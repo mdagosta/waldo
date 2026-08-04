@@ -69,6 +69,22 @@ func (manifest *Manifest) UnmarshalJSON(data []byte) error {
 	}
 }
 
+// MarshalJSON emits the schema-1 polymorphic shards field in the same shape
+// accepted by UnmarshalJSON.
+func (manifest Manifest) MarshalJSON() ([]byte, error) {
+	type plain Manifest
+	wire := struct {
+		plain
+		Shards any `json:"shards"`
+	}{plain: plain(manifest)}
+	if manifest.Rollup != nil {
+		wire.Shards = manifest.Rollup
+	} else {
+		wire.Shards = manifest.Shards
+	}
+	return json.Marshal(wire)
+}
+
 type Source struct {
 	Name          string       `json:"name"`
 	Source        string       `json:"source"`
@@ -173,7 +189,7 @@ type Conversion struct {
 	Collector string `json:"collector,omitempty"`
 	Profile   string `json:"profile"`
 	Recipe    string `json:"recipe"`
-	Tokenizer string `json:"tokenizer"`
+	Tokenizer string `json:"tokenizer,omitempty"`
 }
 
 type Shard struct {

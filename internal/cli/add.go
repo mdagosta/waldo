@@ -39,6 +39,7 @@ func runIndexAdd(context Context, args []string, stdout, _ io.Writer) error {
 	fmt.Fprintf(stdout, "ingestion plan %s\n", identity[:12])
 	fmt.Fprintf(stdout, "  destination  %s\n", plan.Destination)
 	fmt.Fprintf(stdout, "  title        %s\n", plan.Title)
+	fmt.Fprintf(stdout, "  description  %s\n", plan.Description)
 	fmt.Fprintf(stdout, "  license      %s\n", plan.License)
 	fmt.Fprintf(stdout, "  source       %s (%s)\n", plan.Source.Name, plan.Source.Category)
 	fmt.Fprintf(stdout, "  mode         %s\n", plan.Mode)
@@ -79,6 +80,8 @@ func parseIndexAdd(args []string) (ingest.PlanRequest, []string, bool, error) {
 			request.Destination, err = value("--to")
 		case "--title":
 			request.Title, err = value("--title")
+		case "--description":
+			request.Description, err = value("--description")
 		case "--license":
 			request.License, err = value("--license")
 		case "--source":

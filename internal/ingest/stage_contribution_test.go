@@ -1,0 +1,83 @@
+package ingest
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/openwaldo/waldo-new/internal/index"
+)
+
+func TestStageContributionProducesMinimalValidIndexOverlay(t *testing.T) {
+	root := t.TempDir()
+	writeIndexJSON(t, filepath.Join(root, "index.json"), index.Directory{
+		Kind: "index", Schema: 2, Path: "", Entries: []index.Entry{{Name: "core", Type: "dir"}},
+	})
+	writeIndexJSON(t, filepath.Join(root, "core", "index.json"), index.Directory{
+		Kind: "index", Schema: 2, Path: "core", Entries: []index.Entry{},
+	})
+	input := filepath.Join(t.TempDir(), "input.txt")
+	writeFixture(t, input, "document")
+	plan := textFixturePlan(t, input)
+	plan.Destination = "core/example"
+	assembly, err := AssembleTextObjects(context.Background(), plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := BuildManifest(plan, assembly, "s3://openwaldo/lookaside/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := StageContribution(root, t.TempDir(), plan, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"core/example/example.json", "core/example/index.json", "core/index.json"}
+	if len(result.Files) != len(want) {
+		t.Fatalf("files = %v", result.Files)
+	}
+	for index := range want {
+		if result.Files[index] != want[index] {
+			t.Fatalf("files = %v", result.Files)
+		}
+		source := filepath.Join(result.Root, filepath.FromSlash(want[index]))
+		destination := filepath.Join(root, filepath.FromSlash(want[index]))
+		data, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target, err := index.Resolve(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	verification, err := index.Verify(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verification.Corpora != 1 || verification.Shards != 1 {
+		t.Fatalf("verification = %+v", verification)
+	}
+}
+
+func writeIndexJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

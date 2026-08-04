@@ -18,6 +18,7 @@ type Plan struct {
 	Schema      int         `json:"schema"`
 	Destination string      `json:"destination"`
 	Title       string      `json:"title"`
+	Description string      `json:"description"`
 	License     string      `json:"license"`
 	Source      PlanSource  `json:"source"`
 	Mode        string      `json:"mode"`
@@ -54,6 +55,7 @@ type PlanInput struct {
 type PlanRequest struct {
 	Destination string
 	Title       string
+	Description string
 	License     string
 	Source      PlanSource
 	Mode        string
@@ -92,7 +94,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 	}
 	plan := Plan{
 		Kind: "waldo-ingest-plan", Schema: 1,
-		Destination: request.Destination, Title: request.Title, License: request.License,
+		Destination: request.Destination, Title: request.Title, Description: request.Description, License: request.License,
 		Source: request.Source, Mode: mode, MemoryBytes: memory,
 		Writer: WriterPlan{
 			Format: "parquet", RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
@@ -101,6 +103,9 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			AdapterBatchBytes: 16 << 20, RecordMaximumBytes: 64 << 20,
 			Compression: "zstd-level-6",
 		},
+	}
+	if plan.Description == "" {
+		plan.Description = "Training corpus acquired from " + request.Source.Name + "."
 	}
 	for _, artifact := range probe.Artifacts {
 		input := PlanInput{Artifact: artifact}
@@ -161,7 +166,7 @@ func (plan Plan) Validate() error {
 	if plan.Destination == "" || plan.Destination == "." || filepath.IsAbs(plan.Destination) || strings.HasPrefix(cleanDestination, "..") || plan.Destination != cleanDestination {
 		return fmt.Errorf("destination must be a relative index path")
 	}
-	if plan.Title == "" || plan.License == "" || plan.Source.Name == "" || plan.Source.URL == "" || plan.Source.Category == "" {
+	if plan.Title == "" || plan.Description == "" || plan.License == "" || plan.Source.Name == "" || plan.Source.URL == "" || plan.Source.Category == "" {
 		return fmt.Errorf("ingestion plan is missing corpus or source identity")
 	}
 	if plan.Mode != "streaming" && plan.Mode != "canonical" {

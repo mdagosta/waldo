@@ -141,7 +141,7 @@ func verifyManifest(path string, manifest Manifest) error {
 	if len(manifest.Sources) == 0 {
 		return fmt.Errorf("%s: at least one source is required", path)
 	}
-	if !validConversion(manifest.ConvertedBy) {
+	if !validConversion(manifest.ConvertedBy, manifest.RecordSchema < 2) {
 		return fmt.Errorf("%s: converted_by requires tool, version, profile, recipe, and tokenizer", path)
 	}
 	if len(manifest.Shards) == 0 && manifest.Rollup == nil {
@@ -181,7 +181,7 @@ func verifyManifest(path string, manifest Manifest) error {
 				return fmt.Errorf("%s: shard %s refers to unknown source %q", path, shard.SHA256[:12], name)
 			}
 		}
-		if shard.ConvertedBy != nil && !validConversion(*shard.ConvertedBy) {
+		if shard.ConvertedBy != nil && !validConversion(*shard.ConvertedBy, manifest.RecordSchema < 2) {
 			return fmt.Errorf("%s: shard %s has an incomplete converted_by override", path, shard.SHA256[:12])
 		}
 	}
@@ -199,8 +199,14 @@ func verifyManifest(path string, manifest Manifest) error {
 	return nil
 }
 
-func validConversion(conversion Conversion) bool {
-	return conversion.Tool != "" && conversion.Version != "" && conversion.Profile != "" && conversion.Recipe != "" && conversion.Tokenizer != ""
+func validConversion(conversion Conversion, requireTokenizer bool) bool {
+	return conversion.Tool != "" && conversion.Version != "" && conversion.Profile != "" && conversion.Recipe != "" && (!requireTokenizer || conversion.Tokenizer != "")
+}
+
+// ValidateManifest validates a manifest using the filename-derived identity
+// rules that apply inside an index checkout.
+func ValidateManifest(path string, manifest Manifest) error {
+	return verifyManifest(path, manifest)
 }
 
 func manifestShardCount(manifest Manifest) int64 {
