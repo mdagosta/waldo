@@ -53,6 +53,9 @@ func runIndexAdd(context Context, args []string, stdout, _ io.Writer) error {
 		if err != nil {
 			return err
 		}
+		if err := ingest.ValidateWorkLocations(target.Root, options.Staging, cache.Root()); err != nil {
+			return err
+		}
 		assembly, admission, err := ingest.ExecuteAdmission(context.Execution, plan, options.Staging, cache)
 		if err != nil {
 			return err

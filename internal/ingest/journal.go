@@ -41,6 +41,9 @@ func ExecuteAssembly(ctx context.Context, plan Plan, stagingDirectory string) (A
 	if err != nil {
 		return AssemblyResult{}, err
 	}
+	if plan.Mode != "streaming" {
+		return AssemblyResult{}, fmt.Errorf("canonical ingestion execution requires the external-sort stage, which is not enabled yet")
+	}
 	if stagingDirectory == "" {
 		return AssemblyResult{}, fmt.Errorf("staging directory is required")
 	}

@@ -31,6 +31,9 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 	if err != nil {
 		return ContributionResult{}, err
 	}
+	if pathWithin(root, stagingRoot) {
+		return ContributionResult{}, fmt.Errorf("staging directory must be outside the index checkout")
+	}
 	finalRoot := filepath.Join(stagingRoot, "contribution")
 	_, finalErr := os.Stat(finalRoot)
 	if finalErr != nil && !os.IsNotExist(finalErr) {
@@ -128,6 +131,35 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 	}
 	committed = true
 	return result, nil
+}
+
+// ValidateWorkLocations keeps machine-local state out of the Git checkout and
+// prevents staging cleanup from ever sharing a tree with lookaside objects.
+func ValidateWorkLocations(indexRoot, stagingDirectory, cacheRoot string) error {
+	root, err := filepath.Abs(indexRoot)
+	if err != nil {
+		return err
+	}
+	staging, err := filepath.Abs(stagingDirectory)
+	if err != nil {
+		return err
+	}
+	cache, err := filepath.Abs(cacheRoot)
+	if err != nil {
+		return err
+	}
+	if pathWithin(root, staging) || pathWithin(root, cache) {
+		return fmt.Errorf("staging and lookaside cache must be outside the index checkout")
+	}
+	if pathWithin(staging, cache) || pathWithin(cache, staging) {
+		return fmt.Errorf("staging and lookaside cache must not overlap")
+	}
+	return nil
+}
+
+func pathWithin(parent, child string) bool {
+	relative, err := filepath.Rel(parent, child)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 // CheckContributionDestination performs the checkout collision check before

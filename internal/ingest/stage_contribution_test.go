@@ -89,3 +89,14 @@ func writeIndexJSON(t *testing.T, path string, value any) {
 		t.Fatal(err)
 	}
 }
+
+func TestValidateWorkLocationsRejectsCheckoutOverlap(t *testing.T) {
+	root := t.TempDir()
+	if err := ValidateWorkLocations(root, filepath.Join(root, "work"), t.TempDir()); err == nil {
+		t.Fatal("expected staging overlap rejection")
+	}
+	outside := t.TempDir()
+	if err := ValidateWorkLocations(root, outside, filepath.Join(outside, "cache")); err == nil {
+		t.Fatal("expected staging/cache overlap rejection")
+	}
+}
