@@ -113,6 +113,91 @@ func TestRollupManifestUsesPolymorphicShardsField(t *testing.T) {
 	}
 }
 
+func TestVerifyAcceptsAdditiveMultimodalProvenance(t *testing.T) {
+	root := fixtureIndex(t)
+	manifest := fmt.Sprintf(`{
+  "kind": "manifest", "schema": 1, "name": "books",
+  "title": "Images", "description": "Example image records.", "license": "CC0-1.0",
+  "sources": [{
+    "name": "upstream", "source": "Example", "url": "https://example.test", "sha256": %q,
+    "category": "public-dataset",
+    "usage": {"image": {"samples": 2, "items": 3, "content_bytes": 100}},
+    "content": {"types": ["photography"], "copyrighted": "unknown"}
+  }],
+  "converted_by": {"tool": "test", "version": "1", "profile": "image", "recipe": "test/v2", "tokenizer": "none"},
+  "processing": {
+    "steps": [{"name": "validate", "description": "Validated media payloads."}],
+    "rights_reservation_measures": ["Honoured recorded upstream exclusions."],
+    "illegal_content_measures": ["Rejected payloads matching the configured blocklist."]
+  },
+  "record_schema": 2,
+  "format": "parquet",
+  "shards": [{
+    "url": "https://example.test/a", "sha256": %q, "sources": ["upstream"],
+    "docs": 2, "tokens": 0, "bytes": 200,
+    "modalities": {"image": {"samples": 2, "items": 3, "content_bytes": 100}}
+  }]
+}`, strings.Repeat("a", 64), strings.Repeat("b", 64))
+	path := filepath.Join(root, "alpha", "books.json")
+	writeFile(t, path, manifest)
+	target, err := Resolve(root, "alpha/books.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(target); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadManifest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.RecordSchema != 2 || loaded.Shards[0].Tokens != 0 || loaded.Shards[0].Modalities["image"].Items != 3 {
+		t.Fatalf("multimodal manifest = %+v", loaded)
+	}
+}
+
+func TestVerifyRejectsSourceUsageMismatch(t *testing.T) {
+	root := fixtureIndex(t)
+	manifest := fmt.Sprintf(`{
+  "kind": "manifest", "schema": 1, "name": "books",
+  "title": "Images", "description": "Example image records.", "license": "CC0-1.0",
+  "sources": [{
+    "name": "upstream", "source": "Example", "url": "https://example.test", "sha256": %q,
+    "category": "public-dataset", "usage": {"image": {"samples": 1, "items": 1}}
+  }],
+  "converted_by": {"tool": "test", "version": "1", "profile": "image", "recipe": "test/v2", "tokenizer": "none"},
+  "shards": [{
+    "url": "https://example.test/a", "sha256": %q, "sources": ["upstream"],
+    "docs": 2, "tokens": 0, "bytes": 200,
+    "modalities": {"image": {"samples": 2, "items": 2}}
+  }]
+}`, strings.Repeat("a", 64), strings.Repeat("b", 64))
+	path := filepath.Join(root, "alpha", "books.json")
+	writeFile(t, path, manifest)
+	target, err := Resolve(root, "alpha/books.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Verify(target); err == nil || !strings.Contains(err.Error(), "does not reconcile") {
+		t.Fatalf("Verify() error = %v, want source-usage reconciliation error", err)
+	}
+}
+
+func TestWebCrawlProvenanceRequiresCrawlerEvidence(t *testing.T) {
+	source := Source{
+		Name: "crawl", Category: SourceWebCrawl,
+		Usage:       Modalities{"text": {Samples: 1, Tokens: 2}},
+		Acquisition: &Acquisition{Domains: []DomainMeasure{{Domain: "example.com", RetainedBytes: 10}}},
+	}
+	if err := validateSourceProvenance(source); err == nil || !strings.Contains(err.Error(), "crawler details") {
+		t.Fatalf("validateSourceProvenance() error = %v, want crawler error", err)
+	}
+	source.Acquisition.Crawler = &Crawler{Name: "waldo", Purpose: "Acquire public pages.", Behaviour: "Honours robots.txt."}
+	if err := validateSourceProvenance(source); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPublicIndexAcceptance(t *testing.T) {
 	path := os.Getenv("WALDO_ACCEPTANCE_INDEX")
 	if path == "" {

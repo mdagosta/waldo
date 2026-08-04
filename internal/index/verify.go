@@ -189,9 +189,12 @@ func verifyManifest(path string, manifest Manifest) error {
 		if manifest.Rollup.URL == "" || !sha256Pattern.MatchString(manifest.Rollup.SHA256) {
 			return fmt.Errorf("%s: rollup requires a URL and lowercase 64-character sha256", path)
 		}
-		if manifest.Rollup.Count <= 0 || manifest.Rollup.Docs <= 0 || manifest.Rollup.Tokens <= 0 || manifest.Rollup.Bytes <= 0 {
-			return fmt.Errorf("%s: rollup count, docs, tokens, and bytes must be positive", path)
+		if manifest.Rollup.Count <= 0 || manifest.Rollup.Docs <= 0 || manifest.Rollup.Tokens < 0 || manifest.Rollup.Bytes <= 0 {
+			return fmt.Errorf("%s: rollup count, docs, and bytes must be positive and tokens non-negative", path)
 		}
+	}
+	if err := validateManifestProvenance(manifest); err != nil {
+		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil
 }

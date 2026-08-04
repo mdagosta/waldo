@@ -25,18 +25,19 @@ type Entry struct {
 // decoder deliberately permits unknown fields so additive metadata does not
 // make an older reader reject an otherwise compatible index.
 type Manifest struct {
-	Kind         string     `json:"kind"`
-	Schema       int        `json:"schema"`
-	Name         string     `json:"name"`
-	Title        string     `json:"title"`
-	Description  string     `json:"description"`
-	License      string     `json:"license"`
-	Format       string     `json:"format,omitempty"`
-	Sources      []Source   `json:"sources"`
-	ConvertedBy  Conversion `json:"converted_by"`
-	RecordSchema int        `json:"record_schema,omitempty"`
-	Shards       []Shard    `json:"-"`
-	Rollup       *Rollup    `json:"-"`
+	Kind         string      `json:"kind"`
+	Schema       int         `json:"schema"`
+	Name         string      `json:"name"`
+	Title        string      `json:"title"`
+	Description  string      `json:"description"`
+	License      string      `json:"license"`
+	Format       string      `json:"format,omitempty"`
+	Sources      []Source    `json:"sources"`
+	ConvertedBy  Conversion  `json:"converted_by"`
+	RecordSchema int         `json:"record_schema,omitempty"`
+	Processing   *Processing `json:"processing,omitempty"`
+	Shards       []Shard     `json:"-"`
+	Rollup       *Rollup     `json:"-"`
 }
 
 // UnmarshalJSON accepts the schema-1 polymorphic shards field: an inline
@@ -78,6 +79,85 @@ type Source struct {
 	CollectedTo   string       `json:"collected_to,omitempty"`
 	SHA256        string       `json:"sha256"`
 	Files         []SourceFile `json:"files,omitempty"`
+	Usage         Modalities   `json:"usage,omitempty"`
+	Content       *Content     `json:"content,omitempty"`
+	Acquisition   *Acquisition `json:"acquisition,omitempty"`
+}
+
+// Modalities contains exact, additive measures keyed by a stable modality
+// name such as text, image, audio, or video. A multimodal sample may contribute
+// to Samples in more than one entry, so modality sample counts are not summed
+// to derive a manifest's logical document count.
+type Modalities map[string]ModalityMeasure
+
+type ModalityMeasure struct {
+	Samples      int64 `json:"samples,omitempty"`
+	Items        int64 `json:"items,omitempty"`
+	Tokens       int64 `json:"tokens,omitempty"`
+	DurationMS   int64 `json:"duration_ms,omitempty"`
+	ContentBytes int64 `json:"content_bytes,omitempty"`
+}
+
+// Content describes source material independently of how WALDO acquired or
+// encoded it. Tri-state declarations use "yes", "no", or "unknown"; absence
+// means the contributor did not make a declaration.
+type Content struct {
+	Types            []string `json:"types,omitempty"`
+	Languages        []string `json:"languages,omitempty"`
+	Geographies      []string `json:"geographies,omitempty"`
+	Demographics     []string `json:"demographics,omitempty"`
+	From             string   `json:"from,omitempty"`
+	To               string   `json:"to,omitempty"`
+	Selection        string   `json:"selection,omitempty"`
+	PersonalData     string   `json:"personal_data,omitempty"`
+	Copyrighted      string   `json:"copyrighted,omitempty"`
+	MachineGenerated string   `json:"machine_generated,omitempty"`
+}
+
+// Acquisition records how an upstream source was obtained. Variant details
+// are present only for the applicable source category.
+type Acquisition struct {
+	Basis     string          `json:"basis,omitempty"`
+	Crawler   *Crawler        `json:"crawler,omitempty"`
+	UserData  *UserData       `json:"user_data,omitempty"`
+	Synthetic *SyntheticData  `json:"synthetic,omitempty"`
+	Domains   []DomainMeasure `json:"domains,omitempty"`
+}
+
+type Crawler struct {
+	Name      string   `json:"name"`
+	Purpose   string   `json:"purpose"`
+	Behaviour string   `json:"behaviour"`
+	Protocols []string `json:"protocols,omitempty"`
+}
+
+type UserData struct {
+	Service     string `json:"service"`
+	Interaction string `json:"interaction"`
+}
+
+type SyntheticData struct {
+	Model       string `json:"model"`
+	Version     string `json:"version,omitempty"`
+	SummaryURL  string `json:"summary_url,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+type DomainMeasure struct {
+	Domain        string `json:"domain"`
+	AcquiredBytes int64  `json:"acquired_bytes,omitempty"`
+	RetainedBytes int64  `json:"retained_bytes,omitempty"`
+}
+
+type Processing struct {
+	Steps                     []ProcessingStep `json:"steps,omitempty"`
+	RightsReservationMeasures []string         `json:"rights_reservation_measures,omitempty"`
+	IllegalContentMeasures    []string         `json:"illegal_content_measures,omitempty"`
+}
+
+type ProcessingStep struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
 }
 
 type SourceFile struct {
@@ -107,18 +187,20 @@ type Shard struct {
 	Tokens      int64       `json:"tokens"`
 	Bytes       int64       `json:"bytes"`
 	RecordsRoot string      `json:"records_root,omitempty"`
+	Modalities  Modalities  `json:"modalities,omitempty"`
 }
 
 // Rollup describes an external submanifest tree. Its aggregate counts are
 // enough for offline summaries; object-level verification belongs to the
 // network-enabled verification slice.
 type Rollup struct {
-	URL    string `json:"url"`
-	SHA256 string `json:"sha256"`
-	Count  int64  `json:"count"`
-	Docs   int64  `json:"docs"`
-	Tokens int64  `json:"tokens"`
-	Bytes  int64  `json:"bytes"`
+	URL        string     `json:"url"`
+	SHA256     string     `json:"sha256"`
+	Count      int64      `json:"count"`
+	Docs       int64      `json:"docs"`
+	Tokens     int64      `json:"tokens"`
+	Bytes      int64      `json:"bytes"`
+	Modalities Modalities `json:"modalities,omitempty"`
 }
 
 // SubManifest is the content-addressed overflow form of a manifest's shard
