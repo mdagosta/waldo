@@ -42,6 +42,8 @@ Implemented:
 - Anonymous HTTP and S3 lookaside reads plus local-file fixtures
 - Positional machine configuration for scratch, staging, publication, and ordered read mirrors
 - `waldo index verify --objects`
+- Recursive header-only canonical-object availability and size checks, with an
+  explicit `--offline` structural mode
 - `waldo lookaside status` and cache scrubbing
 - Native shard export with safe resume and `EXPORT.json`
 - Streaming canonical JSONL export with record and text-hash validation

@@ -358,6 +358,14 @@ func TestUnknownCommandSuggestsScopedHelp(t *testing.T) {
 	}
 }
 
+func TestIndexVerifyRejectsConflictingVerificationLevels(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"index", "verify", "--offline", "--objects"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "different verification levels") {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
 func TestLookasideStatusUsesNamedBackend(t *testing.T) {
 	scratchRoot := filepath.Join(t.TempDir(), "objects")
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))

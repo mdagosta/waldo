@@ -22,6 +22,10 @@ and remote checksum verification, reclaim staging safely, and create a Git
 review overlay. A filesystem-backed publisher exercises the same path locally
 for integration tests. Other commands remain visible as an honest roadmap.
 
+Recursive `waldo index verify` checks index structure plus the reachability and
+declared size of every canonical object using header-only requests. Use
+`--offline` for metadata alone or `--objects` to download and hash every byte.
+
 The stable corpus contract is documented in
 [the OpenWALDO BOM guide](docs/OPENWALDO-BOM.md). The next phase is corpus
 contribution; its proposed ingestion and training-data shape is documented in

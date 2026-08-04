@@ -140,18 +140,26 @@ func runIndexVerify(context Context, args []string, stdout, stderr io.Writer) er
 func runIndexVerifyWithProgress(context Context, args []string, stdout, progress io.Writer) error {
 	var path string
 	objects := false
+	offline := false
 	for _, arg := range args {
 		if arg == "--objects" {
 			objects = true
+			continue
+		}
+		if arg == "--offline" {
+			offline = true
 			continue
 		}
 		if strings.HasPrefix(arg, "-") {
 			return usageError{message: fmt.Sprintf("unknown index verify option %q", arg)}
 		}
 		if path != "" {
-			return usageError{message: "usage: waldo index verify [path] [--objects]"}
+			return usageError{message: "usage: waldo index verify [path] [--offline|--objects]"}
 		}
 		path = arg
+	}
+	if objects && offline {
+		return usageError{message: "--objects and --offline are different verification levels; choose one"}
 	}
 	var paths []string
 	if path != "" {
@@ -165,13 +173,13 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	if err != nil {
 		return err
 	}
-	if !objects && context.JSON {
+	if offline && context.JSON {
 		return writeJSON(stdout, struct {
 			Path         string                  `json:"path"`
 			Verification waldoindex.Verification `json:"verification"`
 		}{Path: target.Rel, Verification: verification})
 	}
-	if !objects {
+	if offline {
 		fmt.Fprintf(stdout, "verified %s: %s directories, %s corpora, %s shards\n",
 			displayPath(target.Rel), humanInteger(verification.Directories), humanInteger(verification.Corpora), humanInteger(verification.Shards))
 		return nil
@@ -188,6 +196,34 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	bom, err := corpus.BuildBOM(context.Execution, []waldoindex.Target{target}, policy, cache)
 	if err != nil {
 		return err
+	}
+	if !objects {
+		fmt.Fprintf(progress, "checking %s canonical object URLs (%s declared; headers only)\n",
+			humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes))
+		availability, err := corpus.CheckAvailability(context.Execution, bom, cache, 8, func(event corpus.AvailabilityProgress) {
+			if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
+				fmt.Fprintf(progress, "  %s/%s  %s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12], event.Probe.Method)
+			}
+		})
+		if err != nil {
+			return err
+		}
+		purged, err := cache.PurgeUsed()
+		if err != nil {
+			return fmt.Errorf("purge successful availability-check scratch: %w", err)
+		}
+		if context.JSON {
+			return writeJSON(stdout, struct {
+				Path          string                  `json:"path"`
+				Verification  waldoindex.Verification `json:"verification"`
+				Availability  corpus.Availability     `json:"availability"`
+				ScratchPurged lookaside.Stats         `json:"scratch_purged"`
+			}{Path: target.Rel, Verification: verification, Availability: availability, ScratchPurged: purged})
+		}
+		fmt.Fprintf(stdout, "verified %s: %s directories, %s corpora, %s reachable objects (%s; bodies not downloaded)\n",
+			displayPath(target.Rel), humanInteger(verification.Directories), humanInteger(verification.Corpora),
+			humanInteger(int64(availability.Objects)), humanBytes(availability.Bytes))
+		return nil
 	}
 	fmt.Fprintf(progress, "verifying %s objects (%s) through lookaside scratch %s\n",
 		humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes), cache.Root())

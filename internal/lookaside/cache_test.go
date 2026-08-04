@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -138,6 +139,64 @@ func TestS3URLTranslation(t *testing.T) {
 	}
 }
 
+func TestProbeHTTPUsesHEADWithoutReadingBody(t *testing.T) {
+	transport := &probeTransport{size: 1234}
+	cache, err := NewCache(t.TempDir(), &http.Client{Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := cache.Probe(context.Background(), "https://objects.example/item", 1234)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Method != "HEAD" || result.Bytes != 1234 || len(transport.methods) != 1 || transport.methods[0] != http.MethodHead {
+		t.Fatalf("result = %+v, methods = %v", result, transport.methods)
+	}
+}
+
+func TestProbeHTTPFallsBackToOneByteRange(t *testing.T) {
+	transport := &probeTransport{size: 9876, rejectHead: true}
+	cache, err := NewCache(t.TempDir(), &http.Client{Transport: transport})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := cache.Probe(context.Background(), "https://objects.example/item", 9876)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Method != "GET range" || len(transport.methods) != 2 || transport.rangeHeader != "bytes=0-0" {
+		t.Fatalf("result = %+v, methods = %v, range = %q", result, transport.methods, transport.rangeHeader)
+	}
+}
+
+func TestProbeRejectsDeclaredSizeMismatch(t *testing.T) {
+	cache, err := NewCache(t.TempDir(), &http.Client{Transport: &probeTransport{size: 10}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.Probe(context.Background(), "https://objects.example/item", 11); err == nil || !strings.Contains(err.Error(), "size mismatch") {
+		t.Fatalf("Probe() error = %v", err)
+	}
+}
+
+func TestProbeLocalFileUsesStat(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "object.parquet")
+	if err := os.WriteFile(file, []byte("12345"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache, err := NewCache(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := cache.Probe(context.Background(), file, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Method != "stat" || result.Bytes != 5 {
+		t.Fatalf("Probe() = %+v", result)
+	}
+}
+
 type fakeTransport struct {
 	content  string
 	requests int
@@ -146,6 +205,29 @@ type fakeTransport struct {
 type fallbackTransport struct {
 	content string
 	urls    []string
+}
+
+type probeTransport struct {
+	size        int64
+	rejectHead  bool
+	methods     []string
+	rangeHeader string
+}
+
+func (transport *probeTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.methods = append(transport.methods, request.Method)
+	if request.Method == http.MethodHead && transport.rejectHead {
+		return &http.Response{StatusCode: http.StatusMethodNotAllowed, Status: "405 Method Not Allowed", Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header)}, nil
+	}
+	response := &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader("")), Header: make(http.Header), ContentLength: transport.size}
+	if request.Method == http.MethodGet {
+		transport.rangeHeader = request.Header.Get("Range")
+		response.StatusCode = http.StatusPartialContent
+		response.Status = "206 Partial Content"
+		response.ContentLength = 1
+		response.Header.Set("Content-Range", fmt.Sprintf("bytes 0-0/%d", transport.size))
+	}
+	return response, nil
 }
 
 func (transport *fallbackTransport) RoundTrip(request *http.Request) (*http.Response, error) {

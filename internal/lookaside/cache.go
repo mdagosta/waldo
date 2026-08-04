@@ -16,6 +16,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -28,6 +29,12 @@ type Cache struct {
 	mirrors []string
 	mu      sync.Mutex
 	used    map[string]bool
+}
+
+type ProbeResult struct {
+	URL    string `json:"url"`
+	Bytes  int64  `json:"bytes"`
+	Method string `json:"method"`
 }
 
 type Option func(*Cache)
@@ -71,6 +78,121 @@ func DefaultCache() (*Cache, error) {
 func (cache *Cache) Root() string { return cache.root }
 
 func (cache *Cache) Mirrors() []string { return append([]string(nil), cache.mirrors...) }
+
+// Probe checks the canonical object location without transferring its body.
+// HTTP and S3 URLs use HEAD, with a one-byte range request only when HEAD is
+// unsupported or does not report a size. Local paths use stat.
+func (cache *Cache) Probe(ctx context.Context, objectURL string, expectedBytes int64) (ProbeResult, error) {
+	parsed, err := url.Parse(objectURL)
+	if err != nil {
+		return ProbeResult{}, fmt.Errorf("parse lookaside URL %q: %w", objectURL, err)
+	}
+	switch parsed.Scheme {
+	case "http", "https":
+		return cache.probeHTTP(ctx, parsed.String(), expectedBytes)
+	case "s3":
+		return cache.probeHTTP(ctx, s3HTTPS(parsed), expectedBytes)
+	case "file":
+		localPath, err := url.PathUnescape(parsed.Path)
+		if err != nil {
+			return ProbeResult{}, err
+		}
+		return probeFile(objectURL, filepath.FromSlash(localPath), expectedBytes)
+	case "":
+		return probeFile(objectURL, objectURL, expectedBytes)
+	default:
+		return ProbeResult{}, fmt.Errorf("unsupported lookaside URL scheme %q", parsed.Scheme)
+	}
+}
+
+func probeFile(objectURL, localPath string, expectedBytes int64) (ProbeResult, error) {
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return ProbeResult{}, fmt.Errorf("probe %s: %w", objectURL, err)
+	}
+	if info.IsDir() {
+		return ProbeResult{}, fmt.Errorf("probe %s: object is a directory", objectURL)
+	}
+	if err := checkProbeSize(objectURL, info.Size(), expectedBytes); err != nil {
+		return ProbeResult{}, err
+	}
+	return ProbeResult{URL: objectURL, Bytes: info.Size(), Method: "stat"}, nil
+}
+
+func (cache *Cache) probeHTTP(ctx context.Context, objectURL string, expectedBytes int64) (ProbeResult, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodHead, objectURL, nil)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	request.Header.Set("Accept-Encoding", "identity")
+	response, err := cache.client.Do(request)
+	if err != nil {
+		return ProbeResult{}, fmt.Errorf("probe %s: %w", objectURL, err)
+	}
+	_ = response.Body.Close()
+	if response.StatusCode >= 200 && response.StatusCode < 300 && response.ContentLength >= 0 {
+		if err := checkProbeSize(objectURL, response.ContentLength, expectedBytes); err != nil {
+			return ProbeResult{}, err
+		}
+		return ProbeResult{URL: objectURL, Bytes: response.ContentLength, Method: "HEAD"}, nil
+	}
+	if response.StatusCode >= 200 && response.StatusCode < 300 || response.StatusCode == http.StatusMethodNotAllowed || response.StatusCode == http.StatusNotImplemented {
+		return cache.probeRange(ctx, objectURL, expectedBytes)
+	}
+	return ProbeResult{}, fmt.Errorf("probe %s: HTTP %s", objectURL, response.Status)
+}
+
+func (cache *Cache) probeRange(ctx context.Context, objectURL string, expectedBytes int64) (ProbeResult, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, objectURL, nil)
+	if err != nil {
+		return ProbeResult{}, err
+	}
+	request.Header.Set("Range", "bytes=0-0")
+	request.Header.Set("Accept-Encoding", "identity")
+	response, err := cache.client.Do(request)
+	if err != nil {
+		return ProbeResult{}, fmt.Errorf("probe %s: %w", objectURL, err)
+	}
+	defer response.Body.Close()
+	var size int64
+	switch response.StatusCode {
+	case http.StatusPartialContent:
+		size, err = contentRangeSize(response.Header.Get("Content-Range"))
+		if err != nil {
+			return ProbeResult{}, fmt.Errorf("probe %s: %w", objectURL, err)
+		}
+	case http.StatusOK:
+		size = response.ContentLength
+		if size < 0 {
+			return ProbeResult{}, fmt.Errorf("probe %s: server reported neither object size nor range support", objectURL)
+		}
+	default:
+		return ProbeResult{}, fmt.Errorf("probe %s: HTTP %s", objectURL, response.Status)
+	}
+	if err := checkProbeSize(objectURL, size, expectedBytes); err != nil {
+		return ProbeResult{}, err
+	}
+	return ProbeResult{URL: objectURL, Bytes: size, Method: "GET range"}, nil
+}
+
+func contentRangeSize(value string) (int64, error) {
+	const prefix = "bytes 0-0/"
+	if !strings.HasPrefix(value, prefix) {
+		return 0, fmt.Errorf("invalid Content-Range %q", value)
+	}
+	size, err := strconv.ParseInt(strings.TrimPrefix(value, prefix), 10, 64)
+	if err != nil || size <= 0 {
+		return 0, fmt.Errorf("invalid Content-Range %q", value)
+	}
+	return size, nil
+}
+
+func checkProbeSize(objectURL string, got, want int64) error {
+	if want > 0 && got != want {
+		return fmt.Errorf("probe %s: size mismatch: got %d bytes, want %d", objectURL, got, want)
+	}
+	return nil
+}
 
 func (cache *Cache) Path(digest string) (string, error) {
 	if err := validateDigest(digest); err != nil {

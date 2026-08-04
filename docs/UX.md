@@ -88,8 +88,18 @@ waldo index list science
 waldo index summary
 waldo index show science/plos
 waldo index verify
-waldo index verify --objects
+waldo index verify --offline
+waldo index verify science --objects
 ```
+
+All forms recurse beneath the selected path. The default validates local
+metadata and checks that every canonical object URL is reachable with the
+declared size, using HTTP/S3 headers or local file metadata without downloading
+object bodies. `--offline` performs only local structural validation.
+`--objects` is the expensive proof: it downloads each object, verifies its
+SHA-256, and purges successful scratch material afterward. Availability checks
+always probe the manifest URL itself; a mirror must not hide a missing
+canonical object.
 
 `index list` is recursive and returns one row per corpus beneath the selected
 path, including logical path, title, shard/document/token/byte totals, and a
