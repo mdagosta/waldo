@@ -1,26 +1,41 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path"
 	"strconv"
 	"strings"
 
+	"github.com/openwaldo/waldo-new/internal/config"
 	waldoindex "github.com/openwaldo/waldo-new/internal/index"
 	"github.com/openwaldo/waldo-new/internal/ingest"
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
-func runIndexIngest(context Context, args []string, stdout, _ io.Writer) error {
+var newIngestPublisher = func(ctx context.Context, publish config.Publish) (lookaside.Publisher, error) {
+	return lookaside.NewS3Publisher(ctx, publish)
+}
+
+func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) error {
 	options, err := parseIndexIngest(args)
 	if err != nil {
 		return err
 	}
-	if !options.DryRun && (options.Staging == "" || options.ObjectBase == "") {
-		return usageError{message: "index ingest execution requires --staging and --object-base; use --dry-run to preflight only"}
+	var configuration config.Config
+	if !options.DryRun {
+		configuration, err = config.Load()
+		if err != nil {
+			return err
+		}
+		if configuration.Lookaside.Publish == nil && options.ObjectBase == "" {
+			return usageError{message: "index ingest needs a writable lookaside; run `waldo lookaside configure --publish s3://bucket/prefix` or pass --object-base"}
+		}
 	}
-	probe, err := ingest.ProbePaths(context.Execution, options.Inputs)
+	execution := ingest.WithProgress(context.Execution, ingestProgressReporter(stderr, context.JSON))
+	probe, err := ingest.ProbePaths(execution, options.Inputs)
 	if err != nil {
 		return err
 	}
@@ -46,25 +61,41 @@ func runIndexIngest(context Context, args []string, stdout, _ io.Writer) error {
 		if err := ingest.CheckContributionDestination(target.Root, plan); err != nil {
 			return err
 		}
-		if err := ingest.ValidatePublicObjectBase(options.ObjectBase); err != nil {
-			return err
+		publish := configuration.Lookaside.Publish
+		if publish == nil {
+			publish = &config.Publish{URL: options.ObjectBase, Workers: 4}
+		} else if options.ObjectBase != "" {
+			copy := *publish
+			copy.URL = options.ObjectBase
+			publish = &copy
 		}
-		cache, err := lookaside.DefaultCache()
+		publisher, err := newIngestPublisher(execution, *publish)
 		if err != nil {
 			return err
 		}
-		if err := ingest.ValidateWorkLocations(target.Root, options.Staging, cache.Root()); err != nil {
-			return err
+		staging := options.Staging
+		if staging == "" {
+			staging, err = config.EffectiveStagingRoot(identity)
+			if err != nil {
+				return err
+			}
 		}
-		assembly, admission, err := ingest.ExecuteAdmission(context.Execution, plan, options.Staging, cache)
+		cacheRoot, err := config.EffectiveCacheRoot(configuration)
 		if err != nil {
 			return err
 		}
-		manifest, err := ingest.BuildManifest(plan, assembly, options.ObjectBase)
+		if err := ingest.ValidateWorkLocations(target.Root, staging, cacheRoot); err != nil {
+			return err
+		}
+		assembly, publication, err := ingest.ExecutePublication(execution, plan, staging, publisher, publish.Workers, publish.KeepLocal)
 		if err != nil {
 			return err
 		}
-		contribution, err := ingest.StageContribution(target.Root, options.Staging, plan, manifest)
+		manifest, err := ingest.BuildManifest(plan, assembly, publication.BaseURL)
+		if err != nil {
+			return err
+		}
+		contribution, err := ingest.StageContribution(target.Root, staging, plan, manifest)
 		if err != nil {
 			return err
 		}
@@ -73,15 +104,15 @@ func runIndexIngest(context Context, args []string, stdout, _ io.Writer) error {
 				Identity     string                    `json:"identity"`
 				Plan         ingest.Plan               `json:"plan"`
 				Assembly     ingest.AssemblyResult     `json:"assembly"`
-				Admission    ingest.AdmissionResult    `json:"admission"`
+				Publication  ingest.PublicationResult  `json:"publication"`
 				Contribution ingest.ContributionResult `json:"contribution"`
-			}{identity, plan, assembly, admission, contribution})
+			}{identity, plan, assembly, publication, contribution})
 		}
 		fmt.Fprintf(stdout, "ingestion %s complete\n", identity[:12])
 		fmt.Fprintf(stdout, "  records      %s input, %s retained, %s duplicate\n", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
-		fmt.Fprintf(stdout, "  objects      %s admitted to %s\n", humanInteger(int64(len(admission.Objects))), admission.CacheRoot)
+		fmt.Fprintf(stdout, "  objects      %s published to %s\n", humanInteger(int64(len(publication.Objects))), publication.BaseURL)
 		fmt.Fprintf(stdout, "  contribution %s (%s changed files)\n", contribution.Root, humanInteger(int64(len(contribution.Files))))
-		fmt.Fprintln(stdout, "review the overlay, upload the objects to --object-base, then apply and commit the changed index files with DCO sign-off")
+		fmt.Fprintln(stdout, "review the overlay, then apply and commit the changed index files with DCO sign-off")
 		return nil
 	}
 	fmt.Fprintf(stdout, "ingestion plan %s\n", identity[:12])
@@ -105,6 +136,41 @@ func runIndexIngest(context Context, args []string, stdout, _ io.Writer) error {
 		humanBytes(plan.Writer.RowGroupLogicalBytes), plan.Writer.Compression)
 	fmt.Fprintln(stdout, "dry run complete; no files were written")
 	return nil
+}
+
+func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSink {
+	last := map[string]int64{}
+	return func(event ingest.ProgressEvent) {
+		if jsonOutput {
+			_ = json.NewEncoder(output).Encode(event)
+			return
+		}
+		short := event.Shard
+		if len(short) > 12 {
+			short = short[:12]
+		}
+		switch {
+		case event.Phase == "input" && event.Status == "probing":
+			fmt.Fprintf(output, "probing  %s\n", event.Input)
+		case event.Phase == "input" && event.Status == "detected":
+			fmt.Fprintf(output, "detected %s as %s (%s)\n", event.Input, event.Adapter, humanBytes(event.Bytes))
+		case event.Phase == "convert" && event.Status == "started":
+			fmt.Fprintf(output, "convert  %s using %s\n", event.Input, event.Adapter)
+		case event.Phase == "convert" && event.Status == "completed":
+			fmt.Fprintf(output, "converted %s (%s)\n", event.Input, humanBytes(event.Bytes))
+		case event.Phase == "shard" && event.Status == "ready":
+			fmt.Fprintf(output, "shard %d  %s ready (%s)\n", event.Sequence, short, humanBytes(event.Bytes))
+		case event.Phase == "upload" && event.Status == "started":
+			fmt.Fprintf(output, "upload %d  %s started on worker %d\n", event.Sequence, short, event.Worker)
+		case event.Phase == "upload" && event.Status == "progress" && (event.Bytes == event.TotalBytes || event.Bytes-last[event.Shard] >= 64<<20):
+			last[event.Shard] = event.Bytes
+			fmt.Fprintf(output, "upload %d  %s %s/%s\n", event.Sequence, short, humanBytes(event.Bytes), humanBytes(event.TotalBytes))
+		case event.Phase == "upload" && event.Status == "verified":
+			fmt.Fprintf(output, "upload %d  %s verified at %s\n", event.Sequence, short, event.Remote)
+		case event.Phase == "staging" && event.Status == "purged":
+			fmt.Fprintf(output, "purged %d  %s reclaimed %s\n", event.Sequence, short, humanBytes(event.ReclaimedBytes))
+		}
+	}
 }
 
 type indexIngestOptions struct {

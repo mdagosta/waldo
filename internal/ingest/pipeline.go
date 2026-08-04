@@ -16,6 +16,7 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 		return fmt.Errorf("text batch consumer is required")
 	}
 	for _, input := range plan.Inputs {
+		emitProgress(ctx, ProgressEvent{Phase: "convert", Status: "started", Input: input.Artifact.Path, Adapter: input.Adapter, TotalBytes: input.Artifact.Bytes})
 		inputPlan := plan
 		inputPlan.Inputs = []PlanInput{input}
 		var err error
@@ -30,6 +31,7 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 		if err != nil {
 			return err
 		}
+		emitProgress(ctx, ProgressEvent{Phase: "convert", Status: "completed", Input: input.Artifact.Path, Adapter: input.Adapter, Bytes: input.Artifact.Bytes, TotalBytes: input.Artifact.Bytes})
 	}
 	return nil
 }

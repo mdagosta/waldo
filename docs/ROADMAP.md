@@ -54,6 +54,8 @@ hash checked and an independently readable OpenWALDO BOM.
 
 ## Phase 3: corpus contribution
 
+Implemented foundation:
+
 - Ingestion and training-data contract (`docs/INGESTION-DESIGN.md`)
 - Basic text and Markdown ingestion
 - Canonical records and deterministic Parquet packing
@@ -61,9 +63,12 @@ hash checked and an independently readable OpenWALDO BOM.
 - Bounded progress event stream for probe, conversion, shard, upload, and purge
 - Parallel S3 lookaside publication with remote verification and backpressure
 - Journal-before-purge staged-object reclamation; optional local retention
-- Local-only lookaside admission as an explicit offline mode
 - Manifest and navigation generation
 - Durable staging and recovery
+
+Remaining:
+
+- Local-only lookaside admission as an explicit offline mode
 - External fetcher handoff consumption
 - DCO-oriented Git handoff
 

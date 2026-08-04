@@ -69,6 +69,7 @@ func ProbePaths(ctx context.Context, roots []string) (Probe, error) {
 		if err := ctx.Err(); err != nil {
 			return Probe{}, err
 		}
+		emitProgress(ctx, ProgressEvent{Phase: "input", Status: "probing", Input: path})
 		artifact, err := probeFile(ctx, path)
 		if err != nil {
 			return Probe{}, fmt.Errorf("probe %s: %w", path, err)
@@ -76,6 +77,7 @@ func ProbePaths(ctx context.Context, roots []string) (Probe, error) {
 		result.Artifacts = append(result.Artifacts, artifact)
 		result.Totals.Artifacts++
 		result.Totals.Bytes += artifact.Bytes
+		emitProgress(ctx, ProgressEvent{Phase: "input", Status: "detected", Input: path, Adapter: artifact.Format, Bytes: artifact.Bytes})
 	}
 	if len(result.Artifacts) == 0 {
 		return Probe{}, fmt.Errorf("input paths contain no regular files")

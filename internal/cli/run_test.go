@@ -2,12 +2,40 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
+
+type cliPublisher struct{ objects map[string]int64 }
+
+func (publisher *cliPublisher) BaseURL() string { return "s3://openwaldo/lookaside/v1" }
+func (publisher *cliPublisher) Publish(_ context.Context, source, digest string, size int64, progress func(lookaside.PublishProgress)) (lookaside.PublishedObject, error) {
+	if err := lookaside.VerifyFile(source, digest, size); err != nil {
+		return lookaside.PublishedObject{}, err
+	}
+	if publisher.objects == nil {
+		publisher.objects = map[string]int64{}
+	}
+	publisher.objects[digest] = size
+	if progress != nil {
+		progress(lookaside.PublishProgress{Written: size, Total: size})
+	}
+	return lookaside.PublishedObject{URL: publisher.BaseURL() + "/" + digest[:2] + "/" + digest[2:4] + "/" + digest, SHA256: digest, Bytes: size}, nil
+}
+func (publisher *cliPublisher) Verify(_ context.Context, digest string, size int64) (lookaside.PublishedObject, error) {
+	if publisher.objects[digest] != size {
+		return lookaside.PublishedObject{}, fmt.Errorf("missing object")
+	}
+	return lookaside.PublishedObject{SHA256: digest, Bytes: size}, nil
+}
 
 func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "document.md")
@@ -56,19 +84,19 @@ func TestIndexIngestRejectsFormerToOption(t *testing.T) {
 	}
 }
 
-func TestIndexAddExecutionRequiresStagingAndObjectBase(t *testing.T) {
+func TestIndexIngestExecutionRequiresWritableLookaside(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
 		"index", "ingest", "/does/not/need/to/exist", "core/example",
 		"--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset",
 	}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "requires --staging and --object-base") {
+	if code != 2 || !strings.Contains(stderr.String(), "needs a writable lookaside") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 }
 
-func TestIndexAddExecutesToLookasideAndContributionOverlay(t *testing.T) {
+func TestIndexIngestPublishesAndBuildsContributionOverlay(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "document.txt")
 	if err := os.WriteFile(input, []byte("training document"), 0o644); err != nil {
 		t.Fatal(err)
@@ -87,6 +115,10 @@ func TestIndexAddExecutesToLookasideAndContributionOverlay(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("WALDO_CACHE", cache)
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
+	originalPublisher := newIngestPublisher
+	remote := &cliPublisher{}
+	newIngestPublisher = func(context.Context, config.Publish) (lookaside.Publisher, error) { return remote, nil }
+	t.Cleanup(func() { newIngestPublisher = originalPublisher })
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
 		"--index", root, "--json", "index", "ingest", input, "core/example",
@@ -102,11 +134,11 @@ func TestIndexAddExecutesToLookasideAndContributionOverlay(t *testing.T) {
 		Assembly struct {
 			RetainedDocs int64 `json:"retained_docs"`
 		} `json:"assembly"`
-		Admission struct {
+		Publication struct {
 			Objects []struct {
-				Path string `json:"path"`
+				SHA256 string `json:"sha256"`
 			} `json:"objects"`
-		} `json:"admission"`
+		} `json:"publication"`
 		Contribution struct {
 			Root  string   `json:"root"`
 			Files []string `json:"files"`
@@ -115,11 +147,11 @@ func TestIndexAddExecutesToLookasideAndContributionOverlay(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.Assembly.RetainedDocs != 1 || len(output.Admission.Objects) != 1 || len(output.Contribution.Files) != 3 {
+	if output.Assembly.RetainedDocs != 1 || len(output.Publication.Objects) != 1 || len(output.Contribution.Files) != 3 {
 		t.Fatalf("output = %+v", output)
 	}
-	if _, err := os.Stat(output.Admission.Objects[0].Path); err != nil {
-		t.Fatal(err)
+	if remote.objects[output.Publication.Objects[0].SHA256] == 0 {
+		t.Fatal("published object is absent from fake lookaside")
 	}
 	if _, err := os.Stat(filepath.Join(output.Contribution.Root, "core", "example", "example.json")); err != nil {
 		t.Fatal(err)
@@ -225,6 +257,32 @@ func TestLookasideConfigurePersistsMirrors(t *testing.T) {
 		t.Fatalf("status code = %d, stderr = %q", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), cacheRoot) || !strings.Contains(stdout.String(), "https://mirror.example/lookaside/v1") {
+		t.Fatalf("lookaside status = %q", stdout.String())
+	}
+}
+
+func TestLookasideConfigurePersistsPublisher(t *testing.T) {
+	configurationPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("WALDO_CONFIG", configurationPath)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"lookaside", "configure", "--publish", "s3://bucket/lookaside/v1/", "--publish-region", "us-west-2", "--upload-workers", "6", "--keep-local"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish := configuration.Lookaside.Publish
+	if publish == nil || publish.URL != "s3://bucket/lookaside/v1" || publish.Region != "us-west-2" || publish.Workers != 6 || !publish.KeepLocal {
+		t.Fatalf("publish configuration = %+v", publish)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"lookaside", "status"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("status code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "s3://bucket/lookaside/v1") || !strings.Contains(stdout.String(), "6 workers") {
 		t.Fatalf("lookaside status = %q", stdout.String())
 	}
 }

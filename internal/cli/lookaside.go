@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/openwaldo/waldo-new/internal/config"
@@ -47,12 +48,53 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 			configuration.Lookaside.Mirrors, changed = removeString(configuration.Lookaside.Mirrors, strings.TrimRight(strings.TrimPrefix(argument, "--remove-mirror="), "/")), true
 		case argument == "--clear-mirrors":
 			configuration.Lookaside.Mirrors, changed = nil, true
+		case argument == "--publish":
+			value, next, err := optionValue(args, i, "--publish")
+			if err != nil {
+				return err
+			}
+			publish := ensurePublish(&configuration)
+			publish.URL, i, changed = value, next, true
+		case strings.HasPrefix(argument, "--publish="):
+			ensurePublish(&configuration).URL, changed = strings.TrimPrefix(argument, "--publish="), true
+		case argument == "--publish-region":
+			value, next, err := optionValue(args, i, "--publish-region")
+			if err != nil {
+				return err
+			}
+			ensurePublish(&configuration).Region, i, changed = value, next, true
+		case argument == "--publish-endpoint":
+			value, next, err := optionValue(args, i, "--publish-endpoint")
+			if err != nil {
+				return err
+			}
+			ensurePublish(&configuration).Endpoint, i, changed = value, next, true
+		case argument == "--publish-path-style":
+			ensurePublish(&configuration).PathStyle, changed = true, true
+		case argument == "--no-publish-path-style":
+			ensurePublish(&configuration).PathStyle, changed = false, true
+		case argument == "--upload-workers":
+			value, next, err := optionValue(args, i, "--upload-workers")
+			if err != nil {
+				return err
+			}
+			workers, err := strconv.Atoi(value)
+			if err != nil {
+				return usageError{message: "--upload-workers needs an integer"}
+			}
+			ensurePublish(&configuration).Workers, i, changed = workers, next, true
+		case argument == "--keep-local":
+			ensurePublish(&configuration).KeepLocal, changed = true, true
+		case argument == "--no-keep-local":
+			ensurePublish(&configuration).KeepLocal, changed = false, true
+		case argument == "--clear-publish":
+			configuration.Lookaside.Publish, changed = nil, true
 		default:
 			return usageError{message: fmt.Sprintf("unknown lookaside configure option %q", argument)}
 		}
 	}
 	if !changed {
-		return usageError{message: "lookaside configure requires --cache, --default-cache, --mirror, --remove-mirror, or --clear-mirrors"}
+		return usageError{message: "lookaside configure requires a cache, mirror, or publish option"}
 	}
 	if err := config.Save(configuration); err != nil {
 		return err
@@ -72,10 +114,11 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
-			Path    string   `json:"path"`
-			Cache   string   `json:"cache"`
-			Mirrors []string `json:"mirrors"`
-		}{Path: configPath, Cache: cacheRoot, Mirrors: configuration.Lookaside.Mirrors})
+			Path    string          `json:"path"`
+			Cache   string          `json:"cache"`
+			Mirrors []string        `json:"mirrors"`
+			Publish *config.Publish `json:"publish,omitempty"`
+		}{Path: configPath, Cache: cacheRoot, Mirrors: configuration.Lookaside.Mirrors, Publish: configuration.Lookaside.Publish})
 	}
 	fmt.Fprintf(stdout, "configured lookaside in %s\n", configPath)
 	fmt.Fprintf(stdout, "  cache    %s\n", cacheRoot)
@@ -90,7 +133,20 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 			fmt.Fprintf(stdout, "  %-7s  %s\n", label, mirror)
 		}
 	}
+	if configuration.Lookaside.Publish == nil {
+		fmt.Fprintln(stdout, "  publish  (none)")
+	} else {
+		publish := configuration.Lookaside.Publish
+		fmt.Fprintf(stdout, "  publish  %s (%d workers, keep local: %t)\n", publish.URL, publish.Workers, publish.KeepLocal)
+	}
 	return nil
+}
+
+func ensurePublish(configuration *config.Config) *config.Publish {
+	if configuration.Lookaside.Publish == nil {
+		configuration.Lookaside.Publish = &config.Publish{}
+	}
+	return configuration.Lookaside.Publish
 }
 
 func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) error {
@@ -105,12 +161,17 @@ func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) err
 	if err != nil {
 		return err
 	}
+	configuration, err := config.Load()
+	if err != nil {
+		return err
+	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
 			Root    string          `json:"root"`
 			Mirrors []string        `json:"mirrors"`
+			Publish *config.Publish `json:"publish,omitempty"`
 			Stats   lookaside.Stats `json:"stats"`
-		}{Root: cache.Root(), Mirrors: cache.Mirrors(), Stats: stats})
+		}{Root: cache.Root(), Mirrors: cache.Mirrors(), Publish: configuration.Lookaside.Publish, Stats: stats})
 	}
 	fmt.Fprintf(stdout, "lookaside cache  %s\n", cache.Root())
 	fmt.Fprintf(stdout, "  objects        %s\n", humanInteger(stats.Objects))
@@ -128,6 +189,12 @@ func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) err
 			}
 			fmt.Fprintf(stdout, "  %-13s  %s\n", label, mirror)
 		}
+	}
+	if configuration.Lookaside.Publish == nil {
+		fmt.Fprintln(stdout, "  publish        (none)")
+	} else {
+		publish := configuration.Lookaside.Publish
+		fmt.Fprintf(stdout, "  publish        %s (%d workers, keep local: %t)\n", publish.URL, publish.Workers, publish.KeepLocal)
 	}
 	return nil
 }

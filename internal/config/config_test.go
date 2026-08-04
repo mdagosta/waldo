@@ -14,6 +14,7 @@ func TestSaveLoadAndEffectiveCache(t *testing.T) {
 	want := Config{Lookaside: Lookaside{
 		Cache:   filepath.Join(t.TempDir(), "cache"),
 		Mirrors: []string{"https://one.example/root/", "https://one.example/root", "s3://bucket/root"},
+		Publish: &Publish{URL: "s3://bucket/write/", Region: "us-west-2", Workers: 3, KeepLocal: true},
 	}}
 	if err := Save(want); err != nil {
 		t.Fatal(err)
@@ -31,6 +32,7 @@ func TestSaveLoadAndEffectiveCache(t *testing.T) {
 	}
 	want.Schema = 1
 	want.Lookaside.Mirrors = []string{"https://one.example/root", "s3://bucket/root"}
+	want.Lookaside.Publish.URL = "s3://bucket/write"
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %+v, want %+v", got, want)
 	}
@@ -43,6 +45,16 @@ func TestSaveLoadAndEffectiveCache(t *testing.T) {
 	}
 }
 
+func TestSaveRejectsInvalidPublishConfiguration(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := Save(Config{Lookaside: Lookaside{Publish: &Publish{URL: "https://example.test", Workers: 4}}}); err == nil {
+		t.Fatal("expected non-S3 publisher rejection")
+	}
+	if err := Save(Config{Lookaside: Lookaside{Publish: &Publish{URL: "s3://bucket", Workers: 33}}}); err == nil {
+		t.Fatal("expected worker limit rejection")
+	}
+}
+
 func TestLoadMissingReturnsDefault(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
 	got, err := Load()
@@ -51,5 +63,17 @@ func TestLoadMissingReturnsDefault(t *testing.T) {
 	}
 	if got.Schema != Schema {
 		t.Fatalf("Load() = %+v", got)
+	}
+}
+
+func TestEffectiveStagingRootIsPlanSpecific(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("WALDO_STAGING", base)
+	got, err := EffectiveStagingRoot("plan-identity")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != filepath.Join(base, "plan-identity") {
+		t.Fatalf("EffectiveStagingRoot() = %q", got)
 	}
 }

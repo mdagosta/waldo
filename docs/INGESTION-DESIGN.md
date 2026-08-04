@@ -207,7 +207,7 @@ readers, with and without prefetch, and include text, images, and video clips.
 It must also prove that peak reader memory is governed by configured batch and
 media limits rather than total shard size.
 
-### Assembly and admission
+### Assembly and publication
 
 The writer writes directly to a temporary file through a SHA-256 calculating
 writer. It never builds a complete shard in a byte slice.
@@ -217,16 +217,16 @@ writer. It never builds a complete shard in a byte slice.
 3. Observe encoded bytes after each flush and rotate at the soft shard target.
 4. Close the footer, synchronize the file, and finish the object hash.
 5. Reopen and verify schema, metadata, counts, and readable row groups.
-6. Atomically admit the file to the local lookaside by its content hash.
-7. Journal the completed object before advancing the input checkpoint.
+6. Enqueue the verified object for bounded parallel publication.
+7. Verify remote size and SHA-256, journal the object, then purge staging.
 
 The initial assembler implements steps 1--5 in this boundary. It streams into
 a temporary file through a SHA-256 writer, uses the Parquet writer's encoded
 size estimate after explicit row-group flushes, closes and synchronizes the
 file, re-hashes and reopens it, checks the exact schema/footer/counts, and then
-renames the staged object to its digest. Lookaside admission remains a separate
-journaled transaction so a partially generated manifest can never expose an
-uncommitted object set.
+renames the staged object to its digest. Publication is a separate journaled
+transaction so a partially generated manifest can never expose an uncommitted
+object set.
 
 A single record larger than the normal limit receives its own shard and an
 oversize fact. It is never silently truncated.
@@ -518,8 +518,8 @@ coordinates and machine-readable reasons.
    input substantially larger than the configured memory budget.
 5. Add deterministic partitioning, disk-backed deduplication, journaling, and
    crash/restart tests.
-6. Lock the writer recipe with cross-platform golden files, then enable local
-   lookaside admission and contribution generation.
+6. Lock the writer recipe with cross-platform golden files, then enable
+   verified S3 publication and contribution generation.
 7. Specify compiled text training views with the first real backend, so the
    supposedly direct format is validated by an actual loader.
 8. Add the self-contained multimodal Parquet schema only with an end-to-end

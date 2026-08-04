@@ -37,8 +37,15 @@ type AssemblyResult struct {
 
 // AssembleTextObjects runs the accepted adapters and packs their canonical
 // rows into verified Parquet files beneath stagingDirectory/objects. Complete
-// objects are content-addressed and safe for a later journaled admission step.
+// objects are content-addressed and safe for a later journaled publication or
+// local-admission step.
 func AssembleTextObjects(ctx context.Context, plan Plan, stagingDirectory string) (AssemblyResult, error) {
+	return AssembleTextObjectsWithSink(ctx, plan, stagingDirectory, nil)
+}
+
+// AssembleTextObjectsWithSink delivers each durable object as soon as it is
+// closed. A blocking sink deliberately applies backpressure to the encoder.
+func AssembleTextObjectsWithSink(ctx context.Context, plan Plan, stagingDirectory string, sink func(ObjectResult) error) (AssemblyResult, error) {
 	if err := plan.Validate(); err != nil {
 		return AssemblyResult{}, err
 	}
@@ -61,7 +68,7 @@ func AssembleTextObjects(ctx context.Context, plan Plan, stagingDirectory string
 		return AssemblyResult{}, err
 	}
 	defer dedup.database.Close()
-	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory}
+	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory, sink: sink}
 	err = StreamCanonicalTextBatches(ctx, plan, func(batch TextBatch) error {
 		unique, err := dedup.filter(batch)
 		if err != nil || len(unique.Rows) == 0 {
@@ -91,6 +98,7 @@ type objectAssembler struct {
 	directory string
 	active    *activeObject
 	results   []ObjectResult
+	sink      func(ObjectResult) error
 }
 
 type activeObject struct {
@@ -246,6 +254,12 @@ func (assembler *objectAssembler) finishActive() error {
 		return err
 	}
 	assembler.results = append(assembler.results, result)
+	emitProgress(assembler.ctx, ProgressEvent{Phase: "shard", Status: "ready", Shard: result.SHA256, Sequence: len(assembler.results), Bytes: result.Bytes})
+	if assembler.sink != nil {
+		if err := assembler.sink(result); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

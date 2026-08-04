@@ -11,12 +11,15 @@ data contract; it does not preserve the old backend's internal structure or
 command organization by default.
 
 The project has completed its contracts, read-only index foundation, and
-**Phase 2: verified OpenWALDO BOMs**. The binary can list, show,
+**Phase 2: verified OpenWALDO BOMs**, and now has the first end-to-end corpus
+contribution path. The binary can list, show,
 summarize, and verify the public `waldo-index`; materialize objects through a
 hash-verifying lookaside cache with ordered fallback mirrors; scrub that cache;
 and export selected shards as native objects or canonical JSONL with an
-`EXPORT.json` provenance record. Other commands remain visible as an honest
-roadmap and report that they are not implemented yet.
+`EXPORT.json` provenance record. It can also probe text/Markdown/raw Parquet,
+write canonical schema-1 Parquet, publish shards to S3 with bounded concurrency
+and remote checksum verification, reclaim staging safely, and create a Git
+review overlay. Other commands remain visible as an honest roadmap.
 
 The stable corpus contract is documented in
 [the OpenWALDO BOM guide](docs/OPENWALDO-BOM.md). The next phase is corpus

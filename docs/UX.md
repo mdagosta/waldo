@@ -127,8 +127,17 @@ destination, and lookaside configuration before conversion. On success
 it should explain the exact Git review and DCO commit steps without creating a
 pull request itself.
 
-Execution additionally requires an explicit durable staging directory and the
-public base under which the content-addressed objects will be uploaded:
+Configure the writable lookaside once. Credentials are resolved through the
+standard AWS credential chain and are never stored in WALDO configuration:
+
+```bash
+waldo lookaside configure \
+  --publish s3://openwaldo/lookaside/v1 \
+  --publish-region us-east-2 \
+  --upload-workers 4
+```
+
+Then execute ingestion without transport or scratch flags:
 
 ```bash
 waldo index ingest ~/data/books core/books/example \
@@ -136,25 +145,22 @@ waldo index ingest ~/data/books core/books/example \
   --description "Books from the example public collection." \
   --license CC-BY-4.0 \
   --source https://example.org/books \
-  --source-category public-dataset \
-  --staging ~/waldo-work/example-books \
-  --object-base s3://openwaldo/lookaside/v1
+  --source-category public-dataset
 ```
 
-The current implementation assembles and journals verified objects, admits
-them to local lookaside, and creates a minimal review overlay under
-`<staging>/contribution`. It does not yet upload objects and therefore must not
-claim that the public URLs exist. Parallel verified publication and progressive
-staging purge are the next ingestion slice; after that lands, contribution
-generation will wait for confirmed remote objects. Git editing, committing,
-pushing, and opening a pull request remain explicit user actions.
+WALDO assembles and verifies shards while a bounded worker pool publishes
+earlier shards to S3. It verifies the remote size and SHA-256, journals that
+fact, and then purges the staged copy. `--keep-local` retains staged shards.
+The contribution overlay is created only after every referenced remote object
+is verified. `--staging` and `--object-base` remain optional per-run overrides.
+Git editing, committing, pushing, and opening a pull request remain explicit
+user actions.
 
 The intended steady-state required inputs are the positional input and
 destination plus `--title`, `--license`, `--source`, and `--source-category`.
 `--description`, `--source-name`, `--text-column`, `--mode`, and `--memory` are
-optional or conditional. Staging should have a machine-local default and the
-writable object base should normally come from lookaside configuration; their
-current execution flags are temporary until remote publication lands.
+optional or conditional. Staging has a plan-specific machine-local default and
+the writable object base normally comes from lookaside configuration.
 
 When an external fetcher produced the input, the invocation names its deposit
 or acquisition record rather than repeating facts by hand.
