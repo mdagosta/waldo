@@ -55,6 +55,23 @@ func TestSaveRejectsInvalidPublishConfiguration(t *testing.T) {
 	}
 }
 
+func TestSaveAcceptsLocalPublishConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("WALDO_CONFIG", path)
+	root := filepath.Join(t.TempDir(), "published")
+	configuration := Config{Lookaside: Lookaside{Publish: &Publish{URL: "file://" + root, Workers: 2}}}
+	if err := Save(configuration); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Lookaside.Publish == nil || loaded.Lookaside.Publish.URL != "file://"+root {
+		t.Fatalf("local publisher = %+v", loaded.Lookaside.Publish)
+	}
+}
+
 func TestLoadMissingReturnsDefault(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
 	got, err := Load()

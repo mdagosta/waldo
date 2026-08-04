@@ -137,6 +137,18 @@ waldo lookaside configure \
   --upload-workers 4
 ```
 
+For a complete local integration test, configure a filesystem-backed writable
+lookaside instead:
+
+```bash
+waldo lookaside configure --publish-local /tmp/waldo-published --upload-workers 2
+```
+
+This runs the normal publish, verify, journal, purge, and overlay path and uses
+`file://` shard URLs. Such an overlay is deliberately test-only and must not be
+committed to a shared index. The directory contains only content-addressed
+Parquet objects; WALDO keeps journals and contribution files in staging.
+
 Then execute ingestion without transport or scratch flags:
 
 ```bash

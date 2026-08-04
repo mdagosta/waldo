@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,6 +209,76 @@ func TestIndexIngestLocalOnlyCreatesNoContribution(t *testing.T) {
 	}
 }
 
+func TestIndexIngestPublishesToConfiguredLocalLookaside(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "document.txt")
+	if err := os.WriteFile(input, []byte("local publication document"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"\",\n  \"entries\": [{\"name\": \"core\", \"type\": \"dir\"}]\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "core"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "core", "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"core\",\n  \"entries\": []\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	configurationPath := filepath.Join(t.TempDir(), "config.json")
+	publishedRoot, staging := t.TempDir(), t.TempDir()
+	t.Setenv("WALDO_CONFIG", configurationPath)
+	t.Setenv("WALDO_CACHE", t.TempDir())
+	configuration := config.Config{Lookaside: config.Lookaside{Publish: &config.Publish{
+		URL: (&url.URL{Scheme: "file", Path: filepath.ToSlash(publishedRoot)}).String(), Workers: 2,
+	}}}
+	if err := config.Save(configuration); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"--index", root, "--json", "index", "ingest", input, "core/local-published",
+		"--title", "Locally Published", "--license", "CC0-1.0",
+		"--source", "https://example.test/local", "--source-category", "public-dataset",
+		"--staging", staging,
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	var output struct {
+		Publication struct {
+			Objects []struct {
+				SHA256 string `json:"sha256"`
+				URL    string `json:"url"`
+			} `json:"objects"`
+		} `json:"publication"`
+		Contribution struct {
+			Root string `json:"root"`
+		} `json:"contribution"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if len(output.Publication.Objects) != 1 {
+		t.Fatalf("publication = %+v", output.Publication)
+	}
+	object := output.Publication.Objects[0]
+	wantPath := filepath.Join(publishedRoot, object.SHA256[:2], object.SHA256[2:4], object.SHA256)
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(object.URL, "file://") {
+		t.Fatalf("object URL = %q", object.URL)
+	}
+	manifestPath := filepath.Join(output.Contribution.Root, "core", "local-published", "local-published.json")
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(manifest, []byte(object.URL)) {
+		t.Fatalf("manifest does not reference local published object %q", object.URL)
+	}
+}
+
 func TestShellQuoteHandlesSingleQuote(t *testing.T) {
 	if got, want := shellQuote("a'b"), "'a'\\''b'"; got != want {
 		t.Fatalf("shellQuote() = %q, want %q", got, want)
@@ -340,5 +411,24 @@ func TestLookasideConfigurePersistsPublisher(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "s3://bucket/lookaside/v1") || !strings.Contains(stdout.String(), "6 workers") {
 		t.Fatalf("lookaside status = %q", stdout.String())
+	}
+}
+
+func TestLookasideConfigureAcceptsLocalPublisher(t *testing.T) {
+	configurationPath := filepath.Join(t.TempDir(), "config.json")
+	root := filepath.Join(t.TempDir(), "published objects")
+	t.Setenv("WALDO_CONFIG", configurationPath)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"lookaside", "configure", "--publish-local", root, "--upload-workers", "2"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := (&url.URL{Scheme: "file", Path: filepath.ToSlash(root)}).String()
+	if configuration.Lookaside.Publish == nil || configuration.Lookaside.Publish.URL != want || configuration.Lookaside.Publish.Workers != 2 {
+		t.Fatalf("local publisher = %+v, want %s", configuration.Lookaside.Publish, want)
 	}
 }

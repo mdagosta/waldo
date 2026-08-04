@@ -16,7 +16,7 @@ import (
 )
 
 var newIngestPublisher = func(ctx context.Context, publish config.Publish) (lookaside.Publisher, error) {
-	return lookaside.NewS3Publisher(ctx, publish)
+	return lookaside.NewPublisher(ctx, publish)
 }
 
 func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) error {
@@ -31,7 +31,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			return err
 		}
 		if !options.LocalOnly && configuration.Lookaside.Publish == nil && options.ObjectBase == "" {
-			return usageError{message: "index ingest needs a writable lookaside; run `waldo lookaside configure --publish s3://bucket/prefix` or pass --object-base"}
+			return usageError{message: "index ingest needs a writable lookaside; configure --publish s3://bucket/prefix, use --publish-local <directory>, or pass --object-base"}
 		}
 	}
 	execution := ingest.WithProgress(context.Execution, ingestProgressReporter(stderr, context.JSON))
@@ -137,6 +137,10 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		fmt.Fprintf(stdout, "  contribution %s (%s changed files)\n", contribution.Root, humanInteger(int64(len(contribution.Files))))
 		for _, file := range contribution.Files {
 			fmt.Fprintf(stdout, "    %s\n", file)
+		}
+		if strings.HasPrefix(publication.BaseURL, "file://") {
+			fmt.Fprintln(stdout, "local publication is for end-to-end testing only; do not commit this overlay to a shared index")
+			return nil
 		}
 		fmt.Fprintln(stdout, "next steps (after reviewing the overlay and confirming the checkout is unchanged):")
 		fmt.Fprintf(stdout, "  cp -R -- %s/. %s/\n", shellQuote(contribution.Root), shellQuote(target.Root))

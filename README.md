@@ -19,7 +19,8 @@ and export selected shards as native objects or canonical JSONL with an
 `EXPORT.json` provenance record. It can also probe text/Markdown/raw Parquet,
 write canonical schema-1 Parquet, publish shards to S3 with bounded concurrency
 and remote checksum verification, reclaim staging safely, and create a Git
-review overlay. Other commands remain visible as an honest roadmap.
+review overlay. A filesystem-backed publisher exercises the same path locally
+for integration tests. Other commands remain visible as an honest roadmap.
 
 The stable corpus contract is documented in
 [the OpenWALDO BOM guide](docs/OPENWALDO-BOM.md). The next phase is corpus

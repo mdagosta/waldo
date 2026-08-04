@@ -132,8 +132,23 @@ func validatePublish(publish *Publish) error {
 		return nil
 	}
 	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(publish.URL), "/"))
-	if err != nil || parsed.Scheme != "s3" || parsed.Host == "" {
-		return fmt.Errorf("lookaside publish URL must be an s3:// URL")
+	if err != nil {
+		return fmt.Errorf("invalid lookaside publish URL: %w", err)
+	}
+	switch parsed.Scheme {
+	case "s3":
+		if parsed.Host == "" {
+			return fmt.Errorf("S3 lookaside publish URL requires a bucket")
+		}
+	case "file":
+		if (parsed.Host != "" && parsed.Host != "localhost") || parsed.Path == "" || !filepath.IsAbs(filepath.FromSlash(parsed.Path)) || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("local lookaside publish URL must be an absolute file:/// URL")
+		}
+		if publish.Region != "" || publish.Endpoint != "" || publish.PathStyle {
+			return fmt.Errorf("S3 region, endpoint, and path-style options cannot be used with a local publisher")
+		}
+	default:
+		return fmt.Errorf("lookaside publish URL must use s3:// or file://")
 	}
 	publish.URL = parsed.String()
 	if publish.Workers == 0 {

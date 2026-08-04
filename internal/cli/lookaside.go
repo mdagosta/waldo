@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+	"net/url"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -57,6 +59,22 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 			publish.URL, i, changed = value, next, true
 		case strings.HasPrefix(argument, "--publish="):
 			ensurePublish(&configuration).URL, changed = strings.TrimPrefix(argument, "--publish="), true
+		case argument == "--publish-local":
+			value, next, err := optionValue(args, i, "--publish-local")
+			if err != nil {
+				return err
+			}
+			absolute, err := filepath.Abs(value)
+			if err != nil {
+				return err
+			}
+			previous := ensurePublish(&configuration)
+			configuration.Lookaside.Publish = &config.Publish{
+				URL:       (&url.URL{Scheme: "file", Path: filepath.ToSlash(absolute)}).String(),
+				Workers:   previous.Workers,
+				KeepLocal: previous.KeepLocal,
+			}
+			i, changed = next, true
 		case argument == "--publish-region":
 			value, next, err := optionValue(args, i, "--publish-region")
 			if err != nil {
