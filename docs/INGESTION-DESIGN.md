@@ -219,6 +219,14 @@ writer. It never builds a complete shard in a byte slice.
 6. Atomically admit the file to the local lookaside by its content hash.
 7. Journal the completed object before advancing the input checkpoint.
 
+The initial assembler implements steps 1--5 in this boundary. It streams into
+a temporary file through a SHA-256 writer, uses the Parquet writer's encoded
+size estimate after explicit row-group flushes, closes and synchronizes the
+file, re-hashes and reopens it, checks the exact schema/footer/counts, and then
+renames the staged object to its digest. Lookaside admission remains a separate
+journaled transaction so a partially generated manifest can never expose an
+uncommitted object set.
+
 A single record larger than the normal limit receives its own shard and an
 oversize fact. It is never silently truncated.
 
