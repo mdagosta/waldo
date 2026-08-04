@@ -158,6 +158,62 @@ func TestIndexIngestPublishesAndBuildsContributionOverlay(t *testing.T) {
 	}
 }
 
+func TestIndexIngestLocalOnlyCreatesNoContribution(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "document.txt")
+	if err := os.WriteFile(input, []byte("offline training document"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"\",\n  \"entries\": [{\"name\": \"core\", \"type\": \"dir\"}]\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "core"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "core", "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"core\",\n  \"entries\": []\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	staging, cache := t.TempDir(), t.TempDir()
+	t.Setenv("WALDO_CACHE", cache)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"--index", root, "--json", "index", "ingest", input, "core/offline",
+		"--title", "Offline", "--license", "CC0-1.0",
+		"--source", "https://example.test/offline", "--source-category", "public-dataset",
+		"--staging", staging, "--local-only",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	var output struct {
+		Admission struct {
+			Objects []struct {
+				Path string `json:"path"`
+			} `json:"objects"`
+		} `json:"admission"`
+		Contribution any `json:"contribution"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if len(output.Admission.Objects) != 1 || output.Contribution != nil {
+		t.Fatalf("local-only output = %+v", output)
+	}
+	if _, err := os.Stat(output.Admission.Objects[0].Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(staging, "contribution")); !os.IsNotExist(err) {
+		t.Fatalf("local-only contribution exists: %v", err)
+	}
+}
+
+func TestShellQuoteHandlesSingleQuote(t *testing.T) {
+	if got, want := shellQuote("a'b"), "'a'\\''b'"; got != want {
+		t.Fatalf("shellQuote() = %q, want %q", got, want)
+	}
+}
+
 func TestRootHelpLocksCommandVocabulary(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"--help"}, &stdout, &stderr); code != 0 {

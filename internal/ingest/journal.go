@@ -151,12 +151,13 @@ func ExecuteAdmission(ctx context.Context, plan Plan, stagingDirectory string, c
 		return AssemblyResult{}, AdmissionResult{}, fmt.Errorf("cannot admit journal in status %q", journal.Status)
 	}
 	admission := AdmissionResult{CacheRoot: cache.Root()}
-	for _, object := range assembly.Objects {
+	for sequence, object := range assembly.Objects {
 		path, err := cache.Admit(ctx, object.Path, object.SHA256, object.Bytes)
 		if err != nil {
 			return AssemblyResult{}, AdmissionResult{}, err
 		}
 		admission.Objects = append(admission.Objects, AdmissionObject{SHA256: object.SHA256, Bytes: object.Bytes, Path: path})
+		emitProgress(ctx, ProgressEvent{Phase: "local", Status: "admitted", Shard: object.SHA256, Sequence: sequence + 1, Bytes: object.Bytes, TotalBytes: object.Bytes})
 	}
 	journal.Status = "admitted"
 	journal.Admission = &admission

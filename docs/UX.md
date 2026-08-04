@@ -154,13 +154,20 @@ fact, and then purges the staged copy. `--keep-local` retains staged shards.
 The contribution overlay is created only after every referenced remote object
 is verified. `--staging` and `--object-base` remain optional per-run overrides.
 Git editing, committing, pushing, and opening a pull request remain explicit
-user actions.
+user actions. Human output lists every overlay file and prints copy, full-index
+verification, staged-diff checking, and `git commit -s` commands. WALDO does
+not run those commands on the user's behalf.
 
 The intended steady-state required inputs are the positional input and
 destination plus `--title`, `--license`, `--source`, and `--source-category`.
 `--description`, `--source-name`, `--text-column`, `--mode`, and `--memory` are
 optional or conditional. Staging has a plan-specific machine-local default and
 the writable object base normally comes from lookaside configuration.
+
+`--local-only` performs the same conversion and verification but admits the
+Parquet objects only to the local lookaside cache. It intentionally creates no
+manifest or Git overlay: local paths must never masquerade as published corpus
+objects.
 
 When an external fetcher produced the input, the invocation names its deposit
 or acquisition record rather than repeating facts by hand.

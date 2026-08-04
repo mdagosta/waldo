@@ -63,14 +63,14 @@ Implemented foundation:
 - Bounded progress event stream for probe, conversion, shard, upload, and purge
 - Parallel S3 lookaside publication with remote verification and backpressure
 - Journal-before-purge staged-object reclamation; optional local retention
+- Local-only lookaside admission as an explicit offline mode
 - Manifest and navigation generation
 - Durable staging and recovery
+- DCO-oriented Git handoff
 
 Remaining:
 
-- Local-only lookaside admission as an explicit offline mode
 - External fetcher handoff consumption
-- DCO-oriented Git handoff
 
 Exit: a directory of source documents becomes a reviewable, reproducible index
 contribution through one command.

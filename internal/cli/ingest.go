@@ -30,7 +30,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		if err != nil {
 			return err
 		}
-		if configuration.Lookaside.Publish == nil && options.ObjectBase == "" {
+		if !options.LocalOnly && configuration.Lookaside.Publish == nil && options.ObjectBase == "" {
 			return usageError{message: "index ingest needs a writable lookaside; run `waldo lookaside configure --publish s3://bucket/prefix` or pass --object-base"}
 		}
 	}
@@ -61,18 +61,6 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		if err := ingest.CheckContributionDestination(target.Root, plan); err != nil {
 			return err
 		}
-		publish := configuration.Lookaside.Publish
-		if publish == nil {
-			publish = &config.Publish{URL: options.ObjectBase, Workers: 4}
-		} else if options.ObjectBase != "" {
-			copy := *publish
-			copy.URL = options.ObjectBase
-			publish = &copy
-		}
-		publisher, err := newIngestPublisher(execution, *publish)
-		if err != nil {
-			return err
-		}
 		staging := options.Staging
 		if staging == "" {
 			staging, err = config.EffectiveStagingRoot(identity)
@@ -85,6 +73,41 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			return err
 		}
 		if err := ingest.ValidateWorkLocations(target.Root, staging, cacheRoot); err != nil {
+			return err
+		}
+		if options.LocalOnly {
+			cache, err := lookaside.NewCache(cacheRoot, nil, lookaside.WithMirrors(configuration.Lookaside.Mirrors))
+			if err != nil {
+				return err
+			}
+			assembly, admission, err := ingest.ExecuteAdmission(execution, plan, staging, cache)
+			if err != nil {
+				return err
+			}
+			if context.JSON {
+				return writeJSON(stdout, struct {
+					Identity  string                 `json:"identity"`
+					Plan      ingest.Plan            `json:"plan"`
+					Assembly  ingest.AssemblyResult  `json:"assembly"`
+					Admission ingest.AdmissionResult `json:"admission"`
+				}{identity, plan, assembly, admission})
+			}
+			fmt.Fprintf(stdout, "local ingestion %s complete\n", identity[:12])
+			fmt.Fprintf(stdout, "  records  %s input, %s retained, %s duplicate\n", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
+			fmt.Fprintf(stdout, "  objects  %s admitted to %s\n", humanInteger(int64(len(admission.Objects))), admission.CacheRoot)
+			fmt.Fprintln(stdout, "no manifest or contribution was created; remote publication is required before Git index data may reference these objects")
+			return nil
+		}
+		publish := configuration.Lookaside.Publish
+		if publish == nil {
+			publish = &config.Publish{URL: options.ObjectBase, Workers: 4}
+		} else if options.ObjectBase != "" {
+			copy := *publish
+			copy.URL = options.ObjectBase
+			publish = &copy
+		}
+		publisher, err := newIngestPublisher(execution, *publish)
+		if err != nil {
 			return err
 		}
 		assembly, publication, err := ingest.ExecutePublication(execution, plan, staging, publisher, publish.Workers, publish.KeepLocal)
@@ -112,7 +135,19 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		fmt.Fprintf(stdout, "  records      %s input, %s retained, %s duplicate\n", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
 		fmt.Fprintf(stdout, "  objects      %s published to %s\n", humanInteger(int64(len(publication.Objects))), publication.BaseURL)
 		fmt.Fprintf(stdout, "  contribution %s (%s changed files)\n", contribution.Root, humanInteger(int64(len(contribution.Files))))
-		fmt.Fprintln(stdout, "review the overlay, then apply and commit the changed index files with DCO sign-off")
+		for _, file := range contribution.Files {
+			fmt.Fprintf(stdout, "    %s\n", file)
+		}
+		fmt.Fprintln(stdout, "next steps (after reviewing the overlay and confirming the checkout is unchanged):")
+		fmt.Fprintf(stdout, "  cp -R -- %s/. %s/\n", shellQuote(contribution.Root), shellQuote(target.Root))
+		fmt.Fprintf(stdout, "  waldo --index %s index verify\n", shellQuote(target.Root))
+		fmt.Fprintf(stdout, "  git -C %s add --", shellQuote(target.Root))
+		for _, file := range contribution.Files {
+			fmt.Fprintf(stdout, " %s", shellQuote(file))
+		}
+		fmt.Fprintln(stdout)
+		fmt.Fprintf(stdout, "  git -C %s diff --cached --check\n", shellQuote(target.Root))
+		fmt.Fprintf(stdout, "  git -C %s commit -s\n", shellQuote(target.Root))
 		return nil
 	}
 	fmt.Fprintf(stdout, "ingestion plan %s\n", identity[:12])
@@ -136,6 +171,10 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		humanBytes(plan.Writer.RowGroupLogicalBytes), plan.Writer.Compression)
 	fmt.Fprintln(stdout, "dry run complete; no files were written")
 	return nil
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
 
 func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSink {
@@ -169,6 +208,8 @@ func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSi
 			fmt.Fprintf(output, "upload %d  %s verified at %s\n", event.Sequence, short, event.Remote)
 		case event.Phase == "staging" && event.Status == "purged":
 			fmt.Fprintf(output, "purged %d  %s reclaimed %s\n", event.Sequence, short, humanBytes(event.ReclaimedBytes))
+		case event.Phase == "local" && event.Status == "admitted":
+			fmt.Fprintf(output, "local %d   %s admitted (%s)\n", event.Sequence, short, humanBytes(event.Bytes))
 		}
 	}
 }
@@ -177,6 +218,7 @@ type indexIngestOptions struct {
 	Request    ingest.PlanRequest
 	Inputs     []string
 	DryRun     bool
+	LocalOnly  bool
 	Staging    string
 	ObjectBase string
 }
@@ -196,6 +238,8 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 		switch arg {
 		case "--dry-run":
 			options.DryRun = true
+		case "--local-only":
+			options.LocalOnly = true
 		case "--title":
 			options.Request.Title, err = value("--title")
 		case "--description":
@@ -234,6 +278,12 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 	}
 	if len(options.Inputs) != 2 {
 		return indexIngestOptions{}, usageError{message: "index ingest requires exactly two positional arguments: <input> <destination>"}
+	}
+	if options.DryRun && options.LocalOnly {
+		return indexIngestOptions{}, usageError{message: "--dry-run and --local-only cannot be combined"}
+	}
+	if options.LocalOnly && options.ObjectBase != "" {
+		return indexIngestOptions{}, usageError{message: "--local-only and --object-base cannot be combined"}
 	}
 	options.Request.Destination = options.Inputs[1]
 	options.Inputs = options.Inputs[:1]
