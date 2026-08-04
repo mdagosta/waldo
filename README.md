@@ -20,7 +20,12 @@ roadmap and report that they are not implemented yet.
 
 The stable corpus contract is documented in
 [the OpenWALDO BOM guide](docs/OPENWALDO-BOM.md). The next phase is corpus
-contribution; its ingestion specifics will be designed before implementation.
+contribution; its proposed ingestion and training-data shape is documented in
+[the ingestion design](docs/INGESTION-DESIGN.md) for review before
+implementation.
+The accompanying [EU GPAI disclosure mapping](docs/EU-GPAI-DISCLOSURE.md)
+defines the provenance needed to render the Commission's public training-content
+template from later model BOMs.
 
 ## Principles
 

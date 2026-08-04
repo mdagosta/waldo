@@ -54,6 +54,7 @@ hash checked and an independently readable OpenWALDO BOM.
 
 ## Phase 3: corpus contribution
 
+- Ingestion and training-data contract (`docs/INGESTION-DESIGN.md`)
 - Basic text and Markdown ingestion
 - Canonical records and deterministic Parquet packing
 - License partitioning
@@ -75,6 +76,7 @@ contribution through one command.
 - Durable run state machine
 - Fake backend for completion, failure, and interruption tests
 - Model and run BOMs
+- EU GPAI training-content gap analysis and `bom export --format eu-gpai`
 
 Exit: orchestration and provenance work end to end without Python or a GPU.
 
