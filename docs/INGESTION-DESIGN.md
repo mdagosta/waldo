@@ -332,6 +332,17 @@ The same inputs, acquisition order, plan, memory-independent boundaries, and
 writer recipe produce the same objects. Worker completion order must never
 change emitted order.
 
+The first executable slice enables only this streaming mode. A plan may
+preflight `canonical`, but execution refuses it until the external hash-sort
+stage and its scratch forecast are implemented; it never silently substitutes
+acquisition order.
+
+The streaming implementation uses a build-local Bolt database keyed by the
+binary 32-byte content hash and commits one database transaction per typed
+batch. This database is scratch, not a lookaside object or Git artifact. An
+unjournaled restart rebuilds it from the immutable inputs so a hash cannot be
+considered retained before its containing object is checkpointed.
+
 #### Canonical mode
 
 Canonical mode makes output independent of acquisition order and worker count.
@@ -355,6 +366,14 @@ The durable journal records input artifact, row-group/range, logical sequence,
 completed object hashes, and output partition state. Recovery resumes only from
 a boundary whose admitted outputs and recipe still verify. A crash may repeat a
 bounded batch, but must not publish a partial object or duplicate a record.
+
+`INGESTION.json` schema 1 atomically records the immutable plan identity,
+assembly status, exact deduplication totals, and verified staged objects. An
+`assembled` restart re-hashes and reopens every named object before reuse. A
+changed plan, inconsistent totals, path escape, or corrupt object is refused.
+An interrupted `assembling` state removes only WALDO-owned temporary shard
+files, rebuilds scratch deduplication state, and deterministically resumes from
+the immutable inputs and any content-addressed completed objects.
 
 For distributed conversion, immutable work units are input artifact ranges or
 canonical hash partitions. Workers return verified objects plus facts;

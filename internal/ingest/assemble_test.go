@@ -30,22 +30,65 @@ func TestAssembleTextObjectsRotatesVerifiesAndIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first) != 2 || first[0].Docs != 2 || first[1].Docs != 1 {
+	if len(first.Objects) != 2 || first.Objects[0].Docs != 2 || first.Objects[1].Docs != 1 {
 		t.Fatalf("objects = %+v", first)
 	}
 	second, err := AssembleTextObjects(context.Background(), plan, filepath.Join(t.TempDir(), "second"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(second) != len(first) {
+	if len(second.Objects) != len(first.Objects) {
 		t.Fatalf("second objects = %+v", second)
 	}
-	for index := range first {
-		if first[index].SHA256 != second[index].SHA256 || first[index].Bytes != second[index].Bytes {
-			t.Fatalf("object %d is not deterministic: %+v / %+v", index, first[index], second[index])
+	for index := range first.Objects {
+		if first.Objects[index].SHA256 != second.Objects[index].SHA256 || first.Objects[index].Bytes != second.Objects[index].Bytes {
+			t.Fatalf("object %d is not deterministic: %+v / %+v", index, first.Objects[index], second.Objects[index])
 		}
-		if _, err := os.Stat(first[index].Path); err != nil {
+		if _, err := os.Stat(first.Objects[index].Path); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestAssembleTextObjectsDeduplicatesOnDisk(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture(t, filepath.Join(directory, "a.txt"), "same")
+	writeFixture(t, filepath.Join(directory, "b.txt"), "same")
+	probe, err := ProbePaths(context.Background(), []string{directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "core/example", Title: "Example", License: "CC0-1.0",
+		Source: PlanSource{Name: "fixture", URL: "https://example.test/data", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := AssembleTextObjects(context.Background(), plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.InputDocs != 2 || result.RetainedDocs != 1 || result.DuplicateDocs != 1 || len(result.Objects) != 1 || result.Objects[0].Docs != 1 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestAssembleTextObjectsRefusesUnimplementedCanonicalMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "a.txt")
+	writeFixture(t, path, "text")
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "core/example", Title: "Example", License: "CC0-1.0", Mode: "canonical",
+		Source: PlanSource{Name: "fixture", URL: "https://example.test/data", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AssembleTextObjects(context.Background(), plan, t.TempDir()); err == nil {
+		t.Fatal("expected canonical-mode execution rejection")
 	}
 }

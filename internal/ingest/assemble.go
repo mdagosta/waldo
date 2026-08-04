@@ -28,33 +28,61 @@ type ObjectResult struct {
 	RowGroups    int    `json:"row_groups"`
 }
 
+type AssemblyResult struct {
+	Objects       []ObjectResult `json:"objects"`
+	InputDocs     int64          `json:"input_docs"`
+	RetainedDocs  int64          `json:"retained_docs"`
+	DuplicateDocs int64          `json:"duplicate_docs"`
+}
+
 // AssembleTextObjects runs the accepted adapters and packs their canonical
 // rows into verified Parquet files beneath stagingDirectory/objects. Complete
 // objects are content-addressed and safe for a later journaled admission step.
-func AssembleTextObjects(ctx context.Context, plan Plan, stagingDirectory string) ([]ObjectResult, error) {
+func AssembleTextObjects(ctx context.Context, plan Plan, stagingDirectory string) (AssemblyResult, error) {
 	if err := plan.Validate(); err != nil {
-		return nil, err
+		return AssemblyResult{}, err
+	}
+	if plan.Mode != "streaming" {
+		return AssemblyResult{}, fmt.Errorf("canonical ingestion execution requires the external-sort stage, which is not enabled yet")
 	}
 	if stagingDirectory == "" {
-		return nil, fmt.Errorf("staging directory is required")
+		return AssemblyResult{}, fmt.Errorf("staging directory is required")
 	}
 	objectDirectory := filepath.Join(stagingDirectory, "objects")
 	if err := os.MkdirAll(objectDirectory, 0o755); err != nil {
-		return nil, err
+		return AssemblyResult{}, err
 	}
+	dedupPath := filepath.Join(stagingDirectory, "dedup.db")
+	if err := os.Remove(dedupPath); err != nil && !os.IsNotExist(err) {
+		return AssemblyResult{}, err
+	}
+	dedup, err := openDeduplicator(dedupPath)
+	if err != nil {
+		return AssemblyResult{}, err
+	}
+	defer dedup.database.Close()
 	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory}
-	err := StreamCanonicalTextBatches(ctx, plan, assembler.addBatch)
+	err = StreamCanonicalTextBatches(ctx, plan, func(batch TextBatch) error {
+		unique, err := dedup.filter(batch)
+		if err != nil || len(unique.Rows) == 0 {
+			return err
+		}
+		return assembler.addBatch(unique)
+	})
 	if err == nil {
 		err = assembler.finishActive()
 	}
 	if err != nil {
 		assembler.discardActive()
-		return nil, err
+		return AssemblyResult{}, err
 	}
 	if len(assembler.results) == 0 {
-		return nil, fmt.Errorf("ingestion produced no canonical records")
+		return AssemblyResult{}, fmt.Errorf("ingestion produced no canonical records")
 	}
-	return assembler.results, nil
+	return AssemblyResult{
+		Objects: assembler.results, InputDocs: dedup.input, RetainedDocs: dedup.kept,
+		DuplicateDocs: dedup.input - dedup.kept,
+	}, nil
 }
 
 type objectAssembler struct {

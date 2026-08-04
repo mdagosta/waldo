@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/klauspost/compress v1.17.9
 	github.com/parquet-go/parquet-go v0.30.1
+	go.etcd.io/bbolt v1.4.0
 )
 
 require (
