@@ -60,8 +60,8 @@ func commandTree() Command {
 				{Name: "remove", Summary: "Remove a local model artifact"},
 			}},
 			{Name: "bom", Summary: "Inspect and exchange provenance records", Children: []Command{
-				{Name: "show", Summary: "Show a corpus or model BOM"},
-				{Name: "verify", Summary: "Verify the internally checkable claims in a BOM"},
+				{Name: "show", Summary: "Show an exported OpenWALDO BOM", Usage: "waldo bom show <export-directory|EXPORT.json> [--json]", Handler: runBOMShow},
+				{Name: "verify", Summary: "Validate a BOM and hash its exported files", Usage: "waldo bom verify <export-directory|EXPORT.json> [--json]", Handler: runBOMVerify},
 				{Name: "export", Summary: "Export a BOM in a supported interchange format"},
 			}},
 			{Name: "config", Summary: "Inspect and change machine-local preferences", Children: []Command{

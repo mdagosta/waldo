@@ -40,6 +40,9 @@ func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {
 	if bom.Manifests[0].SHA256 == "" || bom.Shards[0].License != "CC-BY-4.0" || bom.Shards[0].Format != "parquet" {
 		t.Fatalf("bom pins = %+v / %+v", bom.Manifests[0], bom.Shards[0])
 	}
+	if bom.Manifests[0].RecordSchema != 1 || bom.Manifests[0].ConvertedBy.Tool != "test" || len(bom.Manifests[0].Sources[0].Files) != 1 || bom.Shards[0].RecordSchema != 1 || bom.Shards[0].ConvertedBy.Tool != "override" {
+		t.Fatalf("resolved format and provenance = %+v / %+v", bom.Manifests[0], bom.Shards[0])
+	}
 	if bom.Totals.Shards != 1 || bom.Totals.Docs != 3 || bom.Totals.Tokens != 30 || bom.Totals.Bytes != 300 {
 		t.Fatalf("bom totals = %+v", bom.Totals)
 	}
@@ -69,7 +72,7 @@ func TestBuildBOMExpandsNestedSubManifests(t *testing.T) {
 	if len(bom.SubManifests) != 2 || bom.SubManifests[0].SHA256 != rootHash || bom.SubManifests[1].SHA256 != childHash || bom.SubManifests[1].ParentSHA256 != rootHash {
 		t.Fatalf("sub-manifest pins = %+v", bom.SubManifests)
 	}
-	if len(bom.Shards) != 1 || bom.Shards[0].License != "CC-BY-4.0" {
+	if len(bom.Shards) != 1 || bom.Shards[0].License != "CC-BY-4.0" || bom.Shards[0].SubManifestSHA256 != childHash {
 		t.Fatalf("selected shards = %+v", bom.Shards)
 	}
 	if bom.Totals.Shards != 1 || bom.Totals.Docs != 3 || bom.Totals.Tokens != 30 || bom.Totals.Bytes != 300 {
@@ -152,13 +155,16 @@ func bomFixture(t *testing.T) string {
 	manifest := fmt.Sprintf(`{
   "kind": "manifest", "schema": 1, "name": "books", "title": "Books",
   "description": "Example books.", "license": "CC0-1.0",
-  "sources": [{"name": "source", "source": "Example", "url": "https://example.test", "sha256": %q}],
+  "sources": [{"name": "source", "source": "Example", "url": "https://example.test", "sha256": %q,
+    "files": [{"name": "input", "url": "https://example.test/input", "sha256": %q}]}],
   "converted_by": {"tool": "test", "version": "1", "profile": "text", "recipe": "test/v1", "tokenizer": "byte"},
   "shards": [
     {"url": "https://example.test/a", "sha256": %q, "sources": ["source"], "docs": 2, "tokens": 20, "bytes": 200},
-    {"url": "https://example.test/b", "sha256": %q, "license": "CC-BY-4.0", "sources": ["source"], "docs": 3, "tokens": 30, "bytes": 300}
+    {"url": "https://example.test/b", "sha256": %q, "license": "CC-BY-4.0", "sources": ["source"],
+     "converted_by": {"tool": "override", "version": "2", "profile": "text", "recipe": "override/v2", "tokenizer": "byte"},
+     "docs": 3, "tokens": 30, "bytes": 300}
   ]
-}`, strings.Repeat("a", 64), strings.Repeat("b", 64), strings.Repeat("c", 64))
+}`, strings.Repeat("a", 64), strings.Repeat("d", 64), strings.Repeat("b", 64), strings.Repeat("c", 64))
 	writeBOMFile(t, filepath.Join(root, "books", "books.json"), manifest)
 	return root
 }

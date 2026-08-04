@@ -75,6 +75,22 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("exported parquet files = %v", matches)
 	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"bom", "verify", destination}, &stdout, &stderr); code != 0 {
+		t.Fatalf("bom verify code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "verified OpenWALDO BOM") {
+		t.Fatalf("bom verify output = %q", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"bom", "show", destination}, &stdout, &stderr); code != 0 {
+		t.Fatalf("bom show code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "OpenWALDO corpus export") || !strings.Contains(stdout.String(), "native") {
+		t.Fatalf("bom show output = %q", stdout.String())
+	}
 
 	jsonlDestination := filepath.Join(t.TempDir(), "jsonl-export")
 	stdout.Reset()

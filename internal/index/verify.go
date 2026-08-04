@@ -141,6 +141,9 @@ func verifyManifest(path string, manifest Manifest) error {
 	if len(manifest.Sources) == 0 {
 		return fmt.Errorf("%s: at least one source is required", path)
 	}
+	if !validConversion(manifest.ConvertedBy) {
+		return fmt.Errorf("%s: converted_by requires tool, version, profile, recipe, and tokenizer", path)
+	}
 	if len(manifest.Shards) == 0 && manifest.Rollup == nil {
 		return fmt.Errorf("%s: shards or rollup is required", path)
 	}
@@ -160,6 +163,11 @@ func verifyManifest(path string, manifest Manifest) error {
 			return fmt.Errorf("%s: source %q has invalid sha256 %q", path, source.Name, source.SHA256)
 		}
 		sources[source.Name] = true
+		for j, file := range source.Files {
+			if file.Name == "" || file.URL == "" || !sha256Pattern.MatchString(file.SHA256) {
+				return fmt.Errorf("%s: source %q file %d requires name, URL, and lowercase 64-character sha256", path, source.Name, j+1)
+			}
+		}
 	}
 	for i, shard := range manifest.Shards {
 		if shard.URL == "" || !sha256Pattern.MatchString(shard.SHA256) {
@@ -173,6 +181,9 @@ func verifyManifest(path string, manifest Manifest) error {
 				return fmt.Errorf("%s: shard %s refers to unknown source %q", path, shard.SHA256[:12], name)
 			}
 		}
+		if shard.ConvertedBy != nil && !validConversion(*shard.ConvertedBy) {
+			return fmt.Errorf("%s: shard %s has an incomplete converted_by override", path, shard.SHA256[:12])
+		}
 	}
 	if manifest.Rollup != nil {
 		if manifest.Rollup.URL == "" || !sha256Pattern.MatchString(manifest.Rollup.SHA256) {
@@ -183,6 +194,10 @@ func verifyManifest(path string, manifest Manifest) error {
 		}
 	}
 	return nil
+}
+
+func validConversion(conversion Conversion) bool {
+	return conversion.Tool != "" && conversion.Version != "" && conversion.Profile != "" && conversion.Recipe != "" && conversion.Tokenizer != ""
 }
 
 func manifestShardCount(manifest Manifest) int64 {

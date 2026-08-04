@@ -114,4 +114,8 @@ func TestExportJSONLConvertsValidatesAndResumes(t *testing.T) {
 	if _, err := ExportJSONL(materialized, destination, true); err != nil {
 		t.Fatal(err)
 	}
+	materialized.Objects[0].Shard.Tokens++
+	if _, err := ExportJSONL(materialized, t.TempDir(), false); err == nil || !strings.Contains(err.Error(), "manifest declares") {
+		t.Fatalf("declared totals error = %v", err)
+	}
 }

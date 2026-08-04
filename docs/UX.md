@@ -164,14 +164,17 @@ separate explicit option.
 ### Inspect provenance
 
 ```bash
+waldo bom show ~/training-data
+waldo bom verify ~/training-data
 waldo model inspect smoke
-waldo bom show model:smoke
-waldo bom verify model:smoke
 ```
 
 Inspection distinguishes declared inputs, verified materialization, backend-
 reported consumption, and output hashes. It must not describe a baseline BOM
 as proof against a dishonest trainer.
+
+The implemented corpus form accepts an export directory or its `EXPORT.json`
+directly. Model BOM addressing is introduced with the model lifecycle.
 
 ## Common options
 

@@ -69,14 +69,21 @@ func (manifest *Manifest) UnmarshalJSON(data []byte) error {
 }
 
 type Source struct {
-	Name          string `json:"name"`
-	Source        string `json:"source"`
-	Version       string `json:"version,omitempty"`
-	URL           string `json:"url"`
-	Category      string `json:"category,omitempty"`
-	CollectedFrom string `json:"collected_from,omitempty"`
-	CollectedTo   string `json:"collected_to,omitempty"`
-	SHA256        string `json:"sha256"`
+	Name          string       `json:"name"`
+	Source        string       `json:"source"`
+	Version       string       `json:"version,omitempty"`
+	URL           string       `json:"url"`
+	Category      string       `json:"category,omitempty"`
+	CollectedFrom string       `json:"collected_from,omitempty"`
+	CollectedTo   string       `json:"collected_to,omitempty"`
+	SHA256        string       `json:"sha256"`
+	Files         []SourceFile `json:"files,omitempty"`
+}
+
+type SourceFile struct {
+	Name   string `json:"name"`
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
 }
 
 type Conversion struct {
@@ -99,6 +106,7 @@ type Shard struct {
 	Docs        int64       `json:"docs"`
 	Tokens      int64       `json:"tokens"`
 	Bytes       int64       `json:"bytes"`
+	RecordsRoot string      `json:"records_root,omitempty"`
 }
 
 // Rollup describes an external submanifest tree. Its aggregate counts are

@@ -12,3 +12,4 @@ logs.
 - [0006: Use an index-centered CLI](0006-index-centered-cli.md)
 - [0007: Verify objects before admission and export](0007-verified-lookaside.md)
 - [0008: Expand submanifest trees before materialization](0008-verified-submanifests.md)
+- [0009: Stabilize the corpus export BOM](0009-stable-corpus-bom.md)

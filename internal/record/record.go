@@ -14,6 +14,7 @@ import (
 )
 
 const (
+	Schema         = 1
 	KindPretrain   = "pretrain"
 	LangScoreScale = 1000
 )

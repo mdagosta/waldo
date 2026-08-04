@@ -24,12 +24,12 @@ func TestWriteJSONL(t *testing.T) {
 		t.Fatal(err)
 	}
 	var interchange bytes.Buffer
-	written, err := WriteJSONL(&interchange, bytes.NewReader(native.Bytes()), int64(native.Len()))
+	stats, err := WriteJSONL(&interchange, bytes.NewReader(native.Bytes()), int64(native.Len()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if written != int64(interchange.Len()) || !strings.Contains(interchange.String(), `"text":"portable text"`) || !strings.HasSuffix(interchange.String(), "\n") {
-		t.Fatalf("JSONL = %q, bytes = %d", interchange.String(), written)
+	if stats.Bytes != int64(interchange.Len()) || stats.Docs != 1 || !strings.Contains(interchange.String(), `"text":"portable text"`) || !strings.HasSuffix(interchange.String(), "\n") {
+		t.Fatalf("JSONL = %q, stats = %+v", interchange.String(), stats)
 	}
 }
 

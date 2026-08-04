@@ -12,6 +12,7 @@ import (
 
 	"github.com/openwaldo/waldo-new/internal/index"
 	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo-new/internal/record"
 )
 
 const BOMSchema = 1
@@ -43,27 +44,34 @@ type SubManifestPin struct {
 }
 
 type ManifestPin struct {
-	Path        string                    `json:"path"`
-	SHA256      string                    `json:"sha256"`
-	Name        string                    `json:"name"`
-	Title       string                    `json:"title"`
-	Description string                    `json:"description"`
-	License     string                    `json:"license"`
-	Sources     []index.Source            `json:"sources"`
-	Totals      index.Measures            `json:"totals"`
-	Licenses    map[string]index.Measures `json:"licenses"`
+	Path         string                    `json:"path"`
+	SHA256       string                    `json:"sha256"`
+	Name         string                    `json:"name"`
+	Title        string                    `json:"title"`
+	Description  string                    `json:"description"`
+	License      string                    `json:"license"`
+	Format       string                    `json:"format"`
+	RecordSchema int                       `json:"record_schema"`
+	ConvertedBy  index.Conversion          `json:"converted_by"`
+	Sources      []index.Source            `json:"sources"`
+	Totals       index.Measures            `json:"totals"`
+	Licenses     map[string]index.Measures `json:"licenses"`
 }
 
 type ShardPin struct {
-	Manifest string   `json:"manifest"`
-	URL      string   `json:"url"`
-	SHA256   string   `json:"sha256"`
-	Format   string   `json:"format,omitempty"`
-	License  string   `json:"license"`
-	Sources  []string `json:"sources,omitempty"`
-	Docs     int64    `json:"docs"`
-	Tokens   int64    `json:"tokens"`
-	Bytes    int64    `json:"bytes"`
+	Manifest          string           `json:"manifest"`
+	SubManifestSHA256 string           `json:"sub_manifest_sha256,omitempty"`
+	URL               string           `json:"url"`
+	SHA256            string           `json:"sha256"`
+	Format            string           `json:"format"`
+	RecordSchema      int              `json:"record_schema"`
+	License           string           `json:"license"`
+	Sources           []string         `json:"sources,omitempty"`
+	ConvertedBy       index.Conversion `json:"converted_by"`
+	RecordsRoot       string           `json:"records_root,omitempty"`
+	Docs              int64            `json:"docs"`
+	Tokens            int64            `json:"tokens"`
+	Bytes             int64            `json:"bytes"`
 }
 
 // BuildBOM resolves targets from one checkout into immutable manifest and
@@ -107,6 +115,9 @@ func BuildBOM(ctx context.Context, targets []index.Target, policy LicensePolicy,
 		}
 	}
 	sort.Strings(bom.Paths)
+	if err := bom.Validate(); err != nil {
+		return BOM{}, fmt.Errorf("build OpenWALDO BOM: %w", err)
+	}
 	return bom, nil
 }
 
@@ -117,30 +128,41 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 	}
 	digest := sha256.Sum256(data)
 	pin := ManifestPin{
-		Path:        corpus.Path,
-		SHA256:      hex.EncodeToString(digest[:]),
-		Name:        corpus.Manifest.Name,
-		Title:       corpus.Manifest.Title,
-		Description: corpus.Manifest.Description,
-		License:     corpus.Manifest.License,
-		Sources:     append([]index.Source(nil), corpus.Manifest.Sources...),
-		Licenses:    map[string]index.Measures{},
+		Path:         corpus.Path,
+		SHA256:       hex.EncodeToString(digest[:]),
+		Name:         corpus.Manifest.Name,
+		Title:        corpus.Manifest.Title,
+		Description:  corpus.Manifest.Description,
+		License:      corpus.Manifest.License,
+		Format:       effectiveFormat(corpus.Manifest.Format, ""),
+		RecordSchema: effectiveRecordSchema(corpus.Manifest.RecordSchema),
+		ConvertedBy:  corpus.Manifest.ConvertedBy,
+		Sources:      append([]index.Source(nil), corpus.Manifest.Sources...),
+		Licenses:     map[string]index.Measures{},
 	}
-	addShard := func(shard index.Shard) {
+	addShard := func(shard index.Shard, subManifestSHA256 string) {
 		license := corpus.Manifest.EffectiveLicense(shard)
 		if !policy.Allows(license) {
 			return
 		}
+		convertedBy := corpus.Manifest.ConvertedBy
+		if shard.ConvertedBy != nil {
+			convertedBy = *shard.ConvertedBy
+		}
 		shardPin := ShardPin{
-			Manifest: corpus.Path,
-			URL:      shard.URL,
-			SHA256:   shard.SHA256,
-			Format:   effectiveFormat(corpus.Manifest.Format, shard.Format),
-			License:  license,
-			Sources:  append([]string(nil), shard.Sources...),
-			Docs:     shard.Docs,
-			Tokens:   shard.Tokens,
-			Bytes:    shard.Bytes,
+			Manifest:          corpus.Path,
+			SubManifestSHA256: subManifestSHA256,
+			URL:               shard.URL,
+			SHA256:            shard.SHA256,
+			Format:            effectiveFormat(corpus.Manifest.Format, shard.Format),
+			RecordSchema:      effectiveRecordSchema(corpus.Manifest.RecordSchema),
+			License:           license,
+			Sources:           append([]string(nil), shard.Sources...),
+			ConvertedBy:       convertedBy,
+			RecordsRoot:       shard.RecordsRoot,
+			Docs:              shard.Docs,
+			Tokens:            shard.Tokens,
+			Bytes:             shard.Bytes,
 		}
 		bom.Shards = append(bom.Shards, shardPin)
 		addMeasures(&bom.Totals, shardPin)
@@ -158,7 +180,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 		}
 	} else {
 		for _, shard := range corpus.Manifest.Shards {
-			addShard(shard)
+			addShard(shard, "")
 		}
 	}
 	// A selected manifest stays in the OpenWALDO BOM even when policy excludes all
@@ -168,7 +190,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 	return nil
 }
 
-func (bom *BOM) expandRollup(ctx context.Context, manifestPath string, manifest index.Manifest, rollup index.Rollup, parent string, cache *lookaside.Cache, seen map[string]bool, addShard func(index.Shard)) (index.Measures, error) {
+func (bom *BOM) expandRollup(ctx context.Context, manifestPath string, manifest index.Manifest, rollup index.Rollup, parent string, cache *lookaside.Cache, seen map[string]bool, addShard func(index.Shard, string)) (index.Measures, error) {
 	if err := validateRollup(rollup); err != nil {
 		return index.Measures{}, err
 	}
@@ -209,7 +231,7 @@ func (bom *BOM) expandRollup(ctx context.Context, manifestPath string, manifest 
 		actual.Docs += shard.Docs
 		actual.Tokens += shard.Tokens
 		actual.Bytes += shard.Bytes
-		addShard(shard)
+		addShard(shard, rollup.SHA256)
 	}
 	for _, child := range sub.Children {
 		childActual, err := bom.expandRollup(ctx, manifestPath, manifest, child, rollup.SHA256, cache, seen, addShard)
@@ -290,4 +312,11 @@ func effectiveFormat(manifestFormat, shardFormat string) string {
 		return "parquet"
 	}
 	return manifestFormat
+}
+
+func effectiveRecordSchema(manifestSchema int) int {
+	if manifestSchema == 0 {
+		return record.Schema
+	}
+	return manifestSchema
 }

@@ -96,7 +96,7 @@ func ExportJSONL(materialized Materialized, destination string, force bool) ([]E
 		}
 		seenPaths[relative] = true
 		destinationPath := filepath.Join(abs, filepath.FromSlash(relative))
-		digest, bytes, existing, err := convertJSONL(object.Path, destinationPath, force)
+		digest, bytes, existing, err := convertJSONL(object.Path, destinationPath, object.Shard.Docs, object.Shard.Tokens, force)
 		if err != nil {
 			return nil, err
 		}
@@ -185,7 +185,7 @@ func copyVerified(source, destination, digest string, expectedBytes int64) error
 	return nil
 }
 
-func convertJSONL(source, destination string, force bool) (string, int64, bool, error) {
+func convertJSONL(source, destination string, expectedDocs, expectedTokens int64, force bool) (string, int64, bool, error) {
 	input, err := os.Open(source)
 	if err != nil {
 		return "", 0, false, err
@@ -211,14 +211,17 @@ func convertJSONL(source, destination string, force bool) (string, int64, bool, 
 		}
 	}()
 	hasher := sha256.New()
-	written, err := shard.WriteJSONL(io.MultiWriter(temporary, hasher), input, info.Size())
+	stats, err := shard.WriteJSONL(io.MultiWriter(temporary, hasher), input, info.Size())
 	if err != nil {
 		return "", 0, false, fmt.Errorf("convert %s: %w", source, err)
 	}
+	if stats.Docs != expectedDocs || stats.Tokens != expectedTokens {
+		return "", 0, false, fmt.Errorf("convert %s: records report %d docs and %d tokens, manifest declares %d docs and %d tokens", source, stats.Docs, stats.Tokens, expectedDocs, expectedTokens)
+	}
 	digest := hex.EncodeToString(hasher.Sum(nil))
 	if existingInfo, statErr := os.Stat(destination); statErr == nil && !existingInfo.IsDir() {
-		if verifyErr := lookaside.VerifyFile(destination, digest, written); verifyErr == nil {
-			return digest, written, true, nil
+		if verifyErr := lookaside.VerifyFile(destination, digest, stats.Bytes); verifyErr == nil {
+			return digest, stats.Bytes, true, nil
 		} else if !force {
 			return "", 0, false, fmt.Errorf("%s already exists but is not the canonical conversion: %w (use --force to replace it)", destination, verifyErr)
 		}
@@ -238,5 +241,5 @@ func convertJSONL(source, destination string, force bool) (string, int64, bool, 
 		return "", 0, false, err
 	}
 	committed = true
-	return digest, written, false, nil
+	return digest, stats.Bytes, false, nil
 }

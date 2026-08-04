@@ -32,7 +32,7 @@ Implemented:
 
 Deferred to the writing slice: regenerating and byte-comparing `index.json`.
 
-## Phase 2: verified OpenWALDO BOMs — current
+## Phase 2: verified OpenWALDO BOMs — complete
 
 Implemented:
 
@@ -46,11 +46,8 @@ Implemented:
 - Native shard export with safe resume and `EXPORT.json`
 - Streaming canonical JSONL export with record and text-hash validation
 - Recursive, hash-verified submanifest expansion with aggregate validation
+- Stable corpus export BOM contract with offline `bom show` and `bom verify`
 - Real-index OpenWALDO BOM acceptance tests
-
-Remaining:
-
-- Review the export BOM as the first stable provenance interchange contract
 
 Exit: a selection from the public index can be materialized with every object
 hash checked and an independently readable OpenWALDO BOM.

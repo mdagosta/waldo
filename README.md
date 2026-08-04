@@ -10,13 +10,17 @@ with the existing `waldo-index` where that compatibility is part of the public
 data contract; it does not preserve the old backend's internal structure or
 command organization by default.
 
-The project has completed its contracts and read-only index foundation and is
-now in **Phase 2: verified OpenWALDO BOMs**. The binary can list, show,
+The project has completed its contracts, read-only index foundation, and
+**Phase 2: verified OpenWALDO BOMs**. The binary can list, show,
 summarize, and verify the public `waldo-index`; materialize objects through a
 hash-verifying lookaside cache with ordered fallback mirrors; scrub that cache;
 and export selected shards as native objects or canonical JSONL with an
 `EXPORT.json` provenance record. Other commands remain visible as an honest
 roadmap and report that they are not implemented yet.
+
+The stable corpus contract is documented in
+[the OpenWALDO BOM guide](docs/OPENWALDO-BOM.md). The next phase is corpus
+contribution; its ingestion specifics will be designed before implementation.
 
 ## Principles
 
