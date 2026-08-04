@@ -95,7 +95,9 @@ path, including logical path, title, shard/document/token/byte totals, and a
 license summary. `index show` is the detailed view for one corpus or directory.
 
 Structural verification is local and fast. `--objects` explicitly opts into
-network access and verifies lookaside availability and hashes.
+network access and verifies lookaside availability and hashes. For a
+rollup-backed corpus it also expands the content-addressed submanifest tree,
+checks every level's totals, and then verifies the resolved leaf objects.
 
 ### Add a corpus
 

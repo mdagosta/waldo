@@ -45,11 +45,11 @@ Implemented:
 - `waldo lookaside status` and cache scrubbing
 - Native shard export with safe resume and `EXPORT.json`
 - Streaming canonical JSONL export with record and text-hash validation
+- Recursive, hash-verified submanifest expansion with aggregate validation
 - Real-index OpenWALDO BOM acceptance tests
 
 Remaining:
 
-- Submanifest/rollup object expansion
 - Review the export BOM as the first stable provenance interchange contract
 
 Exit: a selection from the public index can be materialized with every object

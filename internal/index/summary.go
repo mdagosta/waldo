@@ -28,7 +28,7 @@ func ListCorpora(target Target) ([]CorpusInfo, error) {
 		licenses := map[string]bool{}
 		if manifest.Rollup != nil {
 			measures = Measures{
-				Shards: manifest.Rollup.Shards,
+				Shards: manifest.Rollup.Count,
 				Docs:   manifest.Rollup.Docs,
 				Tokens: manifest.Rollup.Tokens,
 				Bytes:  manifest.Rollup.Bytes,
@@ -71,7 +71,7 @@ func Summarize(target Target) (Totals, error) {
 		totals.Corpora++
 		manifest := corpus.Manifest
 		if manifest.Rollup != nil {
-			add(&totals, manifest.License, manifest.Rollup.Shards, manifest.Rollup.Docs, manifest.Rollup.Tokens, manifest.Rollup.Bytes)
+			add(&totals, manifest.License, manifest.Rollup.Count, manifest.Rollup.Docs, manifest.Rollup.Tokens, manifest.Rollup.Bytes)
 			return nil
 		}
 		for _, shard := range manifest.Shards {

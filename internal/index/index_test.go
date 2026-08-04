@@ -75,6 +75,44 @@ func TestVerifyRejectsUnsortedDirectory(t *testing.T) {
 	}
 }
 
+func TestRollupManifestUsesPolymorphicShardsField(t *testing.T) {
+	root := fixtureIndex(t)
+	hash := strings.Repeat("d", 64)
+	manifest := fmt.Sprintf(`{
+  "kind": "manifest", "schema": 1, "name": "books",
+  "title": "Books", "description": "Rolled-up books.", "license": "CC0-1.0",
+  "sources": [{"name": "upstream", "source": "Example", "url": "https://example.test", "sha256": %q}],
+  "converted_by": {"tool": "test", "version": "1", "profile": "text", "recipe": "test/v1", "tokenizer": "byte"},
+  "shards": {"url": "https://objects.example/sub", "sha256": %q, "count": 2, "docs": 5, "tokens": 50, "bytes": 500}
+}`, strings.Repeat("a", 64), hash)
+	writeFile(t, filepath.Join(root, "alpha", "books.json"), manifest)
+	target, err := Resolve(root, "alpha/books.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadManifest(target.Abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Rollup == nil || loaded.Rollup.Count != 2 || len(loaded.Shards) != 0 {
+		t.Fatalf("rollup manifest = %+v", loaded)
+	}
+	verified, err := Verify(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Shards != 2 {
+		t.Fatalf("verified rollup = %+v", verified)
+	}
+	totals, err := Summarize(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.Shards != 2 || totals.Docs != 5 || totals.Tokens != 50 || totals.Bytes != 500 {
+		t.Fatalf("rollup totals = %+v", totals)
+	}
+}
+
 func TestPublicIndexAcceptance(t *testing.T) {
 	path := os.Getenv("WALDO_ACCEPTANCE_INDEX")
 	if path == "" {

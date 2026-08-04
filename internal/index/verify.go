@@ -178,13 +178,16 @@ func verifyManifest(path string, manifest Manifest) error {
 		if manifest.Rollup.URL == "" || !sha256Pattern.MatchString(manifest.Rollup.SHA256) {
 			return fmt.Errorf("%s: rollup requires a URL and lowercase 64-character sha256", path)
 		}
+		if manifest.Rollup.Count <= 0 || manifest.Rollup.Docs <= 0 || manifest.Rollup.Tokens <= 0 || manifest.Rollup.Bytes <= 0 {
+			return fmt.Errorf("%s: rollup count, docs, tokens, and bytes must be positive", path)
+		}
 	}
 	return nil
 }
 
 func manifestShardCount(manifest Manifest) int64 {
 	if manifest.Rollup != nil {
-		return manifest.Rollup.Shards
+		return manifest.Rollup.Count
 	}
 	return int64(len(manifest.Shards))
 }

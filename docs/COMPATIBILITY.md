@@ -21,6 +21,10 @@ Read compatibility lands before write compatibility. The new implementation
 will first prove that it reports the existing tree's corpus, shard, document,
 token, byte, and license totals correctly.
 
+Schema-1 `shards` is deliberately polymorphic: readers accept either the
+inline array or the documented rollup object. Object-enabled operations verify
+and expand rollup trees; local summaries use their Git-pinned aggregate totals.
+
 ### Existing object identities
 
 The rebuild must not produce different bytes under an existing recipe identity.
@@ -75,4 +79,3 @@ Every persistent format has an explicit `kind` and `schema`. A change is one of:
 
 Format changes require an ADR, fixtures, and cross-platform tests. Go package
 refactors do not.
-

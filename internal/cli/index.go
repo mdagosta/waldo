@@ -181,11 +181,11 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	if err != nil {
 		return err
 	}
-	bom, err := corpus.BuildBOM([]waldoindex.Target{target}, policy)
+	cache, err := lookaside.DefaultCache()
 	if err != nil {
 		return err
 	}
-	cache, err := lookaside.DefaultCache()
+	bom, err := corpus.BuildBOM(context.Execution, []waldoindex.Target{target}, policy, cache)
 	if err != nil {
 		return err
 	}
@@ -230,7 +230,7 @@ func printManifest(w io.Writer, path string, manifest waldoindex.Manifest) {
 	fmt.Fprintf(w, "  description  %s\n", manifest.Description)
 	var shards, docs, tokens, bytes int64
 	if manifest.Rollup != nil {
-		shards, docs, tokens, bytes = manifest.Rollup.Shards, manifest.Rollup.Docs, manifest.Rollup.Tokens, manifest.Rollup.Bytes
+		shards, docs, tokens, bytes = manifest.Rollup.Count, manifest.Rollup.Docs, manifest.Rollup.Tokens, manifest.Rollup.Bytes
 	} else {
 		shards = int64(len(manifest.Shards))
 		for _, shard := range manifest.Shards {

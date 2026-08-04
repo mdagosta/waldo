@@ -1,6 +1,9 @@
 package corpus
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo-new/internal/index"
+	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
 func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {
@@ -20,7 +24,7 @@ func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bom, err := BuildBOM([]index.Target{target, target}, policy)
+	bom, err := BuildBOM(context.Background(), []index.Target{target, target}, policy, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,6 +48,51 @@ func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {
 	}
 }
 
+func TestBuildBOMExpandsNestedSubManifests(t *testing.T) {
+	root, rootHash, childHash := rollupBOMFixture(t, 50)
+	target, err := index.Resolve(root, "books")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := NewLicensePolicy([]string{"CC-BY-*"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := lookaside.NewCache(filepath.Join(t.TempDir(), "cache"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bom, err := BuildBOM(context.Background(), []index.Target{target}, policy, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bom.SubManifests) != 2 || bom.SubManifests[0].SHA256 != rootHash || bom.SubManifests[1].SHA256 != childHash || bom.SubManifests[1].ParentSHA256 != rootHash {
+		t.Fatalf("sub-manifest pins = %+v", bom.SubManifests)
+	}
+	if len(bom.Shards) != 1 || bom.Shards[0].License != "CC-BY-4.0" {
+		t.Fatalf("selected shards = %+v", bom.Shards)
+	}
+	if bom.Totals.Shards != 1 || bom.Totals.Docs != 3 || bom.Totals.Tokens != 30 || bom.Totals.Bytes != 300 {
+		t.Fatalf("selected totals = %+v", bom.Totals)
+	}
+}
+
+func TestBuildBOMRejectsIncorrectSubManifestTotals(t *testing.T) {
+	root, _, _ := rollupBOMFixture(t, 51)
+	target, err := index.Resolve(root, "books")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := NewLicensePolicy(nil, nil)
+	cache, err := lookaside.NewCache(filepath.Join(t.TempDir(), "cache"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := BuildBOM(context.Background(), []index.Target{target}, policy, cache); err == nil || !strings.Contains(err.Error(), "reference declares") {
+		t.Fatalf("incorrect totals error = %v", err)
+	}
+}
+
 func TestBuildBOMRejectsDifferentCheckouts(t *testing.T) {
 	left := bomFixture(t)
 	right := bomFixture(t)
@@ -56,7 +105,7 @@ func TestBuildBOMRejectsDifferentCheckouts(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy, _ := NewLicensePolicy(nil, nil)
-	if _, err := BuildBOM([]index.Target{leftTarget, rightTarget}, policy); err == nil || !strings.Contains(err.Error(), "different checkouts") {
+	if _, err := BuildBOM(context.Background(), []index.Target{leftTarget, rightTarget}, policy, nil); err == nil || !strings.Contains(err.Error(), "different checkouts") {
 		t.Fatalf("BuildBOM() error = %v", err)
 	}
 }
@@ -77,7 +126,7 @@ func TestPublicIndexBOMAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bom, err := BuildBOM([]index.Target{target}, policy)
+	bom, err := BuildBOM(context.Background(), []index.Target{target}, policy, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,4 +171,42 @@ func writeBOMFile(t *testing.T, path, contents string) {
 	if err := os.WriteFile(path, []byte(contents+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func rollupBOMFixture(t *testing.T, declaredTokens int64) (string, string, string) {
+	t.Helper()
+	root := t.TempDir()
+	objects := filepath.Join(root, "objects")
+	child := fmt.Sprintf(`{"kind":"sub-manifest","schema":1,"shards":[{"url":"https://example.test/b","sha256":%q,"license":"CC-BY-4.0","sources":["source"],"docs":3,"tokens":30,"bytes":300}]}`,
+		strings.Repeat("c", 64))
+	childHash := hashFixture(child)
+	childPath := filepath.Join(objects, childHash+".json")
+	writeBOMFile(t, childPath, child)
+	rootSub := fmt.Sprintf(`{"kind":"sub-manifest","schema":1,"shards":[{"url":"https://example.test/a","sha256":%q,"sources":["source"],"docs":2,"tokens":20,"bytes":200}],"children":[{"url":%q,"sha256":%q,"count":1,"docs":3,"tokens":30,"bytes":300}]}`,
+		strings.Repeat("b", 64), childPath, childHash)
+	rootHash := hashFixture(rootSub)
+	rootPath := filepath.Join(objects, rootHash+".json")
+	writeBOMFile(t, rootPath, rootSub)
+	writeBOMFile(t, filepath.Join(root, "index.json"), `{
+  "kind": "index", "schema": 2, "path": "",
+  "entries": [{"name": "books", "type": "dir"}]
+}`)
+	writeBOMFile(t, filepath.Join(root, "books", "index.json"), `{
+  "kind": "index", "schema": 2, "path": "books",
+  "entries": [{"name": "books.json", "type": "manifest"}]
+}`)
+	manifest := fmt.Sprintf(`{
+  "kind": "manifest", "schema": 1, "name": "books", "title": "Books",
+  "description": "Nested example.", "license": "CC0-1.0",
+  "sources": [{"name": "source", "source": "Example", "url": "https://example.test", "sha256": %q}],
+  "converted_by": {"tool": "test", "version": "1", "profile": "text", "recipe": "test/v1", "tokenizer": "byte"},
+  "shards": {"url": %q, "sha256": %q, "count": 2, "docs": 5, "tokens": %d, "bytes": 500}
+}`, strings.Repeat("a", 64), rootPath, rootHash, declaredTokens)
+	writeBOMFile(t, filepath.Join(root, "books", "books.json"), manifest)
+	return root, rootHash, childHash
+}
+
+func hashFixture(contents string) string {
+	digest := sha256.Sum256([]byte(contents + "\n"))
+	return hex.EncodeToString(digest[:])
 }

@@ -38,7 +38,11 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 		}
 		targets = append(targets, target)
 	}
-	bom, err := corpus.BuildBOM(targets, policy)
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		return err
+	}
+	bom, err := corpus.BuildBOM(context.Execution, targets, policy, cache)
 	if err != nil {
 		return err
 	}
@@ -46,10 +50,6 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 		return fmt.Errorf("the selected paths and license policy contain no shards")
 	}
 	if err := provenance.CheckCorpusExportDestination(options.Output, bom, options.Format); err != nil {
-		return err
-	}
-	cache, err := lookaside.DefaultCache()
-	if err != nil {
 		return err
 	}
 	fmt.Fprintf(stderr, "exporting %s shards, %s docs, %s tokens, %s through %s\n",

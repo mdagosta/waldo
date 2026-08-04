@@ -1,6 +1,12 @@
 // Package index reads and verifies WALDO's Git metadata tree.
 package index
 
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+)
+
 // Directory is one index.json file. Directory indexes are generated navigation
 // data; manifests remain the authority for corpus meaning.
 type Directory struct {
@@ -19,17 +25,47 @@ type Entry struct {
 // decoder deliberately permits unknown fields so additive metadata does not
 // make an older reader reject an otherwise compatible index.
 type Manifest struct {
-	Kind        string     `json:"kind"`
-	Schema      int        `json:"schema"`
-	Name        string     `json:"name"`
-	Title       string     `json:"title"`
-	Description string     `json:"description"`
-	License     string     `json:"license"`
-	Format      string     `json:"format,omitempty"`
-	Sources     []Source   `json:"sources"`
-	ConvertedBy Conversion `json:"converted_by"`
-	Shards      []Shard    `json:"shards,omitempty"`
-	Rollup      *Rollup    `json:"rollup,omitempty"`
+	Kind         string     `json:"kind"`
+	Schema       int        `json:"schema"`
+	Name         string     `json:"name"`
+	Title        string     `json:"title"`
+	Description  string     `json:"description"`
+	License      string     `json:"license"`
+	Format       string     `json:"format,omitempty"`
+	Sources      []Source   `json:"sources"`
+	ConvertedBy  Conversion `json:"converted_by"`
+	RecordSchema int        `json:"record_schema,omitempty"`
+	Shards       []Shard    `json:"-"`
+	Rollup       *Rollup    `json:"-"`
+}
+
+// UnmarshalJSON accepts the schema-1 polymorphic shards field: an inline
+// array, or a content-addressed sub-manifest reference.
+func (manifest *Manifest) UnmarshalJSON(data []byte) error {
+	type plain Manifest
+	var wire struct {
+		*plain
+		Shards json.RawMessage `json:"shards"`
+	}
+	wire.plain = (*plain)(manifest)
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	manifest.Shards = nil
+	manifest.Rollup = nil
+	raw := bytes.TrimSpace(wire.Shards)
+	if len(raw) == 0 {
+		return nil
+	}
+	switch raw[0] {
+	case '[':
+		return json.Unmarshal(raw, &manifest.Shards)
+	case '{':
+		manifest.Rollup = &Rollup{}
+		return json.Unmarshal(raw, manifest.Rollup)
+	default:
+		return fmt.Errorf("manifest %q: shards must be an array or sub-manifest reference", manifest.Name)
+	}
 }
 
 type Source struct {
@@ -54,15 +90,15 @@ type Conversion struct {
 }
 
 type Shard struct {
-	URL         string     `json:"url"`
-	SHA256      string     `json:"sha256"`
-	Format      string     `json:"format,omitempty"`
-	License     string     `json:"license,omitempty"`
-	Sources     []string   `json:"sources,omitempty"`
-	ConvertedBy Conversion `json:"converted_by,omitempty"`
-	Docs        int64      `json:"docs"`
-	Tokens      int64      `json:"tokens"`
-	Bytes       int64      `json:"bytes"`
+	URL         string      `json:"url"`
+	SHA256      string      `json:"sha256"`
+	Format      string      `json:"format,omitempty"`
+	License     string      `json:"license,omitempty"`
+	Sources     []string    `json:"sources,omitempty"`
+	ConvertedBy *Conversion `json:"converted_by,omitempty"`
+	Docs        int64       `json:"docs"`
+	Tokens      int64       `json:"tokens"`
+	Bytes       int64       `json:"bytes"`
 }
 
 // Rollup describes an external submanifest tree. Its aggregate counts are
@@ -71,10 +107,19 @@ type Shard struct {
 type Rollup struct {
 	URL    string `json:"url"`
 	SHA256 string `json:"sha256"`
-	Shards int64  `json:"shards"`
+	Count  int64  `json:"count"`
 	Docs   int64  `json:"docs"`
 	Tokens int64  `json:"tokens"`
 	Bytes  int64  `json:"bytes"`
+}
+
+// SubManifest is the content-addressed overflow form of a manifest's shard
+// list. Children may nest to any depth.
+type SubManifest struct {
+	Kind     string   `json:"kind"`
+	Schema   int      `json:"schema"`
+	Shards   []Shard  `json:"shards,omitempty"`
+	Children []Rollup `json:"children,omitempty"`
 }
 
 type Corpus struct {
