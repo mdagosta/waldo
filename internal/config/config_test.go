@@ -7,15 +7,14 @@ import (
 	"testing"
 )
 
-func TestSaveLoadAndEffectiveCache(t *testing.T) {
+func TestSaveLoadAndEffectiveScratch(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("WALDO_CONFIG", path)
-	t.Setenv("WALDO_SCRATCH", "")
 	want := Config{Lookaside: Lookaside{
 		Scratch: filepath.Join(t.TempDir(), "scratch"),
 		Mirrors: []string{"https://one.example/root/", "https://one.example/root", "s3://bucket/root"},
 		Publish: &Publish{URL: "s3://bucket/write/", Region: "us-west-2", Workers: 3},
-	}}
+	}, Ingest: Ingest{Staging: filepath.Join(t.TempDir(), "ingest")}}
 	if err := Save(want); err != nil {
 		t.Fatal(err)
 	}
@@ -85,8 +84,8 @@ func TestLoadMissingReturnsDefault(t *testing.T) {
 
 func TestEffectiveStagingRootIsPlanSpecific(t *testing.T) {
 	base := t.TempDir()
-	t.Setenv("WALDO_STAGING", base)
-	got, err := EffectiveStagingRoot("plan-identity")
+	configuration := Config{Ingest: Ingest{Staging: base}}
+	got, err := EffectiveStagingRoot(configuration, "plan-identity")
 	if err != nil {
 		t.Fatal(err)
 	}

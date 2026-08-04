@@ -1,0 +1,286 @@
+package cli
+
+import (
+	"fmt"
+	"io"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/openwaldo/waldo-new/internal/config"
+)
+
+var configKeys = []string{
+	"lookaside",
+	"lookaside.region",
+	"lookaside.workers",
+	"lookaside.mirrors",
+	"lookaside.scratch",
+	"ingest.staging",
+}
+
+func runConfigShow(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) != 0 {
+		return usageError{message: "usage: waldo config show [--json]"}
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		return err
+	}
+	path, err := config.Path()
+	if err != nil {
+		return err
+	}
+	values := map[string]any{}
+	for _, key := range configKeys {
+		value, set, err := configValue(configuration, key)
+		if err != nil {
+			return err
+		}
+		if set {
+			values[key] = value
+		}
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Path   string         `json:"path"`
+			Values map[string]any `json:"values"`
+		}{Path: path, Values: values})
+	}
+	fmt.Fprintf(stdout, "configuration %s\n", path)
+	for _, key := range configKeys {
+		value, set, err := configValue(configuration, key)
+		if err != nil {
+			return err
+		}
+		if !set {
+			fmt.Fprintf(stdout, "  %-22s (unset)\n", key)
+			continue
+		}
+		printConfigValue(stdout, key, value)
+	}
+	return nil
+}
+
+func runConfigGet(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) != 1 {
+		return usageError{message: "usage: waldo config get <key> [--json]"}
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		return err
+	}
+	value, set, err := configValue(configuration, args[0])
+	if err != nil {
+		return usageError{message: err.Error()}
+	}
+	if !set {
+		return fmt.Errorf("configuration key %q is not set", args[0])
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Key   string `json:"key"`
+			Value any    `json:"value"`
+		}{Key: args[0], Value: value})
+	}
+	printConfigValue(stdout, "", value)
+	return nil
+}
+
+func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) < 2 {
+		return usageError{message: "usage: waldo config set <key> <value...> [--json]"}
+	}
+	key, values := args[0], args[1:]
+	configuration, err := config.Load()
+	if err != nil {
+		return err
+	}
+	switch key {
+	case "lookaside":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		workers := 0
+		if configuration.Lookaside.Publish != nil {
+			workers = configuration.Lookaside.Publish.Workers
+		}
+		configuration.Lookaside.Publish = &config.Publish{URL: values[0], Workers: workers}
+	case "lookaside.region":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		publish, err := configuredPublisher(&configuration, key)
+		if err != nil {
+			return err
+		}
+		publish.Region = values[0]
+	case "lookaside.workers":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		workers, err := strconv.Atoi(values[0])
+		if err != nil {
+			return usageError{message: "lookaside.workers must be an integer in 1..32"}
+		}
+		publish, err := configuredPublisher(&configuration, key)
+		if err != nil {
+			return err
+		}
+		publish.Workers = workers
+	case "lookaside.mirrors":
+		configuration.Lookaside.Mirrors = append([]string(nil), values...)
+	case "lookaside.scratch":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		configuration.Lookaside.Scratch, err = filepath.Abs(values[0])
+		if err != nil {
+			return err
+		}
+	case "ingest.staging":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		configuration.Ingest.Staging, err = filepath.Abs(values[0])
+		if err != nil {
+			return err
+		}
+	default:
+		return usageError{message: unknownConfigKey(key)}
+	}
+	if err := config.Save(configuration); err != nil {
+		return err
+	}
+	return reportConfigMutation(context, stdout, "set", key)
+}
+
+func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) != 1 {
+		return usageError{message: "usage: waldo config unset <key> [--json]"}
+	}
+	key := args[0]
+	configuration, err := config.Load()
+	if err != nil {
+		return err
+	}
+	switch key {
+	case "lookaside":
+		configuration.Lookaside.Publish = nil
+	case "lookaside.region":
+		if configuration.Lookaside.Publish != nil {
+			configuration.Lookaside.Publish.Region = ""
+		}
+	case "lookaside.workers":
+		if configuration.Lookaside.Publish != nil {
+			configuration.Lookaside.Publish.Workers = 0
+		}
+	case "lookaside.mirrors":
+		configuration.Lookaside.Mirrors = nil
+	case "lookaside.scratch":
+		configuration.Lookaside.Scratch = ""
+	case "ingest.staging":
+		configuration.Ingest.Staging = ""
+	default:
+		return usageError{message: unknownConfigKey(key)}
+	}
+	if err := config.Save(configuration); err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Key    string `json:"key"`
+			Status string `json:"status"`
+		}{Key: key, Status: "unset"})
+	}
+	fmt.Fprintf(stdout, "unset %s\n", key)
+	return nil
+}
+
+func reportConfigMutation(context Context, stdout io.Writer, status, key string) error {
+	configuration, err := config.Load()
+	if err != nil {
+		return err
+	}
+	value, _, err := configValue(configuration, key)
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Key    string `json:"key"`
+			Value  any    `json:"value"`
+			Status string `json:"status"`
+		}{Key: key, Value: value, Status: status})
+	}
+	fmt.Fprintf(stdout, "%s %s = ", status, key)
+	printConfigValue(stdout, "", value)
+	return nil
+}
+
+func configValue(configuration config.Config, key string) (any, bool, error) {
+	switch key {
+	case "lookaside":
+		if configuration.Lookaside.Publish == nil {
+			return nil, false, nil
+		}
+		return configuration.Lookaside.Publish.URL, true, nil
+	case "lookaside.region":
+		if configuration.Lookaside.Publish == nil || configuration.Lookaside.Publish.Region == "" {
+			return nil, false, nil
+		}
+		return configuration.Lookaside.Publish.Region, true, nil
+	case "lookaside.workers":
+		if configuration.Lookaside.Publish == nil {
+			return nil, false, nil
+		}
+		return configuration.Lookaside.Publish.Workers, true, nil
+	case "lookaside.mirrors":
+		if len(configuration.Lookaside.Mirrors) == 0 {
+			return nil, false, nil
+		}
+		return append([]string(nil), configuration.Lookaside.Mirrors...), true, nil
+	case "lookaside.scratch":
+		value, err := config.EffectiveScratchRoot(configuration)
+		return value, err == nil, err
+	case "ingest.staging":
+		value, err := config.EffectiveStagingBase(configuration)
+		return value, err == nil, err
+	default:
+		return nil, false, fmt.Errorf("%s", unknownConfigKey(key))
+	}
+}
+
+func configuredPublisher(configuration *config.Config, key string) (*config.Publish, error) {
+	if configuration.Lookaside.Publish == nil {
+		return nil, usageError{message: fmt.Sprintf("set lookaside before %s", key)}
+	}
+	return configuration.Lookaside.Publish, nil
+}
+
+func oneConfigValue(key string) error {
+	return usageError{message: fmt.Sprintf("configuration key %s requires exactly one value", key)}
+}
+
+func unknownConfigKey(key string) string {
+	return fmt.Sprintf("unknown configuration key %q; keys are %s", key, strings.Join(configKeys, ", "))
+}
+
+func printConfigValue(output io.Writer, key string, value any) {
+	prefix := ""
+	if key != "" {
+		prefix = fmt.Sprintf("  %-22s ", key)
+	}
+	switch typed := value.(type) {
+	case []string:
+		for index, item := range typed {
+			if index == 0 {
+				fmt.Fprintf(output, "%s%s\n", prefix, item)
+			} else {
+				fmt.Fprintf(output, "%s%s\n", strings.Repeat(" ", len(prefix)), item)
+			}
+		}
+	default:
+		fmt.Fprintf(output, "%s%v\n", prefix, typed)
+	}
+}

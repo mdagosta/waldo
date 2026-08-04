@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openwaldo/waldo-new/internal/config"
 	"github.com/openwaldo/waldo-new/internal/record"
 	"github.com/openwaldo/waldo-new/internal/shard"
 	"github.com/parquet-go/parquet-go"
@@ -55,8 +56,10 @@ func TestIndexExportEndToEnd(t *testing.T) {
 
 	cache := filepath.Join(t.TempDir(), "cache")
 	destination := filepath.Join(t.TempDir(), "export")
-	t.Setenv("WALDO_SCRATCH", cache)
-	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Lookaside: config.Lookaside{Scratch: cache}}); err != nil {
+		t.Fatal(err)
+	}
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--index", root, "index", "export", "books", "--output", destination}, &stdout, &stderr)
 	if code != 0 {

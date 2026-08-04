@@ -40,7 +40,7 @@ Implemented:
 - Immutable OpenWALDO BOM with Git, manifest, shard, source, and license pins
 - Local content-addressed scratch with atomic verified materialization
 - Anonymous HTTP and S3 lookaside reads plus local-file fixtures
-- Machine-local cache configuration and ordered read-mirror fallback
+- Positional machine configuration for scratch, staging, publication, and ordered read mirrors
 - `waldo index verify --objects`
 - `waldo lookaside status` and cache scrubbing
 - Native shard export with safe resume and `EXPORT.json`

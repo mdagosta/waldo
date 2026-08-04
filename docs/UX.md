@@ -131,17 +131,17 @@ Configure the writable lookaside once. Credentials are resolved through the
 standard AWS credential chain and are never stored in WALDO configuration:
 
 ```bash
-waldo lookaside configure \
-  --publish s3://openwaldo/lookaside/v1 \
-  --publish-region us-east-2 \
-  --upload-workers 4
+waldo config set lookaside s3://openwaldo/lookaside/v1
+waldo config set lookaside.region us-east-2
+waldo config set lookaside.workers 4
 ```
 
 For a complete local integration test, configure a filesystem-backed writable
 lookaside instead:
 
 ```bash
-waldo lookaside configure --publish-local /tmp/waldo-published --upload-workers 2
+waldo config set lookaside file:///tmp/waldo-published
+waldo config set lookaside.workers 2
 ```
 
 This runs the normal publish, verify, journal, purge, and overlay path and uses
@@ -164,7 +164,8 @@ WALDO assembles and verifies shards while a bounded worker pool publishes
 earlier shards to S3. It verifies the remote size and SHA-256, journals that
 fact, and then purges the staged copy.
 The contribution overlay is created only after every referenced remote object
-is verified. `--staging` is an optional scratch-location override.
+is verified. Machine-specific staging is configured separately when the OS
+default is unsuitable.
 Git editing, committing, pushing, and opening a pull request remain explicit
 user actions. Human output lists every overlay file and prints copy, full-index
 verification, staged-diff checking, and `git commit -s` commands. WALDO does
@@ -183,11 +184,10 @@ The command deliberately has one execution path. Its arguments are:
 | `--description` | Optional. WALDO generates a plain default otherwise. |
 | `--source-name` | Optional. Defaults from the destination name. |
 | `--text-column` | Only when raw Parquet has no uniquely inferable text column. |
-| `--staging` | Optional scratch/recovery location; normally automatic. |
 | `--dry-run` | Probe and print the immutable plan without writing or publishing. |
 | `--json` | Global option for structured output and progress events. |
 
-Publication is configured once through `waldo lookaside configure`; ingestion
+Publication is configured once through `waldo config set`; ingestion
 has no second per-run destination or alternate partial execution mode.
 
 When an external fetcher produced the input, the invocation names its deposit
@@ -211,36 +211,42 @@ jsonl` streams native Parquet rows into canonical interchange records, checks
 each record's required fields and text hash, and records both the lookaside-object
 and exported-file hashes in `EXPORT.json`.
 
-### Configure local lookaside behavior
+### Configure machine-local behavior
 
 ```bash
-waldo lookaside configure --scratch /fast-disk/waldo
-waldo lookaside configure --mirror https://mirror.example/openwaldo/v1
+waldo config set lookaside.scratch /fast-disk/waldo
+waldo config set ingest.staging /fast-disk/waldo-ingest
+waldo config set lookaside.mirrors https://mirror.example/openwaldo/v1
+waldo config show
 waldo lookaside status
 ```
 
-`--scratch` selects space for verified downloads. A materialization tries
+`lookaside.scratch` selects space for verified downloads. A materialization tries
 the object's manifest URL first and then each configured mirror, streaming into
 that directory while checking size and SHA-256. Successful `index export` and
 `index verify --objects` runs purge every scratch object they used. Failed runs
 retain verified objects so the retry can reuse them; `lookaside status` and
-`lookaside verify` inspect those leftovers. `WALDO_SCRATCH` overrides the saved
-path, and `--default-scratch` restores the operating-system default.
+`lookaside verify` inspect those leftovers. Unsetting the key restores the
+operating-system default:
 
-Lookaside configuration options are intentionally limited:
+```bash
+waldo config unset lookaside.scratch
+```
 
-| Option | Purpose |
+Configuration keys are positional and intentionally limited:
+
+| Key | Purpose |
 | --- | --- |
-| `--scratch <directory>` | Set verified-download scratch space. |
-| `--default-scratch` | Return scratch to the OS default. |
-| `--mirror <URL>` | Add a read fallback for unavailable manifest URLs. |
-| `--remove-mirror <URL>` | Remove one fallback. |
-| `--clear-mirrors` | Remove all fallbacks. |
-| `--publish <s3://...>` | Set the writable production lookaside. |
-| `--publish-local <directory>` | Set a test-only filesystem publisher. |
-| `--publish-region <region>` | Pin an AWS region when it cannot be inferred. |
-| `--upload-workers <1..32>` | Bound concurrent completed-shard uploads. |
-| `--clear-publish` | Remove writable-lookaside configuration. |
+| `lookaside` | Writable `s3://` production or `file://` test lookaside. |
+| `lookaside.region` | AWS region when it cannot be inferred. |
+| `lookaside.workers` | Concurrent completed-shard uploads, from 1 through 32. |
+| `lookaside.mirrors` | Complete ordered list of read fallbacks. |
+| `lookaside.scratch` | Verified-download scratch directory. |
+| `ingest.staging` | Ingestion scratch and recovery parent directory. |
+
+`config set` replaces the named value, `config get` reads one value, `config
+show` displays the complete effective configuration, and `config unset`
+returns a key to its default. Backend schemes are values, not separate flags.
 
 ### Build a model from a recipe
 

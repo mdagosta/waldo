@@ -16,6 +16,11 @@ const Schema = 1
 type Config struct {
 	Schema    int       `json:"schema"`
 	Lookaside Lookaside `json:"lookaside,omitempty"`
+	Ingest    Ingest    `json:"ingest,omitempty"`
+}
+
+type Ingest struct {
+	Staging string `json:"staging,omitempty"`
 }
 
 type Lookaside struct {
@@ -158,9 +163,6 @@ func validatePublish(publish *Publish) error {
 }
 
 func EffectiveScratchRoot(config Config) (string, error) {
-	if root := os.Getenv("WALDO_SCRATCH"); root != "" {
-		return filepath.Abs(root)
-	}
 	if config.Lookaside.Scratch != "" {
 		return filepath.Abs(config.Lookaside.Scratch)
 	}
@@ -171,23 +173,24 @@ func EffectiveScratchRoot(config Config) (string, error) {
 	return filepath.Join(base, "waldo", "objects"), nil
 }
 
-// EffectiveStagingRoot returns a private, plan-specific staging directory.
-// WALDO_STAGING may relocate the parent for machines with dedicated scratch
-// storage; --staging remains a per-run CLI override.
-func EffectiveStagingRoot(identity string) (string, error) {
-	base := os.Getenv("WALDO_STAGING")
-	if base == "" {
-		cache, err := os.UserCacheDir()
-		if err != nil {
-			return "", fmt.Errorf("find user cache directory: %w", err)
-		}
-		base = filepath.Join(cache, "waldo", "ingest")
+func EffectiveStagingBase(config Config) (string, error) {
+	if config.Ingest.Staging != "" {
+		return filepath.Abs(config.Ingest.Staging)
 	}
-	abs, err := filepath.Abs(base)
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", fmt.Errorf("find user cache directory: %w", err)
+	}
+	return filepath.Join(cache, "waldo", "ingest"), nil
+}
+
+// EffectiveStagingRoot returns a private, plan-specific staging directory.
+func EffectiveStagingRoot(config Config, identity string) (string, error) {
+	base, err := EffectiveStagingBase(config)
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(abs, identity), nil
+	return filepath.Join(base, identity), nil
 }
 
 func normalizeMirrors(values []string) []string {

@@ -30,7 +30,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			return err
 		}
 		if configuration.Lookaside.Publish == nil {
-			return usageError{message: "index ingest needs a writable lookaside; configure --publish s3://bucket/prefix or --publish-local <directory>"}
+			return usageError{message: "index ingest needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`"}
 		}
 	}
 	execution := ingest.WithProgress(context.Execution, ingestProgressReporter(stderr, context.JSON))
@@ -60,12 +60,9 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		if err := ingest.CheckContributionDestination(target.Root, plan); err != nil {
 			return err
 		}
-		staging := options.Staging
-		if staging == "" {
-			staging, err = config.EffectiveStagingRoot(identity)
-			if err != nil {
-				return err
-			}
+		staging, err := config.EffectiveStagingRoot(configuration, identity)
+		if err != nil {
+			return err
 		}
 		scratchRoot, err := config.EffectiveScratchRoot(configuration)
 		if err != nil {
@@ -189,7 +186,6 @@ type indexIngestOptions struct {
 	Request ingest.PlanRequest
 	Inputs  []string
 	DryRun  bool
-	Staging string
 }
 
 func parseIndexIngest(args []string) (indexIngestOptions, error) {
@@ -221,8 +217,6 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 			options.Request.Source.Category, err = value("--source-category")
 		case "--text-column":
 			options.Request.TextColumn, err = value("--text-column")
-		case "--staging":
-			options.Staging, err = value("--staging")
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return indexIngestOptions{}, usageError{message: fmt.Sprintf("unknown index ingest option %q", arg)}
