@@ -375,6 +375,13 @@ An interrupted `assembling` state removes only WALDO-owned temporary shard
 files, rebuilds scratch deduplication state, and deterministically resumes from
 the immutable inputs and any content-addressed completed objects.
 
+Local admission copies each staged object through a second hashing stream into
+a synchronized sibling temporary file in lookaside, then publishes it without
+replacement under the digest path. The journal pins the cache root and exact
+admitted paths. A resumed `admitted` state verifies both the staged and
+lookaside copies before reuse. Remote upload and manifest publication remain
+later, separate states.
+
 For distributed conversion, immutable work units are input artifact ranges or
 canonical hash partitions. Workers return verified objects plus facts;
 publication of the contribution remains a separate atomic coordinator step.

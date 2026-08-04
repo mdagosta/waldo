@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
 func TestExecuteAssemblyResumesVerifiedJournal(t *testing.T) {
@@ -61,6 +63,31 @@ func TestExecuteAssemblyRefusesCorruptCheckpoint(t *testing.T) {
 	}
 	if _, err := ExecuteAssembly(context.Background(), plan, staging); err == nil {
 		t.Fatal("expected corrupt checkpoint refusal")
+	}
+}
+
+func TestExecuteAdmissionPublishesAndResumesLookasideObjects(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "input.txt")
+	writeFixture(t, input, "durable")
+	plan := textFixturePlan(t, input)
+	staging := t.TempDir()
+	cache, err := lookaside.NewCache(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assembly, first, err := ExecuteAdmission(context.Background(), plan, staging, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Objects) != 1 || first.Objects[0].SHA256 != assembly.Objects[0].SHA256 {
+		t.Fatalf("admission = %+v", first)
+	}
+	_, second, err := ExecuteAdmission(context.Background(), plan, staging, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Objects[0] != first.Objects[0] {
+		t.Fatalf("resumed admission = %+v, want %+v", second, first)
 	}
 }
 

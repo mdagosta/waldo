@@ -7,16 +7,30 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
 const journalFile = "INGESTION.json"
 
 type Journal struct {
-	Kind         string          `json:"kind"`
-	Schema       int             `json:"schema"`
-	PlanIdentity string          `json:"plan_identity"`
-	Status       string          `json:"status"`
-	Assembly     *AssemblyResult `json:"assembly,omitempty"`
+	Kind         string           `json:"kind"`
+	Schema       int              `json:"schema"`
+	PlanIdentity string           `json:"plan_identity"`
+	Status       string           `json:"status"`
+	Assembly     *AssemblyResult  `json:"assembly,omitempty"`
+	Admission    *AdmissionResult `json:"admission,omitempty"`
+}
+
+type AdmissionResult struct {
+	CacheRoot string            `json:"cache_root"`
+	Objects   []AdmissionObject `json:"objects"`
+}
+
+type AdmissionObject struct {
+	SHA256 string `json:"sha256"`
+	Bytes  int64  `json:"bytes"`
+	Path   string `json:"path"`
 }
 
 // ExecuteAssembly wraps object generation in an atomic recovery journal. An
@@ -46,7 +60,7 @@ func ExecuteAssembly(ctx context.Context, plan Plan, stagingDirectory string) (A
 		if journal.PlanIdentity != identity {
 			return AssemblyResult{}, fmt.Errorf("staging journal belongs to ingestion plan %s, not %s", journal.PlanIdentity, identity)
 		}
-		if journal.Status == "assembled" {
+		if journal.Status == "assembled" || journal.Status == "admitted" {
 			if journal.Assembly == nil {
 				return AssemblyResult{}, fmt.Errorf("assembled journal has no assembly result")
 			}
@@ -63,6 +77,7 @@ func ExecuteAssembly(ctx context.Context, plan Plan, stagingDirectory string) (A
 	}
 	journal.Status = "assembling"
 	journal.Assembly = nil
+	journal.Admission = nil
 	if err := writeJournal(journalPath, journal); err != nil {
 		return AssemblyResult{}, err
 	}
@@ -79,6 +94,76 @@ func ExecuteAssembly(ctx context.Context, plan Plan, stagingDirectory string) (A
 		return AssemblyResult{}, err
 	}
 	return result, nil
+}
+
+// ExecuteAdmission assembles or resumes the plan, then atomically admits every
+// verified Parquet object to one pinned local lookaside cache.
+func ExecuteAdmission(ctx context.Context, plan Plan, stagingDirectory string, cache *lookaside.Cache) (AssemblyResult, AdmissionResult, error) {
+	if cache == nil {
+		return AssemblyResult{}, AdmissionResult{}, fmt.Errorf("lookaside cache is required")
+	}
+	assembly, err := ExecuteAssembly(ctx, plan, stagingDirectory)
+	if err != nil {
+		return AssemblyResult{}, AdmissionResult{}, err
+	}
+	abs, err := filepath.Abs(stagingDirectory)
+	if err != nil {
+		return AssemblyResult{}, AdmissionResult{}, err
+	}
+	journalPath := filepath.Join(abs, journalFile)
+	journal, exists, err := loadJournal(journalPath)
+	if err != nil {
+		return AssemblyResult{}, AdmissionResult{}, fmt.Errorf("load admission journal: %w", err)
+	}
+	if !exists {
+		return AssemblyResult{}, AdmissionResult{}, fmt.Errorf("admission journal disappeared after assembly")
+	}
+	if journal.Status == "admitted" {
+		if journal.Admission == nil {
+			return AssemblyResult{}, AdmissionResult{}, fmt.Errorf("admitted journal has no admission result")
+		}
+		if err := verifyAdmission(cache, assembly, *journal.Admission); err != nil {
+			return AssemblyResult{}, AdmissionResult{}, err
+		}
+		return assembly, *journal.Admission, nil
+	}
+	if journal.Status != "assembled" {
+		return AssemblyResult{}, AdmissionResult{}, fmt.Errorf("cannot admit journal in status %q", journal.Status)
+	}
+	admission := AdmissionResult{CacheRoot: cache.Root()}
+	for _, object := range assembly.Objects {
+		path, err := cache.Admit(ctx, object.Path, object.SHA256, object.Bytes)
+		if err != nil {
+			return AssemblyResult{}, AdmissionResult{}, err
+		}
+		admission.Objects = append(admission.Objects, AdmissionObject{SHA256: object.SHA256, Bytes: object.Bytes, Path: path})
+	}
+	journal.Status = "admitted"
+	journal.Admission = &admission
+	if err := writeJournal(journalPath, journal); err != nil {
+		return AssemblyResult{}, AdmissionResult{}, err
+	}
+	return assembly, admission, nil
+}
+
+func verifyAdmission(cache *lookaside.Cache, assembly AssemblyResult, admission AdmissionResult) error {
+	if admission.CacheRoot != cache.Root() || len(admission.Objects) != len(assembly.Objects) {
+		return fmt.Errorf("admission journal belongs to a different lookaside cache or object set")
+	}
+	for index, object := range admission.Objects {
+		assembled := assembly.Objects[index]
+		expectedPath, err := cache.Path(object.SHA256)
+		if err != nil {
+			return err
+		}
+		if object.SHA256 != assembled.SHA256 || object.Bytes != assembled.Bytes || filepath.Clean(object.Path) != expectedPath {
+			return fmt.Errorf("admission object %d does not match its assembled object", index+1)
+		}
+		if err := lookaside.VerifyFile(object.Path, object.SHA256, object.Bytes); err != nil {
+			return fmt.Errorf("verify admitted object %s: %w", object.SHA256, err)
+		}
+	}
+	return nil
 }
 
 func loadJournal(path string) (Journal, bool, error) {

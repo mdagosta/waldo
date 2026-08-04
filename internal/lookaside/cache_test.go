@@ -80,6 +80,35 @@ func TestFetchRepairsCorruptCacheEntry(t *testing.T) {
 	}
 }
 
+func TestAdmitPublishesAndReusesVerifiedObject(t *testing.T) {
+	root := t.TempDir()
+	cache, err := NewCache(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("canonical parquet fixture")
+	digestBytes := sha256.Sum256(content)
+	digest := hex.EncodeToString(digestBytes[:])
+	source := filepath.Join(t.TempDir(), "object")
+	if err := os.WriteFile(source, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	destination, err := cache.Admit(context.Background(), source, digest, int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyFile(destination, digest, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+	again, err := cache.Admit(context.Background(), source, digest, int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != destination {
+		t.Fatalf("second admission = %q, want %q", again, destination)
+	}
+}
+
 func TestFetchFallsBackToConfiguredMirror(t *testing.T) {
 	content := "from mirror"
 	digest := digestOf(content)

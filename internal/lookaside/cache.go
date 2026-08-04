@@ -76,6 +76,67 @@ func (cache *Cache) Path(digest string) (string, error) {
 	return filepath.Join(cache.root, digest[:2], digest[2:4], digest), nil
 }
 
+// Admit copies a locally generated object into the content-addressed cache.
+// The source and any existing destination are verified. Publication uses an
+// atomic hard link from a fully synchronized sibling temporary file, so it
+// never replaces a valid object or exposes a partial one.
+func (cache *Cache) Admit(ctx context.Context, source, digest string, expectedBytes int64) (string, error) {
+	destination, err := cache.Path(digest)
+	if err != nil {
+		return "", err
+	}
+	if err := VerifyFile(source, digest, expectedBytes); err != nil {
+		return "", fmt.Errorf("verify admission source: %w", err)
+	}
+	if err := VerifyFile(destination, digest, expectedBytes); err == nil {
+		return destination, nil
+	} else if !os.IsNotExist(err) {
+		if removeErr := os.Remove(destination); removeErr != nil && !os.IsNotExist(removeErr) {
+			return "", fmt.Errorf("remove corrupt cached object %s: %w", digest, removeErr)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return "", err
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return "", err
+	}
+	defer input.Close()
+	temporary, err := os.CreateTemp(filepath.Dir(destination), ".waldo-admit-*")
+	if err != nil {
+		return "", err
+	}
+	temporaryPath := temporary.Name()
+	defer func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}()
+	hasher := sha256.New()
+	written, err := io.Copy(io.MultiWriter(temporary, hasher), &contextReader{ctx: ctx, reader: input})
+	if err != nil {
+		return "", err
+	}
+	if written != expectedBytes || hex.EncodeToString(hasher.Sum(nil)) != digest {
+		return "", fmt.Errorf("admitted object changed while it was copied")
+	}
+	if err := temporary.Sync(); err != nil {
+		return "", err
+	}
+	if err := temporary.Close(); err != nil {
+		return "", err
+	}
+	if err := os.Link(temporaryPath, destination); err != nil {
+		if verifyErr := VerifyFile(destination, digest, expectedBytes); verifyErr != nil {
+			return "", fmt.Errorf("publish admitted object: %w", err)
+		}
+	}
+	if err := syncDirectory(filepath.Dir(destination)); err != nil {
+		return "", err
+	}
+	return destination, nil
+}
+
 // Fetch returns a local verified object path. An existing cache entry is
 // re-hashed before use. Downloads are streamed to a sibling temporary file and
 // become visible only after their digest and optional expected size match.
@@ -258,4 +319,25 @@ func validateDigest(digest string) error {
 		return fmt.Errorf("invalid sha256 %q: want 64 lowercase hexadecimal characters", digest)
 	}
 	return nil
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader *contextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
