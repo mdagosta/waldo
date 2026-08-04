@@ -106,11 +106,19 @@ waldo index add ~/data/books \
   --to core/books \
   --title "Example Books" \
   --license CC-BY-4.0 \
-  --source https://example.org/books
+  --source https://example.org/books \
+  --source-category public-dataset \
+  --dry-run
 ```
 
-The command should preflight source metadata, projected shard count, output
-size, destination, and lookaside configuration before conversion. On success
+The first implemented slice hashes and senses every input, reads Parquet
+footers without loading their payload, resolves unambiguous column mappings,
+and emits an immutable plan with `--dry-run`. Extensions are hints only; magic
+bytes and container structure take precedence. Execution is enabled only after
+the Parquet writer recipe is benchmarked and locked.
+
+The command preflights source metadata, projected shard count, output size,
+destination, and lookaside configuration before conversion. On success
 it should explain the exact Git review and DCO commit steps without creating a
 pull request itself.
 

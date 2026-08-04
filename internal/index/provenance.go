@@ -124,13 +124,22 @@ func validateSourceProvenance(source Source) error {
 }
 
 func validSourceCategory(category string) bool {
+	_, ok := CanonicalSourceCategory(category)
+	return ok
+}
+
+// CanonicalSourceCategory maps the schema-1 legacy spelling to the controlled
+// vocabulary emitted by new ingestion plans and manifests.
+func CanonicalSourceCategory(category string) (string, bool) {
 	switch category {
-	case "public", SourcePublicDataset, SourceCommerciallyLicensed,
+	case "public":
+		return SourcePublicDataset, true
+	case SourcePublicDataset, SourceCommerciallyLicensed,
 		SourcePrivateThirdParty, SourceWebCrawl, SourceUserData,
 		SourceSynthetic, SourceOther:
-		return true
+		return category, true
 	default:
-		return false
+		return "", false
 	}
 }
 

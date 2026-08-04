@@ -2,10 +2,56 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "document.md")
+	if err := os.WriteFile(input, []byte("# Example\n\nTraining text.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"index", "add", input,
+		"--to", "core/example", "--title", "Example", "--license", "CC0-1.0",
+		"--source", "https://example.test/data", "--source-category", "public-dataset",
+		"--dry-run", "--json",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	var output struct {
+		Identity string `json:"identity"`
+		Plan     struct {
+			Kind   string `json:"kind"`
+			Inputs []struct {
+				Adapter string `json:"adapter"`
+			} `json:"inputs"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if len(output.Identity) != 64 || output.Plan.Kind != "waldo-ingest-plan" || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Adapter != "markdown" {
+		t.Fatalf("index add output = %+v", output)
+	}
+}
+
+func TestIndexAddRequiresDryRunUntilExecutionLands(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"index", "add", "/does/not/need/to/exist",
+		"--to", "core/example", "--title", "Example", "--license", "CC0-1.0",
+		"--source", "https://example.test/data", "--source-category", "public-dataset",
+	}, &stdout, &stderr)
+	if code != 1 || !strings.Contains(stderr.String(), "rerun with --dry-run") {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+}
 
 func TestRootHelpLocksCommandVocabulary(t *testing.T) {
 	var stdout, stderr bytes.Buffer
