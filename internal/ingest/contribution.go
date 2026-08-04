@@ -15,7 +15,7 @@ import (
 )
 
 // BuildManifest converts a completed assembly into a public-index-compatible
-// schema-1 manifest using the additive schema-2 provenance fields.
+// schema-1 manifest using additive provenance fields for record schema 1.
 func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index.Manifest, error) {
 	if err := plan.Validate(); err != nil {
 		return index.Manifest{}, err
@@ -36,7 +36,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		return index.Manifest{}, err
 	}
 	manifest := index.Manifest{
-		Kind: "manifest", Schema: 1, Name: name, Title: plan.Title,
+		Kind: "manifest", Schema: index.ManifestSchema, Name: name, Title: plan.Title,
 		Description: plan.Description, License: plan.License, Format: "parquet",
 		RecordSchema: shard.TextRecordSchema,
 		Sources: []index.Source{{
@@ -49,14 +49,14 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			},
 		}},
 		ConvertedBy: index.Conversion{
-			Tool: "waldo index add", Version: "0.1.0-dev",
-			Profile: "canonical-text-schema-2", Recipe: shard.TextWriterRecipe,
+			Tool: "waldo index ingest", Version: "0.1.0-dev",
+			Profile: "canonical-text-schema-1", Recipe: shard.TextWriterRecipe,
 		},
 		Processing: &index.Processing{Steps: []index.ProcessingStep{
 			{Name: "decode", Description: "Read the accepted text or projected Parquet mapping without an interchange materialization."},
 			{Name: "validate", Description: "Require scalar NUL-free UTF-8 records within the accepted size limit."},
 			{Name: "deduplicate", Description: "Retain the first occurrence of each exact SHA-256 text identity in stable acquisition order."},
-			{Name: "encode", Description: "Write canonical text record schema 2 using the manifest's pinned Parquet recipe."},
+			{Name: "encode", Description: "Write canonical text record schema 1 using the manifest's pinned Parquet recipe."},
 		}},
 	}
 	for _, object := range assembly.Objects {

@@ -122,7 +122,7 @@ func verifyManifest(path string, manifest Manifest) error {
 	if manifest.Kind != "manifest" {
 		return fmt.Errorf("%s: kind is %q, want %q", path, manifest.Kind, "manifest")
 	}
-	if manifest.Schema != 1 {
+	if manifest.Schema != ManifestSchema {
 		return fmt.Errorf("%s: unsupported manifest schema %d", path, manifest.Schema)
 	}
 	wantName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -141,8 +141,8 @@ func verifyManifest(path string, manifest Manifest) error {
 	if len(manifest.Sources) == 0 {
 		return fmt.Errorf("%s: at least one source is required", path)
 	}
-	if !validConversion(manifest.ConvertedBy, manifest.RecordSchema < 2) {
-		return fmt.Errorf("%s: converted_by requires tool, version, profile, recipe, and tokenizer", path)
+	if !validConversion(manifest.ConvertedBy) {
+		return fmt.Errorf("%s: converted_by requires tool, version, profile, and recipe", path)
 	}
 	if len(manifest.Shards) == 0 && manifest.Rollup == nil {
 		return fmt.Errorf("%s: shards or rollup is required", path)
@@ -181,7 +181,7 @@ func verifyManifest(path string, manifest Manifest) error {
 				return fmt.Errorf("%s: shard %s refers to unknown source %q", path, shard.SHA256[:12], name)
 			}
 		}
-		if shard.ConvertedBy != nil && !validConversion(*shard.ConvertedBy, manifest.RecordSchema < 2) {
+		if shard.ConvertedBy != nil && !validConversion(*shard.ConvertedBy) {
 			return fmt.Errorf("%s: shard %s has an incomplete converted_by override", path, shard.SHA256[:12])
 		}
 	}
@@ -199,8 +199,8 @@ func verifyManifest(path string, manifest Manifest) error {
 	return nil
 }
 
-func validConversion(conversion Conversion, requireTokenizer bool) bool {
-	return conversion.Tool != "" && conversion.Version != "" && conversion.Profile != "" && conversion.Recipe != "" && (!requireTokenizer || conversion.Tokenizer != "")
+func validConversion(conversion Conversion) bool {
+	return conversion.Tool != "" && conversion.Version != "" && conversion.Profile != "" && conversion.Recipe != ""
 }
 
 // ValidateManifest validates a manifest using the filename-derived identity

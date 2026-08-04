@@ -2,6 +2,7 @@ package shard
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"strings"
 	"testing"
 
@@ -45,5 +46,27 @@ func TestWriteJSONLRejectsInvalidRecord(t *testing.T) {
 	}
 	if _, err := WriteJSONL(&bytes.Buffer{}, bytes.NewReader(native.Bytes()), int64(native.Len())); err == nil {
 		t.Fatal("expected invalid record error")
+	}
+}
+
+func TestWriteJSONLReadsCanonicalSchemaOnePhysicalRecipe(t *testing.T) {
+	var native bytes.Buffer
+	hash := sha256.Sum256([]byte("hello"))
+	writer := NewTextParquetWriter(&native)
+	if _, err := writer.Write([]TextRow{{
+		ContentSHA256: hash, Text: "hello", Source: "fixture:1", License: "CC0-1.0",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	stats, err := WriteJSONL(&output, bytes.NewReader(native.Bytes()), int64(native.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Docs != 1 || stats.Tokens != 0 || !strings.Contains(output.String(), `"kind":"pretrain"`) || !strings.Contains(output.String(), `"text":"hello"`) {
+		t.Fatalf("output/stats = %q / %+v", output.String(), stats)
 	}
 }

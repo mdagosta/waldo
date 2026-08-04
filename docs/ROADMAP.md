@@ -58,7 +58,10 @@ hash checked and an independently readable OpenWALDO BOM.
 - Basic text and Markdown ingestion
 - Canonical records and deterministic Parquet packing
 - License partitioning
-- Local lookaside writes, then S3 writes
+- Bounded progress event stream for probe, conversion, shard, upload, and purge
+- Parallel S3 lookaside publication with remote verification and backpressure
+- Journal-before-purge staged-object reclamation; optional local retention
+- Local-only lookaside admission as an explicit offline mode
 - Manifest and navigation generation
 - Durable staging and recovery
 - External fetcher handoff consumption

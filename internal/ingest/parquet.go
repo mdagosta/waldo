@@ -136,6 +136,9 @@ func readProjectedText(ctx context.Context, input *os.File, planned PlanInput, p
 				return fmt.Errorf("row %d is %d bytes; maximum is %d bytes (choose an explicit splitter recipe)", rowNumber, len(textBytes), maximum)
 			}
 			text := string(textBytes)
+			if text == "" {
+				return fmt.Errorf("row %d is empty", rowNumber)
+			}
 			if !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
 				return fmt.Errorf("row %d is not NUL-free UTF-8", rowNumber)
 			}

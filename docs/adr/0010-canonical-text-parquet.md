@@ -1,4 +1,4 @@
-# ADR 0010: Canonical text uses record schema 2 Parquet
+# ADR 0010: Canonical text uses record schema 1 Parquet
 
 - Status: accepted
 - Date: 2026-08-04
@@ -17,7 +17,7 @@ footer, or in the Git manifest that names the immutable object.
 
 ## Decision
 
-Adopt text record schema 2. One row is one independently attributable UTF-8
+Adopt text record schema 1. One row is one independently attributable UTF-8
 document with this ordered physical schema:
 
 1. required 32-byte `content_sha256`;
@@ -69,8 +69,9 @@ is a regression control, not a claim about every corpus.
 
 - Raw Parquet can be projected into typed rows and written directly without an
   intermediate interchange format or whole-input buffer.
-- Schema 1 remains readable but new objects have a distinct record schema and
-  recipe identity.
+- Existing schema-1 objects remain readable. The exact physical representation
+  is distinguished by its writer recipe and footer metadata; new objects must
+  never claim an older physical recipe identity.
 - Changing column order, types, nullability, encodings, relevant writer
   versions, compression settings, statistics policy, or footer semantics needs
   a new physical recipe identity. A logical column change needs a new record

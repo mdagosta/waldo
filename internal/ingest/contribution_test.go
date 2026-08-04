@@ -32,7 +32,7 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.RecordSchema != 2 || len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Sources[0].Usage["text"].Samples != 1 {
+	if manifest.Schema != index.ManifestSchema || manifest.RecordSchema != 1 || len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Sources[0].Usage["text"].Samples != 1 {
 		t.Fatalf("manifest = %+v", manifest)
 	}
 	if manifest.ConvertedBy.Tokenizer != "" {

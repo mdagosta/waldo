@@ -16,8 +16,8 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
-		"index", "add", input,
-		"--to", "core/example", "--title", "Example", "--license", "CC0-1.0",
+		"index", "ingest", input, "core/example",
+		"--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset",
 		"--dry-run", "--json",
 	}, &stdout, &stderr)
@@ -28,6 +28,9 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 		Identity string `json:"identity"`
 		Plan     struct {
 			Kind   string `json:"kind"`
+			Writer struct {
+				RecordSchema int `json:"record_schema"`
+			} `json:"writer"`
 			Inputs []struct {
 				Adapter string `json:"adapter"`
 			} `json:"inputs"`
@@ -36,16 +39,28 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	if len(output.Identity) != 64 || output.Plan.Kind != "waldo-ingest-plan" || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Adapter != "markdown" {
-		t.Fatalf("index add output = %+v", output)
+	if len(output.Identity) != 64 || output.Plan.Kind != "waldo-ingest-plan" || output.Plan.Writer.RecordSchema != 1 || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Adapter != "markdown" {
+		t.Fatalf("index ingest output = %+v", output)
+	}
+}
+
+func TestIndexIngestRejectsFormerToOption(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"index", "ingest", "input", "destination", "--to", "other",
+		"--title", "Example", "--license", "CC0-1.0",
+		"--source", "https://example.test/data", "--source-category", "public-dataset", "--dry-run",
+	}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "unknown index ingest option") {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 }
 
 func TestIndexAddExecutionRequiresStagingAndObjectBase(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
-		"index", "add", "/does/not/need/to/exist",
-		"--to", "core/example", "--title", "Example", "--license", "CC0-1.0",
+		"index", "ingest", "/does/not/need/to/exist", "core/example",
+		"--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset",
 	}, &stdout, &stderr)
 	if code != 2 || !strings.Contains(stderr.String(), "requires --staging and --object-base") {
@@ -74,8 +89,8 @@ func TestIndexAddExecutesToLookasideAndContributionOverlay(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
-		"--index", root, "--json", "index", "add", input,
-		"--to", "core/example", "--title", "Example", "--description", "Example corpus.",
+		"--index", root, "--json", "index", "ingest", input, "core/example",
+		"--title", "Example", "--description", "Example corpus.",
 		"--license", "CC0-1.0", "--source", "https://example.test/data",
 		"--source-category", "public-dataset", "--staging", staging,
 		"--object-base", "s3://openwaldo/lookaside/v1",
@@ -134,7 +149,7 @@ func TestIndexOwnsCorpusWorkflows(t *testing.T) {
 	if code := Run([]string{"index", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
-	for _, want := range []string{"list", "show", "summary", "verify", "add", "update", "export", "remove"} {
+	for _, want := range []string{"list", "show", "summary", "verify", "ingest", "update", "export", "remove"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("index help does not contain %q:\n%s", want, stdout.String())
 		}

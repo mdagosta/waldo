@@ -81,7 +81,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 	switch category {
 	case index.SourcePublicDataset, index.SourcePrivateThirdParty, index.SourceOther:
 	default:
-		return Plan{}, fmt.Errorf("source category %q requires acquisition evidence fields that index add does not collect yet", category)
+		return Plan{}, fmt.Errorf("source category %q requires acquisition evidence fields that index ingest does not collect yet", category)
 	}
 	mode := request.Mode
 	if mode == "" {

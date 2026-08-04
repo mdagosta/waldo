@@ -121,8 +121,9 @@ lowercase hexadecimal.
 version are shard facts. It is useful for corpus accounting but does not replace
 the token IDs in a compiled training view.
 
-Schema 1 remains readable exactly as it is today. This proposal is a new writer
-schema and recipe; it must not claim the identity of an existing shard recipe.
+Record schema 1 remains the canonical logical contract. The physical writer
+recipe and footer metadata distinguish this representation from older
+schema-1 objects; it must not claim the identity of an existing shard recipe.
 
 ### Other logical record kinds
 
@@ -375,12 +376,28 @@ An interrupted `assembling` state removes only WALDO-owned temporary shard
 files, rebuilds scratch deduplication state, and deterministically resumes from
 the immutable inputs and any content-addressed completed objects.
 
-Local admission copies each staged object through a second hashing stream into
-a synchronized sibling temporary file in lookaside, then publishes it without
-replacement under the digest path. The journal pins the cache root and exact
-admitted paths. A resumed `admitted` state verifies both the staged and
-lookaside copies before reuse. Remote upload and manifest publication remain
-later, separate states.
+Local-only admission can copy each staged object through a second hashing
+stream into a synchronized sibling temporary file in lookaside, then publish
+it without replacement under the digest path. This is an explicit offline mode,
+not the normal remote contribution path.
+
+Normal contribution uses a bounded producer/uploader pipeline. Each finalized
+and verified shard enters a small upload queue while assembly continues. A
+configured number of workers upload content-addressed objects in parallel;
+when the queue is full, backpressure stops assembly from consuming unbounded
+disk. After remote size and checksum verification, the coordinator journals
+the remote object, synchronizes the journal, removes the staged shard, and
+synchronizes the staging directory. Ingestion does not populate the read cache
+unless the user explicitly requests local retention. A manifest overlay is not
+created until every referenced remote object has been verified.
+
+Progress is a structured event stream shared by the terminal and `--json`
+frontends. Events identify the phase, input path and row group where applicable,
+logical and encoded byte counts, shard sequence and digest, upload worker and
+remote destination, and bytes reclaimed by purge. Human output is rate-limited
+and redraws concise status; machine output is newline-delimited JSON. Neither
+mode requires parsing log prose to recover execution state—the journal remains
+authoritative.
 
 For distributed conversion, immutable work units are input artifact ranges or
 canonical hash partitions. Workers return verified objects plus facts;
@@ -389,7 +406,7 @@ Remote execution is not required for the first implementation, but local file
 formats and identities must not preclude it.
 
 The local contribution step writes a minimal overlay: the new schema-1
-manifest with additive schema-2 provenance, its leaf `index.json`, and only the
+manifest with additive provenance for record schema 1, its leaf `index.json`, and only the
 ancestor directory indexes that change. It validates the overlay against the
 same manifest contract used to read the public index and is idempotent only
 when every staged byte still matches. It never edits Git, uploads to the
@@ -492,7 +509,7 @@ coordinates and machine-readable reasons.
 
 ## Implementation sequence
 
-1. Lock logical text schema 2 and the conversion-recipe vocabulary in an ADR.
+1. Lock logical text schema 1 and the conversion-recipe vocabulary in an ADR.
 2. Build a benchmark harness before choosing the Go columnar implementation and
    final physical tuning values.
 3. Implement the typed batch boundary, probe/plan contract, and Markdown/text

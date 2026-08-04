@@ -2,6 +2,7 @@
 package shard
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -46,6 +47,9 @@ func WriteJSONL(dst io.Writer, src io.ReaderAt, size int64) (Statistics, error) 
 	if err != nil {
 		return Statistics{}, err
 	}
+	if recipe, ok := file.Lookup("waldo.recipe"); ok && recipe == TextWriterRecipe {
+		return writeCanonicalTextJSONL(dst, file)
+	}
 	reader := parquet.NewGenericReader[Row](file)
 	defer reader.Close()
 	rows := make([]Row, 512)
@@ -78,4 +82,70 @@ func WriteJSONL(dst io.Writer, src io.ReaderAt, size int64) (Statistics, error) 
 			return stats, nil
 		}
 	}
+}
+
+func writeCanonicalTextJSONL(dst io.Writer, file *parquet.File) (Statistics, error) {
+	reader := parquet.NewGenericReader[TextRow](file)
+	defer reader.Close()
+	rows := make([]TextRow, 512)
+	line := make([]byte, 0, 64<<10)
+	var stats Statistics
+	recordNumber := 0
+	for {
+		count, readErr := reader.Read(rows)
+		for i := 0; i < count; i++ {
+			row := rows[i]
+			canonical := record.Record{
+				SHA256: hex.EncodeToString(row.ContentSHA256[:]), Kind: record.KindPretrain,
+				Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName),
+				License: row.License, LicenseRaw: stringValue(row.LicenseRaw),
+				Lang: stringValue(row.Language), LangScore: int64(int32Value(row.LanguageScore)),
+				Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount),
+			}
+			meta := []byte(stringValue(row.Meta))
+			var err error
+			line, err = canonical.AppendCanonical(line[:0], meta)
+			if err != nil {
+				return stats, fmt.Errorf("record %d: %w", recordNumber, err)
+			}
+			n, writeErr := dst.Write(line)
+			stats.Bytes += int64(n)
+			if writeErr != nil {
+				return stats, writeErr
+			}
+			stats.Docs++
+			stats.Tokens += canonical.Tokens
+			recordNumber++
+		}
+		if errors.Is(readErr, io.EOF) {
+			return stats, nil
+		}
+		if readErr != nil {
+			return stats, readErr
+		}
+		if count == 0 {
+			return stats, nil
+		}
+	}
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func int32Value(value *int32) int32 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func int64Value(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 )
 
+const ManifestSchema = 1
+
 // Directory is one index.json file. Directory indexes are generated navigation
 // data; manifests remain the authority for corpus meaning.
 type Directory struct {

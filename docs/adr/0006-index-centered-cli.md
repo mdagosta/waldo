@@ -14,7 +14,7 @@ plausibly appear under either name.
 ## Decision
 
 Expose corpus workflows beneath `waldo index`. `index list` recursively lists
-the corpora beneath a path; `index show` provides one detailed view; `index add`,
+the corpora beneath a path; `index show` provides one detailed view; `index ingest`,
 `update`, `export`, and `remove` own corpus mutation and materialization.
 
 Retain corpus as an internal domain and as terminology for the data itself. CLI

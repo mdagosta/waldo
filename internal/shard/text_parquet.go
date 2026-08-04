@@ -10,14 +10,14 @@ import (
 )
 
 const (
-	TextRecordSchema  = 2
+	TextRecordSchema  = 1
 	TextWriterRecipe  = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v2"
 	TextRowGroupBytes = 64 << 20
 	TextPageBytes     = 1 << 20
 )
 
 // TextRow is the canonical tokenizer-neutral pretraining row for record schema
-// 2. Pointer fields are true Parquet nulls; empty strings and zero values are
+// 1. Pointer fields are true Parquet nulls; empty strings and zero values are
 // not overloaded to mean absence.
 type TextRow struct {
 	ContentSHA256 [32]byte `parquet:"content_sha256"`
@@ -33,7 +33,7 @@ type TextRow struct {
 	Meta          *string  `parquet:"meta"`
 }
 
-// NewTextParquetWriter returns the proposed schema-2 writer. Callers control
+// NewTextParquetWriter returns the canonical schema-1 writer. Callers control
 // row-group boundaries explicitly with Flush and write directly to the final
 // temporary-file stream; this function never introduces a whole-shard buffer.
 func NewTextParquetWriter(output io.Writer) *parquet.GenericWriter[TextRow] {

@@ -272,7 +272,7 @@ schema 2:
   logical rows and encoded bytes.
 
 Old manifests remain readable and produce the same existing totals. New writers
-declare `format: "parquet"`, the new record schema, and the additive provenance
+declare `format: "parquet"`, record schema 1, the exact writer recipe, and the additive provenance
 facts. Unknown additive fields continue to be accepted by older readers. The
 OpenWALDO BOM requires a new schema because adding mandatory modality and
 source-usage reconciliation changes its validated identity contract.

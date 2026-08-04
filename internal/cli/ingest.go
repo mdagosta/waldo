@@ -12,13 +12,13 @@ import (
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
-func runIndexAdd(context Context, args []string, stdout, _ io.Writer) error {
-	options, err := parseIndexAdd(args)
+func runIndexIngest(context Context, args []string, stdout, _ io.Writer) error {
+	options, err := parseIndexIngest(args)
 	if err != nil {
 		return err
 	}
 	if !options.DryRun && (options.Staging == "" || options.ObjectBase == "") {
-		return usageError{message: "index add execution requires --staging and --object-base; use --dry-run to preflight only"}
+		return usageError{message: "index ingest execution requires --staging and --object-base; use --dry-run to preflight only"}
 	}
 	probe, err := ingest.ProbePaths(context.Execution, options.Inputs)
 	if err != nil {
@@ -107,7 +107,7 @@ func runIndexAdd(context Context, args []string, stdout, _ io.Writer) error {
 	return nil
 }
 
-type indexAddOptions struct {
+type indexIngestOptions struct {
 	Request    ingest.PlanRequest
 	Inputs     []string
 	DryRun     bool
@@ -115,8 +115,8 @@ type indexAddOptions struct {
 	ObjectBase string
 }
 
-func parseIndexAdd(args []string) (indexAddOptions, error) {
-	var options indexAddOptions
+func parseIndexIngest(args []string) (indexIngestOptions, error) {
+	var options indexIngestOptions
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		value := func(name string) (string, error) {
@@ -130,8 +130,6 @@ func parseIndexAdd(args []string) (indexAddOptions, error) {
 		switch arg {
 		case "--dry-run":
 			options.DryRun = true
-		case "--to":
-			options.Request.Destination, err = value("--to")
 		case "--title":
 			options.Request.Title, err = value("--title")
 		case "--description":
@@ -160,20 +158,22 @@ func parseIndexAdd(args []string) (indexAddOptions, error) {
 			}
 		default:
 			if strings.HasPrefix(arg, "-") {
-				return indexAddOptions{}, usageError{message: fmt.Sprintf("unknown index add option %q", arg)}
+				return indexIngestOptions{}, usageError{message: fmt.Sprintf("unknown index ingest option %q", arg)}
 			}
 			options.Inputs = append(options.Inputs, arg)
 		}
 		if err != nil {
-			return indexAddOptions{}, err
+			return indexIngestOptions{}, err
 		}
 	}
-	if len(options.Inputs) == 0 {
-		return indexAddOptions{}, usageError{message: "index add needs at least one input path"}
+	if len(options.Inputs) != 2 {
+		return indexIngestOptions{}, usageError{message: "index ingest requires exactly two positional arguments: <input> <destination>"}
 	}
+	options.Request.Destination = options.Inputs[1]
+	options.Inputs = options.Inputs[:1]
 	request := &options.Request
-	if request.Destination == "" || request.Title == "" || request.License == "" || request.Source.URL == "" || request.Source.Category == "" {
-		return indexAddOptions{}, usageError{message: "index add requires --to, --title, --license, --source, and --source-category"}
+	if request.Title == "" || request.License == "" || request.Source.URL == "" || request.Source.Category == "" {
+		return indexIngestOptions{}, usageError{message: "index ingest requires --title, --license, --source, and --source-category"}
 	}
 	if request.Source.Name == "" {
 		request.Source.Name = path.Base(strings.TrimSuffix(request.Destination, "/"))

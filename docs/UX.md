@@ -102,8 +102,7 @@ checks every level's totals, and then verifies the resolved leaf objects.
 ### Add a corpus
 
 ```bash
-waldo index add ~/data/books \
-  --to core/books \
+waldo index ingest ~/data/books core/books \
   --title "Example Books" \
   --license CC-BY-4.0 \
   --source https://example.org/books \
@@ -132,8 +131,7 @@ Execution additionally requires an explicit durable staging directory and the
 public base under which the content-addressed objects will be uploaded:
 
 ```bash
-waldo index add ~/data/books \
-  --to core/books/example \
+waldo index ingest ~/data/books core/books/example \
   --title "Example Books" \
   --description "Books from the example public collection." \
   --license CC-BY-4.0 \
@@ -143,11 +141,20 @@ waldo index add ~/data/books \
   --object-base s3://openwaldo/lookaside/v1
 ```
 
-This assembles and journals verified objects, admits them to local lookaside,
-and creates a minimal review overlay under `<staging>/contribution`. It does not
-edit the Git checkout, upload objects, claim that the public URLs already
-exist, commit, push, or open a pull request. The user reviews the overlay and
-publishes the objects before applying the Git changes.
+The current implementation assembles and journals verified objects, admits
+them to local lookaside, and creates a minimal review overlay under
+`<staging>/contribution`. It does not yet upload objects and therefore must not
+claim that the public URLs exist. Parallel verified publication and progressive
+staging purge are the next ingestion slice; after that lands, contribution
+generation will wait for confirmed remote objects. Git editing, committing,
+pushing, and opening a pull request remain explicit user actions.
+
+The intended steady-state required inputs are the positional input and
+destination plus `--title`, `--license`, `--source`, and `--source-category`.
+`--description`, `--source-name`, `--text-column`, `--mode`, and `--memory` are
+optional or conditional. Staging should have a machine-local default and the
+writable object base should normally come from lookaside configuration; their
+current execution flags are temporary until remote publication lands.
 
 When an external fetcher produced the input, the invocation names its deposit
 or acquisition record rather than repeating facts by hand.
