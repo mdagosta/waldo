@@ -41,15 +41,73 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	}
 }
 
-func TestIndexAddRequiresDryRunUntilExecutionLands(t *testing.T) {
+func TestIndexAddExecutionRequiresStagingAndObjectBase(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
 		"index", "add", "/does/not/need/to/exist",
 		"--to", "core/example", "--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset",
 	}, &stdout, &stderr)
-	if code != 1 || !strings.Contains(stderr.String(), "rerun with --dry-run") {
+	if code != 2 || !strings.Contains(stderr.String(), "requires --staging and --object-base") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
+func TestIndexAddExecutesToLookasideAndContributionOverlay(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "document.txt")
+	if err := os.WriteFile(input, []byte("training document"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"\",\n  \"entries\": [{\"name\": \"core\", \"type\": \"dir\"}]\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "core"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "core", "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"core\",\n  \"entries\": []\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	staging := t.TempDir()
+	cache := t.TempDir()
+	t.Setenv("WALDO_CACHE", cache)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"--index", root, "--json", "index", "add", input,
+		"--to", "core/example", "--title", "Example", "--description", "Example corpus.",
+		"--license", "CC0-1.0", "--source", "https://example.test/data",
+		"--source-category", "public-dataset", "--staging", staging,
+		"--object-base", "s3://openwaldo/lookaside/v1",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	var output struct {
+		Assembly struct {
+			RetainedDocs int64 `json:"retained_docs"`
+		} `json:"assembly"`
+		Admission struct {
+			Objects []struct {
+				Path string `json:"path"`
+			} `json:"objects"`
+		} `json:"admission"`
+		Contribution struct {
+			Root  string   `json:"root"`
+			Files []string `json:"files"`
+		} `json:"contribution"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Assembly.RetainedDocs != 1 || len(output.Admission.Objects) != 1 || len(output.Contribution.Files) != 3 {
+		t.Fatalf("output = %+v", output)
+	}
+	if _, err := os.Stat(output.Admission.Objects[0].Path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(output.Contribution.Root, "core", "example", "example.json")); err != nil {
+		t.Fatal(err)
 	}
 }
 

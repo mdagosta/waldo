@@ -388,6 +388,13 @@ publication of the contribution remains a separate atomic coordinator step.
 Remote execution is not required for the first implementation, but local file
 formats and identities must not preclude it.
 
+The local contribution step writes a minimal overlay: the new schema-1
+manifest with additive schema-2 provenance, its leaf `index.json`, and only the
+ancestor directory indexes that change. It validates the overlay against the
+same manifest contract used to read the public index and is idempotent only
+when every staged byte still matches. It never edits Git, uploads to the
+declared public object base, commits, pushes, or opens a pull request.
+
 ## Multimodal material
 
 Image, audio, and video samples are also self-contained Parquet files. They use

@@ -147,3 +147,17 @@ func contentAddressedURL(base, digest string) (string, error) {
 	parsed.Path = path.Join(parsed.Path, objectPath)
 	return parsed.String(), nil
 }
+
+func ValidatePublicObjectBase(base string) error {
+	parsed, err := url.Parse(strings.TrimSpace(base))
+	if err != nil {
+		return err
+	}
+	if parsed.Scheme != "s3" && parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return fmt.Errorf("public object base must use s3, https, or http")
+	}
+	if parsed.Host == "" {
+		return fmt.Errorf("public object base requires a host or bucket")
+	}
+	return nil
+}

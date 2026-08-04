@@ -24,13 +24,7 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 	if err != nil {
 		return ContributionResult{}, err
 	}
-	if _, err := index.LoadDirectory(root); err != nil {
-		return ContributionResult{}, fmt.Errorf("load index root: %w", err)
-	}
-	destination := filepath.Join(root, filepath.FromSlash(plan.Destination))
-	if _, err := os.Stat(destination); err == nil {
-		return ContributionResult{}, fmt.Errorf("index destination %s already exists", plan.Destination)
-	} else if !os.IsNotExist(err) {
+	if err := CheckContributionDestination(root, plan); err != nil {
 		return ContributionResult{}, err
 	}
 	stagingRoot, err := filepath.Abs(stagingDirectory)
@@ -38,11 +32,11 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 		return ContributionResult{}, err
 	}
 	finalRoot := filepath.Join(stagingRoot, "contribution")
-	if _, err := os.Stat(finalRoot); err == nil {
-		return ContributionResult{}, fmt.Errorf("staged contribution already exists at %s", finalRoot)
-	} else if !os.IsNotExist(err) {
-		return ContributionResult{}, err
+	_, finalErr := os.Stat(finalRoot)
+	if finalErr != nil && !os.IsNotExist(finalErr) {
+		return ContributionResult{}, finalErr
 	}
+	finalExists := finalErr == nil
 	if err := os.MkdirAll(stagingRoot, 0o755); err != nil {
 		return ContributionResult{}, err
 	}
@@ -119,6 +113,13 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 	if err := syncContributionTree(temporary); err != nil {
 		return ContributionResult{}, err
 	}
+	if finalExists {
+		if err := compareContributionTrees(finalRoot, temporary, result.Files); err != nil {
+			return ContributionResult{}, fmt.Errorf("existing staged contribution differs: %w", err)
+		}
+		result.Root = finalRoot
+		return result, nil
+	}
 	if err := os.Rename(temporary, finalRoot); err != nil {
 		return ContributionResult{}, err
 	}
@@ -127,6 +128,64 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 	}
 	committed = true
 	return result, nil
+}
+
+// CheckContributionDestination performs the checkout collision check before
+// expensive conversion or lookaside admission begins.
+func CheckContributionDestination(indexRoot string, plan Plan) error {
+	root, err := filepath.Abs(indexRoot)
+	if err != nil {
+		return err
+	}
+	if _, err := index.LoadDirectory(root); err != nil {
+		return fmt.Errorf("load index root: %w", err)
+	}
+	destination := filepath.Join(root, filepath.FromSlash(plan.Destination))
+	if _, err := os.Stat(destination); err == nil {
+		return fmt.Errorf("index destination %s already exists", plan.Destination)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
+func compareContributionTrees(left, right string, expected []string) error {
+	actual := []string{}
+	err := filepath.WalkDir(left, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		relative, err := filepath.Rel(left, path)
+		if err != nil {
+			return err
+		}
+		actual = append(actual, filepath.ToSlash(relative))
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	slices.Sort(actual)
+	if !slices.Equal(actual, expected) {
+		return fmt.Errorf("file set is %v, want %v", actual, expected)
+	}
+	for _, relative := range expected {
+		leftData, err := os.ReadFile(filepath.Join(left, filepath.FromSlash(relative)))
+		if err != nil {
+			return err
+		}
+		rightData, err := os.ReadFile(filepath.Join(right, filepath.FromSlash(relative)))
+		if err != nil {
+			return err
+		}
+		if !slices.Equal(leftData, rightData) {
+			return fmt.Errorf("%s differs", relative)
+		}
+	}
+	return nil
 }
 
 func writeContributionJSON(root, relative string, value any) error {

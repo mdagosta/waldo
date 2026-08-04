@@ -30,9 +30,17 @@ func TestStageContributionProducesMinimalValidIndexOverlay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := StageContribution(root, t.TempDir(), plan, manifest)
+	staging := t.TempDir()
+	result, err := StageContribution(root, staging, plan, manifest)
 	if err != nil {
 		t.Fatal(err)
+	}
+	resumed, err := StageContribution(root, staging, plan, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.Root != result.Root || len(resumed.Files) != len(result.Files) {
+		t.Fatalf("resumed contribution = %+v, want %+v", resumed, result)
 	}
 	want := []string{"core/example/example.json", "core/example/index.json", "core/index.json"}
 	if len(result.Files) != len(want) {

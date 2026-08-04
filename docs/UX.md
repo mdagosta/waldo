@@ -114,8 +114,7 @@ waldo index add ~/data/books \
 The first implemented slice hashes and senses every input, reads Parquet
 footers without loading their payload, resolves unambiguous column mappings,
 and emits an immutable plan with `--dry-run`. Extensions are hints only; magic
-bytes and container structure take precedence. Execution is enabled only after
-the Parquet writer recipe is benchmarked and locked.
+bytes and container structure take precedence.
 
 For the basic text and Markdown adapter, one file is one logical document and
 its exact NUL-free UTF-8 bytes are preserved. The accepted plan pins a 16 MiB
@@ -128,6 +127,27 @@ The command preflights source metadata, projected shard count, output size,
 destination, and lookaside configuration before conversion. On success
 it should explain the exact Git review and DCO commit steps without creating a
 pull request itself.
+
+Execution additionally requires an explicit durable staging directory and the
+public base under which the content-addressed objects will be uploaded:
+
+```bash
+waldo index add ~/data/books \
+  --to core/books/example \
+  --title "Example Books" \
+  --description "Books from the example public collection." \
+  --license CC-BY-4.0 \
+  --source https://example.org/books \
+  --source-category public-dataset \
+  --staging ~/waldo-work/example-books \
+  --object-base s3://openwaldo/lookaside/v1
+```
+
+This assembles and journals verified objects, admits them to local lookaside,
+and creates a minimal review overlay under `<staging>/contribution`. It does not
+edit the Git checkout, upload objects, claim that the public URLs already
+exist, commit, push, or open a pull request. The user reviews the overlay and
+publishes the objects before applying the Git changes.
 
 When an external fetcher produced the input, the invocation names its deposit
 or acquisition record rather than repeating facts by hand.
