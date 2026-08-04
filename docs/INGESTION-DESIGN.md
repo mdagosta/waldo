@@ -248,6 +248,12 @@ They do not create an untyped `map[string]any` for every row. The implementation
 may use Arrow buffers where that provides real projection or zero-copy benefits,
 but WALDO's domain contract must not be an Arrow API.
 
+The initial text-family adapter treats each file as one document, targets
+16 MiB typed batches, and rejects a single record larger than 64 MiB. These
+limits are recorded in the immutable plan. Splitting large text streams is a
+separate, explicit recipe because line, paragraph, and byte-window boundaries
+produce materially different training records and content hashes.
+
 ```text
 probe -> read projected batch -> map/extract -> derive/validate
       -> partition/deduplicate -> encode/hash -> verify/admit -> journal

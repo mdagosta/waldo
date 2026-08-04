@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/openwaldo/waldo-new/internal/index"
+	"github.com/openwaldo/waldo-new/internal/shard"
 )
 
 type Plan struct {
@@ -34,10 +35,13 @@ type PlanSource struct {
 type WriterPlan struct {
 	Format               string `json:"format"`
 	RecordSchema         int    `json:"record_schema"`
+	Recipe               string `json:"recipe"`
 	CompressedTarget     int64  `json:"compressed_target_bytes"`
 	CompressedMaximum    int64  `json:"compressed_maximum_bytes"`
 	RowGroupLogicalBytes int64  `json:"row_group_logical_bytes"`
 	PageBytes            int64  `json:"page_bytes"`
+	AdapterBatchBytes    int64  `json:"adapter_batch_bytes"`
+	RecordMaximumBytes   int64  `json:"record_maximum_bytes"`
 	Compression          string `json:"compression"`
 }
 
@@ -91,9 +95,10 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		Destination: request.Destination, Title: request.Title, License: request.License,
 		Source: request.Source, Mode: mode, MemoryBytes: memory,
 		Writer: WriterPlan{
-			Format: "parquet", RecordSchema: 2,
+			Format: "parquet", RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
 			CompressedTarget: 256 << 20, CompressedMaximum: 512 << 20,
 			RowGroupLogicalBytes: 64 << 20, PageBytes: 1 << 20,
+			AdapterBatchBytes: 16 << 20, RecordMaximumBytes: 64 << 20,
 			Compression: "zstd-level-6",
 		},
 	}
@@ -146,7 +151,7 @@ func chooseTextColumn(artifact Artifact, requested string) (string, error) {
 }
 
 func (plan Plan) Validate() error {
-	if plan.Kind != "waldo-ingest-plan" || plan.Schema != 1 || plan.Writer.Format != "parquet" || plan.Writer.RecordSchema != 2 {
+	if plan.Kind != "waldo-ingest-plan" || plan.Schema != 1 || plan.Writer.Format != "parquet" || plan.Writer.RecordSchema != shard.TextRecordSchema || plan.Writer.Recipe != shard.TextWriterRecipe {
 		return fmt.Errorf("unsupported ingestion plan identity or writer")
 	}
 	cleanDestination := filepath.ToSlash(filepath.Clean(plan.Destination))
@@ -159,7 +164,7 @@ func (plan Plan) Validate() error {
 	if plan.Mode != "streaming" && plan.Mode != "canonical" {
 		return fmt.Errorf("unsupported ingestion mode %q", plan.Mode)
 	}
-	if plan.MemoryBytes < 256<<20 || plan.Writer.CompressedTarget <= 0 || plan.Writer.CompressedMaximum < plan.Writer.CompressedTarget || plan.Writer.RowGroupLogicalBytes <= 0 || plan.Writer.PageBytes <= 0 {
+	if plan.MemoryBytes < 256<<20 || plan.Writer.CompressedTarget <= 0 || plan.Writer.CompressedMaximum < plan.Writer.CompressedTarget || plan.Writer.RowGroupLogicalBytes <= 0 || plan.Writer.PageBytes <= 0 || plan.Writer.AdapterBatchBytes <= 0 || plan.Writer.RecordMaximumBytes < plan.Writer.AdapterBatchBytes || plan.Writer.RecordMaximumBytes > plan.MemoryBytes/2 {
 		return fmt.Errorf("ingestion plan has invalid resource or writer limits")
 	}
 	previous := ""

@@ -117,6 +117,13 @@ and emits an immutable plan with `--dry-run`. Extensions are hints only; magic
 bytes and container structure take precedence. Execution is enabled only after
 the Parquet writer recipe is benchmarked and locked.
 
+For the basic text and Markdown adapter, one file is one logical document and
+its exact NUL-free UTF-8 bytes are preserved. The accepted plan pins a 16 MiB
+adapter batch target, a 64 MiB maximum indivisible record, and the exact
+Parquet writer recipe. Execution re-hashes each file before emitting it. A
+larger file requires an explicit, named splitter recipe; it is never silently
+split, truncated, repaired, or rendered from Markdown.
+
 The command preflights source metadata, projected shard count, output size,
 destination, and lookaside configuration before conversion. On success
 it should explain the exact Git review and DCO commit steps without creating a
