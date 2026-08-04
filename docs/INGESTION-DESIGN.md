@@ -280,6 +280,12 @@ Raw Parquet is never loaded as one `[]byte` and never expanded to JSONL.
    values, language, and token counts in bounded parallel stages.
 6. Append the resulting typed batches directly to canonical output writers.
 
+The initial implementation re-hashes the planned file, opens its footer through
+`ReaderAt`, constructs a one-column Parquet schema projection, and reads scalar
+rows directly into the canonical typed-batch boundary. It currently accepts a
+flat scalar text column only. Nulls, nested mappings, invalid UTF-8, NUL bytes,
+and oversized values are explicit errors rather than coercions or dropped rows.
+
 Parquet column projection and dataset scanning are standard Arrow capabilities;
 see the [PyArrow Parquet documentation](https://arrow.apache.org/docs/python/parquet.html).
 The Go implementation receives its own acceptance benchmark rather than

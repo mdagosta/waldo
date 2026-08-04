@@ -131,6 +131,9 @@ func chooseTextColumn(artifact Artifact, requested string) (string, error) {
 	}
 	if requested != "" {
 		if slices.Contains(artifact.Parquet.Columns, requested) {
+			if strings.Contains(requested, ".") {
+				return "", fmt.Errorf("nested text column %q is not enabled yet", requested)
+			}
 			return requested, nil
 		}
 		return "", fmt.Errorf("requested text column %q is absent", requested)
