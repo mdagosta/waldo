@@ -85,6 +85,25 @@ func TestIndexIngestRejectsFormerToOption(t *testing.T) {
 	}
 }
 
+func TestIndexIngestRejectsRemovedModeFlags(t *testing.T) {
+	for _, removed := range []string{"--local-only", "--object-base", "--mode", "--memory"} {
+		var stdout, stderr bytes.Buffer
+		args := []string{
+			"index", "ingest", "input", "destination",
+			"--title", "Example", "--license", "CC0-1.0",
+			"--source", "https://example.test/data", "--source-category", "public-dataset",
+			"--dry-run", removed,
+		}
+		if removed != "--local-only" {
+			args = append(args, "value")
+		}
+		code := Run(args, &stdout, &stderr)
+		if code != 2 || !strings.Contains(stderr.String(), "unknown index ingest option") {
+			t.Fatalf("%s: code = %d, stderr = %q", removed, code, stderr.String())
+		}
+	}
+}
+
 func TestIndexIngestExecutionRequiresWritableLookaside(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
@@ -114,8 +133,12 @@ func TestIndexIngestPublishesAndBuildsContributionOverlay(t *testing.T) {
 	}
 	staging := t.TempDir()
 	cache := t.TempDir()
-	t.Setenv("WALDO_CACHE", cache)
-	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
+	configurationPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("WALDO_SCRATCH", cache)
+	t.Setenv("WALDO_CONFIG", configurationPath)
+	if err := config.Save(config.Config{Lookaside: config.Lookaside{Publish: &config.Publish{URL: "s3://openwaldo/lookaside/v1", Workers: 4}}}); err != nil {
+		t.Fatal(err)
+	}
 	originalPublisher := newIngestPublisher
 	remote := &cliPublisher{}
 	newIngestPublisher = func(context.Context, config.Publish) (lookaside.Publisher, error) { return remote, nil }
@@ -126,7 +149,6 @@ func TestIndexIngestPublishesAndBuildsContributionOverlay(t *testing.T) {
 		"--title", "Example", "--description", "Example corpus.",
 		"--license", "CC0-1.0", "--source", "https://example.test/data",
 		"--source-category", "public-dataset", "--staging", staging,
-		"--object-base", "s3://openwaldo/lookaside/v1",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
@@ -159,56 +181,6 @@ func TestIndexIngestPublishesAndBuildsContributionOverlay(t *testing.T) {
 	}
 }
 
-func TestIndexIngestLocalOnlyCreatesNoContribution(t *testing.T) {
-	input := filepath.Join(t.TempDir(), "document.txt")
-	if err := os.WriteFile(input, []byte("offline training document"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"\",\n  \"entries\": [{\"name\": \"core\", \"type\": \"dir\"}]\n}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(root, "core"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "core", "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"core\",\n  \"entries\": []\n}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	staging, cache := t.TempDir(), t.TempDir()
-	t.Setenv("WALDO_CACHE", cache)
-	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
-	var stdout, stderr bytes.Buffer
-	code := Run([]string{
-		"--index", root, "--json", "index", "ingest", input, "core/offline",
-		"--title", "Offline", "--license", "CC0-1.0",
-		"--source", "https://example.test/offline", "--source-category", "public-dataset",
-		"--staging", staging, "--local-only",
-	}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
-	}
-	var output struct {
-		Admission struct {
-			Objects []struct {
-				Path string `json:"path"`
-			} `json:"objects"`
-		} `json:"admission"`
-		Contribution any `json:"contribution"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-		t.Fatal(err)
-	}
-	if len(output.Admission.Objects) != 1 || output.Contribution != nil {
-		t.Fatalf("local-only output = %+v", output)
-	}
-	if _, err := os.Stat(output.Admission.Objects[0].Path); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(staging, "contribution")); !os.IsNotExist(err) {
-		t.Fatalf("local-only contribution exists: %v", err)
-	}
-}
-
 func TestIndexIngestPublishesToConfiguredLocalLookaside(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "document.txt")
 	if err := os.WriteFile(input, []byte("local publication document"), 0o644); err != nil {
@@ -227,7 +199,7 @@ func TestIndexIngestPublishesToConfiguredLocalLookaside(t *testing.T) {
 	configurationPath := filepath.Join(t.TempDir(), "config.json")
 	publishedRoot, staging := t.TempDir(), t.TempDir()
 	t.Setenv("WALDO_CONFIG", configurationPath)
-	t.Setenv("WALDO_CACHE", t.TempDir())
+	t.Setenv("WALDO_SCRATCH", t.TempDir())
 	configuration := config.Config{Lookaside: config.Lookaside{Publish: &config.Publish{
 		URL: (&url.URL{Scheme: "file", Path: filepath.ToSlash(publishedRoot)}).String(), Workers: 2,
 	}}}
@@ -335,6 +307,27 @@ func TestLeafHelpDoesNotExecuteCommand(t *testing.T) {
 	}
 }
 
+func TestFlagRichHelpExplainsRetainedOptions(t *testing.T) {
+	for _, test := range []struct {
+		args []string
+		want []string
+	}{
+		{[]string{"index", "ingest", "--help"}, []string{"Required:", "--text-column", "Scratch and recovery", "writable lookaside"}},
+		{[]string{"lookaside", "configure", "--help"}, []string{"verified-download scratch", "test-only filesystem", "standard AWS credential chain"}},
+		{[]string{"index", "export", "--help"}, []string{"--force", "purged only after", "OpenWALDO BOM"}},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(test.args, &stdout, &stderr); code != 0 {
+			t.Fatalf("%v: code = %d, stderr = %q", test.args, code, stderr.String())
+		}
+		for _, want := range test.want {
+			if !strings.Contains(stdout.String(), want) {
+				t.Errorf("%v help missing %q:\n%s", test.args, want, stdout.String())
+			}
+		}
+	}
+}
+
 func TestPlannedCommandIsHonest(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"model", "build"}, &stdout, &stderr); code != 1 {
@@ -356,25 +349,25 @@ func TestUnknownCommandSuggestsScopedHelp(t *testing.T) {
 }
 
 func TestLookasideStatusUsesNamedBackend(t *testing.T) {
-	cacheRoot := filepath.Join(t.TempDir(), "objects")
-	t.Setenv("WALDO_CACHE", cacheRoot)
+	scratchRoot := filepath.Join(t.TempDir(), "objects")
+	t.Setenv("WALDO_SCRATCH", scratchRoot)
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"lookaside", "status"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "lookaside cache") || !strings.Contains(stdout.String(), cacheRoot) {
+	if !strings.Contains(stdout.String(), "lookaside scratch") || !strings.Contains(stdout.String(), scratchRoot) {
 		t.Fatalf("lookaside status = %q", stdout.String())
 	}
 }
 
 func TestLookasideConfigurePersistsMirrors(t *testing.T) {
 	configuration := filepath.Join(t.TempDir(), "config.json")
-	cacheRoot := filepath.Join(t.TempDir(), "objects")
+	scratchRoot := filepath.Join(t.TempDir(), "objects")
 	t.Setenv("WALDO_CONFIG", configuration)
-	t.Setenv("WALDO_CACHE", "")
+	t.Setenv("WALDO_SCRATCH", "")
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"lookaside", "configure", "--cache", cacheRoot, "--mirror", "https://mirror.example/lookaside/v1/"}, &stdout, &stderr)
+	code := Run([]string{"lookaside", "configure", "--scratch", scratchRoot, "--mirror", "https://mirror.example/lookaside/v1/"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
@@ -383,7 +376,7 @@ func TestLookasideConfigurePersistsMirrors(t *testing.T) {
 	if code := Run([]string{"lookaside", "status"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("status code = %d, stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), cacheRoot) || !strings.Contains(stdout.String(), "https://mirror.example/lookaside/v1") {
+	if !strings.Contains(stdout.String(), scratchRoot) || !strings.Contains(stdout.String(), "https://mirror.example/lookaside/v1") {
 		t.Fatalf("lookaside status = %q", stdout.String())
 	}
 }
@@ -392,7 +385,7 @@ func TestLookasideConfigurePersistsPublisher(t *testing.T) {
 	configurationPath := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("WALDO_CONFIG", configurationPath)
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"lookaside", "configure", "--publish", "s3://bucket/lookaside/v1/", "--publish-region", "us-west-2", "--upload-workers", "6", "--keep-local"}, &stdout, &stderr)
+	code := Run([]string{"lookaside", "configure", "--publish", "s3://bucket/lookaside/v1/", "--publish-region", "us-west-2", "--upload-workers", "6"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
@@ -401,7 +394,7 @@ func TestLookasideConfigurePersistsPublisher(t *testing.T) {
 		t.Fatal(err)
 	}
 	publish := configuration.Lookaside.Publish
-	if publish == nil || publish.URL != "s3://bucket/lookaside/v1" || publish.Region != "us-west-2" || publish.Workers != 6 || !publish.KeepLocal {
+	if publish == nil || publish.URL != "s3://bucket/lookaside/v1" || publish.Region != "us-west-2" || publish.Workers != 6 {
 		t.Fatalf("publish configuration = %+v", publish)
 	}
 	stdout.Reset()
@@ -430,5 +423,19 @@ func TestLookasideConfigureAcceptsLocalPublisher(t *testing.T) {
 	want := (&url.URL{Scheme: "file", Path: filepath.ToSlash(root)}).String()
 	if configuration.Lookaside.Publish == nil || configuration.Lookaside.Publish.URL != want || configuration.Lookaside.Publish.Workers != 2 {
 		t.Fatalf("local publisher = %+v, want %s", configuration.Lookaside.Publish, want)
+	}
+}
+
+func TestLookasideConfigureRejectsRemovedRetentionAndEndpointFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"lookaside", "configure", "--keep-local"},
+		{"lookaside", "configure", "--publish-endpoint", "https://example.test"},
+		{"lookaside", "configure", "--publish-path-style"},
+	} {
+		t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+		var stdout, stderr bytes.Buffer
+		if code := Run(args, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "unknown lookaside configure option") {
+			t.Fatalf("%v: code = %d, stderr = %q", args, code, stderr.String())
+		}
 	}
 }

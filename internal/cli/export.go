@@ -76,6 +76,11 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err := provenance.WriteCorpusExport(options.Output, document); err != nil {
 		return err
 	}
+	purged, err := cache.PurgeUsed()
+	if err != nil {
+		return fmt.Errorf("purge successful export cache: %w", err)
+	}
+	fmt.Fprintf(stderr, "purged %s cached objects (%s)\n", humanInteger(purged.Objects), humanBytes(purged.Bytes))
 	existing := 0
 	for _, file := range files {
 		if file.Existing {
@@ -89,7 +94,8 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 			Files    int                 `json:"files"`
 			Existing int                 `json:"existing"`
 			BOM      string              `json:"bom"`
-		}{Output: options.Output, Totals: bom.Totals, Files: len(files), Existing: existing, BOM: "EXPORT.json"})
+			Purged   lookaside.Stats     `json:"scratch_purged"`
+		}{Output: options.Output, Totals: bom.Totals, Files: len(files), Existing: existing, BOM: "EXPORT.json", Purged: purged})
 	}
 	fmt.Fprintf(stdout, "exported %s files (%s already verified) and EXPORT.json to %s\n",
 		humanInteger(int64(len(files))), humanInteger(int64(existing)), options.Output)

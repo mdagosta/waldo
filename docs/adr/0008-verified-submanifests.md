@@ -22,7 +22,7 @@ field. Offline list, summary, and structural verification use the root's
 declared totals and do not imply that the external tree was inspected.
 
 Before object materialization, BOM construction recursively fetches every
-submanifest through the verified lookaside cache. It checks each object's
+submanifest through verified lookaside scratch. It checks each object's
 SHA-256, validates its `kind` and `schema`, resolves leaf fields against the
 Git-pinned manifest, and verifies that every parent's count, document, token,
 and byte totals exactly equal its descendants. Repeated submanifest hashes are

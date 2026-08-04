@@ -189,7 +189,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(progress, "verifying %s objects (%s) through lookaside cache %s\n",
+	fmt.Fprintf(progress, "verifying %s objects (%s) through lookaside scratch %s\n",
 		humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes), cache.Root())
 	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
 		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
@@ -199,14 +199,20 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	if err != nil {
 		return err
 	}
+	purged, err := cache.PurgeUsed()
+	if err != nil {
+		return fmt.Errorf("purge successful verification cache: %w", err)
+	}
+	fmt.Fprintf(progress, "purged %s cached objects (%s)\n", humanInteger(purged.Objects), humanBytes(purged.Bytes))
 	if context.JSON {
 		return writeJSON(stdout, struct {
 			Path         string                  `json:"path"`
 			Verification waldoindex.Verification `json:"verification"`
 			Objects      int                     `json:"objects_verified"`
 			Bytes        int64                   `json:"bytes_verified"`
-			Cache        string                  `json:"cache"`
-		}{Path: target.Rel, Verification: verification, Objects: len(materialized.Objects), Bytes: bom.Totals.Bytes, Cache: cache.Root()})
+			Scratch      string                  `json:"scratch"`
+			Purged       lookaside.Stats         `json:"scratch_purged"`
+		}{Path: target.Rel, Verification: verification, Objects: len(materialized.Objects), Bytes: bom.Totals.Bytes, Scratch: cache.Root(), Purged: purged})
 	}
 	fmt.Fprintf(stdout, "verified %s: %s directories, %s corpora, %s objects (%s)\n",
 		displayPath(target.Rel), humanInteger(verification.Directories), humanInteger(verification.Corpora),

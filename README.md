@@ -14,7 +14,7 @@ The project has completed its contracts, read-only index foundation, and
 **Phase 2: verified OpenWALDO BOMs**, and now has the first end-to-end corpus
 contribution path. The binary can list, show,
 summarize, and verify the public `waldo-index`; materialize objects through a
-hash-verifying lookaside cache with ordered fallback mirrors; scrub that cache;
+hash-verifying lookaside scratch with ordered fallback mirrors; inspect failed-run leftovers;
 and export selected shards as native objects or canonical JSONL with an
 `EXPORT.json` provenance record. It can also probe text/Markdown/raw Parquet,
 write canonical schema-1 Parquet, publish shards to S3 with bounded concurrency

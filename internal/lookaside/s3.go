@@ -47,10 +47,7 @@ func NewS3Publisher(ctx context.Context, publish config.Publish) (*S3Publisher, 
 		return nil, fmt.Errorf("load AWS configuration: %w", err)
 	}
 	client := s3.NewFromConfig(awsConfiguration, func(options *s3.Options) {
-		options.UsePathStyle = publish.PathStyle
-		if publish.Endpoint != "" {
-			options.BaseEndpoint = aws.String(publish.Endpoint)
-		}
+		options.UsePathStyle = false
 	})
 	return &S3Publisher{api: client, baseURL: strings.TrimRight(publish.URL, "/"), bucket: bucket, prefix: prefix}, nil
 }

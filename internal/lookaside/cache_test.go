@@ -80,32 +80,27 @@ func TestFetchRepairsCorruptCacheEntry(t *testing.T) {
 	}
 }
 
-func TestAdmitPublishesAndReusesVerifiedObject(t *testing.T) {
+func TestPurgeUsedRemovesSuccessfulFetches(t *testing.T) {
 	root := t.TempDir()
-	cache, err := NewCache(root, nil)
+	content := "temporary object"
+	digest := digestOf(content)
+	cache, err := NewCache(root, &http.Client{Transport: &fakeTransport{content: content}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := []byte("canonical parquet fixture")
-	digestBytes := sha256.Sum256(content)
-	digest := hex.EncodeToString(digestBytes[:])
-	source := filepath.Join(t.TempDir(), "object")
-	if err := os.WriteFile(source, content, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	destination, err := cache.Admit(context.Background(), source, digest, int64(len(content)))
+	path, err := cache.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := VerifyFile(destination, digest, int64(len(content))); err != nil {
-		t.Fatal(err)
-	}
-	again, err := cache.Admit(context.Background(), source, digest, int64(len(content)))
+	purged, err := cache.PurgeUsed()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again != destination {
-		t.Fatalf("second admission = %q, want %q", again, destination)
+	if purged.Objects != 1 || purged.Bytes != int64(len(content)) {
+		t.Fatalf("PurgeUsed() = %+v", purged)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("fetched cache object remains: %v", err)
 	}
 }
 

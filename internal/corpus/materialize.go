@@ -29,7 +29,7 @@ type MaterializeProgress struct {
 // while retaining each manifest reference in the returned sequence.
 func Materialize(ctx context.Context, bom BOM, cache *lookaside.Cache, progress func(MaterializeProgress)) (Materialized, error) {
 	if cache == nil {
-		return Materialized{}, fmt.Errorf("lookaside cache is required")
+		return Materialized{}, fmt.Errorf("lookaside scratch is required")
 	}
 	result := Materialized{BOM: bom, Objects: make([]MaterializedObject, 0, len(bom.Shards))}
 	fetched := map[string]string{}

@@ -19,18 +19,15 @@ type Config struct {
 }
 
 type Lookaside struct {
-	Cache   string   `json:"cache,omitempty"`
+	Scratch string   `json:"scratch,omitempty"`
 	Mirrors []string `json:"mirrors,omitempty"`
 	Publish *Publish `json:"publish,omitempty"`
 }
 
 type Publish struct {
-	URL       string `json:"url"`
-	Region    string `json:"region,omitempty"`
-	Endpoint  string `json:"endpoint,omitempty"`
-	PathStyle bool   `json:"path_style,omitempty"`
-	Workers   int    `json:"workers,omitempty"`
-	KeepLocal bool   `json:"keep_local,omitempty"`
+	URL     string `json:"url"`
+	Region  string `json:"region,omitempty"`
+	Workers int    `json:"workers,omitempty"`
 }
 
 func Default() Config { return Config{Schema: Schema} }
@@ -144,8 +141,8 @@ func validatePublish(publish *Publish) error {
 		if (parsed.Host != "" && parsed.Host != "localhost") || parsed.Path == "" || !filepath.IsAbs(filepath.FromSlash(parsed.Path)) || parsed.RawQuery != "" || parsed.Fragment != "" {
 			return fmt.Errorf("local lookaside publish URL must be an absolute file:/// URL")
 		}
-		if publish.Region != "" || publish.Endpoint != "" || publish.PathStyle {
-			return fmt.Errorf("S3 region, endpoint, and path-style options cannot be used with a local publisher")
+		if publish.Region != "" {
+			return fmt.Errorf("S3 region cannot be used with a local publisher")
 		}
 	default:
 		return fmt.Errorf("lookaside publish URL must use s3:// or file://")
@@ -157,21 +154,15 @@ func validatePublish(publish *Publish) error {
 	if publish.Workers < 1 || publish.Workers > 32 {
 		return fmt.Errorf("lookaside publish workers must be in 1..32")
 	}
-	if publish.Endpoint != "" {
-		endpoint, err := url.Parse(publish.Endpoint)
-		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" {
-			return fmt.Errorf("lookaside publish endpoint must be an http:// or https:// URL")
-		}
-	}
 	return nil
 }
 
-func EffectiveCacheRoot(config Config) (string, error) {
-	if root := os.Getenv("WALDO_CACHE"); root != "" {
+func EffectiveScratchRoot(config Config) (string, error) {
+	if root := os.Getenv("WALDO_SCRATCH"); root != "" {
 		return filepath.Abs(root)
 	}
-	if config.Lookaside.Cache != "" {
-		return filepath.Abs(config.Lookaside.Cache)
+	if config.Lookaside.Scratch != "" {
+		return filepath.Abs(config.Lookaside.Scratch)
 	}
 	base, err := os.UserCacheDir()
 	if err != nil {

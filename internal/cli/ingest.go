@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"strconv"
 	"strings"
 
 	"github.com/openwaldo/waldo-new/internal/config"
@@ -30,8 +29,8 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		if err != nil {
 			return err
 		}
-		if !options.LocalOnly && configuration.Lookaside.Publish == nil && options.ObjectBase == "" {
-			return usageError{message: "index ingest needs a writable lookaside; configure --publish s3://bucket/prefix, use --publish-local <directory>, or pass --object-base"}
+		if configuration.Lookaside.Publish == nil {
+			return usageError{message: "index ingest needs a writable lookaside; configure --publish s3://bucket/prefix or --publish-local <directory>"}
 		}
 	}
 	execution := ingest.WithProgress(context.Execution, ingestProgressReporter(stderr, context.JSON))
@@ -68,49 +67,19 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 				return err
 			}
 		}
-		cacheRoot, err := config.EffectiveCacheRoot(configuration)
+		scratchRoot, err := config.EffectiveScratchRoot(configuration)
 		if err != nil {
 			return err
 		}
-		if err := ingest.ValidateWorkLocations(target.Root, staging, cacheRoot); err != nil {
+		if err := ingest.ValidateWorkLocations(target.Root, staging, scratchRoot); err != nil {
 			return err
 		}
-		if options.LocalOnly {
-			cache, err := lookaside.NewCache(cacheRoot, nil, lookaside.WithMirrors(configuration.Lookaside.Mirrors))
-			if err != nil {
-				return err
-			}
-			assembly, admission, err := ingest.ExecuteAdmission(execution, plan, staging, cache)
-			if err != nil {
-				return err
-			}
-			if context.JSON {
-				return writeJSON(stdout, struct {
-					Identity  string                 `json:"identity"`
-					Plan      ingest.Plan            `json:"plan"`
-					Assembly  ingest.AssemblyResult  `json:"assembly"`
-					Admission ingest.AdmissionResult `json:"admission"`
-				}{identity, plan, assembly, admission})
-			}
-			fmt.Fprintf(stdout, "local ingestion %s complete\n", identity[:12])
-			fmt.Fprintf(stdout, "  records  %s input, %s retained, %s duplicate\n", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
-			fmt.Fprintf(stdout, "  objects  %s admitted to %s\n", humanInteger(int64(len(admission.Objects))), admission.CacheRoot)
-			fmt.Fprintln(stdout, "no manifest or contribution was created; remote publication is required before Git index data may reference these objects")
-			return nil
-		}
 		publish := configuration.Lookaside.Publish
-		if publish == nil {
-			publish = &config.Publish{URL: options.ObjectBase, Workers: 4}
-		} else if options.ObjectBase != "" {
-			copy := *publish
-			copy.URL = options.ObjectBase
-			publish = &copy
-		}
 		publisher, err := newIngestPublisher(execution, *publish)
 		if err != nil {
 			return err
 		}
-		assembly, publication, err := ingest.ExecutePublication(execution, plan, staging, publisher, publish.Workers, publish.KeepLocal)
+		assembly, publication, err := ingest.ExecutePublication(execution, plan, staging, publisher, publish.Workers)
 		if err != nil {
 			return err
 		}
@@ -212,19 +181,15 @@ func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSi
 			fmt.Fprintf(output, "upload %d  %s verified at %s\n", event.Sequence, short, event.Remote)
 		case event.Phase == "staging" && event.Status == "purged":
 			fmt.Fprintf(output, "purged %d  %s reclaimed %s\n", event.Sequence, short, humanBytes(event.ReclaimedBytes))
-		case event.Phase == "local" && event.Status == "admitted":
-			fmt.Fprintf(output, "local %d   %s admitted (%s)\n", event.Sequence, short, humanBytes(event.Bytes))
 		}
 	}
 }
 
 type indexIngestOptions struct {
-	Request    ingest.PlanRequest
-	Inputs     []string
-	DryRun     bool
-	LocalOnly  bool
-	Staging    string
-	ObjectBase string
+	Request ingest.PlanRequest
+	Inputs  []string
+	DryRun  bool
+	Staging string
 }
 
 func parseIndexIngest(args []string) (indexIngestOptions, error) {
@@ -242,8 +207,6 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 		switch arg {
 		case "--dry-run":
 			options.DryRun = true
-		case "--local-only":
-			options.LocalOnly = true
 		case "--title":
 			options.Request.Title, err = value("--title")
 		case "--description":
@@ -258,18 +221,8 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 			options.Request.Source.Category, err = value("--source-category")
 		case "--text-column":
 			options.Request.TextColumn, err = value("--text-column")
-		case "--mode":
-			options.Request.Mode, err = value("--mode")
 		case "--staging":
 			options.Staging, err = value("--staging")
-		case "--object-base":
-			options.ObjectBase, err = value("--object-base")
-		case "--memory":
-			var raw string
-			raw, err = value("--memory")
-			if err == nil {
-				options.Request.MemoryBytes, err = parseMemory(raw)
-			}
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return indexIngestOptions{}, usageError{message: fmt.Sprintf("unknown index ingest option %q", arg)}
@@ -283,12 +236,6 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 	if len(options.Inputs) != 2 {
 		return indexIngestOptions{}, usageError{message: "index ingest requires exactly two positional arguments: <input> <destination>"}
 	}
-	if options.DryRun && options.LocalOnly {
-		return indexIngestOptions{}, usageError{message: "--dry-run and --local-only cannot be combined"}
-	}
-	if options.LocalOnly && options.ObjectBase != "" {
-		return indexIngestOptions{}, usageError{message: "--local-only and --object-base cannot be combined"}
-	}
 	options.Request.Destination = options.Inputs[1]
 	options.Inputs = options.Inputs[:1]
 	request := &options.Request
@@ -299,27 +246,4 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 		request.Source.Name = path.Base(strings.TrimSuffix(request.Destination, "/"))
 	}
 	return options, nil
-}
-
-func parseMemory(value string) (int64, error) {
-	upper := strings.ToUpper(strings.TrimSpace(value))
-	units := []struct {
-		suffix string
-		scale  int64
-	}{{"GIB", 1 << 30}, {"MIB", 1 << 20}, {"GB", 1_000_000_000}, {"MB", 1_000_000}}
-	for _, unit := range units {
-		if strings.HasSuffix(upper, unit.suffix) {
-			number := strings.TrimSpace(strings.TrimSuffix(upper, unit.suffix))
-			parsed, err := strconv.ParseInt(number, 10, 64)
-			if err != nil || parsed <= 0 || parsed > (1<<63-1)/unit.scale {
-				return 0, usageError{message: fmt.Sprintf("invalid --memory value %q", value)}
-			}
-			return parsed * unit.scale, nil
-		}
-	}
-	parsed, err := strconv.ParseInt(upper, 10, 64)
-	if err != nil || parsed <= 0 {
-		return 0, usageError{message: fmt.Sprintf("invalid --memory value %q", value)}
-	}
-	return parsed, nil
 }

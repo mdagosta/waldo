@@ -55,7 +55,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 
 	cache := filepath.Join(t.TempDir(), "cache")
 	destination := filepath.Join(t.TempDir(), "export")
-	t.Setenv("WALDO_CACHE", cache)
+	t.Setenv("WALDO_SCRATCH", cache)
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--index", root, "index", "export", "books", "--output", destination}, &stdout, &stderr)
@@ -75,6 +75,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("exported parquet files = %v", matches)
 	}
+	assertNoCacheFiles(t, cache)
 	stdout.Reset()
 	stderr.Reset()
 	if code := Run([]string{"bom", "verify", destination}, &stdout, &stderr); code != 0 {
@@ -109,6 +110,26 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(string(jsonl), `"text":"small native shard"`) {
 		t.Fatalf("JSONL = %q", jsonl)
+	}
+	assertNoCacheFiles(t, cache)
+}
+
+func assertNoCacheFiles(t *testing.T, root string) {
+	t.Helper()
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if !entry.IsDir() {
+			t.Fatalf("cache file remains after successful command: %s", path)
+		}
+		return nil
+	})
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
 	}
 }
 

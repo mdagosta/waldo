@@ -17,6 +17,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/openwaldo/waldo-new/internal/config"
 )
@@ -25,6 +26,8 @@ type Cache struct {
 	root    string
 	client  *http.Client
 	mirrors []string
+	mu      sync.Mutex
+	used    map[string]bool
 }
 
 type Option func(*Cache)
@@ -37,7 +40,7 @@ func WithMirrors(mirrors []string) Option {
 
 func NewCache(root string, client *http.Client, options ...Option) (*Cache, error) {
 	if root == "" {
-		return nil, fmt.Errorf("lookaside cache root is required")
+		return nil, fmt.Errorf("lookaside scratch root is required")
 	}
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -46,7 +49,7 @@ func NewCache(root string, client *http.Client, options ...Option) (*Cache, erro
 	if client == nil {
 		client = http.DefaultClient
 	}
-	cache := &Cache{root: abs, client: client}
+	cache := &Cache{root: abs, client: client, used: map[string]bool{}}
 	for _, option := range options {
 		option(cache)
 	}
@@ -58,7 +61,7 @@ func DefaultCache() (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	root, err := config.EffectiveCacheRoot(configuration)
+	root, err := config.EffectiveScratchRoot(configuration)
 	if err != nil {
 		return nil, err
 	}
@@ -76,67 +79,6 @@ func (cache *Cache) Path(digest string) (string, error) {
 	return filepath.Join(cache.root, digest[:2], digest[2:4], digest), nil
 }
 
-// Admit copies a locally generated object into the content-addressed cache.
-// The source and any existing destination are verified. Publication uses an
-// atomic hard link from a fully synchronized sibling temporary file, so it
-// never replaces a valid object or exposes a partial one.
-func (cache *Cache) Admit(ctx context.Context, source, digest string, expectedBytes int64) (string, error) {
-	destination, err := cache.Path(digest)
-	if err != nil {
-		return "", err
-	}
-	if err := VerifyFile(source, digest, expectedBytes); err != nil {
-		return "", fmt.Errorf("verify admission source: %w", err)
-	}
-	if err := VerifyFile(destination, digest, expectedBytes); err == nil {
-		return destination, nil
-	} else if !os.IsNotExist(err) {
-		if removeErr := os.Remove(destination); removeErr != nil && !os.IsNotExist(removeErr) {
-			return "", fmt.Errorf("remove corrupt cached object %s: %w", digest, removeErr)
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-		return "", err
-	}
-	input, err := os.Open(source)
-	if err != nil {
-		return "", err
-	}
-	defer input.Close()
-	temporary, err := os.CreateTemp(filepath.Dir(destination), ".waldo-admit-*")
-	if err != nil {
-		return "", err
-	}
-	temporaryPath := temporary.Name()
-	defer func() {
-		_ = temporary.Close()
-		_ = os.Remove(temporaryPath)
-	}()
-	hasher := sha256.New()
-	written, err := io.Copy(io.MultiWriter(temporary, hasher), &contextReader{ctx: ctx, reader: input})
-	if err != nil {
-		return "", err
-	}
-	if written != expectedBytes || hex.EncodeToString(hasher.Sum(nil)) != digest {
-		return "", fmt.Errorf("admitted object changed while it was copied")
-	}
-	if err := temporary.Sync(); err != nil {
-		return "", err
-	}
-	if err := temporary.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Link(temporaryPath, destination); err != nil {
-		if verifyErr := VerifyFile(destination, digest, expectedBytes); verifyErr != nil {
-			return "", fmt.Errorf("publish admitted object: %w", err)
-		}
-	}
-	if err := syncDirectory(filepath.Dir(destination)); err != nil {
-		return "", err
-	}
-	return destination, nil
-}
-
 // Fetch returns a local verified object path. An existing cache entry is
 // re-hashed before use. Downloads are streamed to a sibling temporary file and
 // become visible only after their digest and optional expected size match.
@@ -147,6 +89,7 @@ func (cache *Cache) Fetch(ctx context.Context, objectURL, digest string, expecte
 	}
 	if info, err := os.Stat(destination); err == nil && !info.IsDir() {
 		if err := VerifyFile(destination, digest, expectedBytes); err == nil {
+			cache.markUsed(destination)
 			return destination, nil
 		}
 		// A cache entry is derived and addressed by its expected content. Once
@@ -172,12 +115,62 @@ func (cache *Cache) Fetch(ctx context.Context, objectURL, digest string, expecte
 		}
 		seen[candidate] = true
 		if err := cache.fetchCandidate(ctx, candidate, destination, digest, expectedBytes); err == nil {
+			cache.markUsed(destination)
 			return destination, nil
 		} else {
 			failures = append(failures, err)
 		}
 	}
 	return "", fmt.Errorf("object %s was unavailable from its manifest URL and %d configured mirror(s): %w", digest, len(cache.mirrors), errors.Join(failures...))
+}
+
+// PurgeUsed removes only objects successfully returned by Fetch on this Cache
+// instance. Callers invoke it after the consuming operation commits; failures
+// deliberately leave objects available for diagnosis and retry.
+func (cache *Cache) PurgeUsed() (Stats, error) {
+	cache.mu.Lock()
+	paths := make([]string, 0, len(cache.used))
+	for path := range cache.used {
+		paths = append(paths, path)
+	}
+	cache.mu.Unlock()
+	var purged Stats
+	for _, objectPath := range paths {
+		digest := filepath.Base(objectPath)
+		expected, err := cache.Path(digest)
+		if err != nil || filepath.Clean(objectPath) != expected {
+			return purged, fmt.Errorf("refuse to purge invalid cache object path %q", objectPath)
+		}
+		info, err := os.Stat(objectPath)
+		if err == nil {
+			if err := os.Remove(objectPath); err != nil {
+				return purged, err
+			}
+			purged.Objects++
+			purged.Bytes += info.Size()
+		} else if !os.IsNotExist(err) {
+			return purged, err
+		}
+		cache.mu.Lock()
+		delete(cache.used, objectPath)
+		cache.mu.Unlock()
+		second := filepath.Dir(objectPath)
+		first := filepath.Dir(second)
+		_ = os.Remove(second)
+		_ = os.Remove(first)
+	}
+	if purged.Objects > 0 {
+		if err := syncDirectory(cache.root); err != nil && !os.IsNotExist(err) {
+			return purged, err
+		}
+	}
+	return purged, nil
+}
+
+func (cache *Cache) markUsed(path string) {
+	cache.mu.Lock()
+	cache.used[path] = true
+	cache.mu.Unlock()
 }
 
 func (cache *Cache) fetchCandidate(ctx context.Context, objectURL, destination, digest string, expectedBytes int64) error {

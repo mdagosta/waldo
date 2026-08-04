@@ -127,31 +127,6 @@ func TestExecuteAssemblyRefusesCorruptCheckpoint(t *testing.T) {
 	}
 }
 
-func TestExecuteAdmissionPublishesAndResumesLookasideObjects(t *testing.T) {
-	input := filepath.Join(t.TempDir(), "input.txt")
-	writeFixture(t, input, "durable")
-	plan := textFixturePlan(t, input)
-	staging := t.TempDir()
-	cache, err := lookaside.NewCache(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	assembly, first, err := ExecuteAdmission(context.Background(), plan, staging, cache)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(first.Objects) != 1 || first.Objects[0].SHA256 != assembly.Objects[0].SHA256 {
-		t.Fatalf("admission = %+v", first)
-	}
-	_, second, err := ExecuteAdmission(context.Background(), plan, staging, cache)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Objects[0] != first.Objects[0] {
-		t.Fatalf("resumed admission = %+v, want %+v", second, first)
-	}
-}
-
 func TestExecutePublicationOverlapsUploadsAndPurgesVerifiedObjects(t *testing.T) {
 	input := publicationFixtureDirectory(t, "alpha", "beta", "gamma", "delta")
 	plan := textFixturePlan(t, input)
@@ -162,7 +137,7 @@ func TestExecutePublicationOverlapsUploadsAndPurgesVerifiedObjects(t *testing.T)
 	publisher := &fakePublisher{}
 	var events []ProgressEvent
 	ctx := WithProgress(context.Background(), func(event ProgressEvent) { events = append(events, event) })
-	assembly, publication, err := ExecutePublication(ctx, plan, staging, publisher, 2, false)
+	assembly, publication, err := ExecutePublication(ctx, plan, staging, publisher, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +166,7 @@ func TestExecutePublicationOverlapsUploadsAndPurgesVerifiedObjects(t *testing.T)
 	if ready != len(assembly.Objects) || verified != ready || purged != ready {
 		t.Fatalf("progress ready=%d verified=%d purged=%d", ready, verified, purged)
 	}
-	if _, _, err := ExecutePublication(context.Background(), plan, staging, publisher, 2, false); err != nil {
+	if _, _, err := ExecutePublication(context.Background(), plan, staging, publisher, 2); err != nil {
 		t.Fatalf("resume published ingestion: %v", err)
 	}
 }
@@ -204,10 +179,10 @@ func TestExecutePublicationRecoversAfterPartialFailure(t *testing.T) {
 	plan.Writer.CompressedMaximum = 1 << 20
 	staging := t.TempDir()
 	publisher := &fakePublisher{failOnce: true}
-	if _, _, err := ExecutePublication(context.Background(), plan, staging, publisher, 2, false); err == nil {
+	if _, _, err := ExecutePublication(context.Background(), plan, staging, publisher, 2); err == nil {
 		t.Fatal("expected injected upload failure")
 	}
-	assembly, publication, err := ExecutePublication(context.Background(), plan, staging, publisher, 2, false)
+	assembly, publication, err := ExecutePublication(context.Background(), plan, staging, publisher, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,19 +198,6 @@ func publicationFixtureDirectory(t *testing.T, documents ...string) string {
 		writeFixture(t, filepath.Join(directory, fmt.Sprintf("%02d.txt", index)), document)
 	}
 	return directory
-}
-
-func TestExecutePublicationKeepLocalRetainsObjects(t *testing.T) {
-	input := filepath.Join(t.TempDir(), "input.txt")
-	writeFixture(t, input, "durable")
-	plan := textFixturePlan(t, input)
-	assembly, _, err := ExecutePublication(context.Background(), plan, t.TempDir(), &fakePublisher{}, 1, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(assembly.Objects[0].Path); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func textFixturePlan(t *testing.T, input string) Plan {

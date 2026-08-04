@@ -38,7 +38,7 @@ Implemented:
 
 - License include/exclude policy
 - Immutable OpenWALDO BOM with Git, manifest, shard, source, and license pins
-- Local content-addressed cache with atomic verified admission
+- Local content-addressed scratch with atomic verified materialization
 - Anonymous HTTP and S3 lookaside reads plus local-file fixtures
 - Machine-local cache configuration and ordered read-mirror fallback
 - `waldo index verify --objects`
@@ -63,7 +63,6 @@ Implemented foundation:
 - Bounded progress event stream for probe, conversion, shard, upload, and purge
 - Parallel S3 lookaside publication with remote verification and backpressure
 - Journal-before-purge staged-object reclamation; optional local retention
-- Local-only lookaside admission as an explicit offline mode
 - Manifest and navigation generation
 - Durable staging and recovery
 - DCO-oriented Git handoff

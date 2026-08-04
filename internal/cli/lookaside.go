@@ -22,16 +22,16 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 	for i := 0; i < len(args); i++ {
 		argument := args[i]
 		switch {
-		case argument == "--cache":
-			value, next, err := optionValue(args, i, "--cache")
+		case argument == "--scratch":
+			value, next, err := optionValue(args, i, "--scratch")
 			if err != nil {
 				return err
 			}
-			configuration.Lookaside.Cache, i, changed = value, next, true
-		case strings.HasPrefix(argument, "--cache="):
-			configuration.Lookaside.Cache, changed = strings.TrimPrefix(argument, "--cache="), true
-		case argument == "--default-cache":
-			configuration.Lookaside.Cache, changed = "", true
+			configuration.Lookaside.Scratch, i, changed = value, next, true
+		case strings.HasPrefix(argument, "--scratch="):
+			configuration.Lookaside.Scratch, changed = strings.TrimPrefix(argument, "--scratch="), true
+		case argument == "--default-scratch":
+			configuration.Lookaside.Scratch, changed = "", true
 		case argument == "--mirror":
 			value, next, err := optionValue(args, i, "--mirror")
 			if err != nil {
@@ -70,9 +70,8 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 			}
 			previous := ensurePublish(&configuration)
 			configuration.Lookaside.Publish = &config.Publish{
-				URL:       (&url.URL{Scheme: "file", Path: filepath.ToSlash(absolute)}).String(),
-				Workers:   previous.Workers,
-				KeepLocal: previous.KeepLocal,
+				URL:     (&url.URL{Scheme: "file", Path: filepath.ToSlash(absolute)}).String(),
+				Workers: previous.Workers,
 			}
 			i, changed = next, true
 		case argument == "--publish-region":
@@ -81,16 +80,6 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 				return err
 			}
 			ensurePublish(&configuration).Region, i, changed = value, next, true
-		case argument == "--publish-endpoint":
-			value, next, err := optionValue(args, i, "--publish-endpoint")
-			if err != nil {
-				return err
-			}
-			ensurePublish(&configuration).Endpoint, i, changed = value, next, true
-		case argument == "--publish-path-style":
-			ensurePublish(&configuration).PathStyle, changed = true, true
-		case argument == "--no-publish-path-style":
-			ensurePublish(&configuration).PathStyle, changed = false, true
 		case argument == "--upload-workers":
 			value, next, err := optionValue(args, i, "--upload-workers")
 			if err != nil {
@@ -101,10 +90,6 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 				return usageError{message: "--upload-workers needs an integer"}
 			}
 			ensurePublish(&configuration).Workers, i, changed = workers, next, true
-		case argument == "--keep-local":
-			ensurePublish(&configuration).KeepLocal, changed = true, true
-		case argument == "--no-keep-local":
-			ensurePublish(&configuration).KeepLocal, changed = false, true
 		case argument == "--clear-publish":
 			configuration.Lookaside.Publish, changed = nil, true
 		default:
@@ -112,17 +97,17 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 		}
 	}
 	if !changed {
-		return usageError{message: "lookaside configure requires a cache, mirror, or publish option"}
+		return usageError{message: "lookaside configure requires a scratch, mirror, or publish option"}
 	}
 	if err := config.Save(configuration); err != nil {
 		return err
 	}
-	// Reload to report normalized mirror values and the effective cache path.
+	// Reload to report normalized mirrors and the effective scratch path.
 	configuration, err = config.Load()
 	if err != nil {
 		return err
 	}
-	cacheRoot, err := config.EffectiveCacheRoot(configuration)
+	scratchRoot, err := config.EffectiveScratchRoot(configuration)
 	if err != nil {
 		return err
 	}
@@ -133,13 +118,13 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 	if context.JSON {
 		return writeJSON(stdout, struct {
 			Path    string          `json:"path"`
-			Cache   string          `json:"cache"`
+			Scratch string          `json:"scratch"`
 			Mirrors []string        `json:"mirrors"`
 			Publish *config.Publish `json:"publish,omitempty"`
-		}{Path: configPath, Cache: cacheRoot, Mirrors: configuration.Lookaside.Mirrors, Publish: configuration.Lookaside.Publish})
+		}{Path: configPath, Scratch: scratchRoot, Mirrors: configuration.Lookaside.Mirrors, Publish: configuration.Lookaside.Publish})
 	}
 	fmt.Fprintf(stdout, "configured lookaside in %s\n", configPath)
-	fmt.Fprintf(stdout, "  cache    %s\n", cacheRoot)
+	fmt.Fprintf(stdout, "  scratch  %s\n", scratchRoot)
 	if len(configuration.Lookaside.Mirrors) == 0 {
 		fmt.Fprintln(stdout, "  mirrors  (none)")
 	} else {
@@ -155,7 +140,7 @@ func runLookasideConfigure(context Context, args []string, stdout, _ io.Writer) 
 		fmt.Fprintln(stdout, "  publish  (none)")
 	} else {
 		publish := configuration.Lookaside.Publish
-		fmt.Fprintf(stdout, "  publish  %s (%d workers, keep local: %t)\n", publish.URL, publish.Workers, publish.KeepLocal)
+		fmt.Fprintf(stdout, "  publish  %s (%d workers)\n", publish.URL, publish.Workers)
 	}
 	return nil
 }
@@ -191,7 +176,7 @@ func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) err
 			Stats   lookaside.Stats `json:"stats"`
 		}{Root: cache.Root(), Mirrors: cache.Mirrors(), Publish: configuration.Lookaside.Publish, Stats: stats})
 	}
-	fmt.Fprintf(stdout, "lookaside cache  %s\n", cache.Root())
+	fmt.Fprintf(stdout, "lookaside scratch  %s\n", cache.Root())
 	fmt.Fprintf(stdout, "  objects        %s\n", humanInteger(stats.Objects))
 	fmt.Fprintf(stdout, "  bytes          %s\n", humanBytes(stats.Bytes))
 	if stats.Other > 0 {
@@ -212,7 +197,7 @@ func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) err
 		fmt.Fprintln(stdout, "  publish        (none)")
 	} else {
 		publish := configuration.Lookaside.Publish
-		fmt.Fprintf(stdout, "  publish        %s (%d workers, keep local: %t)\n", publish.URL, publish.Workers, publish.KeepLocal)
+		fmt.Fprintf(stdout, "  publish        %s (%d workers)\n", publish.URL, publish.Workers)
 	}
 	return nil
 }
@@ -244,7 +229,7 @@ func runLookasideVerify(context Context, args []string, stdout, _ io.Writer) err
 		}
 	}
 	if len(result.Corrupt) > 0 {
-		return fmt.Errorf("lookaside cache contains %d corrupt object(s)", len(result.Corrupt))
+		return fmt.Errorf("lookaside scratch contains %d corrupt object(s)", len(result.Corrupt))
 	}
 	return nil
 }

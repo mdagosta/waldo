@@ -10,11 +10,11 @@ import (
 func TestSaveLoadAndEffectiveCache(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("WALDO_CONFIG", path)
-	t.Setenv("WALDO_CACHE", "")
+	t.Setenv("WALDO_SCRATCH", "")
 	want := Config{Lookaside: Lookaside{
-		Cache:   filepath.Join(t.TempDir(), "cache"),
+		Scratch: filepath.Join(t.TempDir(), "scratch"),
 		Mirrors: []string{"https://one.example/root/", "https://one.example/root", "s3://bucket/root"},
-		Publish: &Publish{URL: "s3://bucket/write/", Region: "us-west-2", Workers: 3, KeepLocal: true},
+		Publish: &Publish{URL: "s3://bucket/write/", Region: "us-west-2", Workers: 3},
 	}}
 	if err := Save(want); err != nil {
 		t.Fatal(err)
@@ -36,12 +36,12 @@ func TestSaveLoadAndEffectiveCache(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Load() = %+v, want %+v", got, want)
 	}
-	root, err := EffectiveCacheRoot(got)
+	root, err := EffectiveScratchRoot(got)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if root != want.Lookaside.Cache {
-		t.Fatalf("EffectiveCacheRoot() = %q, want %q", root, want.Lookaside.Cache)
+	if root != want.Lookaside.Scratch {
+		t.Fatalf("EffectiveScratchRoot() = %q, want %q", root, want.Lookaside.Scratch)
 	}
 }
 

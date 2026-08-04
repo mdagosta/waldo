@@ -13,8 +13,10 @@ verified shared state.
 ## Decision
 
 Stream every fetched object through SHA-256 and optional exact-size validation,
-then atomically rename it into a hash-derived lookaside cache path. Re-hash a
-cache entry before materialization. Provide an independent cache scrub.
+then atomically rename it into a hash-derived lookaside scratch path. Re-hash
+an existing object before materialization. Purge objects used by a successful
+consumer, retain them after failure for retry, and provide an independent scrub
+for those leftovers.
 
 Native export copies and re-verifies bytes into an atomic destination file; it
 does not hard-link exports to the cache. Existing export files are resumed only

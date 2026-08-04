@@ -124,9 +124,16 @@ func printHelp(w io.Writer, command Command, path []string) {
 			usage = name
 		}
 		fmt.Fprintf(w, "Usage:\n  %s\n", usage)
+		if command.Details != "" {
+			fmt.Fprintf(w, "\n%s\n", command.Details)
+		}
 		return
 	}
-	fmt.Fprintf(w, "Usage:\n  %s <command>\n\nCommands:\n", name)
+	fmt.Fprintf(w, "Usage:\n  %s <command>\n", name)
+	if command.Details != "" {
+		fmt.Fprintf(w, "\n%s\n", command.Details)
+	}
+	fmt.Fprintln(w, "\nCommands:")
 	for _, candidate := range command.Children {
 		fmt.Fprintf(w, "  %-12s %s\n", candidate.Name, candidate.Summary)
 	}

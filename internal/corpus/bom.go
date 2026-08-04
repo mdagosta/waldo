@@ -172,7 +172,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 	}
 	if corpus.Manifest.Rollup != nil {
 		if cache == nil {
-			return fmt.Errorf("%s: a lookaside cache is required to resolve its sub-manifest tree", corpus.Path)
+			return fmt.Errorf("%s: lookaside scratch is required to resolve its sub-manifest tree", corpus.Path)
 		}
 		seen := map[string]bool{}
 		if _, err := bom.expandRollup(ctx, corpus.Path, corpus.Manifest, *corpus.Manifest.Rollup, "", cache, seen, addShard); err != nil {

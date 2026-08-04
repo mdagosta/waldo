@@ -162,24 +162,33 @@ waldo index ingest ~/data/books core/books/example \
 
 WALDO assembles and verifies shards while a bounded worker pool publishes
 earlier shards to S3. It verifies the remote size and SHA-256, journals that
-fact, and then purges the staged copy. `--keep-local` retains staged shards.
+fact, and then purges the staged copy.
 The contribution overlay is created only after every referenced remote object
-is verified. `--staging` and `--object-base` remain optional per-run overrides.
+is verified. `--staging` is an optional scratch-location override.
 Git editing, committing, pushing, and opening a pull request remain explicit
 user actions. Human output lists every overlay file and prints copy, full-index
 verification, staged-diff checking, and `git commit -s` commands. WALDO does
 not run those commands on the user's behalf.
 
-The intended steady-state required inputs are the positional input and
-destination plus `--title`, `--license`, `--source`, and `--source-category`.
-`--description`, `--source-name`, `--text-column`, `--mode`, and `--memory` are
-optional or conditional. Staging has a plan-specific machine-local default and
-the writable object base normally comes from lookaside configuration.
+The command deliberately has one execution path. Its arguments are:
 
-`--local-only` performs the same conversion and verification but admits the
-Parquet objects only to the local lookaside cache. It intentionally creates no
-manifest or Git overlay: local paths must never masquerade as published corpus
-objects.
+| Argument | When to use it |
+| --- | --- |
+| `<input>` | Always. A file or recursively scanned directory. |
+| `<destination>` | Always. The new corpus path inside the index. |
+| `--title` | Always. Human-readable corpus title. |
+| `--license` | Always. License applying to this contribution. |
+| `--source` | Always. Acquisition/source URL recorded in provenance. |
+| `--source-category` | Always. GPAI-compatible source category. |
+| `--description` | Optional. WALDO generates a plain default otherwise. |
+| `--source-name` | Optional. Defaults from the destination name. |
+| `--text-column` | Only when raw Parquet has no uniquely inferable text column. |
+| `--staging` | Optional scratch/recovery location; normally automatic. |
+| `--dry-run` | Probe and print the immutable plan without writing or publishing. |
+| `--json` | Global option for structured output and progress events. |
+
+Publication is configured once through `waldo lookaside configure`; ingestion
+has no second per-run destination or alternate partial execution mode.
 
 When an external fetcher produced the input, the invocation names its deposit
 or acquisition record rather than repeating facts by hand.
@@ -205,16 +214,33 @@ and exported-file hashes in `EXPORT.json`.
 ### Configure local lookaside behavior
 
 ```bash
-waldo lookaside configure --cache /fast-disk/waldo
+waldo lookaside configure --scratch /fast-disk/waldo
 waldo lookaside configure --mirror https://mirror.example/openwaldo/v1
 waldo lookaside status
 ```
 
-The cache and ordered read mirrors are machine-local preferences; they never
-change an OpenWALDO BOM. A materialization tries the object's manifest URL
-first and then each configured mirror, accepting bytes only after the same
-size and SHA-256 checks. `WALDO_CACHE` remains an explicit environment override
-for the configured cache path.
+`--scratch` selects space for verified downloads. A materialization tries
+the object's manifest URL first and then each configured mirror, streaming into
+that directory while checking size and SHA-256. Successful `index export` and
+`index verify --objects` runs purge every scratch object they used. Failed runs
+retain verified objects so the retry can reuse them; `lookaside status` and
+`lookaside verify` inspect those leftovers. `WALDO_SCRATCH` overrides the saved
+path, and `--default-scratch` restores the operating-system default.
+
+Lookaside configuration options are intentionally limited:
+
+| Option | Purpose |
+| --- | --- |
+| `--scratch <directory>` | Set verified-download scratch space. |
+| `--default-scratch` | Return scratch to the OS default. |
+| `--mirror <URL>` | Add a read fallback for unavailable manifest URLs. |
+| `--remove-mirror <URL>` | Remove one fallback. |
+| `--clear-mirrors` | Remove all fallbacks. |
+| `--publish <s3://...>` | Set the writable production lookaside. |
+| `--publish-local <directory>` | Set a test-only filesystem publisher. |
+| `--publish-region <region>` | Pin an AWS region when it cannot be inferred. |
+| `--upload-workers <1..32>` | Bound concurrent completed-shard uploads. |
+| `--clear-publish` | Remove writable-lookaside configuration. |
 
 ### Build a model from a recipe
 

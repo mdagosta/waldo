@@ -44,7 +44,7 @@ must not be duplicated in a fetcher or training backend.
 
 Owns content-addressed object transport and lifecycle:
 
-- Verified cache
+- Verified download scratch, purged after successful consumers
 - Anonymous HTTP and S3 reads
 - Authenticated writes
 - Mirrors

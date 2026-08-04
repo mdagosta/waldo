@@ -365,7 +365,7 @@ fetcher contract should support.
 
 The durable journal records input artifact, row-group/range, logical sequence,
 completed object hashes, and output partition state. Recovery resumes only from
-a boundary whose admitted outputs and recipe still verify. A crash may repeat a
+a boundary whose published outputs and recipe still verify. A crash may repeat a
 bounded batch, but must not publish a partial object or duplicate a record.
 
 `INGESTION.json` schema 1 atomically records the immutable plan identity,
@@ -375,11 +375,6 @@ changed plan, inconsistent totals, path escape, or corrupt object is refused.
 An interrupted `assembling` state removes only WALDO-owned temporary shard
 files, rebuilds scratch deduplication state, and deterministically resumes from
 the immutable inputs and any content-addressed completed objects.
-
-Local-only admission can copy each staged object through a second hashing
-stream into a synchronized sibling temporary file in lookaside, then publish
-it without replacement under the digest path. This is an explicit offline mode,
-not the normal remote contribution path.
 
 Normal contribution uses a bounded producer/uploader pipeline. Each finalized
 and verified shard enters a small upload queue while assembly continues. A

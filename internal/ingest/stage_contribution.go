@@ -135,7 +135,7 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 
 // ValidateWorkLocations keeps machine-local state out of the Git checkout and
 // prevents staging cleanup from ever sharing a tree with lookaside objects.
-func ValidateWorkLocations(indexRoot, stagingDirectory, cacheRoot string) error {
+func ValidateWorkLocations(indexRoot, stagingDirectory, scratchRoot string) error {
 	root, err := filepath.Abs(indexRoot)
 	if err != nil {
 		return err
@@ -144,15 +144,15 @@ func ValidateWorkLocations(indexRoot, stagingDirectory, cacheRoot string) error 
 	if err != nil {
 		return err
 	}
-	cache, err := filepath.Abs(cacheRoot)
+	scratch, err := filepath.Abs(scratchRoot)
 	if err != nil {
 		return err
 	}
-	if pathWithin(root, staging) || pathWithin(root, cache) {
-		return fmt.Errorf("staging and lookaside cache must be outside the index checkout")
+	if pathWithin(root, staging) || pathWithin(root, scratch) {
+		return fmt.Errorf("staging and lookaside scratch must be outside the index checkout")
 	}
-	if pathWithin(staging, cache) || pathWithin(cache, staging) {
-		return fmt.Errorf("staging and lookaside cache must not overlap")
+	if pathWithin(staging, scratch) || pathWithin(scratch, staging) {
+		return fmt.Errorf("staging and lookaside scratch must not overlap")
 	}
 	return nil
 }
