@@ -121,11 +121,31 @@ or acquisition record rather than repeating facts by hand.
 waldo index export core science \
   --license 'CC0-*,CC-BY-*' \
   --output ~/training-data
+
+waldo index export core \
+  --format jsonl \
+  --output ~/portable-training-data
 ```
 
 The command prints selection totals and disk requirements before fetching. It
-writes verified native shard files and a corpus BOM by default. An explicit
-format option may request canonical interchange output.
+writes verified native shard files and an OpenWALDO BOM by default. `--format
+jsonl` streams native Parquet rows into canonical interchange records, checks
+each record's required fields and text hash, and records both the lookaside-object
+and exported-file hashes in `EXPORT.json`.
+
+### Configure local lookaside behavior
+
+```bash
+waldo lookaside configure --cache /fast-disk/waldo
+waldo lookaside configure --mirror https://mirror.example/openwaldo/v1
+waldo lookaside status
+```
+
+The cache and ordered read mirrors are machine-local preferences; they never
+change an OpenWALDO BOM. A materialization tries the object's manifest URL
+first and then each configured mirror, accepting bytes only after the same
+size and SHA-256 checks. `WALDO_CACHE` remains an explicit environment override
+for the configured cache path.
 
 ### Build a model from a recipe
 

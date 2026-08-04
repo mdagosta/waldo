@@ -13,9 +13,10 @@ command organization by default.
 The project has completed its contracts and read-only index foundation and is
 now in **Phase 2: verified OpenWALDO BOMs**. The binary can list, show,
 summarize, and verify the public `waldo-index`; materialize objects through a
-hash-verifying lookaside cache; scrub that cache; and export native selected
-shards with an `EXPORT.json` provenance record. Other commands remain visible
-as an honest roadmap and report that they are not implemented yet.
+hash-verifying lookaside cache with ordered fallback mirrors; scrub that cache;
+and export selected shards as native objects or canonical JSONL with an
+`EXPORT.json` provenance record. Other commands remain visible as an honest
+roadmap and report that they are not implemented yet.
 
 ## Principles
 

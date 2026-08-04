@@ -9,11 +9,27 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/openwaldo/waldo-new/internal/record"
+	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/parquet-go/parquet-go"
 )
 
 func TestIndexExportEndToEnd(t *testing.T) {
 	root := t.TempDir()
-	content := []byte("small native shard")
+	text := "small native shard"
+	var parquetData bytes.Buffer
+	writer := parquet.NewGenericWriter[shard.Row](&parquetData)
+	if _, err := writer.Write([]shard.Row{{
+		SHA256: record.TextHash(text), Kind: record.KindPretrain, Text: text,
+		Source: "fixture", License: "CC0-1.0", Tokens: 3,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	content := parquetData.Bytes()
 	digestArray := sha256.Sum256(content)
 	digest := hex.EncodeToString(digestArray[:])
 	source := filepath.Join(root, "source.parquet")
@@ -40,6 +56,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	cache := filepath.Join(t.TempDir(), "cache")
 	destination := filepath.Join(t.TempDir(), "export")
 	t.Setenv("WALDO_CACHE", cache)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--index", root, "index", "export", "books", "--output", destination}, &stdout, &stderr)
 	if code != 0 {
@@ -58,14 +75,33 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	if len(matches) != 1 {
 		t.Fatalf("exported parquet files = %v", matches)
 	}
-}
 
-func TestParseExportOptions(t *testing.T) {
-	options, err := parseExportOptions([]string{"core", "science", "--output=dest", "--license", "CC0-*, CC-BY-*", "--exclude-license=CC-BY-NC-*", "--force"})
+	jsonlDestination := filepath.Join(t.TempDir(), "jsonl-export")
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--index", root, "index", "export", "books", "--format=jsonl", "--output", jsonlDestination}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("JSONL Run() code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	jsonlMatches, err := filepath.Glob(filepath.Join(jsonlDestination, "data", "books", "*.jsonl"))
+	if err != nil || len(jsonlMatches) != 1 {
+		t.Fatalf("exported JSONL files = %v, error = %v", jsonlMatches, err)
+	}
+	jsonl, err := os.ReadFile(jsonlMatches[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(options.Paths) != 2 || len(options.Include) != 2 || len(options.Exclude) != 1 || options.Output != "dest" || !options.Force {
+	if !strings.Contains(string(jsonl), `"text":"small native shard"`) {
+		t.Fatalf("JSONL = %q", jsonl)
+	}
+}
+
+func TestParseExportOptions(t *testing.T) {
+	options, err := parseExportOptions([]string{"core", "science", "--output=dest", "--format=jsonl", "--license", "CC0-*, CC-BY-*", "--exclude-license=CC-BY-NC-*", "--force"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options.Paths) != 2 || len(options.Include) != 2 || len(options.Exclude) != 1 || options.Output != "dest" || options.Format != "jsonl" || !options.Force {
 		t.Fatalf("parseExportOptions() = %+v", options)
 	}
 }

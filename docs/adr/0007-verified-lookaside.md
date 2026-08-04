@@ -21,6 +21,12 @@ does not hard-link exports to the cache. Existing export files are resumed only
 when their size and hash match. An `EXPORT.json` containing a different
 OpenWALDO BOM blocks reuse of that directory.
 
+Canonical JSONL export streams rows from verified native Parquet objects,
+validates schema-1 records and their text hashes, and atomically publishes the
+converted file. Its export entry records the lookaside-object hash separately
+from the converted file hash. An existing converted file is retained only when
+a fresh conversion produces the same bytes.
+
 ## Consequences
 
 - A successful materialization has one clear verified-byte guarantee.

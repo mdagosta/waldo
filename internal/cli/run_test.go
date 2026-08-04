@@ -80,11 +80,32 @@ func TestUnknownCommandSuggestsScopedHelp(t *testing.T) {
 func TestLookasideStatusUsesNamedBackend(t *testing.T) {
 	cacheRoot := filepath.Join(t.TempDir(), "objects")
 	t.Setenv("WALDO_CACHE", cacheRoot)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing-config.json"))
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"lookaside", "status"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "lookaside cache") || !strings.Contains(stdout.String(), cacheRoot) {
+		t.Fatalf("lookaside status = %q", stdout.String())
+	}
+}
+
+func TestLookasideConfigurePersistsMirrors(t *testing.T) {
+	configuration := filepath.Join(t.TempDir(), "config.json")
+	cacheRoot := filepath.Join(t.TempDir(), "objects")
+	t.Setenv("WALDO_CONFIG", configuration)
+	t.Setenv("WALDO_CACHE", "")
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"lookaside", "configure", "--cache", cacheRoot, "--mirror", "https://mirror.example/lookaside/v1/"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"lookaside", "status"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("status code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), cacheRoot) || !strings.Contains(stdout.String(), "https://mirror.example/lookaside/v1") {
 		t.Fatalf("lookaside status = %q", stdout.String())
 	}
 }

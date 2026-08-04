@@ -80,6 +80,23 @@ func TestFetchRepairsCorruptCacheEntry(t *testing.T) {
 	}
 }
 
+func TestFetchFallsBackToConfiguredMirror(t *testing.T) {
+	content := "from mirror"
+	digest := digestOf(content)
+	transport := &fallbackTransport{content: content}
+	cache, err := NewCache(t.TempDir(), &http.Client{Transport: transport}, WithMirrors([]string{"https://mirror.example/lookaside/v1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cache.Fetch(context.Background(), "https://primary.example/object", digest, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+	wantMirror := "https://mirror.example/lookaside/v1/" + digest[:2] + "/" + digest[2:4] + "/" + digest
+	if len(transport.urls) != 2 || transport.urls[0] != "https://primary.example/object" || transport.urls[1] != wantMirror {
+		t.Fatalf("request order = %v, want primary then %s", transport.urls, wantMirror)
+	}
+}
+
 func TestS3URLTranslation(t *testing.T) {
 	tests := map[string]string{
 		"s3://bucket/key": "https://bucket.s3.amazonaws.com/key",
@@ -100,6 +117,27 @@ func TestS3URLTranslation(t *testing.T) {
 type fakeTransport struct {
 	content  string
 	requests int
+}
+
+type fallbackTransport struct {
+	content string
+	urls    []string
+}
+
+func (transport *fallbackTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.urls = append(transport.urls, request.URL.String())
+	status := http.StatusNotFound
+	body := "missing"
+	if request.URL.Host == "mirror.example" {
+		status = http.StatusOK
+		body = transport.content
+	}
+	return &http.Response{
+		StatusCode: status,
+		Status:     http.StatusText(status),
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     make(http.Header),
+	}, nil
 }
 
 func (transport *fakeTransport) RoundTrip(*http.Request) (*http.Response, error) {

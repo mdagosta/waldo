@@ -18,6 +18,7 @@ type exportOptions struct {
 	Include []string
 	Exclude []string
 	Force   bool
+	Format  string
 }
 
 func runIndexExport(context Context, args []string, stdout, stderr io.Writer) error {
@@ -44,7 +45,7 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	if len(bom.Shards) == 0 {
 		return fmt.Errorf("the selected paths and license policy contain no shards")
 	}
-	if err := provenance.CheckCorpusExportDestination(options.Output, bom); err != nil {
+	if err := provenance.CheckCorpusExportDestination(options.Output, bom, options.Format); err != nil {
 		return err
 	}
 	cache, err := lookaside.DefaultCache()
@@ -62,11 +63,16 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	files, err := corpus.ExportNative(materialized, options.Output, options.Force)
+	var files []corpus.ExportedFile
+	if options.Format == "jsonl" {
+		files, err = corpus.ExportJSONL(materialized, options.Output, options.Force)
+	} else {
+		files, err = corpus.ExportNative(materialized, options.Output, options.Force)
+	}
 	if err != nil {
 		return err
 	}
-	document := provenance.NewCorpusExport(bom, files, time.Now())
+	document := provenance.NewCorpusExport(bom, options.Format, files, time.Now())
 	if err := provenance.WriteCorpusExport(options.Output, document); err != nil {
 		return err
 	}
@@ -91,7 +97,7 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 }
 
 func parseExportOptions(args []string) (exportOptions, error) {
-	var options exportOptions
+	options := exportOptions{Format: "native"}
 	for i := 0; i < len(args); i++ {
 		argument := args[i]
 		switch {
@@ -121,6 +127,14 @@ func parseExportOptions(args []string) (exportOptions, error) {
 			options.Exclude = append(options.Exclude, splitComma(strings.TrimPrefix(argument, "--exclude-license="))...)
 		case argument == "--force":
 			options.Force = true
+		case argument == "--format":
+			value, next, err := optionValue(args, i, "--format")
+			if err != nil {
+				return exportOptions{}, err
+			}
+			options.Format, i = value, next
+		case strings.HasPrefix(argument, "--format="):
+			options.Format = strings.TrimPrefix(argument, "--format=")
 		case strings.HasPrefix(argument, "-"):
 			return exportOptions{}, usageError{message: fmt.Sprintf("unknown index export option %q", argument)}
 		default:
@@ -128,7 +142,10 @@ func parseExportOptions(args []string) (exportOptions, error) {
 		}
 	}
 	if len(options.Paths) == 0 || options.Output == "" {
-		return exportOptions{}, usageError{message: "usage: waldo index export <path...> --output <directory>"}
+		return exportOptions{}, usageError{message: "usage: waldo index export <path...> --output <directory> [--format native|jsonl]"}
+	}
+	if options.Format != "native" && options.Format != "jsonl" {
+		return exportOptions{}, usageError{message: fmt.Sprintf("unsupported export format %q; use native or jsonl", options.Format)}
 	}
 	return options, nil
 }

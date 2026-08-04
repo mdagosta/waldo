@@ -37,11 +37,11 @@ func commandTree() Command {
 				{Name: "verify", Summary: "Verify index structure and optionally its objects", Usage: "waldo index verify [path] [--objects] [--index <checkout>] [--json]", Handler: runIndexVerify},
 				{Name: "add", Summary: "Add acquired material to an index"},
 				{Name: "update", Summary: "Append new material to an existing corpus"},
-				{Name: "export", Summary: "Export a verified corpus selection and BOM", Usage: "waldo index export <path...> --output <directory> [--license <glob,...>] [--exclude-license <glob,...>] [--force] [--index <checkout>] [--json]", Handler: runIndexExport},
+				{Name: "export", Summary: "Export a verified corpus selection and BOM", Usage: "waldo index export <path...> --output <directory> [--format native|jsonl] [--license <glob,...>] [--exclude-license <glob,...>] [--force] [--index <checkout>] [--json]", Handler: runIndexExport},
 				{Name: "remove", Summary: "Remove a corpus from the current index revision"},
 			}},
 			{Name: "lookaside", Summary: "Configure and maintain content-addressed objects", Children: []Command{
-				{Name: "configure", Summary: "Configure a lookaside location"},
+				{Name: "configure", Summary: "Configure the cache and read mirrors", Usage: "waldo lookaside configure [--cache <directory> | --default-cache] [--mirror <base-url>] [--remove-mirror <base-url>] [--clear-mirrors] [--json]", Handler: runLookasideConfigure},
 				{Name: "login", Summary: "Save credentials for lookaside writes"},
 				{Name: "status", Summary: "Show the local verified-object cache", Usage: "waldo lookaside status [--json]", Handler: runLookasideStatus},
 				{Name: "verify", Summary: "Scrub cached objects against their hashes", Usage: "waldo lookaside verify [--json]", Handler: runLookasideVerify},

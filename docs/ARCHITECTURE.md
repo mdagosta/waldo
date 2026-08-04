@@ -121,8 +121,11 @@ recorded as observations rather than replaced by projected corpus totals.
 ```text
 cmd/waldo/          process entry point
 internal/cli/       parsing, help, and presentation
+internal/config/    machine-local transport and execution preferences
+internal/canon/     canonical JSON primitives shared by durable formats
 internal/index/     metadata schemas, tree, resolver, verification
 internal/record/    document schema and canonical representation
+internal/shard/     native shard decoding and interchange conversion
 internal/license/   normalization and selection policy
 internal/lookaside/ verified object access and lifecycle
 internal/corpus/    ingestion, selection, OpenWALDO BOMs, export

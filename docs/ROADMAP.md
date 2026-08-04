@@ -40,15 +40,15 @@ Implemented:
 - Immutable OpenWALDO BOM with Git, manifest, shard, source, and license pins
 - Local content-addressed cache with atomic verified admission
 - Anonymous HTTP and S3 lookaside reads plus local-file fixtures
+- Machine-local cache configuration and ordered read-mirror fallback
 - `waldo index verify --objects`
 - `waldo lookaside status` and cache scrubbing
 - Native shard export with safe resume and `EXPORT.json`
+- Streaming canonical JSONL export with record and text-hash validation
 - Real-index OpenWALDO BOM acceptance tests
 
 Remaining:
 
-- Mirror fallback and configured lookaside preferences
-- Canonical interchange export
 - Submanifest/rollup object expansion
 - Review the export BOM as the first stable provenance interchange contract
 

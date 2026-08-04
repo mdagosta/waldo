@@ -19,15 +19,17 @@ type CorpusExport struct {
 	Kind      string                `json:"kind"`
 	Schema    int                   `json:"schema"`
 	Generated string                `json:"generated"`
+	Format    string                `json:"format"`
 	BOM       corpus.BOM            `json:"bom"`
 	Files     []corpus.ExportedFile `json:"files"`
 }
 
-func NewCorpusExport(bom corpus.BOM, files []corpus.ExportedFile, generated time.Time) CorpusExport {
+func NewCorpusExport(bom corpus.BOM, format string, files []corpus.ExportedFile, generated time.Time) CorpusExport {
 	return CorpusExport{
 		Kind:      "waldo-corpus-export",
 		Schema:    CorpusExportSchema,
 		Generated: generated.UTC().Format(time.RFC3339),
+		Format:    format,
 		BOM:       bom,
 		Files:     append([]corpus.ExportedFile(nil), files...),
 	}
@@ -77,7 +79,7 @@ func WriteCorpusExport(destination string, document CorpusExport) error {
 // CheckCorpusExportDestination permits a fresh or interrupted export and a
 // resume of the same completed OpenWALDO BOM. It refuses to mix two selections in
 // one directory because stale data files would otherwise look current.
-func CheckCorpusExportDestination(destination string, bom corpus.BOM) error {
+func CheckCorpusExportDestination(destination string, bom corpus.BOM, format string) error {
 	path := filepath.Join(destination, "EXPORT.json")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -95,6 +97,9 @@ func CheckCorpusExportDestination(destination string, bom corpus.BOM) error {
 	}
 	if !reflect.DeepEqual(existing.BOM, bom) {
 		return fmt.Errorf("%s contains a different OpenWALDO BOM; choose another output directory", path)
+	}
+	if existing.Format != format {
+		return fmt.Errorf("%s contains a %s export, not %s; choose another output directory", path, existing.Format, format)
 	}
 	return nil
 }

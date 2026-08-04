@@ -10,18 +10,21 @@ import (
 	"strings"
 
 	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo-new/internal/shard"
 )
 
 type ExportedFile struct {
-	Path     string `json:"path"`
-	Manifest string `json:"manifest"`
-	SHA256   string `json:"sha256"`
-	Format   string `json:"format"`
-	License  string `json:"license"`
-	Docs     int64  `json:"docs"`
-	Tokens   int64  `json:"tokens"`
-	Bytes    int64  `json:"bytes"`
-	Existing bool   `json:"-"`
+	Path         string `json:"path"`
+	Manifest     string `json:"manifest"`
+	ObjectSHA256 string `json:"object_sha256"`
+	SHA256       string `json:"sha256"`
+	Format       string `json:"format"`
+	License      string `json:"license"`
+	Docs         int64  `json:"docs"`
+	Tokens       int64  `json:"tokens"`
+	ObjectBytes  int64  `json:"object_bytes"`
+	Bytes        int64  `json:"bytes"`
+	Existing     bool   `json:"-"`
 }
 
 // ExportNative copies verified materialized objects into a portable directory
@@ -60,10 +63,49 @@ func ExportNative(materialized Materialized, destination string, force bool) ([]
 			}
 		}
 		files = append(files, ExportedFile{
-			Path: relative, Manifest: object.Shard.Manifest, SHA256: object.Shard.SHA256,
+			Path: relative, Manifest: object.Shard.Manifest,
+			ObjectSHA256: object.Shard.SHA256, SHA256: object.Shard.SHA256,
 			Format: object.Shard.Format, License: object.Shard.License,
-			Docs: object.Shard.Docs, Tokens: object.Shard.Tokens, Bytes: object.Shard.Bytes,
+			Docs: object.Shard.Docs, Tokens: object.Shard.Tokens,
+			ObjectBytes: object.Shard.Bytes, Bytes: object.Shard.Bytes,
 			Existing: existing,
+		})
+	}
+	return files, nil
+}
+
+// ExportJSONL converts verified native Parquet objects into canonical JSONL.
+// Existing output is accepted only when conversion produces the same bytes.
+func ExportJSONL(materialized Materialized, destination string, force bool) ([]ExportedFile, error) {
+	if destination == "" {
+		return nil, fmt.Errorf("export destination is required")
+	}
+	abs, err := filepath.Abs(destination)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]ExportedFile, 0, len(materialized.Objects))
+	seenPaths := map[string]bool{}
+	for _, object := range materialized.Objects {
+		if object.Shard.Format != "" && object.Shard.Format != "parquet" {
+			return nil, fmt.Errorf("%s uses %q; canonical JSONL export currently requires Parquet shards", object.Shard.Manifest, object.Shard.Format)
+		}
+		relative := strings.TrimSuffix(exportPath(object.Shard), filepath.Ext(exportPath(object.Shard))) + ".jsonl"
+		if seenPaths[relative] {
+			return nil, fmt.Errorf("export path collision at %s", relative)
+		}
+		seenPaths[relative] = true
+		destinationPath := filepath.Join(abs, filepath.FromSlash(relative))
+		digest, bytes, existing, err := convertJSONL(object.Path, destinationPath, force)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, ExportedFile{
+			Path: relative, Manifest: object.Shard.Manifest,
+			ObjectSHA256: object.Shard.SHA256, SHA256: digest,
+			Format: "jsonl", License: object.Shard.License,
+			Docs: object.Shard.Docs, Tokens: object.Shard.Tokens,
+			ObjectBytes: object.Shard.Bytes, Bytes: bytes, Existing: existing,
 		})
 	}
 	return files, nil
@@ -141,4 +183,60 @@ func copyVerified(source, destination, digest string, expectedBytes int64) error
 	}
 	committed = true
 	return nil
+}
+
+func convertJSONL(source, destination string, force bool) (string, int64, bool, error) {
+	input, err := os.Open(source)
+	if err != nil {
+		return "", 0, false, err
+	}
+	defer input.Close()
+	info, err := input.Stat()
+	if err != nil {
+		return "", 0, false, err
+	}
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return "", 0, false, err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(destination), ".waldo-jsonl-*")
+	if err != nil {
+		return "", 0, false, err
+	}
+	temporaryPath := temporary.Name()
+	committed := false
+	defer func() {
+		_ = temporary.Close()
+		if !committed {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	hasher := sha256.New()
+	written, err := shard.WriteJSONL(io.MultiWriter(temporary, hasher), input, info.Size())
+	if err != nil {
+		return "", 0, false, fmt.Errorf("convert %s: %w", source, err)
+	}
+	digest := hex.EncodeToString(hasher.Sum(nil))
+	if existingInfo, statErr := os.Stat(destination); statErr == nil && !existingInfo.IsDir() {
+		if verifyErr := lookaside.VerifyFile(destination, digest, written); verifyErr == nil {
+			return digest, written, true, nil
+		} else if !force {
+			return "", 0, false, fmt.Errorf("%s already exists but is not the canonical conversion: %w (use --force to replace it)", destination, verifyErr)
+		}
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return "", 0, false, statErr
+	}
+	if err := temporary.Chmod(0o644); err != nil {
+		return "", 0, false, err
+	}
+	if err := temporary.Sync(); err != nil {
+		return "", 0, false, err
+	}
+	if err := temporary.Close(); err != nil {
+		return "", 0, false, err
+	}
+	if err := os.Rename(temporaryPath, destination); err != nil {
+		return "", 0, false, err
+	}
+	committed = true
+	return digest, written, false, nil
 }

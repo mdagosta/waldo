@@ -7,22 +7,35 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/openwaldo/waldo-new/internal/config"
 )
 
 type Cache struct {
-	root   string
-	client *http.Client
+	root    string
+	client  *http.Client
+	mirrors []string
 }
 
-func NewCache(root string, client *http.Client) (*Cache, error) {
+type Option func(*Cache)
+
+func WithMirrors(mirrors []string) Option {
+	return func(cache *Cache) {
+		cache.mirrors = append([]string(nil), mirrors...)
+	}
+}
+
+func NewCache(root string, client *http.Client, options ...Option) (*Cache, error) {
 	if root == "" {
 		return nil, fmt.Errorf("lookaside cache root is required")
 	}
@@ -33,21 +46,28 @@ func NewCache(root string, client *http.Client) (*Cache, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Cache{root: abs, client: client}, nil
+	cache := &Cache{root: abs, client: client}
+	for _, option := range options {
+		option(cache)
+	}
+	return cache, nil
 }
 
 func DefaultCache() (*Cache, error) {
-	if root := os.Getenv("WALDO_CACHE"); root != "" {
-		return NewCache(root, nil)
-	}
-	base, err := os.UserCacheDir()
+	configuration, err := config.Load()
 	if err != nil {
-		return nil, fmt.Errorf("find user cache directory: %w", err)
+		return nil, err
 	}
-	return NewCache(filepath.Join(base, "waldo", "objects"), nil)
+	root, err := config.EffectiveCacheRoot(configuration)
+	if err != nil {
+		return nil, err
+	}
+	return NewCache(root, nil, WithMirrors(configuration.Lookaside.Mirrors))
 }
 
 func (cache *Cache) Root() string { return cache.root }
+
+func (cache *Cache) Mirrors() []string { return append([]string(nil), cache.mirrors...) }
 
 func (cache *Cache) Path(digest string) (string, error) {
 	if err := validateDigest(digest); err != nil {
@@ -79,14 +99,35 @@ func (cache *Cache) Fetch(ctx context.Context, objectURL, digest string, expecte
 		return "", err
 	}
 
+	candidates := []string{objectURL}
+	for _, mirror := range cache.mirrors {
+		candidates = append(candidates, mirrorObjectURL(mirror, digest))
+	}
+	seen := map[string]bool{}
+	var failures []error
+	for _, candidate := range candidates {
+		if seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		if err := cache.fetchCandidate(ctx, candidate, destination, digest, expectedBytes); err == nil {
+			return destination, nil
+		} else {
+			failures = append(failures, err)
+		}
+	}
+	return "", fmt.Errorf("object %s was unavailable from its manifest URL and %d configured mirror(s): %w", digest, len(cache.mirrors), errors.Join(failures...))
+}
+
+func (cache *Cache) fetchCandidate(ctx context.Context, objectURL, destination, digest string, expectedBytes int64) error {
 	reader, err := cache.open(ctx, objectURL)
 	if err != nil {
-		return "", err
+		return err
 	}
 	defer reader.Close()
 	temporary, err := os.CreateTemp(filepath.Dir(destination), ".waldo-object-*")
 	if err != nil {
-		return "", err
+		return err
 	}
 	temporaryPath := temporary.Name()
 	committed := false
@@ -100,25 +141,25 @@ func (cache *Cache) Fetch(ctx context.Context, objectURL, digest string, expecte
 	hasher := sha256.New()
 	written, copyErr := io.Copy(io.MultiWriter(temporary, hasher), reader)
 	if copyErr != nil {
-		return "", fmt.Errorf("fetch %s: %w", objectURL, copyErr)
+		return fmt.Errorf("fetch %s: %w", objectURL, copyErr)
 	}
 	if expectedBytes > 0 && written != expectedBytes {
-		return "", fmt.Errorf("fetch %s: size mismatch: got %d bytes, want %d", objectURL, written, expectedBytes)
+		return fmt.Errorf("fetch %s: size mismatch: got %d bytes, want %d", objectURL, written, expectedBytes)
 	}
 	if got := hex.EncodeToString(hasher.Sum(nil)); got != digest {
-		return "", fmt.Errorf("fetch %s: sha256 mismatch: got %s, want %s", objectURL, got, digest)
+		return fmt.Errorf("fetch %s: sha256 mismatch: got %s, want %s", objectURL, got, digest)
 	}
 	if err := temporary.Sync(); err != nil {
-		return "", err
+		return err
 	}
 	if err := temporary.Close(); err != nil {
-		return "", err
+		return err
 	}
 	if err := os.Rename(temporaryPath, destination); err != nil {
-		return "", err
+		return err
 	}
 	committed = true
-	return destination, nil
+	return nil
 }
 
 func (cache *Cache) open(ctx context.Context, objectURL string) (io.ReadCloser, error) {
@@ -166,6 +207,16 @@ func s3HTTPS(parsed *url.URL) string {
 		return (&url.URL{Scheme: "https", Host: host, Path: parsed.Path, RawQuery: parsed.RawQuery}).String()
 	}
 	return (&url.URL{Scheme: "https", Host: host + ".s3.amazonaws.com", Path: parsed.Path, RawQuery: parsed.RawQuery}).String()
+}
+
+func mirrorObjectURL(base, digest string) string {
+	objectPath := path.Join(digest[:2], digest[2:4], digest)
+	parsed, err := url.Parse(base)
+	if err == nil && parsed.Scheme != "" {
+		parsed.Path = path.Join(parsed.Path, objectPath)
+		return parsed.String()
+	}
+	return filepath.Join(base, filepath.FromSlash(objectPath))
 }
 
 func VerifyFile(path, digest string, expectedBytes int64) error {
