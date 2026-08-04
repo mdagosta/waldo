@@ -78,6 +78,11 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		return Plan{}, fmt.Errorf("unsupported source category %q", request.Source.Category)
 	}
 	request.Source.Category = category
+	switch category {
+	case index.SourcePublicDataset, index.SourcePrivateThirdParty, index.SourceOther:
+	default:
+		return Plan{}, fmt.Errorf("source category %q requires acquisition evidence fields that index add does not collect yet", category)
+	}
 	mode := request.Mode
 	if mode == "" {
 		mode = "streaming"

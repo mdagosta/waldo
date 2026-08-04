@@ -144,6 +144,22 @@ func TestNewPlanRejectsAmbiguousParquetMapping(t *testing.T) {
 	}
 }
 
+func TestNewPlanRejectsCategoryWithoutRequiredAcquisitionEvidence(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.txt")
+	writeProbeFile(t, path, "text")
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewPlan(probe, PlanRequest{
+		Destination: "core/example", Title: "Example", License: "CC0-1.0",
+		Source: PlanSource{Name: "crawl", URL: "https://example.test", Category: "web-crawl"},
+	})
+	if err == nil {
+		t.Fatal("expected missing acquisition evidence rejection")
+	}
+}
+
 func TestProbePathsRejectsSymlinks(t *testing.T) {
 	root := t.TempDir()
 	target := filepath.Join(root, "target.txt")
