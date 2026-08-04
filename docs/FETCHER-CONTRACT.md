@@ -1,11 +1,15 @@
-# External fetcher handoff
+# Fetcher and local acquisition contract
 
-Fetchers are source-specific acquisition scripts maintained in a separate,
-future repository. They download upstream material and record what they
-observed. WALDO interprets, normalizes, packs, and indexes that material.
+Fetchers are source-specific acquisition adapters in the single WALDO binary.
+They download upstream material into a user-selected local directory and
+record what they observed. A fetch ends there: it does not ingest, publish to a
+lookaside, mutate an index, or start model training.
 
-This document reserves the boundary; its exact schema will be finalized with
-the first corpus-ingestion slice.
+The first fetcher slice will finalize the local acquisition schema after the
+model-lifecycle phase. Until then, this document defines its boundary. The
+already implemented consumer-side counterpart is `waldo index export`, which
+materializes a selected indexed corpus and its OpenWALDO BOM into a local
+directory.
 
 ## A fetcher owns
 
@@ -26,7 +30,7 @@ the first corpus-ingestion slice.
   access/opt-out protocols, and domain-level acquired content-byte totals
 - For user data, the collecting service/product and interaction type
 - For synthetic data, generator model identity and lineage where available
-- An atomic, versioned handoff record
+- An atomic, versioned acquisition record beside the local bytes
 
 ## WALDO owns
 
@@ -43,9 +47,9 @@ the first corpus-ingestion slice.
 - Manifest generation and index mutation
 - Provenance and compatibility validation
 
-## Two accepted shapes
+## Local output shapes
 
-The future contract may describe:
+The contract may describe:
 
 1. Raw acquired artifacts plus an acquisition record
 2. A normalized, sorted deposit optimized for large columnar upstreams
@@ -54,15 +58,24 @@ A deposit carries documents and faithfully copied upstream evidence. It does
 not carry WALDO's conclusions about canonical licenses, document hashes,
 languages, or token counts.
 
-The handoff must retain enough acquisition evidence for the source and corpus
+The local acquisition must retain enough evidence for the source and corpus
 manifests to support the EU GPAI training-content projection described in
 `docs/EU-GPAI-DISCLOSURE.md`. Fetchers record what they did and observed; they
 do not make a legal-compliance determination.
 
+## Execution boundary
+
+- Fetchers ship as reviewed adapters compiled into the WALDO binary.
+- Fetchers are not runtime plugins and WALDO does not execute downloaded or
+  arbitrary fetcher code.
+- Network, pagination, and source-specific concerns remain behind a narrow
+  acquisition interface; they do not enter index, corpus, or model packages.
+- The user explicitly runs ingestion after reviewing a local acquisition.
+
 ## Non-goals
 
-- Fetchers are not plugins loaded into the WALDO binary.
-- WALDO does not execute arbitrary fetcher code during verification.
+- A fetch does not upload to the lookaside or create an index contribution.
+- A fetch does not invoke a training or model command.
 - A fetcher name is not provenance; the handoff must record concrete upstream
   artifacts and hashes.
-- The future fetcher repository does not define index or shard schemas.
+- A fetcher does not define index or shard schemas.

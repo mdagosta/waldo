@@ -128,6 +128,7 @@ internal/record/    document schema and canonical representation
 internal/shard/     native shard decoding and interchange conversion
 internal/license/   normalization and selection policy
 internal/lookaside/ verified object access and lifecycle
+internal/acquire/   bounded source adapters and local acquisition records
 internal/corpus/    ingestion, selection, OpenWALDO BOMs, export
 internal/provenance/BOM types and verification
 internal/model/     model lifecycle and recipes
@@ -153,7 +154,7 @@ with the first vertical slice that needs them.
 
 ## Fetcher boundary
 
-Fetchers will live in another repository. WALDO accepts a versioned handoff
-describing acquired artifacts or a normalized deposit. The boundary is defined
-in `docs/FETCHER-CONTRACT.md`; source-specific download logic never enters this
-repository.
+Fetchers remain in the single WALDO binary, behind the acquisition boundary
+defined in `docs/FETCHER-CONTRACT.md`. They write acquired artifacts and a
+versioned evidence record to a local directory, then stop. Source-specific
+download logic does not enter index, corpus, lookaside, or model packages.

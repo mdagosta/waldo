@@ -40,8 +40,9 @@ template from later model BOMs.
 - Provenance records observed facts and states the limits of its guarantees.
 - The common path should be obvious; advanced maintenance should remain out of
   the way until it is needed.
-- Fetchers are external producers. A future fetcher repository will implement
-  the acquisition side of the documented handoff contract.
+- Fetchers are bounded adapters in the same binary. Their first workflow writes
+  acquired bytes and evidence to a local directory; ingestion remains an
+  explicit separate command.
 
 ## Development
 

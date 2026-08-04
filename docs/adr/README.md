@@ -8,7 +8,7 @@ logs.
 - [0002: OpenWALDO BOMs are the model boundary](0002-openwaldo-bom-boundary.md)
 - [0003: Preserve the public index format](0003-index-compatibility.md)
 - [0004: Persist the training run state machine](0004-training-run-state.md)
-- [0005: Keep fetchers external](0005-external-fetchers.md)
+- [0005: Keep fetchers bounded and local-first](0005-external-fetchers.md)
 - [0006: Use an index-centered CLI](0006-index-centered-cli.md)
 - [0007: Verify objects before admission and export](0007-verified-lookaside.md)
 - [0008: Expand submanifest trees before materialization](0008-verified-submanifests.md)

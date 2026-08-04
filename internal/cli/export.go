@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -72,6 +73,15 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	for position, file := range files {
+		status := "wrote"
+		if file.Existing {
+			status = "resumed"
+		}
+		fmt.Fprintf(stderr, "  local %s/%s  %-7s %s (%s, %s docs)\n",
+			humanInteger(int64(position+1)), humanInteger(int64(len(files))), status,
+			filepath.Join(options.Output, filepath.FromSlash(file.Path)), humanBytes(file.Bytes), humanCount(file.Docs))
+	}
 	document := provenance.NewCorpusExport(bom, options.Format, files, time.Now())
 	if err := provenance.WriteCorpusExport(options.Output, document); err != nil {
 		return err
@@ -107,14 +117,6 @@ func parseExportOptions(args []string) (exportOptions, error) {
 	for i := 0; i < len(args); i++ {
 		argument := args[i]
 		switch {
-		case argument == "--output":
-			value, next, err := optionValue(args, i, "--output")
-			if err != nil {
-				return exportOptions{}, err
-			}
-			options.Output, i = value, next
-		case strings.HasPrefix(argument, "--output="):
-			options.Output = strings.TrimPrefix(argument, "--output=")
 		case argument == "--license":
 			value, next, err := optionValue(args, i, "--license")
 			if err != nil {
@@ -147,9 +149,11 @@ func parseExportOptions(args []string) (exportOptions, error) {
 			options.Paths = append(options.Paths, argument)
 		}
 	}
-	if len(options.Paths) == 0 || options.Output == "" {
-		return exportOptions{}, usageError{message: "usage: waldo index export <path...> --output <directory> [--format native|jsonl]"}
+	if len(options.Paths) < 2 {
+		return exportOptions{}, usageError{message: "usage: waldo index export <path...> <directory> [--format native|jsonl]"}
 	}
+	options.Output = options.Paths[len(options.Paths)-1]
+	options.Paths = options.Paths[:len(options.Paths)-1]
 	if options.Format != "native" && options.Format != "jsonl" {
 		return exportOptions{}, usageError{message: fmt.Sprintf("unsupported export format %q; use native or jsonl", options.Format)}
 	}

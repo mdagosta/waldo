@@ -61,7 +61,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--index", root, "index", "export", "books", "--output", destination}, &stdout, &stderr)
+	code := Run([]string{"--index", root, "index", "export", "books", destination}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
@@ -99,7 +99,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	jsonlDestination := filepath.Join(t.TempDir(), "jsonl-export")
 	stdout.Reset()
 	stderr.Reset()
-	code = Run([]string{"--index", root, "index", "export", "books", "--format=jsonl", "--output", jsonlDestination}, &stdout, &stderr)
+	code = Run([]string{"--index", root, "index", "export", "books", "--format=jsonl", jsonlDestination}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("JSONL Run() code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
@@ -137,12 +137,19 @@ func assertNoCacheFiles(t *testing.T, root string) {
 }
 
 func TestParseExportOptions(t *testing.T) {
-	options, err := parseExportOptions([]string{"core", "science", "--output=dest", "--format=jsonl", "--license", "CC0-*, CC-BY-*", "--exclude-license=CC-BY-NC-*", "--force"})
+	options, err := parseExportOptions([]string{"core", "science", "--format=jsonl", "--license", "CC0-*, CC-BY-*", "--exclude-license=CC-BY-NC-*", "--force", "dest"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(options.Paths) != 2 || len(options.Include) != 2 || len(options.Exclude) != 1 || options.Output != "dest" || options.Format != "jsonl" || !options.Force {
 		t.Fatalf("parseExportOptions() = %+v", options)
+	}
+}
+
+func TestIndexExportRejectsRemovedOutputOption(t *testing.T) {
+	_, err := parseExportOptions([]string{"core", "--output", "dest"})
+	if err == nil || !strings.Contains(err.Error(), "unknown index export option") {
+		t.Fatalf("parseExportOptions error = %v", err)
 	}
 }
 

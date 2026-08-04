@@ -73,9 +73,10 @@ architecture does not have to appear as product vocabulary.
 There is no `compose` command group. A declarative model recipe is one input to
 `waldo model build`.
 
-There is no `fetch` command group. Source-specific acquisition belongs to the
-future fetchers repository. WALDO consumes its output through the fetcher
-handoff contract.
+Source-specific acquisition will be added after the model-lifecycle phase as
+bounded adapters in this same binary. Its first workflow writes raw artifacts
+and acquisition evidence to a local directory, then stops. It does not hide
+ingestion, publication, or training behind a fetch command.
 
 ## Primary journeys
 
@@ -190,7 +191,7 @@ The command deliberately has one execution path. Its arguments are:
 Publication is configured once through `waldo config set`; ingestion
 has no second per-run destination or alternate partial execution mode.
 
-When an external fetcher produced the input, the invocation names its deposit
+When a WALDO fetcher produced the input, the invocation names its local deposit
 or acquisition record rather than repeating facts by hand.
 
 ### Export a corpus selection
@@ -198,18 +199,19 @@ or acquisition record rather than repeating facts by hand.
 ```bash
 waldo index export core science \
   --license 'CC0-*,CC-BY-*' \
-  --output ~/training-data
+  ~/training-data
 
 waldo index export core \
   --format jsonl \
-  --output ~/portable-training-data
+  ~/portable-training-data
 ```
 
-The command prints selection totals and disk requirements before fetching. It
+This is the first local fetch/materialization workflow. The command prints
+selection totals and disk requirements before fetching. It
 writes verified native shard files and an OpenWALDO BOM by default. `--format
 jsonl` streams native Parquet rows into canonical interchange records, checks
 each record's required fields and text hash, and records both the lookaside-object
-and exported-file hashes in `EXPORT.json`.
+and exported-file hashes in `EXPORT.json`. It does not build or train a model.
 
 ### Configure machine-local behavior
 

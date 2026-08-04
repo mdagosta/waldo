@@ -62,14 +62,14 @@ Implemented foundation:
 - License partitioning
 - Bounded progress event stream for probe, conversion, shard, upload, and purge
 - Parallel S3 lookaside publication with remote verification and backpressure
-- Journal-before-purge staged-object reclamation; optional local retention
+- Journal-before-purge staged-object reclamation
 - Manifest and navigation generation
 - Durable staging and recovery
 - DCO-oriented Git handoff
 
-Remaining:
-
-- External fetcher handoff consumption
+The first end-to-end contribution path is complete. Source-specific
+acquisition adapters are intentionally sequenced after Phase 4; they stay in
+this binary and initially write only to a local directory.
 
 Exit: a directory of source documents becomes a reviewable, reproducible index
 contribution through one command.
@@ -87,7 +87,19 @@ contribution through one command.
 
 Exit: orchestration and provenance work end to end without Python or a GPU.
 
-## Phase 5: one real training backend
+## Phase 5: integrated source fetchers
+
+- Narrow acquisition interface inside the WALDO binary
+- First reviewed source adapter
+- Resumable streaming downloads into an explicit local directory
+- Atomic schema-1 acquisition evidence
+- Reviewable handoff to `waldo index ingest`
+- No implicit lookaside publication, index mutation, or model execution
+
+Exit: one upstream source can be acquired reproducibly into a local directory
+and then ingested through a separate explicit command.
+
+## Phase 6: one real training backend
 
 - Select MLX or PyTorch as the first backend
 - Streaming shard consumption
@@ -99,7 +111,7 @@ Exit: orchestration and provenance work end to end without Python or a GPU.
 Exit: a tiny model can be rebuilt from a recipe and its complete observed run
 record can be inspected.
 
-## Phase 6: useful model operations
+## Phase 7: useful model operations
 
 - Second local backend
 - Evaluation and chat
@@ -110,7 +122,7 @@ record can be inspected.
 Model import, SFT, preference training, and cluster orchestration remain
 deferred until this smaller lifecycle is reliable.
 
-## Phase 7: operations and transition
+## Phase 8: operations and transition
 
 - Lookaside mirroring, scrubbing, and safe garbage collection
 - Append-only corpus updates
