@@ -11,7 +11,7 @@ CLI
  ├─ index ─────────────────────────────┐
  ├─ corpus ── index + lookaside ──────┼─ provenance
  ├─ lookaside                         │
- └─ model ── corpus snapshot ─────────┘
+ └─ model ── OpenWALDO BOM ─────────┘
               └─ training backend
 ```
 
@@ -62,15 +62,17 @@ immutable data selections:
 - Corpus ingestion and deterministic packing
 - Corpus selection and license policy
 - Export
-- Snapshot construction
+- OpenWALDO BOM construction
 
-Its central output is a `CorpusSnapshot`, the only normal handoff to model
+Its central output is an OpenWALDO BOM (`corpus.BOM`), the only normal handoff to model
 workflows.
 
 Conceptually:
 
 ```go
-type CorpusSnapshot struct {
+type BOM struct {
+    Kind      "openwaldo-bom"
+    Subject   "corpus"
     Index     IndexIdentity
     Selection Selection
     Manifests []ManifestPin
@@ -79,26 +81,25 @@ type CorpusSnapshot struct {
 }
 ```
 
-The concrete type will be designed alongside read-only index support. It must
-contain resolved facts, not pointers to mutable manifests or implicit access to
-an index checkout.
+The BOM contains resolved facts, not pointers to mutable manifests or implicit
+access to an index checkout.
 
 ### Provenance
 
 Owns the vocabulary and serialization of:
 
-1. Corpus snapshots and export BOMs
+1. OpenWALDO BOMs and export records
 2. Training run records
 3. Model lineage and aggregate model BOMs
 
 These are related records, not one giant optional structure. A run references
-a corpus snapshot and adds planned parameters, observed consumption, backend
+an OpenWALDO BOM and adds planned parameters, observed consumption, backend
 identity, status, and outputs.
 
 ### Model
 
 Owns model identity, immutable architecture, recipes, lifecycle, lineage, and
-artifact export. It asks the corpus domain for snapshots and gives a fully
+artifact export. It asks the corpus domain for OpenWALDO BOMs and gives a fully
 resolved execution request to a training backend.
 
 It must not parse index files, normalize licenses, choose lookaside mirrors, or
@@ -124,7 +125,7 @@ internal/index/     metadata schemas, tree, resolver, verification
 internal/record/    document schema and canonical representation
 internal/license/   normalization and selection policy
 internal/lookaside/ verified object access and lifecycle
-internal/corpus/    ingestion, selection, snapshots, export
+internal/corpus/    ingestion, selection, OpenWALDO BOMs, export
 internal/provenance/BOM types and verification
 internal/model/     model lifecycle and recipes
 internal/training/  backend interface and adapters
@@ -153,4 +154,3 @@ Fetchers will live in another repository. WALDO accepts a versioned handoff
 describing acquired artifacts or a normalized deposit. The boundary is defined
 in `docs/FETCHER-CONTRACT.md`; source-specific download logic never enters this
 repository.
-

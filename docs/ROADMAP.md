@@ -15,7 +15,7 @@ backend.
 - Foundational ADRs and contributor instructions
 - Buildable single-binary command scaffold
 
-## Phase 1: read-only index — current
+## Phase 1: read-only index — complete
 
 Implemented:
 
@@ -30,26 +30,30 @@ Implemented:
 - JSON output
 - Unit fixtures and acceptance tests against the real public index
 
-Remaining before the phase closes:
+Deferred to the writing slice: regenerating and byte-comparing `index.json`.
 
-- Review the human output and command help with the project owner
-- Decide whether structural verification should regenerate and byte-compare
-  `index.json` immediately or land with index writing
-- Record exact supported legacy shard and rollup shapes as fixtures
+## Phase 2: verified OpenWALDO BOMs — current
 
-## Phase 2: verified corpus snapshots
+Implemented:
 
-- License-policy selection
-- Immutable corpus snapshot contract
-- Local verified object cache
-- Anonymous HTTP and S3 lookaside reads
-- Mirror fallback
-- Explicit network object verification
-- Native Parquet export and corpus BOM
+- License include/exclude policy
+- Immutable OpenWALDO BOM with Git, manifest, shard, source, and license pins
+- Local content-addressed cache with atomic verified admission
+- Anonymous HTTP and S3 lookaside reads plus local-file fixtures
+- `waldo index verify --objects`
+- `waldo lookaside status` and cache scrubbing
+- Native shard export with safe resume and `EXPORT.json`
+- Real-index OpenWALDO BOM acceptance tests
+
+Remaining:
+
+- Mirror fallback and configured lookaside preferences
 - Canonical interchange export
+- Submanifest/rollup object expansion
+- Review the export BOM as the first stable provenance interchange contract
 
 Exit: a selection from the public index can be materialized with every object
-hash checked and an independently readable corpus BOM.
+hash checked and an independently readable OpenWALDO BOM.
 
 ## Phase 3: corpus contribution
 
@@ -70,7 +74,7 @@ contribution through one command.
 - Model identity and immutable architecture
 - Declarative build recipes
 - Curriculum and resource validation
-- Corpus snapshot attachment
+- OpenWALDO BOM attachment
 - Durable run state machine
 - Fake backend for completion, failure, and interruption tests
 - Model and run BOMs

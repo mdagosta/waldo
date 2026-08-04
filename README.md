@@ -10,16 +10,18 @@ with the existing `waldo-index` where that compatibility is part of the public
 data contract; it does not preserve the old backend's internal structure or
 command organization by default.
 
-The project has completed **Phase 0: contracts and scaffolding** and is now in
-**Phase 1: read-only index support**. The binary can list, show, summarize, and
-structurally verify the existing public `waldo-index`. Other command groups are
-visible as an honest roadmap and report that they are not implemented yet.
+The project has completed its contracts and read-only index foundation and is
+now in **Phase 2: verified OpenWALDO BOMs**. The binary can list, show,
+summarize, and verify the public `waldo-index`; materialize objects through a
+hash-verifying lookaside cache; scrub that cache; and export native selected
+shards with an `EXPORT.json` provenance record. Other commands remain visible
+as an honest roadmap and report that they are not implemented yet.
 
 ## Principles
 
 - One binary, with clear one-way dependencies between its domains.
 - The index defines corpus meaning; lookaside storage only holds bytes.
-- Model tooling consumes an immutable, verified corpus snapshot. It does not
+- Model tooling consumes an immutable, verified OpenWALDO BOM. It does not
   reinterpret index manifests or licenses.
 - Provenance records observed facts and states the limits of its guarantees.
 - The common path should be obvious; advanced maintenance should remain out of

@@ -27,4 +27,4 @@ organization follows the user's mental model, not the package graph.
   arbitrary directory of files.
 - The `index` command group is broader, so its verbs and help text must clearly
   separate read-only inspection from mutation and transfer.
-- Internal corpus snapshot and ingestion code remains independently testable.
+- Internal OpenWALDO BOM and ingestion code remains independently testable.

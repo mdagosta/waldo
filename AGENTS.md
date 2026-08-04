@@ -16,8 +16,8 @@ reason.
 
 - Use **lookaside**, never `store`, for the user-facing command group and the
   backend domain that holds content-addressed objects.
-- A **corpus snapshot** is the immutable, resolved, verified handoff from the
-  data side to the model side.
+- An **OpenWALDO BOM** is the immutable, resolved handoff from the data side;
+  materialization then verifies every object named by it.
 - A model **recipe** is consumed by `waldo model build`; there is no separate
   `compose` command group.
 - Fetchers are external producers and will live in another repository. This
@@ -27,14 +27,14 @@ reason.
 
 - `index`, `record`, `license`, `lookaside`, and `corpus` must not import
   `model` or `training`.
-- `model` and `training` consume corpus snapshots and provenance contracts;
+- `model` and `training` consume OpenWALDO BOMs and provenance contracts;
   they must not independently traverse index trees, resolve manifest
   inheritance, normalize licenses, or fetch unverified shards.
 - CLI packages may wire domains together but contain no domain logic.
 - Interfaces belong near the consumer that needs them. Avoid general-purpose
   service containers and shared utility packages.
 - A fact has one authoritative type and one owner. Do not create parallel
-  manifest, shard, license, snapshot, or BOM representations for convenience.
+  manifest, shard, license, or OpenWALDO BOM representations for convenience.
 
 ## Development discipline
 

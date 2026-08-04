@@ -10,7 +10,9 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/openwaldo/waldo-new/internal/corpus"
 	waldoindex "github.com/openwaldo/waldo-new/internal/index"
+	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
 func runIndexList(context Context, args []string, stdout, _ io.Writer) error {
@@ -131,11 +133,17 @@ func runIndexSummary(context Context, args []string, stdout, _ io.Writer) error 
 	return nil
 }
 
-func runIndexVerify(context Context, args []string, stdout, _ io.Writer) error {
+func runIndexVerify(context Context, args []string, stdout, stderr io.Writer) error {
+	return runIndexVerifyWithProgress(context, args, stdout, stderr)
+}
+
+func runIndexVerifyWithProgress(context Context, args []string, stdout, progress io.Writer) error {
 	var path string
+	objects := false
 	for _, arg := range args {
 		if arg == "--objects" {
-			return fmt.Errorf("object verification is not available yet; local structural verification is implemented")
+			objects = true
+			continue
 		}
 		if strings.HasPrefix(arg, "-") {
 			return usageError{message: fmt.Sprintf("unknown index verify option %q", arg)}
@@ -157,14 +165,52 @@ func runIndexVerify(context Context, args []string, stdout, _ io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if context.JSON {
+	if !objects && context.JSON {
 		return writeJSON(stdout, struct {
 			Path         string                  `json:"path"`
 			Verification waldoindex.Verification `json:"verification"`
 		}{Path: target.Rel, Verification: verification})
 	}
-	fmt.Fprintf(stdout, "verified %s: %s directories, %s corpora, %s shards\n",
-		displayPath(target.Rel), humanInteger(verification.Directories), humanInteger(verification.Corpora), humanInteger(verification.Shards))
+	if !objects {
+		fmt.Fprintf(stdout, "verified %s: %s directories, %s corpora, %s shards\n",
+			displayPath(target.Rel), humanInteger(verification.Directories), humanInteger(verification.Corpora), humanInteger(verification.Shards))
+		return nil
+	}
+
+	policy, err := corpus.NewLicensePolicy(nil, nil)
+	if err != nil {
+		return err
+	}
+	bom, err := corpus.BuildBOM([]waldoindex.Target{target}, policy)
+	if err != nil {
+		return err
+	}
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(progress, "verifying %s objects (%s) through lookaside cache %s\n",
+		humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes), cache.Root())
+	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
+		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
+			fmt.Fprintf(progress, "  %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
+		}
+	})
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Path         string                  `json:"path"`
+			Verification waldoindex.Verification `json:"verification"`
+			Objects      int                     `json:"objects_verified"`
+			Bytes        int64                   `json:"bytes_verified"`
+			Cache        string                  `json:"cache"`
+		}{Path: target.Rel, Verification: verification, Objects: len(materialized.Objects), Bytes: bom.Totals.Bytes, Cache: cache.Root()})
+	}
+	fmt.Fprintf(stdout, "verified %s: %s directories, %s corpora, %s objects (%s)\n",
+		displayPath(target.Rel), humanInteger(verification.Directories), humanInteger(verification.Corpora),
+		humanInteger(int64(len(materialized.Objects))), humanBytes(bom.Totals.Bytes))
 	return nil
 }
 

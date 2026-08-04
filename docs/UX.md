@@ -67,7 +67,7 @@ do not grow into the wrong namespace.
 The CLI intentionally groups corpus workflows under `index`. Users encounter a
 corpus as an indexed path, and should not have to choose between two command
 groups that appear to own the same data. The internal corpus domain remains a
-separate boundary for selection, snapshots, ingestion, and export; package
+separate boundary for selection, OpenWALDO BOMs, ingestion, and export; package
 architecture does not have to appear as product vocabulary.
 
 There is no `compose` command group. A declarative model recipe is one input to

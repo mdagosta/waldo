@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -12,11 +13,16 @@ const version = "0.0.0-dev"
 // Run executes the Phase 0 command scaffold. Operational handlers will replace
 // the unavailable response one vertical slice at a time.
 func Run(args []string, stdout, stderr io.Writer) int {
-	context, args, err := parseGlobals(args)
+	return RunContext(context.Background(), args, stdout, stderr)
+}
+
+func RunContext(execution context.Context, args []string, stdout, stderr io.Writer) int {
+	commandContext, args, err := parseGlobals(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "waldo: %v\n", err)
 		return 2
 	}
+	commandContext.Execution = execution
 	root := commandTree()
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printHelp(stdout, root, nil)
@@ -56,7 +62,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 				fmt.Fprintf(stderr, "%s is not available yet; this command has not reached its implementation phase.\n", commandPath(path))
 				return 1
 			}
-			if err := command.Handler(context, remaining, stdout, stderr); err != nil {
+			if err := command.Handler(commandContext, remaining, stdout, stderr); err != nil {
 				var usage usageError
 				if errors.As(err, &usage) {
 					fmt.Fprintf(stderr, "waldo: %v\n", usage)

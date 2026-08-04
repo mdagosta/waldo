@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -73,5 +74,17 @@ func TestUnknownCommandSuggestsScopedHelp(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "waldo lookaside --help") {
 		t.Fatalf("stderr does not suggest scoped help: %q", stderr.String())
+	}
+}
+
+func TestLookasideStatusUsesNamedBackend(t *testing.T) {
+	cacheRoot := filepath.Join(t.TempDir(), "objects")
+	t.Setenv("WALDO_CACHE", cacheRoot)
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"lookaside", "status"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "lookaside cache") || !strings.Contains(stdout.String(), cacheRoot) {
+		t.Fatalf("lookaside status = %q", stdout.String())
 	}
 }

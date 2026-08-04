@@ -8,8 +8,8 @@ without trusting a central data service.
 
 The public commons is represented by a Git metadata index. Large shard objects
 live in federated lookaside storage. A consumer resolves an index selection to
-an immutable corpus snapshot, verifies every object, and can carry that
-snapshot into an export or model training record.
+an immutable OpenWALDO BOM, verifies every object named by it, and can carry
+that BOM into an export or model training record.
 
 WALDO is one binary because a complete provenance chain is one user journey.
 It is not one undifferentiated subsystem: index, corpus, lookaside, provenance,
@@ -72,4 +72,3 @@ The implementation is successful when a new user can understand the normal
 workflow from `waldo --help`, a curator can verify the real index without
 special knowledge, and a small model can be rebuilt from a recipe with a clear
 machine-readable chain from index commit to output weights.
-

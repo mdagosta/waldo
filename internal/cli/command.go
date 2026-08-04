@@ -1,8 +1,12 @@
 package cli
 
-import "io"
+import (
+	"context"
+	"io"
+)
 
 type Context struct {
+	Execution context.Context
 	IndexPath string
 	JSON      bool
 }
@@ -30,17 +34,17 @@ func commandTree() Command {
 				{Name: "list", Summary: "List all corpora beneath an index path", Usage: "waldo index list [path] [--index <checkout>] [--json]", Handler: runIndexList},
 				{Name: "show", Summary: "Show an index entry or corpus manifest", Usage: "waldo index show [path] [--index <checkout>] [--json]", Handler: runIndexShow},
 				{Name: "summary", Summary: "Summarize corpora, licenses, and totals", Usage: "waldo index summary [path] [--index <checkout>] [--json]", Handler: runIndexSummary},
-				{Name: "verify", Summary: "Verify local index structure", Usage: "waldo index verify [path] [--index <checkout>] [--json]", Handler: runIndexVerify},
+				{Name: "verify", Summary: "Verify index structure and optionally its objects", Usage: "waldo index verify [path] [--objects] [--index <checkout>] [--json]", Handler: runIndexVerify},
 				{Name: "add", Summary: "Add acquired material to an index"},
 				{Name: "update", Summary: "Append new material to an existing corpus"},
-				{Name: "export", Summary: "Export a verified corpus selection and BOM"},
+				{Name: "export", Summary: "Export a verified corpus selection and BOM", Usage: "waldo index export <path...> --output <directory> [--license <glob,...>] [--exclude-license <glob,...>] [--force] [--index <checkout>] [--json]", Handler: runIndexExport},
 				{Name: "remove", Summary: "Remove a corpus from the current index revision"},
 			}},
 			{Name: "lookaside", Summary: "Configure and maintain content-addressed objects", Children: []Command{
 				{Name: "configure", Summary: "Configure a lookaside location"},
 				{Name: "login", Summary: "Save credentials for lookaside writes"},
-				{Name: "status", Summary: "Show effective lookaside configuration and health"},
-				{Name: "verify", Summary: "Verify lookaside object availability and integrity"},
+				{Name: "status", Summary: "Show the local verified-object cache", Usage: "waldo lookaside status [--json]", Handler: runLookasideStatus},
+				{Name: "verify", Summary: "Scrub cached objects against their hashes", Usage: "waldo lookaside verify [--json]", Handler: runLookasideVerify},
 				{Name: "mirror", Summary: "Copy verified objects to another lookaside"},
 				{Name: "gc", Summary: "Safely reclaim unreferenced lookaside objects"},
 			}},
