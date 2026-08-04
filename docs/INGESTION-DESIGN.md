@@ -96,7 +96,7 @@ Homogeneous shards avoid a single sparse schema for unrelated objectives and
 allow repeated shard facts to be asserted and checked in file metadata. They
 do not remove the important per-row source evidence.
 
-### Proposed pretraining schema
+### Accepted pretraining schema
 
 | Column | Parquet/Arrow type | Required | Meaning |
 | --- | --- | --- | --- |
@@ -142,9 +142,9 @@ payload is schema-specific.
 
 ### Physical encoding recipe
 
-The first implementation should start with these values and lock them only
-after benchmark fixtures exercise small documents, large documents, and real
-upstream Parquet:
+The first implementation uses these values. ADR 0010 records the writer
+identity and initial benchmark; broader fixtures remain a release gate for
+remote contribution:
 
 | Property | Proposed value | Reason |
 | --- | --- | --- |
@@ -455,9 +455,9 @@ coordinates and machine-readable reasons.
 8. Add the self-contained multimodal Parquet schema only with an end-to-end
    image or audio fixture and loader.
 
-## Decisions still requiring acceptance
+## Accepted decisions
 
-Before implementation, the project should explicitly accept or revise:
+The initial implementation accepts:
 
 1. canonical corpus versus compiled training view as separate artifact classes;
 2. streaming acquisition-order objects as the normal mode, with order-independent

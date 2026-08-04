@@ -13,3 +13,4 @@ logs.
 - [0007: Verify objects before admission and export](0007-verified-lookaside.md)
 - [0008: Expand submanifest trees before materialization](0008-verified-submanifests.md)
 - [0009: Stabilize the corpus export BOM](0009-stable-corpus-bom.md)
+- [0010: Canonical text uses record schema 2 Parquet](0010-canonical-text-parquet.md)
