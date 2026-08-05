@@ -52,13 +52,20 @@ flowchart TB
     V --> B["Immutable OpenWALDO Training Data"]
     B --> C["Corpus export"]
     C --> X["Your own tools<br/>audit · validate · train from scratch<br/>or combine with open weights"]
-    N["New blank model<br/>architecture declared in compose"] --> MC["Compose Configuration"]
-    O["Existing open-weight model<br/>planned download + BOM pin"] --> MC
+    N["New blank model<br/>architecture declared in compose"] --> MC["Compose configuration"]
+    O["Existing open-weight model<br/>Hugging Face Safetensors"] --> D["waldo model download"]
+    D --> DN["Verify source · normalize tensors<br/>preserve training precision"]
+    DN --> OB["Immutable model-origin BOM<br/>source revision + artifact hashes"]
+    OB --> MC
     B --> MC
-    MC --> T["Model forecast and train"]
+    MC --> T["Forecast and train<br/>or continue training"]
     T --> M["Run and model BOMs<br/>data + starting-point lineage"]
     M --> Q["Test · validate · chat"]
-    Q --> E["Export model<br/>WALDO · Hugging Face · MLX<br/>GGUF · Ollama"]
+    Q --> E["Export and convert<br/>from training-quality Safetensors"]
+    E --> F["One selected package<br/>WALDO · Hugging Face · MLX<br/>GGUF · Ollama"]
+
+    classDef startingPoint fill:transparent,stroke:#4c8bf5,stroke-width:3px
+    class N,O startingPoint
 
 ```
 
@@ -71,15 +78,17 @@ flowchart TB
    training stack, used to train from scratch, or paired with an open-weight
    base model for continued training or fine-tuning.
 4. A WALDO compose currently starts with a blank architecture. The planned
-   open-weight path will download and pin the inherited model and its BOM before
+   open-weight path will download Hugging Face Safetensors, validate and
+   losslessly normalize them, and pin an immutable model-origin BOM before
    resolving the same compose lifecycle; model download and fine-tuning remain
    pending.
 5. WALDO persists the corpus BOM and starting-point identity before execution,
    records observed results afterward, and binds output weights into append-only
    run and model BOMs.
-6. A verified real run can be tested, used for generation, and exported into
-   one chosen runtime format. Every package contains `BOM.json` and
-   `EU-BOM.json`, and both are automatically signed when signing is configured.
+6. A verified real run can be tested, used for generation, and converted from
+   retained training-quality Safetensors into one chosen runtime format. Every
+   package contains `BOM.json` and `EU-BOM.json`, and both are automatically
+   signed when signing is configured.
 
 ## Why WALDO is structured this way
 
