@@ -163,8 +163,13 @@ waldo lookaside login
 
 `lookaside login` is bucket-scoped, so changing prefixes in the same bucket
 does not require another login. `waldo lookaside logout` removes the saved
-keys. Environment and workload-role credentials remain supported for headless
-execution when no WALDO keychain login exists.
+keys. Before saving a new login, WALDO writes, inspects, reads, and deletes a
+tiny unique probe object beneath the configured prefix. A login therefore
+proves the credentials have `PutObject`, `GetObject` (including metadata), and
+`DeleteObject` access without leaving test data behind. A failed validation
+does not replace previously saved credentials. Environment and workload-role
+credentials remain supported for headless execution when no WALDO keychain
+login exists.
 
 For a complete local integration test, configure a filesystem-backed writable
 lookaside instead:

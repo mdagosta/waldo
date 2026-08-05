@@ -42,7 +42,7 @@ func commandTree() Command {
 				{Name: "remove", Summary: "Remove a corpus from the current index revision"},
 			}},
 			{Name: "lookaside", Summary: "Inspect and maintain content-addressed objects", Children: []Command{
-				{Name: "login", Summary: "Store S3 access credentials in the OS keychain", Usage: "waldo lookaside login [--json]", Details: "Requires a configured s3:// lookaside. Prompts interactively for an S3 access key and hidden secret key, then stores both in the operating system credential vault scoped to the bucket. Credentials are never written to WALDO configuration, output, manifests, or command history.", Handler: runLookasideLogin},
+				{Name: "login", Summary: "Verify and store S3 credentials in the OS keychain", Usage: "waldo lookaside login [--json]", Details: "Requires a configured s3:// lookaside. Prompts interactively for an S3 access key and hidden secret key. WALDO writes, inspects, reads, and deletes a tiny probe object beneath the configured prefix before storing the credentials in the operating system credential vault, scoped to the bucket. Credentials are never written to WALDO configuration, output, manifests, or command history.", Handler: runLookasideLogin},
 				{Name: "logout", Summary: "Remove stored S3 credentials", Usage: "waldo lookaside logout [--json]", Handler: runLookasideLogout},
 				{Name: "status", Summary: "Show verified-download scratch and leftovers", Usage: "waldo lookaside status [--json]", Handler: runLookasideStatus},
 				{Name: "verify", Summary: "Scrub leftover objects against their hashes", Usage: "waldo lookaside verify [--json]", Handler: runLookasideVerify},

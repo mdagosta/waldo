@@ -6,10 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -114,6 +116,9 @@ type fakeS3Object struct {
 type fakeS3 struct {
 	objects map[string]fakeS3Object
 	puts    int
+	gets    int
+	deletes int
+	getErr  error
 }
 
 func (api *fakeS3) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
@@ -143,4 +148,43 @@ func (api *fakeS3) HeadObject(_ context.Context, input *s3.HeadObjectInput, _ ..
 		checksum = base64.StdEncoding.EncodeToString(digest[:])
 	}
 	return &s3.HeadObjectOutput{ContentLength: aws.Int64(int64(len(object.data))), ChecksumSHA256: aws.String(checksum)}, nil
+}
+
+func (api *fakeS3) GetObject(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	if api.getErr != nil {
+		return nil, api.getErr
+	}
+	object, ok := api.objects[aws.ToString(input.Key)]
+	if !ok {
+		return nil, &types.NoSuchKey{}
+	}
+	api.gets++
+	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(object.data))}, nil
+}
+
+func (api *fakeS3) DeleteObject(_ context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+	delete(api.objects, aws.ToString(input.Key))
+	api.deletes++
+	return &s3.DeleteObjectOutput{}, nil
+}
+
+func TestValidateS3CredentialsRoundTripsAndDeletesProbe(t *testing.T) {
+	api := &fakeS3{objects: map[string]fakeS3Object{}}
+	if err := validateS3CredentialAPI(context.Background(), api, "bucket", "lookaside/v1"); err != nil {
+		t.Fatal(err)
+	}
+	if api.puts != 1 || api.gets != 1 || api.deletes != 1 || len(api.objects) != 0 {
+		t.Fatalf("puts=%d gets=%d deletes=%d objects=%d", api.puts, api.gets, api.deletes, len(api.objects))
+	}
+}
+
+func TestValidateS3CredentialsCleansUpAfterReadFailure(t *testing.T) {
+	api := &fakeS3{objects: map[string]fakeS3Object{}, getErr: errors.New("read denied")}
+	err := validateS3CredentialAPI(context.Background(), api, "bucket", "prefix")
+	if err == nil || !strings.Contains(err.Error(), "read probe object") {
+		t.Fatalf("error = %v", err)
+	}
+	if api.deletes != 1 || len(api.objects) != 0 {
+		t.Fatalf("deletes=%d objects=%d", api.deletes, len(api.objects))
+	}
 }

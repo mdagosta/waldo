@@ -529,12 +529,25 @@ func TestLookasideLoginStatusAndLogoutUseCredentialStore(t *testing.T) {
 		return lookaside.Credentials{AccessKey: "AKIAEXAMPLE1234", SecretKey: "never-print-this-secret"}, nil
 	}
 	t.Cleanup(func() { promptS3Credentials = previousPrompt })
+	previousValidator := validateS3Credentials
+	validated := false
+	validateS3Credentials = func(_ context.Context, publish config.Publish, credentials lookaside.Credentials) error {
+		if store.found {
+			return fmt.Errorf("credentials were stored before validation")
+		}
+		if publish.URL != "s3://openwaldo/waldo-index" || credentials.AccessKey != "AKIAEXAMPLE1234" {
+			return fmt.Errorf("unexpected validation inputs")
+		}
+		validated = true
+		return nil
+	}
+	t.Cleanup(func() { validateS3Credentials = previousValidator })
 
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"lookaside", "login"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("login code = %d, stderr = %q", code, stderr.String())
 	}
-	if !store.found || store.credentials.AccessKey != "AKIAEXAMPLE1234" || store.credentials.SecretKey != "never-print-this-secret" {
+	if !validated || !store.found || store.credentials.AccessKey != "AKIAEXAMPLE1234" || store.credentials.SecretKey != "never-print-this-secret" {
 		t.Fatalf("stored credentials = %+v, found=%v", store.credentials, store.found)
 	}
 	if strings.Contains(stdout.String(), "AKIAEXAMPLE1234") || strings.Contains(stdout.String(), "never-print-this-secret") || !strings.Contains(stdout.String(), "…1234") {
@@ -554,6 +567,34 @@ func TestLookasideLoginStatusAndLogoutUseCredentialStore(t *testing.T) {
 	stderr.Reset()
 	if code := Run([]string{"lookaside", "logout"}, &stdout, &stderr); code != 0 || store.found {
 		t.Fatalf("logout code = %d, found=%v, stderr = %q", code, store.found, stderr.String())
+	}
+}
+
+func TestLookasideLoginValidationFailurePreservesStoredCredentials(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Lookaside: config.Lookaside{Publish: &config.Publish{URL: "s3://openwaldo/waldo-index", Region: "us-east-2", Workers: 2}}}); err != nil {
+		t.Fatal(err)
+	}
+	old := lookaside.Credentials{AccessKey: "old-access", SecretKey: "old-secret"}
+	store := &cliCredentialStore{credentials: old, found: true}
+	useCLICredentialStore(t, store)
+	previousPrompt := promptS3Credentials
+	promptS3Credentials = func(io.Writer) (lookaside.Credentials, error) {
+		return lookaside.Credentials{AccessKey: "new-access", SecretKey: "new-secret"}, nil
+	}
+	t.Cleanup(func() { promptS3Credentials = previousPrompt })
+	previousValidator := validateS3Credentials
+	validateS3Credentials = func(context.Context, config.Publish, lookaside.Credentials) error {
+		return fmt.Errorf("write probe object: access denied")
+	}
+	t.Cleanup(func() { validateS3Credentials = previousValidator })
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"lookaside", "login"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "access denied") {
+		t.Fatalf("login code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !store.found || store.credentials != old {
+		t.Fatalf("stored credentials changed to %+v", store.credentials)
 	}
 }
 

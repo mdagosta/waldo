@@ -1,7 +1,10 @@
 package lookaside
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -12,6 +15,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -25,6 +29,13 @@ import (
 type s3API interface {
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+}
+
+type s3CredentialAPI interface {
+	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
 type S3Publisher struct {
@@ -63,6 +74,90 @@ func newS3Publisher(ctx context.Context, publish config.Publish, store Credentia
 		options.UsePathStyle = false
 	})
 	return &S3Publisher{api: client, baseURL: strings.TrimRight(publish.URL, "/"), bucket: bucket, prefix: prefix}, nil
+}
+
+// ValidateS3Credentials proves that credentials can perform every object
+// operation WALDO relies on at the configured bucket and prefix. The probe is
+// unique, contains no user data, and is deleted before this function succeeds.
+func ValidateS3Credentials(ctx context.Context, publish config.Publish, credentials Credentials) error {
+	if err := credentials.Validate(); err != nil {
+		return err
+	}
+	bucket, prefix, err := parseS3Base(publish.URL)
+	if err != nil {
+		return err
+	}
+	options := []func(*awsconfig.LoadOptions) error{
+		awsconfig.WithCredentialsProvider(awscredentials.NewStaticCredentialsProvider(credentials.AccessKey, credentials.SecretKey, "")),
+	}
+	if publish.Region != "" {
+		options = append(options, awsconfig.WithRegion(publish.Region))
+	}
+	awsConfiguration, err := awsconfig.LoadDefaultConfig(ctx, options...)
+	if err != nil {
+		return fmt.Errorf("load AWS configuration for credential validation: %w", err)
+	}
+	client := s3.NewFromConfig(awsConfiguration)
+	return validateS3CredentialAPI(ctx, client, bucket, prefix)
+}
+
+func validateS3CredentialAPI(ctx context.Context, api s3CredentialAPI, bucket, prefix string) error {
+	probeID := make([]byte, 16)
+	if _, err := rand.Read(probeID); err != nil {
+		return fmt.Errorf("create S3 credential probe name: %w", err)
+	}
+	content := []byte("OpenWALDO S3 credential check " + hex.EncodeToString(probeID) + "\n")
+	digest := sha256.Sum256(content)
+	digestHex := hex.EncodeToString(digest[:])
+	key := path.Join(prefix, digestHex[:2], digestHex[2:4], digestHex)
+	checksum := base64.StdEncoding.EncodeToString(digest[:])
+
+	_, err := api.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:         aws.String(bucket),
+		Key:            aws.String(key),
+		Body:           bytes.NewReader(content),
+		ContentLength:  aws.Int64(int64(len(content))),
+		ChecksumSHA256: aws.String(checksum),
+		ContentType:    aws.String("application/octet-stream"),
+	})
+	if err != nil {
+		return fmt.Errorf("validate S3 credentials: write probe object: %w", err)
+	}
+
+	cleanup := func(primary error) error {
+		cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+		_, deleteErr := api.DeleteObject(cleanupContext, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)})
+		if deleteErr != nil {
+			deleteErr = fmt.Errorf("delete probe object %s: %w", key, deleteErr)
+		}
+		return errors.Join(primary, deleteErr)
+	}
+
+	head, err := api.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled})
+	if err != nil {
+		return cleanup(fmt.Errorf("validate S3 credentials: inspect probe object: %w", err))
+	}
+	if aws.ToInt64(head.ContentLength) != int64(len(content)) || aws.ToString(head.ChecksumSHA256) != checksum {
+		return cleanup(fmt.Errorf("validate S3 credentials: probe metadata did not match uploaded content"))
+	}
+
+	object, err := api.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled})
+	if err != nil {
+		return cleanup(fmt.Errorf("validate S3 credentials: read probe object: %w", err))
+	}
+	read, readErr := io.ReadAll(object.Body)
+	closeErr := object.Body.Close()
+	if readErr != nil || closeErr != nil {
+		return cleanup(fmt.Errorf("validate S3 credentials: read probe content: %w", errors.Join(readErr, closeErr)))
+	}
+	if !bytes.Equal(read, content) {
+		return cleanup(fmt.Errorf("validate S3 credentials: probe content did not match uploaded content"))
+	}
+	if err := cleanup(nil); err != nil {
+		return fmt.Errorf("validate S3 credentials: %w", err)
+	}
+	return nil
 }
 
 func newS3PublisherWithAPI(api s3API, baseURL string) (*S3Publisher, error) {

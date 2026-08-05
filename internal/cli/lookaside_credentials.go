@@ -13,6 +13,7 @@ import (
 )
 
 var lookasideCredentialStore lookaside.CredentialStore = lookaside.KeyringCredentialStore{}
+var validateS3Credentials = lookaside.ValidateS3Credentials
 
 var promptS3Credentials = func(output io.Writer) (lookaside.Credentials, error) {
 	fd := int(os.Stdin.Fd())
@@ -49,6 +50,10 @@ func runLookasideLogin(context Context, args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
+	fmt.Fprintf(stderr, "validating S3 write, read, and delete access at %s...\n", scope)
+	if err := validateS3Credentials(context.Execution, publish, credentials); err != nil {
+		return err
+	}
 	if err := lookasideCredentialStore.Set(publish.URL, credentials); err != nil {
 		return err
 	}
@@ -59,9 +64,9 @@ func runLookasideLogin(context Context, args []string, stdout, stderr io.Writer)
 			AccessKey string `json:"access_key"`
 			Store     string `json:"store"`
 			Status    string `json:"status"`
-		}{Scope: scope, AccessKey: redacted, Store: "os-keychain", Status: "logged-in"})
+		}{Scope: scope, AccessKey: redacted, Store: "os-keychain", Status: "verified-and-stored"})
 	}
-	fmt.Fprintf(stdout, "stored S3 credentials for %s in the OS keychain (%s)\n", scope, redacted)
+	fmt.Fprintf(stdout, "verified S3 access and stored credentials for %s in the OS keychain (%s)\n", scope, redacted)
 	return nil
 }
 

@@ -16,8 +16,11 @@ environment variables or workload identities.
 ## Decision
 
 `waldo lookaside login` prompts for an S3 access key and a non-echoed S3 secret
-key. It stores both in the operating system's native credential vault, scoped
-to the configured bucket. WALDO does not request or persist a session token.
+key. Before changing the saved login, WALDO uses the supplied credentials to
+write, inspect, read, and delete a unique probe object beneath the configured
+prefix. Only credentials that complete the round trip are stored in the
+operating system's native credential vault, scoped to the configured bucket.
+WALDO does not request or persist a session token.
 
 Full credentials must not appear in WALDO configuration, command output, logs,
 index manifests, or OpenWALDO BOMs. Status output may show only a redacted
@@ -32,6 +35,8 @@ the AWS CLI.
 - Interactive credentials use macOS Keychain, Windows Credential Manager, or
   the Linux Secret Service through the system keyring implementation.
 - `waldo lookaside logout` removes credentials for the configured bucket.
+- Interactive login requires `PutObject`, `GetObject`, and `DeleteObject` on
+  the configured prefix; failed validation preserves any prior login.
 - Different prefixes in one bucket share a login; a different bucket requires
   a separate login.
 - Headless deployments can continue to use short-lived environment or role
