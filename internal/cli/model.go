@@ -16,6 +16,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/openwaldo/waldo/internal/calibration"
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/disclosure"
@@ -23,6 +24,7 @@ import (
 	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/modelexport"
+	"github.com/openwaldo/waldo/internal/modelquant"
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/openwaldo/waldo/internal/signing"
 	"github.com/openwaldo/waldo/internal/training"
@@ -518,7 +520,7 @@ func parseModelCompose(args []string) (string, string, bool, error) {
 }
 
 func runModelExport(context Context, args []string, stdout, stderr io.Writer) error {
-	name, destination, format, allowIncomplete, err := parseModelExport(args)
+	parsed, err := parseModelExport(args)
 	if err != nil {
 		return err
 	}
@@ -530,7 +532,7 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	inspection, err := model.Inspect(root, name)
+	inspection, err := model.Inspect(root, parsed.Name)
 	if err != nil {
 		return err
 	}
@@ -545,7 +547,7 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	if err := requireCompleteDisclosure(report, allowIncomplete, stderr); err != nil {
+	if err := requireCompleteDisclosure(report, parsed.AllowIncomplete, stderr); err != nil {
 		return err
 	}
 	euBOM, err := json.MarshalIndent(report, "", "  ")
@@ -561,40 +563,90 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 		}
 	}
 	var output string
-	switch format {
+	var quantization *modelexport.Quantization
+	var preparedCalibration *calibration.Prepared
+	var cache *lookaside.Cache
+	if parsed.Quant != "" {
+		resolved, err := modelquant.ResolveProfile(parsed.Quant)
+		if err != nil {
+			return err
+		}
+		runtime, err := modelquant.ResolveRuntime(context.Execution, parsed.Calibration != "")
+		if err != nil {
+			return err
+		}
+		quantization = &modelexport.Quantization{Requested: parsed.Quant, Resolved: resolved, Quantizer: runtime}
+		if parsed.Calibration != "" {
+			cache, err = lookaside.DefaultCache()
+			if err != nil {
+				return err
+			}
+			targets, err := resolveIndexArguments([]string{parsed.Calibration})
+			if err != nil {
+				return fmt.Errorf("calibration: %w", err)
+			}
+			policy, err := corpus.NewLicensePolicy(nil, nil)
+			if err != nil {
+				return err
+			}
+			bom, err := corpus.BuildBOM(context.Execution, targets, policy, cache)
+			if err != nil {
+				return fmt.Errorf("calibration: %w", err)
+			}
+			fmt.Fprintf(stderr, "calibration        resolved %s: %s shards, %s reference tokens\n", strings.Join(bom.Paths, ", "), humanInteger(bom.Totals.Shards), humanCount(bom.Totals.Tokens))
+			prepared, err := calibration.Prepare(context.Execution, bom, cache, calibration.DefaultTokens, calibration.DefaultSeed, func(event calibration.Progress) {
+				if event.Current == 1 || event.Current%25 == 0 || event.Current == event.Total {
+					fmt.Fprintf(stderr, "calibration        shard %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard[:12])
+				}
+			})
+			if err != nil {
+				return err
+			}
+			preparedCalibration = &prepared
+			defer prepared.Cleanup()
+			quantization.Calibration = &modelexport.Calibration{TextPath: prepared.TextPath, Profile: prepared.BOM.Profile, ReferenceTokens: prepared.BOM.Corpus.Tokens, SampledTokens: prepared.BOM.SampledTokens, Records: prepared.BOM.Records, Shards: len(prepared.BOM.Shards), SelectionSHA256: prepared.BOM.SelectionSHA256, Seed: prepared.BOM.Seed, Evidence: json.RawMessage(prepared.JSON)}
+			fmt.Fprintf(stderr, "calibration        selected %s byte tokens from %s records in %s shards\n", humanCount(prepared.BOM.SampledTokens), humanCount(prepared.BOM.Records), humanInteger(int64(len(prepared.BOM.Shards))))
+		}
+	}
+	switch parsed.Format {
 	case "waldo":
 		options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM}}
 		if signed {
 			options.Finalize = finalize
 		}
-		output, err = model.ExportPackage(root, name, destination, options)
+		output, err = model.ExportPackage(root, parsed.Name, parsed.Destination, options)
 	case "huggingface":
 		options := modelexport.Options{EUBOM: euBOM}
 		if signed {
 			options.Finalize = finalize
 		}
-		output, err = modelexport.ExportHuggingFace(context.Execution, inspection, destination, options)
+		output, err = modelexport.ExportHuggingFace(context.Execution, inspection, parsed.Destination, options)
 	case "mlx":
 		options := modelexport.Options{EUBOM: euBOM}
 		if signed {
 			options.Finalize = finalize
 		}
-		output, err = modelexport.ExportMLX(context.Execution, inspection, destination, options)
+		output, err = modelexport.ExportMLX(context.Execution, inspection, parsed.Destination, options)
 	case "gguf":
-		options := modelexport.Options{EUBOM: euBOM}
+		options := modelexport.Options{EUBOM: euBOM, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
 		if signed {
 			options.Finalize = finalize
 		}
-		output, err = modelexport.ExportGGUF(context.Execution, inspection, destination, options)
+		output, err = modelexport.ExportGGUF(context.Execution, inspection, parsed.Destination, options)
 	case "ollama":
-		options := modelexport.Options{EUBOM: euBOM}
+		options := modelexport.Options{EUBOM: euBOM, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
 		if signed {
 			options.Finalize = finalize
 		}
-		output, err = modelexport.ExportOllama(context.Execution, inspection, destination, options)
+		output, err = modelexport.ExportOllama(context.Execution, inspection, parsed.Destination, options)
 	}
 	if err != nil {
 		return err
+	}
+	if preparedCalibration != nil {
+		if _, err := cache.PurgeUsed(); err != nil {
+			return fmt.Errorf("purge successful calibration scratch: %w", err)
+		}
 	}
 	if !signed {
 		fmt.Fprintln(stderr, "warning: model export is unsigned; configure signing.* to sign exports automatically")
@@ -605,42 +657,74 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 			Format string `json:"format"`
 			Output string `json:"output"`
 			Signed bool   `json:"signed"`
-		}{name, format, output, signed})
+		}{parsed.Name, parsed.Format, output, signed})
 	}
-	fmt.Fprintf(stdout, "exported %s model %s to %s\n", format, name, output)
+	fmt.Fprintf(stdout, "exported %s model %s to %s\n", parsed.Format, parsed.Name, output)
 	return nil
 }
 
-func parseModelExport(args []string) (string, string, string, bool, error) {
-	format := "waldo"
-	allowIncomplete := false
+type modelExportOptions struct {
+	Name            string
+	Destination     string
+	Format          string
+	Quant           string
+	Calibration     string
+	AllowIncomplete bool
+}
+
+func parseModelExport(args []string) (modelExportOptions, error) {
+	result := modelExportOptions{Format: "waldo"}
 	var positionals []string
 	for index := 0; index < len(args); index++ {
 		argument := args[index]
 		switch {
-		case argument == "--format":
-			value, next, err := optionValue(args, index, "--format")
+		case argument == "--format" || argument == "--quant" || argument == "--calibration":
+			value, next, err := optionValue(args, index, argument)
 			if err != nil {
-				return "", "", "", false, err
+				return modelExportOptions{}, err
 			}
-			format, index = value, next
+			switch argument {
+			case "--format":
+				result.Format = value
+			case "--quant":
+				result.Quant = value
+			case "--calibration":
+				result.Calibration = value
+			}
+			index = next
 		case strings.HasPrefix(argument, "--format="):
-			format = strings.TrimPrefix(argument, "--format=")
+			result.Format = strings.TrimPrefix(argument, "--format=")
+		case strings.HasPrefix(argument, "--quant="):
+			result.Quant = strings.TrimPrefix(argument, "--quant=")
+		case strings.HasPrefix(argument, "--calibration="):
+			result.Calibration = strings.TrimPrefix(argument, "--calibration=")
 		case argument == "--allow-incomplete":
-			allowIncomplete = true
+			result.AllowIncomplete = true
 		case strings.HasPrefix(argument, "-"):
-			return "", "", "", false, usageError{message: fmt.Sprintf("unknown model export option %q", argument)}
+			return modelExportOptions{}, usageError{message: fmt.Sprintf("unknown model export option %q", argument)}
 		default:
 			positionals = append(positionals, argument)
 		}
 	}
 	if len(positionals) != 2 {
-		return "", "", "", false, usageError{message: "usage: waldo model export <name> <directory> [--format waldo|huggingface|mlx|gguf|ollama] [--allow-incomplete] [--json]"}
+		return modelExportOptions{}, usageError{message: "usage: waldo model export <name> <directory> [--format waldo|huggingface|mlx|gguf|ollama] [--quant 2|3|4|5|6|8] [--calibration <index-path>] [--allow-incomplete] [--json]"}
 	}
-	if format != "waldo" && format != "huggingface" && format != "mlx" && format != "gguf" && format != "ollama" {
-		return "", "", "", false, usageError{message: fmt.Sprintf("model export format %q is not implemented; use waldo, huggingface, mlx, gguf, or ollama", format)}
+	result.Name, result.Destination = positionals[0], positionals[1]
+	if result.Format != "waldo" && result.Format != "huggingface" && result.Format != "mlx" && result.Format != "gguf" && result.Format != "ollama" {
+		return modelExportOptions{}, usageError{message: fmt.Sprintf("model export format %q is not implemented; use waldo, huggingface, mlx, gguf, or ollama", result.Format)}
 	}
-	return positionals[0], positionals[1], format, allowIncomplete, nil
+	if result.Quant != "" && result.Format != "gguf" && result.Format != "ollama" {
+		return modelExportOptions{}, usageError{message: "--quant is supported only with --format gguf or ollama"}
+	}
+	if result.Quant != "" {
+		if _, err := modelquant.ResolveProfile(result.Quant); err != nil {
+			return modelExportOptions{}, usageError{message: err.Error()}
+		}
+	}
+	if result.Calibration != "" && result.Quant == "" {
+		return modelExportOptions{}, usageError{message: "--calibration requires --quant"}
+	}
+	return result, nil
 }
 
 func runModelRemove(context Context, args []string, stdout, _ io.Writer) error {

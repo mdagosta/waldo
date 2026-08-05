@@ -516,6 +516,9 @@ Exactly one runtime representation is selected with `--format waldo`,
 `huggingface`, `mlx`, `gguf`, or `ollama`. The GGUF package contains
 `model.gguf`; the Ollama package adds a `Modelfile` that can be passed directly
 to `ollama create`. Neither package duplicates the weights as Safetensors.
+GGUF and Ollama optionally accept `--quant 2|3|4|5|6|8` and
+`--calibration <index-path>`. Calibration is a deterministic bounded
+importance sample from hash-verified, audited index shards; it is not training.
 See [the model export guide](MODEL-EXPORTS.md) for the package layouts, BOM
 semantics, format conversions, disclosure requirements, and signing contract.
 

@@ -200,6 +200,9 @@ record can be inspected.
   revision, source inventory, origin BOM, lossless name normalization, direct
   continued training, and pulled-base composes. **Implemented for the
   standard Llama plus OpenWALDO byte-tokenizer compatibility profile.**
+- Quantized GGUF and Ollama releases with simple bit-level profiles, exact
+  upstream tool identity, and optional deterministic bounded calibration from
+  a verified WALDO index selection. **Implemented.**
 - Held-out evaluation
 - Fork and lineage
 - Explicit additional training runs **implemented through `waldo model train`.**

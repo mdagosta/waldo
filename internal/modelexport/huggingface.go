@@ -16,26 +16,59 @@ import (
 
 	"github.com/openwaldo/waldo/internal/inference"
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/modelquant"
 )
 
 type Options struct {
-	EUBOM    []byte
-	Finalize func(string) error
+	EUBOM        []byte
+	Finalize     func(string) error
+	Quantization *Quantization
+	Report       func(string)
+	result       *modelquant.Result
+}
+
+type Quantization struct {
+	Requested   string
+	Resolved    string
+	Quantizer   modelquant.Quantizer
+	Calibration *Calibration
+}
+
+type Calibration struct {
+	TextPath        string          `json:"-"`
+	Profile         string          `json:"profile"`
+	ReferenceTokens int64           `json:"available_reference_tokens"`
+	SampledTokens   int64           `json:"sampled_tokens"`
+	Records         int64           `json:"records"`
+	Shards          int             `json:"shards"`
+	SelectionSHA256 string          `json:"selection_sha256"`
+	Seed            uint64          `json:"seed"`
+	Evidence        json.RawMessage `json:"evidence"`
 }
 
 type releaseBOM struct {
-	Kind       string            `json:"kind"`
-	Schema     int               `json:"schema"`
-	Subject    string            `json:"subject"`
-	Format     string            `json:"format"`
-	ModelID    string            `json:"model_id"`
-	Name       string            `json:"name"`
-	SourceType string            `json:"source_type"`
-	SourceID   string            `json:"source_id"`
-	RunID      string            `json:"run_id,omitempty"`
-	SourceBOM  string            `json:"source_bom_sha256"`
-	Artifacts  []releaseArtifact `json:"artifacts"`
-	Generated  string            `json:"generated"`
+	Kind         string               `json:"kind"`
+	Schema       int                  `json:"schema"`
+	Subject      string               `json:"subject"`
+	Format       string               `json:"format"`
+	ModelID      string               `json:"model_id"`
+	Name         string               `json:"name"`
+	SourceType   string               `json:"source_type"`
+	SourceID     string               `json:"source_id"`
+	RunID        string               `json:"run_id,omitempty"`
+	SourceBOM    string               `json:"source_bom_sha256"`
+	Artifacts    []releaseArtifact    `json:"artifacts"`
+	Quantization *releaseQuantization `json:"quantization,omitempty"`
+	Generated    string               `json:"generated"`
+}
+
+type releaseQuantization struct {
+	Requested   string           `json:"requested"`
+	Resolved    string           `json:"resolved"`
+	Profile     string           `json:"profile"`
+	Quantizer   modelquant.Tool  `json:"quantizer"`
+	Calibrator  *modelquant.Tool `json:"calibrator,omitempty"`
+	Calibration *Calibration     `json:"calibration,omitempty"`
 }
 
 type releaseArtifact struct {

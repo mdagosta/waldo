@@ -3,10 +3,12 @@ package modelexport
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"math"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/modelquant"
 )
 
 func TestByteTokenizerVocabulary(t *testing.T) {
@@ -23,6 +25,30 @@ func TestByteTokenizerVocabulary(t *testing.T) {
 			t.Fatalf("duplicate token %q", token)
 		}
 		seen[token] = true
+	}
+}
+
+func TestReleaseBOMEmbedsCompactCalibrationEvidence(t *testing.T) {
+	evidence := json.RawMessage(`{"kind":"openwaldo-bom","schema":1,"subject":"quantization-calibration","shards":[{"sha256":"abc"}]}`)
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Quantization: &releaseQuantization{
+		Requested: "4", Resolved: "Q4_K_M", Profile: modelquant.Profile,
+		Calibration: &Calibration{TextPath: "/private/sample.txt", Profile: "sample-schema-1", SampledTokens: 100, Evidence: evidence},
+	}}
+	data, err := json.Marshal(bom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	quantization := decoded["quantization"].(map[string]any)
+	calibration := quantization["calibration"].(map[string]any)
+	if calibration["sampled_tokens"] != float64(100) || calibration["evidence"].(map[string]any)["subject"] != "quantization-calibration" {
+		t.Fatalf("calibration = %+v", calibration)
+	}
+	if _, present := calibration["TextPath"]; present || bytes.Contains(data, []byte("/private/sample.txt")) {
+		t.Fatalf("private calibration path leaked into BOM: %s", data)
 	}
 }
 

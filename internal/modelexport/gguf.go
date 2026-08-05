@@ -14,6 +14,7 @@ import (
 
 	"github.com/openwaldo/waldo/internal/inference"
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/modelquant"
 	"github.com/openwaldo/waldo/internal/modelweights"
 )
 
@@ -79,8 +80,34 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	}
 	committed := false
 	defer func() { cleanup(committed) }()
-	if err := writeGGUF(ctx, artifacts.Weights, filepath.Join(temporary, "model.gguf"), inspection.Model); err != nil {
-		return "", err
+	weightsPath := filepath.Join(temporary, "model.gguf")
+	if options.Quantization == nil {
+		if err := writeGGUF(ctx, artifacts.Weights, weightsPath, inspection.Model); err != nil {
+			return "", err
+		}
+	} else {
+		if options.Quantization.Quantizer == nil {
+			return "", fmt.Errorf("quantization runtime is required")
+		}
+		highPrecision := filepath.Join(temporary, ".waldo-high-precision.gguf")
+		if options.Report != nil {
+			options.Report("writing high-precision GGUF")
+		}
+		if err := writeGGUF(ctx, artifacts.Weights, highPrecision, inspection.Model); err != nil {
+			return "", err
+		}
+		calibrationText := ""
+		if options.Quantization.Calibration != nil {
+			calibrationText = options.Quantization.Calibration.TextPath
+		}
+		result, err := options.Quantization.Quantizer.Quantize(ctx, modelquant.Request{Input: highPrecision, Output: weightsPath, Resolved: options.Quantization.Resolved, CalibrationText: calibrationText, Report: options.Report})
+		if err != nil {
+			return "", err
+		}
+		if err := os.Remove(highPrecision); err != nil {
+			return "", err
+		}
+		options.result = &result
 	}
 	if len(options.EUBOM) == 0 {
 		return "", fmt.Errorf("EU-BOM.json is empty")
@@ -107,6 +134,20 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 		return "", err
 	}
 	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
+	if options.Quantization != nil {
+		if options.result == nil {
+			return "", fmt.Errorf("quantization result is missing")
+		}
+		bom.Quantization = &releaseQuantization{Requested: options.Quantization.Requested, Resolved: options.Quantization.Resolved, Profile: modelquant.Profile, Quantizer: options.result.Quantizer, Calibrator: options.result.Calibrator, Calibration: options.Quantization.Calibration}
+		if bom.Quantization.Calibration != nil {
+			copy := *bom.Quantization.Calibration
+			copy.TextPath = ""
+			if len(copy.Evidence) == 0 || !json.Valid(copy.Evidence) {
+				return "", fmt.Errorf("calibration evidence is empty or invalid")
+			}
+			bom.Quantization.Calibration = &copy
+		}
+	}
 	if err := writeJSON(filepath.Join(temporary, "BOM.json"), bom); err != nil {
 		return "", err
 	}

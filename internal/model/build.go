@@ -310,7 +310,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 			return Inspection{}, fmt.Errorf("resolve compose base model %q: %w", compose.Base.Model, err)
 		}
 		if base.Origin == nil || base.BOM.CurrentOriginSHA256 == "" {
-			return Inspection{}, fmt.Errorf("compose base model %q must have downloaded origin weights as its current weights", compose.Base.Model)
+			return Inspection{}, fmt.Errorf("compose base model %q must have pulled origin weights as its current weights", compose.Base.Model)
 		}
 		if compose.Base.OriginSHA256 != "" && compose.Base.OriginSHA256 != base.Model.OriginBOMSHA256 {
 			return Inspection{}, fmt.Errorf("compose base model %q origin is %s, not requested %s", compose.Base.Model, base.Model.OriginBOMSHA256, compose.Base.OriginSHA256)

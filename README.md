@@ -378,8 +378,8 @@ explicitly recorded fine-tuning support.
 
 ### Continue training an open-weight model
 
-The next model-lifecycle slice will download training-quality open weights
-directly into WALDO's managed model root:
+WALDO pulls training-quality open weights directly into its managed model
+root:
 
 ```mermaid
 flowchart TB
@@ -420,7 +420,7 @@ For a supported architecture, WALDO will:
    contract without quantization or numerical conversion; and
 5. persist a separate immutable model-origin record before allowing training.
 
-The downloaded origin is not represented as a training run. Subsequent
+The pulled origin is not represented as a training run. Subsequent
 `model train` and model-compose stages append ordinary runs that pin the exact
 origin BOM and initialization-weight hash. Missing upstream provenance remains
 an explicit disclosure gap rather than being inferred. Unsupported
@@ -432,9 +432,9 @@ training-quality format emitted by WALDO's Hugging Face export. General
 Hugging Face tokenizer support remains future work; WALDO fails closed instead
 of silently retokenizing a model or changing its tensor values.
 
-GGUF is intentionally not the default download format because it is commonly
-quantized for inference. WALDO will derive GGUF, Ollama, and MLX packages from
-the retained training-quality weights during export. A later `model push`
+GGUF is intentionally not the default pull format because it is commonly
+quantized for inference. WALDO derives GGUF, Ollama, and MLX packages from the
+retained training-quality weights during export. A later `model push`
 command can publish one deliberately selected representation back to Hugging
 Face without bundling redundant weight formats.
 
@@ -457,16 +457,25 @@ waldo model export small ./small-mlx --format mlx
 waldo model export small ./small-gguf --format gguf
 waldo model export small ./small-ollama --format ollama
 
+# Optional derived inference weights; exact Q4_K_M is recorded in BOM.json.
+waldo model export small ./small-q4 --format gguf --quant 4
+
+# Optional bounded importance calibration from a verified index selection.
+waldo model export small ./small-q4-calibrated \
+  --format gguf --quant 4 --calibration core/books
+
 ollama create small -f ./small-ollama/Modelfile
 ```
 
 Every package contains `BOM.json` and `EU-BOM.json`. Derived runtime formats
-select either the current verified download origin or the newest complete,
+select either the current verified pulled origin or the newest complete,
 non-simulated real run and verify its model pin, configuration, tokenizer,
 weights, sizes, and hashes before conversion.
 Hugging Face and MLX preserve tensor bytes while translating names and runtime
-metadata. GGUF v3 is streamed directly, embeds the byte tokenizer, and does not
-imply quantization. Ollama adds only a portable relative `Modelfile`; no export
+metadata. GGUF v3 is streamed directly and embeds the byte tokenizer;
+quantization happens only when `--quant` is explicit. `--calibration` selects a
+bounded deterministic sample from verified index shards and does not train or
+change the source model. Ollama adds only a portable relative `Modelfile`; no export
 duplicates large weight formats.
 
 The native WALDO package is the self-contained provenance archive. Derived
@@ -505,7 +514,8 @@ Working end to end today:
   single-process PyTorch training on Linux CPU, NVIDIA CUDA, or AMD ROCm, and
   single-node distributed TorchTitan training across all visible Linux GPUs;
 - **Release:** separate native WALDO, Hugging Face, MLX, GGUF, and Ollama
-  packages, each with technical and EU BOMs; and
+  packages, each with technical and EU BOMs, plus quantized GGUF/Ollama with
+  optional index-backed calibration evidence; and
 - **Disclosure and signing:** machine-readable EU GPAI mapping and gap analysis,
   plus optional fail-closed Sigstore signing of model release BOMs.
 
@@ -520,9 +530,8 @@ Still deliberately pending:
   checkpoints and resume, and empirical forecast calibration;
 - **Additional execution:** PyTorch generation, a TensorFlow adapter, and
   multi-node TorchTitan rendezvous, scheduler, and cluster orchestration;
-- **Additional release formats:** quantized GGUF variants and rendering the
-  exact official editable EU template instead of only its versioned JSON
-  mapping; and
+- **Additional release formats:** rendering the exact official editable EU
+  template instead of only its versioned JSON mapping; and
 - **Distribution:** Hugging Face model push, installable packages, migration
   guidance, website reconciliation, and a supported public release.
 
@@ -539,6 +548,7 @@ repository policy remain visible.
 - [Fetcher and ingest-recipe contract](docs/FETCHER-CONTRACT.md)
 - [Corpus OpenWALDO BOM](docs/OPENWALDO-BOM.md)
 - [Model lifecycle and training](docs/MODEL-LIFECYCLE.md)
+- [Training, tuning, and quantization calibration](docs/TRAINING-AND-CALIBRATION.md)
 - [Model formats, release BOMs, and signing](docs/MODEL-EXPORTS.md)
 - [EU GPAI disclosure mapping](docs/EU-GPAI-DISCLOSURE.md)
 - [Architectural decisions](docs/adr/README.md)

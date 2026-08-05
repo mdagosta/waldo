@@ -30,3 +30,4 @@ logs.
 - [0024: Execute Linux training through the shared PyTorch worker contract](0024-pytorch-training-adapter.md)
 - [0025: Use TorchTitan for single-node distributed training](0025-torchtitan-distributed-adapter.md)
 - [0026: Normalize pinned open weights behind an origin BOM](0026-pinned-model-origin.md)
+- [0027: Quantize with upstream tools and bounded index calibration](0027-bounded-index-calibration.md)

@@ -48,6 +48,7 @@ huggingface_export="$work/huggingface-export"
 mlx_export="$work/mlx-export"
 gguf_export="$work/gguf-export"
 ollama_export="$work/ollama-export"
+quantized_export="$work/quantized-export"
 export WALDO_CONFIG="$work/config.json"
 
 echo "testing: real MLX model lifecycle with $mlx_python"
@@ -211,5 +212,35 @@ with open(os.path.join(ollama_root, "Modelfile"), encoding="utf-8") as stream:
 assert "FROM ./model.gguf\n" in modelfile
 assert "PARAMETER num_ctx 16\n" in modelfile
 PY
+
+if command -v llama-quantize >/dev/null 2>&1 && command -v llama-imatrix >/dev/null 2>&1; then
+  "$binary" model export mlx-smoke "$quantized_export" \
+    --format gguf --quant 4 --calibration core/e2e/mlx --allow-incomplete >/dev/null
+  "$mlx_python" - "$quantized_export" <<'PY'
+import json
+import os
+import sys
+
+root = sys.argv[1]
+with open(os.path.join(root, "BOM.json"), encoding="utf-8") as stream:
+    bom = json.load(stream)
+quant = bom["quantization"]
+assert quant["requested"] == "4"
+assert quant["resolved"] == "Q4_K_M"
+assert quant["quantizer"]["name"] == "llama-quantize"
+assert quant["calibrator"]["name"] == "llama-imatrix"
+calibration = quant["calibration"]
+assert calibration["sampled_tokens"] > 0
+assert calibration["records"] > 0
+assert calibration["shards"] == 1
+assert calibration["evidence"]["subject"] == "quantization-calibration"
+assert len(calibration["evidence"]["shards"]) == 1
+assert os.path.getsize(os.path.join(root, "model.gguf")) > 0
+assert not os.path.exists(os.path.join(root, ".waldo-high-precision.gguf"))
+assert not os.path.exists(os.path.join(root, ".waldo-imatrix.gguf"))
+PY
+else
+  echo "testing: calibrated GGUF export skipped (llama-quantize and llama-imatrix not both installed)"
+fi
 
 echo "E2E MLX model passed: trained, resumed, generated, and exported Hugging Face, MLX, GGUF, and Ollama packages"

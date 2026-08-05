@@ -8,6 +8,8 @@ one export.
 ```bash
 waldo model export <name> <new-directory> \
   [--format waldo|huggingface|mlx|gguf|ollama] \
+  [--quant 2|3|4|5|6|8] \
+  [--calibration <index-path>] \
   [--allow-incomplete] [--json]
 ```
 
@@ -32,7 +34,7 @@ not also copy Safetensors and choosing Hugging Face does not also create GGUF.
 | `gguf` | llama.cpp-compatible consumers, including LM Studio | One GGUF v3 file | No second weight representation |
 | `ollama` | Ollama | The same GGUF v3 representation | A relative `Modelfile` containing the context length |
 
-`waldo` is the default because it is lossless, retains the downloaded origin
+`waldo` is the default because it is lossless, retains the pulled origin
 and every historical run, and preserves the most provenance. A derived runtime
 package contains only the current verified origin selected by
 `current_origin_sha256` or the newest complete, non-simulated real-weight run
@@ -349,9 +351,36 @@ weight file. It:
 - disables implicit BOS and EOS insertion so prompt tokenization matches
   WALDO's byte-token stream.
 
-This export is a container conversion, not quantization. The resulting GGUF is
-normally close to the source weight size. Quantized variants would be distinct
-derived releases and are not currently produced by `model export`.
+Without `--quant`, this is a container conversion rather than quantization and
+the resulting GGUF is normally close to the source weight size. Quantized
+exports use simple user-facing levels and preserve the resolved llama.cpp
+recipe in `BOM.json`:
+
+```bash
+waldo model export small ./small-q4 --format gguf --quant 4
+waldo model export small ./small-q4-calibrated \
+  --format gguf --quant 4 --calibration core/books
+```
+
+The supported levels resolve to `Q2_K`, `Q3_K_M`, `Q4_K_M`, `Q5_K_M`,
+`Q6_K`, and `Q8_0`. Quantized export requires the upstream
+`llama-quantize` executable in `PATH`. Calibrated export also requires
+`llama-imatrix`.
+
+`--calibration` accepts one normal WALDO index selection. It recursively
+resolves the corpus and then retrieves and audits only enough deterministically
+ordered, hash-verified Parquet shards to fill a 100,000-byte-token sample. It
+does not scan a large corpus in full, update weights, use gradients, or create
+a training run. The release embeds the source corpus BOM pin, selected shards,
+sample parameters, and exact tool hashes directly in `BOM.json`; it does not
+invent a third public BOM file. See
+[training and calibration](TRAINING-AND-CALIBRATION.md) for the
+semantic boundary.
+
+Quantization needs a temporary high-precision GGUF alongside the derived file
+in the atomic staging directory. WALDO removes that intermediate and the
+importance matrix before publication; failures remove the entire staging
+directory. Plan temporary disk capacity accordingly.
 
 The current GGUF adapter intentionally fails closed unless the model uses the
 supported decoder-transformer architecture and
@@ -386,6 +415,8 @@ The GGUF bytes are produced by the same converter as `--format gguf`. The
 additional `Modelfile` contains a relative `FROM ./model.gguf` reference and
 the model's context length. It remains portable when the package directory is
 moved.
+
+The same `--quant` and optional `--calibration` flags apply to Ollama exports.
 
 WALDO's current pretrained models are raw causal continuation models. The
 Ollama package therefore does not invent a system prompt or chat template.
@@ -423,6 +454,7 @@ should use the JSON result rather than parse the human sentence.
 | No current weights | Download a supported open-weight origin or complete a real training run; simulated artifacts cannot become runtime releases. |
 | Artifact hash, size, or model pin mismatch | Treat the managed model as corrupted or inconsistent and audit it; WALDO will not convert unverified bytes. |
 | Unsupported GGUF tensor, tokenizer, or dtype | Use a supported schema-1 decoder model or add a reviewed format adapter rather than guessing metadata. |
+| `llama-quantize` or `llama-imatrix` is unavailable | Install llama.cpp and put the required executable in `PATH`; WALDO never silently substitutes a quantizer. |
 | Signing is configured but fails | Install/configure `cosign`, fix authentication or the configured key, and rerun. WALDO will not fall back to unsigned output. |
 
 ## Verification boundaries

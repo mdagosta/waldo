@@ -77,8 +77,11 @@ checkpoints, evaluations, and non-simulated run observation. It also exports
 the current real run as separate Hugging Face, MLX, GGUF, and Ollama packages.
 It proves the Safetensors payloads are byte-identical after header-name
 conversion, checks Python syntax, verifies all release inventories, validates
-the GGUF v3 header, and checks the generated relative Ollama `Modelfile`. Other
-platforms report an explicit skip.
+the GGUF v3 header, and checks the generated relative Ollama `Modelfile`. When
+the upstream `llama-quantize` and `llama-imatrix` executables are installed, it
+also performs a calibrated Q4 export from the disposable index and verifies
+the embedded calibration evidence, tool identity, quant profile, output, and temporary-file
+cleanup. Other platforms and unavailable optional tools report explicit skips.
 
 ```bash
 ./testing/e2e/model-mlx.sh
