@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -516,7 +517,7 @@ func configuredModelRoot() (string, error) {
 	return config.EffectiveModelRoot(configuration)
 }
 
-func configuredModelBuilder(context Context, progress io.Writer) (model.Builder, error) {
+func configuredModelBuilder(commandContext Context, progress io.Writer) (model.Builder, error) {
 	configuration, err := config.Load()
 	if err != nil {
 		return model.Builder{}, err
@@ -526,7 +527,7 @@ func configuredModelBuilder(context Context, progress io.Writer) (model.Builder,
 		return model.Builder{}, err
 	}
 	builder := model.Builder{Root: root, Progress: func(event model.Progress) {
-		if context.JSON {
+		if commandContext.JSON {
 			_ = json.NewEncoder(progress).Encode(event)
 			return
 		}
@@ -540,9 +541,19 @@ func configuredModelBuilder(context Context, progress io.Writer) (model.Builder,
 			fmt.Fprintf(progress, "%-22s %s\n", label, event.Message)
 		}
 	}}
-	if config.EffectiveModelBackend(configuration) == "fake" {
-		builder.Resolver = training.FakeResolver()
-	}
+	backend := config.EffectiveModelBackend(configuration)
+	resolver := training.NewEnvironmentResolver(backend)
+	builder.Resolver = training.ResolverFunc(func(execution context.Context, request training.ResolveRequest) (training.Selection, error) {
+		selection, err := resolver.Resolve(execution, request)
+		if err != nil {
+			if commandContext.JSON {
+				_ = json.NewEncoder(progress).Encode(model.Progress{Phase: "backend", State: "unavailable", Message: err.Error()})
+			} else {
+				fmt.Fprintf(progress, "warning: training backend unavailable: %v\n", err)
+			}
+		}
+		return selection, err
+	})
 	return builder, nil
 }
 

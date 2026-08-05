@@ -158,8 +158,9 @@ the same files independently of an index checkout.
   **Implemented.**
 - Select MLX automatically on Apple Silicon. **Implemented for the built-in
   byte tokenizer with verified Metal runtime discovery.**
-- Select PyTorch automatically on single-node Linux
-- Select TorchTitan for explicitly configured multi-node Linux runs
+- On Linux, prefer an installed TorchTitan and then an installed PyTorch.
+  **Deterministic discovery and fail-closed diagnostics implemented; execution
+  adapters remain.**
 - Persist the resolved backend and immutable environment facts in each run BOM.
   **Implemented for MLX, including Python/MLX versions and Apple accelerator.**
 - Keep the execution adapter portable across MLX, PyTorch, TensorFlow, and

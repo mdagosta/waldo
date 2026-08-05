@@ -91,6 +91,11 @@ func TestModelBackendDefaultsToRealAutoAndRejectsUnknown(t *testing.T) {
 	if err := Save(Config{Model: Model{Backend: "made-up"}}); err == nil {
 		t.Fatal("unknown model backend accepted")
 	}
+	for _, backend := range []string{"auto", "mlx", "torchtitan", "pytorch", "fake"} {
+		if err := Save(Config{Model: Model{Backend: backend}}); err != nil {
+			t.Fatalf("backend %q rejected: %v", backend, err)
+		}
+	}
 }
 
 func TestEffectiveStagingRootIsPlanSpecific(t *testing.T) {

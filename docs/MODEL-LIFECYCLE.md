@@ -19,10 +19,20 @@ waldo config set lookaside.cache /fast-disk/waldo-cache
 ```
 
 Defaults are `~/.waldo/models` and `~/.waldo/cache`.
-`model.backend` defaults to `auto`, which selects only a real compatible
-backend. `waldo config set model.backend fake` is an explicit simulation mode
-for development and automated lifecycle tests; its artifacts are permanently
-marked as simulated.
+`model.backend` defaults to `auto`. On macOS it selects MLX and requires Apple
+Silicon. On Linux it probes Python environments in deterministic order,
+preferring an installed TorchTitan and then an installed PyTorch. It never
+falls back to simulation. `mlx`, `torchtitan`, and `pytorch` are explicit
+machine-local overrides; `fake` is an explicit simulation mode for development
+and automated lifecycle tests whose artifacts are permanently marked as
+simulated.
+
+Backend resolution happens before a run record is created. A missing or
+unusable selected backend writes a warning to standard error, then fails with
+platform-appropriate official installation guidance. The current executable
+adapter is MLX. Linux discovery and selection are implemented, while the
+TorchTitan and PyTorch execution adapters remain roadmap work; detecting an
+installed framework therefore reports that adapter gap explicitly.
 
 ## Basic commands
 

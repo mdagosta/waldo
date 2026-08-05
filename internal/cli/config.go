@@ -239,8 +239,8 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		if len(values) != 1 {
 			return oneConfigValue(key)
 		}
-		if values[0] != "auto" && values[0] != "fake" {
-			return usageError{message: "model.backend must be auto or fake"}
+		if values[0] != "auto" && values[0] != "mlx" && values[0] != "torchtitan" && values[0] != "pytorch" && values[0] != "fake" {
+			return usageError{message: "model.backend must be auto, mlx, torchtitan, pytorch, or fake"}
 		}
 		configuration.Model.Backend = values[0]
 	default:

@@ -381,7 +381,7 @@ func persistModel(modelPath string, record *ModelRecord, now time.Time) error {
 }
 
 func builtinResolver() training.Resolver {
-	return training.NewMLXResolver()
+	return training.NewEnvironmentResolver(training.BackendAuto)
 }
 
 func validateSelection(selection training.Selection, objectives []string) error {

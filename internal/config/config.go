@@ -235,8 +235,8 @@ func EffectiveModelBackend(config Config) string {
 }
 
 func validateModelBackend(backend string) error {
-	if backend != "" && backend != "auto" && backend != "fake" {
-		return fmt.Errorf("model backend must be auto or fake")
+	if backend != "" && backend != "auto" && backend != "mlx" && backend != "torchtitan" && backend != "pytorch" && backend != "fake" {
+		return fmt.Errorf("model backend must be auto, mlx, torchtitan, pytorch, or fake")
 	}
 	return nil
 }
