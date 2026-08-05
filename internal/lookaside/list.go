@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo/internal/config"
 )
 
 type ListedObject struct {

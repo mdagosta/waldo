@@ -6,7 +6,7 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/openwaldo/waldo-new/internal/corpus"
+	"github.com/openwaldo/waldo/internal/corpus"
 )
 
 type Identity struct {

@@ -10,11 +10,11 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/openwaldo/waldo-new/internal/config"
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	waldoindex "github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/lookaside"
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/corpus"
+	waldoindex "github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 func runIndexInit(context Context, args []string, stdout, _ io.Writer) error {

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	"github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/model"
-	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 func TestBuildEUGPAIReportDeduplicatesCorporaAndReportsFacts(t *testing.T) {

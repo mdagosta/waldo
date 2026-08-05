@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/shard"
-	"github.com/openwaldo/waldo-new/internal/tokenizer"
+	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/shard"
+	"github.com/openwaldo/waldo/internal/tokenizer"
 )
 
 // BuildManifest converts a completed assembly into the compact schema-1 shape

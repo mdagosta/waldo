@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo/internal/config"
 )
 
 const (

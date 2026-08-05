@@ -13,11 +13,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	"github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/record"
-	"github.com/openwaldo/waldo-new/internal/shard"
-	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/record"
+	"github.com/openwaldo/waldo/internal/shard"
+	"github.com/openwaldo/waldo/internal/training"
 	"github.com/parquet-go/parquet-go"
 )
 

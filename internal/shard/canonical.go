@@ -14,8 +14,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/record"
-	"github.com/openwaldo/waldo-new/internal/tokenizer"
+	"github.com/openwaldo/waldo/internal/record"
+	"github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/parquet-go/parquet-go"
 	"go.etcd.io/bbolt"
 )

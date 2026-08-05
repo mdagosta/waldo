@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/record"
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/record"
+	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/parquet-go/parquet-go"
 )
 

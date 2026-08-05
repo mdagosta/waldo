@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/index"
+	"github.com/openwaldo/waldo/internal/index"
 )
 
 func TestStageContributionProducesMinimalValidIndexOverlay(t *testing.T) {

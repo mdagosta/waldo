@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"unicode/utf8"
 
-	"github.com/openwaldo/waldo-new/internal/canon"
+	"github.com/openwaldo/waldo/internal/canon"
 )
 
 const (

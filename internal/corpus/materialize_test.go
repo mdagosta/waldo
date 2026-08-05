@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/lookaside"
 )
 
 func TestMaterializeUsesBOMWithoutIndex(t *testing.T) {

@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/lookaside"
 )
 
 func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {

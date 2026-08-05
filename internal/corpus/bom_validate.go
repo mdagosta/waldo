@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/index"
+	"github.com/openwaldo/waldo/internal/index"
 )
 
 // Validate checks the internally provable claims in an OpenWALDO BOM. It does

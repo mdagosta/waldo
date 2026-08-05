@@ -15,9 +15,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/mlxruntime"
-	"github.com/openwaldo/waldo-new/internal/model"
-	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/openwaldo/waldo/internal/mlxruntime"
+	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 //go:embed workers/mlx.py

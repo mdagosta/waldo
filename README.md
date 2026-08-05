@@ -1,5 +1,8 @@
 # WALDO
 
+**Open Weights. Open Artifacts. Open Licenses. Open Data. Open Origins.**<br>
+**OpenWALDO.**
+
 WALDO turns training data into reviewable, verifiable inputs—and carries that
 provenance all the way into trained model releases.
 
@@ -88,22 +91,32 @@ limits of what it verified.
 - `EU-BOM.json` is the model-specific regulatory disclosure projection, not a
   second weight inventory or a replacement for the technical provenance tree.
 
-## Build and inspect
+## Install and inspect
 
 WALDO currently requires Go 1.25 or newer.
 
 ```bash
-cd /path/to/waldo-new
-go build -o waldo ./cmd/waldo
-./waldo --help
+cd /path/to/waldo
+go install ./cmd/waldo
+
+WALDO_GOBIN="$(go env GOBIN)"
+[ -n "$WALDO_GOBIN" ] || WALDO_GOBIN="$(go env GOPATH)/bin"
+export PATH="$WALDO_GOBIN:$PATH"
+
+command -v waldo
+waldo --help
 ```
+
+`go install` writes the executable to `GOBIN`, or to `GOPATH/bin` when
+`GOBIN` is unset. Add the resolved `WALDO_GOBIN` directory to your shell startup
+configuration so `waldo` remains available in future terminals.
 
 Every command supports focused help. Global `--json` emits stable structured
 results while progress remains on standard error:
 
 ```bash
-./waldo index verify --help
-./waldo --json config get
+waldo index verify --help
+waldo --json config get
 ```
 
 ## Configure the machine, not the corpus

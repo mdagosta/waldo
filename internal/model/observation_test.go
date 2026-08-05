@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 func TestValidateBackendObservationVerifiesBoundsAndArtifacts(t *testing.T) {

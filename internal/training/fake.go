@@ -9,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/openwaldo/waldo-new/internal/corpus"
+	"github.com/openwaldo/waldo/internal/corpus"
 )
 
 const FakeRevision = "builtin-fake-schema-1"

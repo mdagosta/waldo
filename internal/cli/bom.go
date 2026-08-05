@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/config"
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	"github.com/openwaldo/waldo-new/internal/disclosure"
-	"github.com/openwaldo/waldo-new/internal/model"
-	"github.com/openwaldo/waldo-new/internal/provenance"
+	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/disclosure"
+	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/provenance"
 )
 
 func runBOMShow(context Context, args []string, stdout, _ io.Writer) error {

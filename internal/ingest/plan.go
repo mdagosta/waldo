@@ -9,8 +9,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 type Plan struct {

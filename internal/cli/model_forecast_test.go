@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/config"
-	"github.com/openwaldo/waldo-new/internal/model"
+	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/model"
 )
 
 func TestApproximateDurationUsesHoursUntilOneHundred(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/inference"
+	"github.com/openwaldo/waldo/internal/inference"
 )
 
 func TestParseModelChatSupportsOneShotGenerationOptions(t *testing.T) {

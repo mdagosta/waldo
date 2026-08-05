@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/inference"
-	"github.com/openwaldo/waldo-new/internal/model"
+	"github.com/openwaldo/waldo/internal/inference"
+	"github.com/openwaldo/waldo/internal/model"
 )
 
 type Options struct {

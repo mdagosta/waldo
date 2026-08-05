@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/lookaside"
 )
 
 const CorpusExportSchema = 1

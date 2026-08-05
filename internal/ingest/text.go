@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 // TextBatch is the typed boundary between text-family adapters and the

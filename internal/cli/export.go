@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	waldoindex "github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/lookaside"
-	"github.com/openwaldo/waldo-new/internal/provenance"
+	"github.com/openwaldo/waldo/internal/corpus"
+	waldoindex "github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/provenance"
 )
 
 type exportOptions struct {

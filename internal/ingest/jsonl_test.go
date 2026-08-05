@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 func TestCompressedJSONLStreamsThroughCanonicalAdapter(t *testing.T) {

@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/lookaside"
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 type ExportedFile struct {

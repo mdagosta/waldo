@@ -6,7 +6,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/model"
+	"github.com/openwaldo/waldo/internal/model"
 )
 
 func TestByteTokenizerVocabulary(t *testing.T) {

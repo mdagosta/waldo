@@ -5,7 +5,7 @@ import (
 	"io"
 	"text/tabwriter"
 
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 func runShardSummary(context Context, args []string, stdout, _ io.Writer) error {

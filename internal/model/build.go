@@ -13,7 +13,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 type Progress struct {

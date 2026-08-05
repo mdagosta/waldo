@@ -29,7 +29,7 @@ what was actually used.
 ## Compatibility with the current public index
 
 The current `waldo-index` uses directory index schema 2 and manifest schema 1.
-Its 20 manifests and 1,087 shards verify successfully with `waldo-new`.
+Its 20 manifests and 1,087 shards verify successfully with `waldo`.
 
 The proposed ingestion design fits the existing structural model:
 

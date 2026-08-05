@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 type Preset struct {

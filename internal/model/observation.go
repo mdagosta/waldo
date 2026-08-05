@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 func validateBackendObservation(runDirectory string, planned PlannedStage, observation training.Observation) error {

@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/openwaldo/waldo-new/internal/config"
-	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/lookaside"
 )
 
 func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) error {

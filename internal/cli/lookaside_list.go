@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/config"
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	waldoindex "github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/corpus"
+	waldoindex "github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/lookaside"
 )
 
 type listedLookasideObject struct {

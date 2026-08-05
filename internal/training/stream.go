@@ -6,7 +6,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 type Record struct {

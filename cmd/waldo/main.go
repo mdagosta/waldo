@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/openwaldo/waldo-new/internal/cli"
+	"github.com/openwaldo/waldo/internal/cli"
 )
 
 func main() {

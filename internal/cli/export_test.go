@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/config"
-	"github.com/openwaldo/waldo-new/internal/model"
-	"github.com/openwaldo/waldo-new/internal/record"
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/record"
+	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/parquet-go/parquet-go"
 )
 

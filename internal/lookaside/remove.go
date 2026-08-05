@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/url"
 
-	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo/internal/config"
 )
 
 // ObjectRemover deletes only explicitly named content-addressed objects.

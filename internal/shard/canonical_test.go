@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/tokenizer"
+	"github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/parquet-go/parquet-go"
 )
 

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo/internal/config"
 )
 
 func TestFilePublisherPublishesVerifiesAndReusesObject(t *testing.T) {

@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/mlxruntime"
+	"github.com/openwaldo/waldo/internal/mlxruntime"
 )
 
 const MLXRevision = "builtin-mlx-worker-schema-1"

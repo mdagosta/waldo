@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 const (

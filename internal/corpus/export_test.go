@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openwaldo/waldo-new/internal/lookaside"
-	"github.com/openwaldo/waldo-new/internal/record"
-	nativeshard "github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/record"
+	nativeshard "github.com/openwaldo/waldo/internal/shard"
 	"github.com/parquet-go/parquet-go"
 )
 

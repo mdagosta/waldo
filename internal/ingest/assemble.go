@@ -13,8 +13,8 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/openwaldo/waldo-new/internal/shard"
-	"github.com/openwaldo/waldo-new/internal/tokenizer"
+	"github.com/openwaldo/waldo/internal/shard"
+	"github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/parquet-go/parquet-go"
 )
 

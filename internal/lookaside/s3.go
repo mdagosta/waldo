@@ -23,7 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo/internal/config"
 )
 
 type s3API interface {

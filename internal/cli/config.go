@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/config"
-	"github.com/openwaldo/waldo-new/internal/disclosure"
-	waldoindex "github.com/openwaldo/waldo-new/internal/index"
+	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/disclosure"
+	waldoindex "github.com/openwaldo/waldo/internal/index"
 )
 
 var configKeys = []string{

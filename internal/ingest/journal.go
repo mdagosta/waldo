@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/lookaside"
 )
 
 const journalFile = "INGESTION.json"

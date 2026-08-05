@@ -3,7 +3,7 @@ package ingest
 import (
 	"fmt"
 
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/shard"
 	"go.etcd.io/bbolt"
 )
 

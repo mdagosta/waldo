@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	"github.com/openwaldo/waldo-new/internal/index"
+	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/index"
 )
 
 func TestWriteCorpusExport(t *testing.T) {

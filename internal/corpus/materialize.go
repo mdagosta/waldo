@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/lookaside"
 )
 
 type Materialized struct {

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 // StreamJSONLTextBatches streams ordinary, gzip, or zstd JSONL records whose

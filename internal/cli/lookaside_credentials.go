@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/config"
-	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/lookaside"
 	"golang.org/x/term"
 )
 

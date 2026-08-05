@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/openwaldo/waldo-new/internal/corpus"
-	"github.com/openwaldo/waldo-new/internal/shard"
-	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/shard"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 // PreparedStage is the model-domain boundary for an already resolved and

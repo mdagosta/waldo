@@ -1,4 +1,4 @@
-module github.com/openwaldo/waldo-new
+module github.com/openwaldo/waldo
 
 go 1.25.0
 

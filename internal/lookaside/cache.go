@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo/internal/config"
 )
 
 type Cache struct {

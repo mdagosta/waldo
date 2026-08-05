@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/openwaldo/waldo-new/internal/record"
+	"github.com/openwaldo/waldo/internal/record"
 	"github.com/parquet-go/parquet-go"
 )
 
