@@ -21,11 +21,14 @@ the entire list exists before deleting any object.
 The command does not accept URLs, prefixes, globs, or inferred unreferenced
 sets. Choosing the objects to remove remains an explicit caller decision.
 
-`waldo lookaside list [index-path]` inventories the entire containing S3 bucket
-(or configured local root), marks the configured write prefix, and may annotate
-objects with references from one recursively selected index subtree. That relationship is
-informational: an object absent from the selected index is not automatically a
-removal candidate because another index, Git revision, or BOM may reference it.
+`waldo lookaside list [index-path] [--all]` inventories the entire containing S3
+bucket (or configured local root). Without an index it lists every object. With
+one recursively selected index subtree it shows only matching objects unless
+`--all` is given. The compact human table contains only its header and rows;
+complete inventory metadata and missing references remain available as JSON.
+That relationship is informational: an object absent from the selected index
+is not automatically a removal candidate because another index, Git revision,
+or BOM may reference it.
 
 ## Consequences
 

@@ -186,8 +186,11 @@ func (publisher *FilePublisher) List(ctx context.Context) ([]ListedObject, error
 		if err != nil {
 			return err
 		}
-		name, canonical := canonicalObjectName(filepath.ToSlash(relative))
-		objects = append(objects, ListedObject{Name: name, Bytes: info.Size(), Path: objectPath, Canonical: canonical, InConfiguredLookaside: true})
+		name, prefix, canonical := classifyObjectPath(filepath.ToSlash(relative))
+		objects = append(objects, ListedObject{
+			Name: name, Bytes: info.Size(), Path: objectPath, Prefix: prefix, Canonical: canonical,
+			InConfiguredLookaside: true, StoredAt: info.ModTime().UTC(),
+		})
 		return nil
 	})
 	if err != nil {

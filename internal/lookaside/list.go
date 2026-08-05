@@ -6,16 +6,19 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/openwaldo/waldo-new/internal/config"
 )
 
 type ListedObject struct {
-	Name                  string `json:"name,omitempty"`
-	Bytes                 int64  `json:"bytes"`
-	Path                  string `json:"path"`
-	Canonical             bool   `json:"canonical"`
-	InConfiguredLookaside bool   `json:"in_configured_lookaside"`
+	Name                  string    `json:"name,omitempty"`
+	Bytes                 int64     `json:"bytes"`
+	Path                  string    `json:"path"`
+	Prefix                string    `json:"prefix"`
+	Canonical             bool      `json:"canonical"`
+	InConfiguredLookaside bool      `json:"in_configured_lookaside"`
+	StoredAt              time.Time `json:"stored_at"`
 }
 
 type ObjectLister interface {
@@ -39,17 +42,22 @@ func NewObjectLister(ctx context.Context, publish config.Publish) (ObjectLister,
 	}
 }
 
-func canonicalObjectName(relativePath string) (string, bool) {
-	parts := strings.Split(strings.Trim(relativePath, "/"), "/")
+func classifyObjectPath(relativePath string) (name, prefix string, canonical bool) {
+	trimmed := strings.Trim(relativePath, "/")
+	parts := strings.Split(trimmed, "/")
 	if len(parts) < 3 {
-		return "", false
+		return "", trimmed, false
 	}
-	parts = parts[len(parts)-3:]
-	digest := parts[2]
-	if validateDigest(digest) != nil || parts[0] != digest[:2] || parts[1] != digest[2:4] {
-		return "", false
+	fanout := parts[len(parts)-3:]
+	digest := fanout[2]
+	if validateDigest(digest) != nil || fanout[0] != digest[:2] || fanout[1] != digest[2:4] {
+		return "", trimmed, false
 	}
-	return digest, true
+	prefix = strings.Join(parts[:len(parts)-3], "/")
+	if prefix == "" {
+		prefix = "--"
+	}
+	return digest, prefix, true
 }
 
 func sortListedObjects(objects []ListedObject) {

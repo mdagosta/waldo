@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openwaldo/waldo-new/internal/config"
 	waldoindex "github.com/openwaldo/waldo-new/internal/index"
@@ -37,10 +38,41 @@ func TestLookasideListRelatesObjectsToSelectedIndex(t *testing.T) {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	output := stdout.String()
-	for _, want := range []string{referenced, unreferenced, "tiny.json", "(not in selected index)", "MISSING " + missing, "1 referenced, 1 not in selected index"} {
+	for _, want := range []string{"OBJECT", "STORED (UTC)", referenced[:16], "tiny", "--"} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("output missing %q:\n%s", want, output)
 		}
+	}
+	for _, unwanted := range []string{unreferenced[:16], "inventory ", "configured lookaside ", "selected index ", " shown (", "bucket objects match", missing} {
+		if strings.Contains(output, unwanted) {
+			t.Fatalf("output unexpectedly contains %q:\n%s", unwanted, output)
+		}
+	}
+	if strings.Contains(output, "LAST ACCESS") {
+		t.Fatalf("output unexpectedly contains LAST ACCESS:\n%s", output)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(output, "\n"), "\n") {
+		if strings.HasSuffix(line, " ") {
+			t.Fatalf("output line has trailing padding: %q", line)
+		}
+	}
+	if lines := strings.Split(strings.TrimSpace(output), "\n"); len(lines) != 2 {
+		t.Fatalf("wanted header and one matching row, got %d lines:\n%s", len(lines), output)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"lookaside", "list", indexRoot, "--all"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("--all code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	allOutput := stdout.String()
+	for _, want := range []string{referenced[:16], unreferenced[:16], "tiny", "--"} {
+		if !strings.Contains(allOutput, want) {
+			t.Fatalf("--all output missing %q:\n%s", want, allOutput)
+		}
+	}
+	if lines := strings.Split(strings.TrimSpace(allOutput), "\n"); len(lines) != 3 {
+		t.Fatalf("wanted header and two rows, got %d lines:\n%s", len(lines), allOutput)
 	}
 }
 
@@ -63,7 +95,8 @@ func TestLookasideListJSONWithoutIndex(t *testing.T) {
 	}
 	var result struct {
 		Objects []struct {
-			Name string `json:"name"`
+			Name     string    `json:"name"`
+			StoredAt time.Time `json:"stored_at"`
 		} `json:"objects"`
 		Totals lookasideListTotals `json:"totals"`
 	}
@@ -72,6 +105,9 @@ func TestLookasideListJSONWithoutIndex(t *testing.T) {
 	}
 	if len(result.Objects) != 1 || result.Objects[0].Name != digest || result.Totals.Objects != 1 || result.Totals.Canonical != 1 || result.Totals.WithinLookaside != 1 {
 		t.Fatalf("result = %+v", result)
+	}
+	if result.Objects[0].StoredAt.IsZero() {
+		t.Fatalf("timestamps = %+v", result.Objects[0])
 	}
 }
 

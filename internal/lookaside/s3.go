@@ -287,11 +287,12 @@ func (publisher *S3Publisher) List(ctx context.Context) ([]ListedObject, error) 
 		}
 		for _, object := range output.Contents {
 			key := aws.ToString(object.Key)
-			name, canonical := canonicalObjectName(key)
+			name, objectPrefix, canonical := classifyObjectPath(key)
 			inside := configuredPrefix == "" || key == configuredPrefix || strings.HasPrefix(key, configuredPrefixWithSlash)
 			objects = append(objects, ListedObject{
 				Name: name, Bytes: aws.ToInt64(object.Size), Path: "s3://" + publisher.bucket + "/" + key,
-				Canonical: canonical, InConfiguredLookaside: inside,
+				Prefix: objectPrefix, Canonical: canonical, InConfiguredLookaside: inside,
+				StoredAt: aws.ToTime(object.LastModified).UTC(),
 			})
 		}
 		if !aws.ToBool(output.IsTruncated) {

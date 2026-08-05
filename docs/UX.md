@@ -292,16 +292,21 @@ root:
 ```bash
 waldo lookaside list
 waldo lookaside list /path/to/waldo-index/or/subtree
+waldo lookaside list /path/to/waldo-index/or/subtree --all
 ```
 
-For S3, every bucket key is shown with its full path and a marker indicating
-whether it is beneath the configured write prefix. Canonical objects are
-recognized by a trailing `<sha[0:2]>/<sha[2:4]>/<sha256>` path at any bucket
-prefix. The optional index path follows the same recursive positional rules as
-other index commands. Matching hashes are annotated with their corpus manifest
-paths, and references absent from the bucket are reported. “Not in the selected
-index” is informational, never a claim that an object is safe to remove;
-another index, Git revision, or BOM may still reference it.
+Human output is deliberately quiet: one fixed-width header followed by object
+rows. It shows a shortened object hash, size, absolute UTC storage time, object
+prefix, and index manifest. JSON output preserves full object paths,
+hashes, timestamps, inventory context, missing references, and totals.
+
+Canonical objects are recognized by a trailing
+`<sha[0:2]>/<sha[2:4]>/<sha256>` path at any bucket prefix. With no index path,
+all objects are shown and `INDEX` is `--`. The optional index path follows the
+same recursive positional rules as other index commands and filters the table
+to matching objects. `--all` includes unmatched bucket objects in the same
+table with `INDEX` set to `--`. An unmatched object is never implicitly safe to
+remove; another index, Git revision, or BOM may still reference it.
 
 Remote or local published objects are removed only by exact content hash:
 

@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -112,6 +113,7 @@ func (store *memoryCredentialStore) Delete(string) error {
 type fakeS3Object struct {
 	data     []byte
 	checksum string
+	modified time.Time
 }
 
 type fakeS3 struct {
@@ -188,7 +190,11 @@ func (api *fakeS3) ListObjectsV2(_ context.Context, input *s3.ListObjectsV2Input
 	output := &s3.ListObjectsV2Output{}
 	for _, key := range keys[:limit] {
 		object := api.objects[key]
-		output.Contents = append(output.Contents, types.Object{Key: aws.String(key), Size: aws.Int64(int64(len(object.data)))})
+		modified := object.modified
+		if modified.IsZero() {
+			modified = time.Date(2025, 1, 2, 3, 4, 0, 0, time.UTC)
+		}
+		output.Contents = append(output.Contents, types.Object{Key: aws.String(key), Size: aws.Int64(int64(len(object.data))), LastModified: aws.Time(modified)})
 	}
 	if limit < len(keys) {
 		output.IsTruncated = aws.Bool(true)
@@ -258,6 +264,9 @@ func TestS3PublisherListsCanonicalObjectsAcrossPages(t *testing.T) {
 	for _, object := range objects {
 		if object.Canonical {
 			canonical++
+			if object.Prefix != "prefix" || object.StoredAt.IsZero() {
+				t.Fatalf("canonical object metadata = %+v", object)
+			}
 		}
 		if object.InConfiguredLookaside {
 			inside++
