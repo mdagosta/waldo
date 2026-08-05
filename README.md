@@ -53,16 +53,12 @@ flowchart TB
     B --> C["Corpus export"]
     C --> X["Your own tools<br/>audit · validate · train from scratch<br/>or combine with open weights"]
     N["New blank model<br/>architecture declared in compose"] --> MC["Compose configuration"]
-    O["Existing open-weight model<br/>Hugging Face Safetensors"] --> D["waldo model download"]
-    D --> DN["Verify source · normalize tensors<br/>preserve training precision"]
-    DN --> OB["Immutable model-origin BOM<br/>source revision + artifact hashes"]
-    OB --> MC
+    O["Existing open-weight model<br/>waldo model download + origin BOM"] --> MC
     B --> MC
     MC --> T["Forecast and train<br/>or continue training"]
     T --> M["Run and model BOMs<br/>data + starting-point lineage"]
     M --> Q["Test · validate · chat"]
-    Q --> E["Export and convert<br/>from training-quality Safetensors"]
-    E --> F["One selected package<br/>WALDO · Hugging Face · MLX<br/>GGUF · Ollama"]
+    Q --> E["Export model<br/>WALDO · Hugging Face · MLX<br/>GGUF · Ollama"]
 
     classDef startingPoint fill:transparent,stroke:#4c8bf5,stroke-width:3px
     class N,O startingPoint
@@ -380,6 +376,19 @@ explicitly recorded fine-tuning support.
 
 The next model-lifecycle slice will download training-quality open weights
 directly into WALDO's managed model root:
+
+```mermaid
+flowchart TB
+    H["Hugging Face Safetensors"] --> D["waldo model download<br/><br/>• pin repository revision<br/>• hash every source artifact<br/>• read architecture and tokenizer<br/>• validate compatibility<br/>• map tensor names into WALDO's contract<br/>• preserve tensor values and precision<br/>• record an origin BOM"]
+    D --> W["WALDO-managed Safetensors<br/><br/>• train further<br/>• compose<br/>• chat where supported<br/>• export"]
+    W --> HF["Hugging Face"]
+    W --> MLX["MLX"]
+    W --> GGUF["GGUF"]
+    W --> OLLAMA["Ollama"]
+
+    classDef startingPoint fill:transparent,stroke:#4c8bf5,stroke-width:3px
+    class H startingPoint
+```
 
 ```bash
 waldo model download llama-base \
