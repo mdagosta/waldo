@@ -37,6 +37,11 @@ type s3CredentialAPI interface {
 	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
 	GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error)
 	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+}
+
+type s3ListAPI interface {
+	ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
 }
 
 type S3Publisher struct {
@@ -133,6 +138,16 @@ func validateS3CredentialAPI(ctx context.Context, api s3CredentialAPI, bucket, p
 			deleteErr = fmt.Errorf("delete probe object %s: %w", key, deleteErr)
 		}
 		return errors.Join(primary, deleteErr)
+	}
+
+	listed, err := api.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket), Prefix: aws.String(key), MaxKeys: aws.Int32(1),
+	})
+	if err != nil {
+		return cleanup(fmt.Errorf("validate S3 credentials: list probe object: %w", err))
+	}
+	if len(listed.Contents) != 1 || aws.ToString(listed.Contents[0].Key) != key {
+		return cleanup(fmt.Errorf("validate S3 credentials: probe object was absent from listing"))
 	}
 
 	head, err := api.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), ChecksumMode: types.ChecksumModeEnabled})
@@ -248,6 +263,44 @@ func (publisher *S3Publisher) Remove(ctx context.Context, digest string) error {
 		return fmt.Errorf("remove lookaside object %s: %w", digest, err)
 	}
 	return nil
+}
+
+func (publisher *S3Publisher) List(ctx context.Context) ([]ListedObject, error) {
+	api, ok := publisher.api.(s3ListAPI)
+	if !ok {
+		return nil, fmt.Errorf("S3 client does not support object listing")
+	}
+	prefix := strings.Trim(publisher.prefix, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
+	objects := []ListedObject{}
+	var continuation *string
+	for {
+		output, err := api.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket: aws.String(publisher.bucket), Prefix: aws.String(prefix), ContinuationToken: continuation,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("list S3 lookaside %s: %w", publisher.baseURL, err)
+		}
+		for _, object := range output.Contents {
+			key := aws.ToString(object.Key)
+			relative := strings.TrimPrefix(key, prefix)
+			name, canonical := canonicalObjectName(relative)
+			objects = append(objects, ListedObject{
+				Name: name, Bytes: aws.ToInt64(object.Size), Path: strings.TrimRight(publisher.baseURL, "/") + "/" + relative, Canonical: canonical,
+			})
+		}
+		if !aws.ToBool(output.IsTruncated) {
+			break
+		}
+		if output.NextContinuationToken == nil || aws.ToString(output.NextContinuationToken) == "" {
+			return nil, fmt.Errorf("list S3 lookaside %s: truncated response omitted continuation token", publisher.baseURL)
+		}
+		continuation = output.NextContinuationToken
+	}
+	sortListedObjects(objects)
+	return objects, nil
 }
 
 func (publisher *S3Publisher) head(ctx context.Context, digest string, size int64) (PublishedObject, bool, error) {

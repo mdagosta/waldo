@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -114,11 +115,12 @@ type fakeS3Object struct {
 }
 
 type fakeS3 struct {
-	objects map[string]fakeS3Object
-	puts    int
-	gets    int
-	deletes int
-	getErr  error
+	objects      map[string]fakeS3Object
+	puts         int
+	gets         int
+	deletes      int
+	getErr       error
+	listPageSize int
 }
 
 func (api *fakeS3) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
@@ -168,6 +170,33 @@ func (api *fakeS3) DeleteObject(_ context.Context, input *s3.DeleteObjectInput, 
 	return &s3.DeleteObjectOutput{}, nil
 }
 
+func (api *fakeS3) ListObjectsV2(_ context.Context, input *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	keys := make([]string, 0, len(api.objects))
+	for key := range api.objects {
+		if strings.HasPrefix(key, aws.ToString(input.Prefix)) && (input.ContinuationToken == nil || key > aws.ToString(input.ContinuationToken)) {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	limit := len(keys)
+	if api.listPageSize > 0 && limit > api.listPageSize {
+		limit = api.listPageSize
+	}
+	if input.MaxKeys != nil && int(aws.ToInt32(input.MaxKeys)) < limit {
+		limit = int(aws.ToInt32(input.MaxKeys))
+	}
+	output := &s3.ListObjectsV2Output{}
+	for _, key := range keys[:limit] {
+		object := api.objects[key]
+		output.Contents = append(output.Contents, types.Object{Key: aws.String(key), Size: aws.Int64(int64(len(object.data)))})
+	}
+	if limit < len(keys) {
+		output.IsTruncated = aws.Bool(true)
+		output.NextContinuationToken = aws.String(keys[limit-1])
+	}
+	return output, nil
+}
+
 func TestValidateS3CredentialsRoundTripsAndDeletesProbe(t *testing.T) {
 	api := &fakeS3{objects: map[string]fakeS3Object{}}
 	if err := validateS3CredentialAPI(context.Background(), api, "bucket", "lookaside/v1"); err != nil {
@@ -205,5 +234,27 @@ func TestS3PublisherContainsAndRemovesExactObject(t *testing.T) {
 	}
 	if present, err := publisher.Contains(context.Background(), digest); err != nil || present {
 		t.Fatalf("Contains() after removal = %v, %v", present, err)
+	}
+}
+
+func TestS3PublisherListsCanonicalObjectsAcrossPages(t *testing.T) {
+	first := fmt.Sprintf("%064x", 1)
+	second := fmt.Sprintf("%064x", 2)
+	api := &fakeS3{listPageSize: 1, objects: map[string]fakeS3Object{
+		"prefix/" + first[:2] + "/" + first[2:4] + "/" + first:    {data: []byte("one")},
+		"prefix/" + second[:2] + "/" + second[2:4] + "/" + second: {data: []byte("two")},
+		"prefix/notes.txt": {data: []byte("note")},
+		"elsewhere/object": {data: []byte("excluded")},
+	}}
+	publisher, err := newS3PublisherWithAPI(api, "s3://bucket/prefix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := publisher.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 3 || !objects[0].Canonical || objects[0].Name != first || !objects[1].Canonical || objects[1].Name != second || objects[2].Canonical {
+		t.Fatalf("objects = %+v", objects)
 	}
 }

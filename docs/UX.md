@@ -37,6 +37,7 @@ waldo
 ├── lookaside
 │   ├── login
 │   ├── logout
+│   ├── list
 │   ├── status
 │   ├── verify
 │   ├── mirror
@@ -283,6 +284,19 @@ operating-system default:
 ```bash
 waldo config unset lookaside.scratch
 ```
+
+Inventory the configured writable lookaside without downloading object bodies:
+
+```bash
+waldo lookaside list
+waldo lookaside list /path/to/waldo-index/or/subtree
+```
+
+The optional index path follows the same recursive positional rules as other
+index commands. Matching hashes are annotated with their corpus manifest paths,
+and references absent from this lookaside are reported. “Not in the selected
+index” is informational, never a claim that an object is safe to remove;
+another index, Git revision, or BOM may still reference it.
 
 Remote or local published objects are removed only by exact content hash:
 

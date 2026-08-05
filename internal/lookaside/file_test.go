@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/openwaldo/waldo-new/internal/config"
@@ -106,5 +107,31 @@ func TestFilePublisherContainsAndRemovesObject(t *testing.T) {
 	}
 	if present, err := publisher.Contains(context.Background(), digest); err != nil || present {
 		t.Fatalf("Contains() after removal = %v, %v", present, err)
+	}
+}
+
+func TestFilePublisherListsCanonicalAndNoncanonicalFiles(t *testing.T) {
+	root := t.TempDir()
+	publisher, err := NewFilePublisher((&url.URL{Scheme: "file", Path: filepath.ToSlash(root)}).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("a", 64)
+	canonicalPath := filepath.Join(root, digest[:2], digest[2:4], digest)
+	if err := os.MkdirAll(filepath.Dir(canonicalPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canonicalPath, []byte("object"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "note.txt"), []byte("note"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	objects, err := publisher.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 2 || !objects[0].Canonical || objects[0].Name != digest || objects[1].Canonical {
+		t.Fatalf("objects = %+v", objects)
 	}
 }

@@ -21,9 +21,15 @@ the entire list exists before deleting any object.
 The command does not accept URLs, prefixes, globs, or inferred unreferenced
 sets. Choosing the objects to remove remains an explicit caller decision.
 
+`waldo lookaside list [index-path]` may annotate an inventory with references
+from one recursively selected index subtree. That relationship is
+informational: an object absent from the selected index is not automatically a
+removal candidate because another index, Git revision, or BOM may reference it.
+
 ## Consequences
 
 - WALDO never guesses that a published object is garbage.
+- Index annotations improve operator visibility without authorizing deletion.
 - A typographical error cannot cause partial deletion during preflight.
 - A transport failure during deletion can still produce a partial result, and
   the command reports the object where it stopped.

@@ -159,6 +159,43 @@ func (publisher *FilePublisher) Remove(_ context.Context, digest string) error {
 	return nil
 }
 
+func (publisher *FilePublisher) List(ctx context.Context) ([]ListedObject, error) {
+	objects := []ListedObject{}
+	err := filepath.WalkDir(publisher.root, func(objectPath string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) && objectPath == publisher.root {
+				return nil
+			}
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		relative, err := filepath.Rel(publisher.root, objectPath)
+		if err != nil {
+			return err
+		}
+		name, canonical := canonicalObjectName(filepath.ToSlash(relative))
+		objects = append(objects, ListedObject{Name: name, Bytes: info.Size(), Path: objectPath, Canonical: canonical})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list local lookaside %s: %w", publisher.root, err)
+	}
+	sortListedObjects(objects)
+	return objects, nil
+}
+
 func (publisher *FilePublisher) objectPath(digest string) (string, error) {
 	if err := validateDigest(digest); err != nil {
 		return "", err
