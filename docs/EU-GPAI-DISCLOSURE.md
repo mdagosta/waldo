@@ -208,7 +208,9 @@ They belong in the Git manifest and pass through the OpenWALDO BOM.
 
 Provider identity, EU representative, Code of Practice status, copyright-policy
 link, and market-placement date do not belong in corpus manifests because they
-describe the model provider, not the corpus.
+describe the provider or a particular model release, not the corpus. The
+global `disclosure.provider` profile contains provider-level facts only;
+model-specific release facts live with the model.
 
 ## OpenWALDO BOM and run requirements
 
@@ -235,9 +237,12 @@ The implemented audit UX is:
 
 ```bash
 waldo bom export <model-name-or-path> \
-  --format eu-gpai \
-  --provider provider.json
+  --format eu-gpai
 ```
+
+Configure the reusable provider profile first with `waldo config set
+disclosure.provider provider.json`. `--provider provider.json` is an explicit
+one-command override, not a second home for model-release facts.
 
 With no destination, the converted JSON document is written to standard
 output, so ordinary shell redirection works. A final positional destination
@@ -245,8 +250,7 @@ writes the same document atomically instead:
 
 ```bash
 waldo bom export <model-name-or-path> training-content.json \
-  --format eu-gpai \
-  --provider provider.json
+  --format eu-gpai
 ```
 
 `bom export` is the right command family, but a complete export consumes a
@@ -261,7 +265,8 @@ The current exporter:
    and public-dataset three-percent calculation;
 5. carries retained web-domain aggregates and reports missing crawler/domain
    evidence;
-6. merges provider/model declarations that cannot belong to corpus metadata;
+6. merges provider and model-release declarations that cannot belong to corpus
+   metadata while keeping their ownership separate;
 7. emits a machine-readable, versioned mapping pinned to the official English
    template URL and SHA-256; and
 8. reports every required, review, and optional gap before writing the output.

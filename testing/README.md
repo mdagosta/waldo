@@ -57,8 +57,9 @@ Set `WALDO_E2E_KEEP=1` to retain the temporary workspace for inspection.
 
 `model-fake.sh` builds its corpus from raw text, audits it, exports native
 Parquet, runs the complete fake backend lifecycle, inspects the persisted model
-and run, refuses implicit replacement, and exercises fail-closed plus explicit
-draft EU GPAI disclosure output.
+and run, refuses implicit replacement, and exercises a native package carrying
+`BOM.json` plus `EU-BOM.json`, the unsigned warning, fail-closed disclosure,
+and explicit draft disclosure output.
 
 ```bash
 ./testing/e2e/model-fake.sh

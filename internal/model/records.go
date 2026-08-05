@@ -189,7 +189,11 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 		return Inspection{}, fmt.Errorf("%s has an invalid immutable model plan", directory)
 	}
 	var bom ModelBOM
-	if err := readJSON(filepath.Join(directory, "MODEL-BOM.json"), &bom); err != nil {
+	bomPath := filepath.Join(directory, "MODEL-BOM.json")
+	if _, err := os.Stat(bomPath); os.IsNotExist(err) {
+		bomPath = filepath.Join(directory, "BOM.json")
+	}
+	if err := readJSON(bomPath, &bom); err != nil {
 		return Inspection{}, err
 	}
 	if bom.Kind != "openwaldo-bom" || bom.Schema != ModelBOMSchema || bom.Subject != "model" || bom.ModelID != record.ID || bom.Name != record.Name || bom.PlanSHA256 != record.PlanSHA256 || bom.ArchitectureSHA256 != record.ArchitectureSHA256 || bom.Generated != record.Updated {

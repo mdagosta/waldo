@@ -308,6 +308,12 @@ func TestListExportAndRemoveModels(t *testing.T) {
 	if _, err := Export(root, "alpha", destination); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(filepath.Join(destination, "BOM.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "MODEL-BOM.json")); !os.IsNotExist(err) {
+		t.Fatalf("native export retained internal BOM name: %v", err)
+	}
 	if _, err := Export(root, "alpha", filepath.Join(root, "alpha", "recursive-export")); err == nil {
 		t.Fatal("Export accepted a destination inside its source model")
 	}

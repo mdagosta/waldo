@@ -34,7 +34,7 @@ func TestBuildEUGPAIReportDeduplicatesCorporaAndReportsFacts(t *testing.T) {
 			{Ordinal: 2, Stage: "review", StageType: "alignment", Objective: "causal-language-modeling", CorpusBOMSHA256: strings.Repeat("c", 64), CorpusBOM: bom, Parameters: training.ResolvedParameters{Steps: 1, BatchSize: 1, SequenceLength: 50}},
 		},
 	}
-	report, err := BuildEUGPAIReport(inspection, nil, time.Unix(0, 0))
+	report, err := BuildEUGPAIReport(inspection, nil, ReleaseFromModel(inspection), time.Unix(0, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +50,7 @@ func TestBuildEUGPAIReportDeduplicatesCorporaAndReportsFacts(t *testing.T) {
 
 func TestLoadProviderIsStrict(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "provider.json")
-	data := `{"kind":"waldo-eu-gpai-provider-profile","schema":1,"provider":{"name":"Example","address":"Here","contact":"mail"},"model":{"public_name":"Model","version":"1","market_placement_date":"2026-01-01","origin":"new"},"code_of_practice_status":"signatory","copyright_policy_url":"https://example.test/policy","extra":true}`
+	data := `{"kind":"waldo-disclosure-provider","schema":1,"provider":{"name":"Example","address":"Here","contact":"mail"},"code_of_practice_status":"signatory","copyright_policy_url":"https://example.test/policy","extra":true}`
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}

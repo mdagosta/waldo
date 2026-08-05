@@ -17,10 +17,12 @@ import (
 
 	"github.com/openwaldo/waldo-new/internal/config"
 	"github.com/openwaldo/waldo-new/internal/corpus"
+	"github.com/openwaldo/waldo-new/internal/disclosure"
 	"github.com/openwaldo/waldo-new/internal/inference"
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 	"github.com/openwaldo/waldo-new/internal/model"
 	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo-new/internal/signing"
 	"github.com/openwaldo/waldo-new/internal/training"
 	"golang.org/x/term"
 )
@@ -481,26 +483,98 @@ func parseModelCompose(args []string) (string, string, bool, error) {
 	return positionals[0], positionals[1], replace, nil
 }
 
-func runModelExport(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 2 {
-		return usageError{message: "usage: waldo model export <name> <directory> [--json]"}
-	}
-	root, err := configuredModelRoot()
+func runModelExport(context Context, args []string, stdout, stderr io.Writer) error {
+	name, destination, format, allowIncomplete, err := parseModelExport(args)
 	if err != nil {
 		return err
 	}
-	output, err := model.Export(root, args[0], args[1])
+	configuration, err := config.Load()
 	if err != nil {
 		return err
+	}
+	root, err := config.EffectiveModelRoot(configuration)
+	if err != nil {
+		return err
+	}
+	inspection, err := model.Inspect(root, name)
+	if err != nil {
+		return err
+	}
+	if configuration.Disclosure.Provider == "" {
+		return fmt.Errorf("model export requires provider information; run waldo config set disclosure.provider <provider.json>")
+	}
+	provider, err := disclosure.LoadProvider(configuration.Disclosure.Provider)
+	if err != nil {
+		return fmt.Errorf("load configured disclosure.provider: %w", err)
+	}
+	report, err := disclosure.BuildEUGPAIReport(inspection, &provider, disclosure.ReleaseFromModel(inspection), time.Now())
+	if err != nil {
+		return err
+	}
+	if err := requireCompleteDisclosure(report, allowIncomplete, stderr); err != nil {
+		return err
+	}
+	euBOM, err := json.MarshalIndent(report, "", "  ")
+	if err != nil {
+		return err
+	}
+	euBOM = append(euBOM, '\n')
+	signed := signing.Configured(configuration.Signing)
+	options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM}}
+	if signed {
+		options.Finalize = func(directory string) error {
+			return signing.SignExport(context.Execution, configuration.Signing, directory, stderr)
+		}
+	}
+	output, err := model.ExportPackage(root, name, destination, options)
+	if err != nil {
+		return err
+	}
+	if !signed {
+		fmt.Fprintln(stderr, "warning: model export is unsigned; configure signing.* to sign exports automatically")
 	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
 			Name   string `json:"name"`
+			Format string `json:"format"`
 			Output string `json:"output"`
-		}{args[0], output})
+			Signed bool   `json:"signed"`
+		}{name, format, output, signed})
 	}
-	fmt.Fprintf(stdout, "exported model %s to %s\n", args[0], output)
+	fmt.Fprintf(stdout, "exported %s model %s to %s\n", format, name, output)
 	return nil
+}
+
+func parseModelExport(args []string) (string, string, string, bool, error) {
+	format := "waldo"
+	allowIncomplete := false
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--format":
+			value, next, err := optionValue(args, index, "--format")
+			if err != nil {
+				return "", "", "", false, err
+			}
+			format, index = value, next
+		case strings.HasPrefix(argument, "--format="):
+			format = strings.TrimPrefix(argument, "--format=")
+		case argument == "--allow-incomplete":
+			allowIncomplete = true
+		case strings.HasPrefix(argument, "-"):
+			return "", "", "", false, usageError{message: fmt.Sprintf("unknown model export option %q", argument)}
+		default:
+			positionals = append(positionals, argument)
+		}
+	}
+	if len(positionals) != 2 {
+		return "", "", "", false, usageError{message: "usage: waldo model export <name> <directory> [--format waldo] [--allow-incomplete] [--json]"}
+	}
+	if format != "waldo" {
+		return "", "", "", false, usageError{message: fmt.Sprintf("model export format %q is not implemented yet; use waldo", format)}
+	}
+	return positionals[0], positionals[1], format, allowIncomplete, nil
 }
 
 func runModelRemove(context Context, args []string, stdout, _ io.Writer) error {

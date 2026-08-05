@@ -98,6 +98,20 @@ func TestModelBackendDefaultsToRealAutoAndRejectsUnknown(t *testing.T) {
 	}
 }
 
+func TestSigningConfigurationValidation(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	for _, signing := range []Signing{{Method: "sigstore-keyless"}, {Method: "sigstore-key", Key: "/tmp/test.key"}} {
+		if err := Save(Config{Signing: signing}); err != nil {
+			t.Fatalf("signing %+v rejected: %v", signing, err)
+		}
+	}
+	for _, signing := range []Signing{{Method: "unknown"}, {Method: "sigstore-keyless", Key: "/tmp/test.key"}} {
+		if err := Save(Config{Signing: signing}); err == nil {
+			t.Fatalf("invalid signing %+v accepted", signing)
+		}
+	}
+}
+
 func TestEffectiveStagingRootIsPlanSpecific(t *testing.T) {
 	base := t.TempDir()
 	configuration := Config{Ingest: Ingest{Staging: base}}

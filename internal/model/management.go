@@ -118,7 +118,16 @@ func Exists(root, name string) (bool, error) {
 	return true, nil
 }
 
+type ExportOptions struct {
+	Files    map[string][]byte
+	Finalize func(string) error
+}
+
 func Export(root, name, destination string) (string, error) {
+	return ExportPackage(root, name, destination, ExportOptions{})
+}
+
+func ExportPackage(root, name, destination string, options ExportOptions) (string, error) {
 	inspection, err := Inspect(root, name)
 	if err != nil {
 		return "", err
@@ -156,10 +165,27 @@ func Export(root, name, destination string) (string, error) {
 	if err := copyTree(inspection.Path, temporary); err != nil {
 		return "", err
 	}
+	if err := os.Remove(filepath.Join(temporary, "MODEL-BOM.json")); err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
 	// Export always carries the normalized schema-1 BOM, including when the
 	// managed model was created before model-root-relative paths were added.
-	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL-BOM.json"), inspection.BOM); err != nil {
+	if err := writeJSONAtomic(filepath.Join(temporary, "BOM.json"), inspection.BOM); err != nil {
 		return "", err
+	}
+	extraNames := make([]string, 0, len(options.Files))
+	for name := range options.Files {
+		extraNames = append(extraNames, name)
+	}
+	sort.Strings(extraNames)
+	for _, name := range extraNames {
+		data := options.Files[name]
+		if filepath.Base(name) != name || name == "." || name == "" || name == "BOM.json" || name == "MODEL-BOM.json" {
+			return "", fmt.Errorf("invalid additional model export file %q", name)
+		}
+		if err := os.WriteFile(filepath.Join(temporary, name), data, 0o644); err != nil {
+			return "", err
+		}
 	}
 	exported, err := Inspect("", temporary)
 	if err != nil {
@@ -167,6 +193,11 @@ func Export(root, name, destination string) (string, error) {
 	}
 	if err := verifyModelArtifacts(exported); err != nil {
 		return "", fmt.Errorf("verify exported model artifacts: %w", err)
+	}
+	if options.Finalize != nil {
+		if err := options.Finalize(temporary); err != nil {
+			return "", err
+		}
 	}
 	if err := os.Rename(temporary, absolute); err != nil {
 		return "", err

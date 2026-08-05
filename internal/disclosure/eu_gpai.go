@@ -31,11 +31,8 @@ const (
 type ProviderProfile struct {
 	Kind                 string           `json:"kind"`
 	Schema               int              `json:"schema"`
-	SummaryVersion       string           `json:"summary_version"`
-	PreviousSummaryURLs  []string         `json:"previous_summary_urls,omitempty"`
 	Provider             Organization     `json:"provider"`
 	EURepresentative     *Organization    `json:"eu_representative,omitempty"`
-	Model                ReleaseProfile   `json:"model"`
 	CodeOfPracticeStatus string           `json:"code_of_practice_status"`
 	CopyrightPolicyURL   string           `json:"copyright_policy_url"`
 	AdditionalMeasures   ProviderMeasures `json:"additional_measures,omitempty"`
@@ -50,13 +47,15 @@ type Organization struct {
 }
 
 type ReleaseProfile struct {
-	PublicName          string `json:"public_name"`
-	Version             string `json:"version"`
-	MarketPlacementDate string `json:"market_placement_date"`
-	Origin              string `json:"origin"`
-	OriginalSummaryURL  string `json:"original_summary_url,omitempty"`
-	DocumentationURL    string `json:"documentation_url,omitempty"`
-	ContinuousTraining  string `json:"continuous_training"`
+	SummaryVersion      string   `json:"summary_version"`
+	PreviousSummaryURLs []string `json:"previous_summary_urls,omitempty"`
+	PublicName          string   `json:"public_name"`
+	Version             string   `json:"version"`
+	MarketPlacementDate string   `json:"market_placement_date"`
+	Origin              string   `json:"origin"`
+	OriginalSummaryURL  string   `json:"original_summary_url,omitempty"`
+	DocumentationURL    string   `json:"documentation_url,omitempty"`
+	ContinuousTraining  string   `json:"continuous_training"`
 }
 
 type ProviderMeasures struct {
@@ -73,6 +72,7 @@ type EUGPAIReport struct {
 	Template   TemplatePin      `json:"template"`
 	Model      ModelSummary     `json:"model"`
 	Provider   *ProviderProfile `json:"provider,omitempty"`
+	Release    ReleaseProfile   `json:"release"`
 	Training   TrainingSummary  `json:"training"`
 	Gaps       []Gap            `json:"gaps,omitempty"`
 	Disclaimer string           `json:"disclaimer"`
@@ -157,13 +157,13 @@ func LoadProvider(path string) (ProviderProfile, error) {
 	if err := requireEOF(decoder); err != nil {
 		return ProviderProfile{}, fmt.Errorf("%s: %w", path, err)
 	}
-	if profile.Kind != "waldo-eu-gpai-provider-profile" || profile.Schema != ProviderSchema {
+	if profile.Kind != "waldo-disclosure-provider" || profile.Schema != ProviderSchema {
 		return ProviderProfile{}, fmt.Errorf("%s has unsupported provider profile identity %q schema %d", path, profile.Kind, profile.Schema)
 	}
 	return profile, nil
 }
 
-func BuildEUGPAIReport(inspection model.Inspection, provider *ProviderProfile, now time.Time) (EUGPAIReport, error) {
+func BuildEUGPAIReport(inspection model.Inspection, provider *ProviderProfile, release ReleaseProfile, now time.Time) (EUGPAIReport, error) {
 	modelBOMHash, err := hashJSON(inspection.BOM)
 	if err != nil {
 		return EUGPAIReport{}, err
@@ -174,9 +174,11 @@ func BuildEUGPAIReport(inspection model.Inspection, provider *ProviderProfile, n
 		Template:   TemplatePin{Authority: "European Commission", Document: EUGPAITemplate, Version: EUGPAITemplateDate, Language: "en", Source: EUGPAITemplateSource, SourceSHA256: EUGPAIEnglishTemplateSHA256},
 		Model:      ModelSummary{ID: inspection.Model.ID, Name: inspection.Model.Name, PlanSHA256: inspection.Model.PlanSHA256, ArchitectureSHA256: inspection.Model.ArchitectureSHA256, BOMSHA256: modelBOMHash, Runs: len(inspection.Runs)},
 		Provider:   provider,
+		Release:    release,
 		Disclaimer: "WALDO maps recorded provenance to disclosure fields. This report is not legal advice and does not by itself establish compliance.",
 	}
 	report.addProviderGaps(provider)
+	report.addReleaseGaps(release)
 	if len(inspection.RunBOMs) == 0 {
 		report.gap("1.3", "training.stages", inspection.Model.Name, "the model records no training stages")
 	}
@@ -248,7 +250,6 @@ func (report *EUGPAIReport) addProviderGaps(profile *ProviderProfile) {
 			report.gap(section, field, "provider profile", message)
 		}
 	}
-	require("General", "summary.version", profile.SummaryVersion, "summary version is missing")
 	require("1.1", "provider.name", profile.Provider.Name, "provider name is missing")
 	require("1.1", "provider.address", profile.Provider.Address, "provider address is missing")
 	require("1.1", "provider.contact", profile.Provider.Contact, "provider contact is missing")
@@ -258,29 +259,47 @@ func (report *EUGPAIReport) addProviderGaps(profile *ProviderProfile) {
 	if profile.Provider.EstablishedInEU == "no" && (profile.EURepresentative == nil || strings.TrimSpace(profile.EURepresentative.Name) == "" || strings.TrimSpace(profile.EURepresentative.Contact) == "") {
 		report.gap("1.1", "provider.eu-representative", "provider profile", "a provider established outside the Union requires authorised representative details")
 	}
-	require("1.2", "model.public-name", profile.Model.PublicName, "public model name is missing")
-	require("1.2", "model.version", profile.Model.Version, "public model version is missing")
-	require("1.2", "model.market-placement-date", profile.Model.MarketPlacementDate, "EU market-placement date is missing")
-	if profile.Model.MarketPlacementDate != "" {
-		if _, err := time.Parse("2006-01-02", profile.Model.MarketPlacementDate); err != nil {
-			report.gap("1.2", "model.market-placement-date", "provider profile", "market-placement date must use YYYY-MM-DD")
-		}
-	}
-	if profile.Model.Origin != "new" && profile.Model.Origin != "modified" {
-		report.gap("1.2", "model.origin", "provider profile", "model origin must be new or modified")
-	}
-	if profile.Model.Origin == "modified" && strings.TrimSpace(profile.Model.OriginalSummaryURL) == "" {
-		report.gap("1.2", "model.original-summary", "provider profile", "a modified model requires the original model public-summary URL")
-	}
-	if profile.Model.ContinuousTraining != "yes" && profile.Model.ContinuousTraining != "no" {
-		report.gap("1.3", "model.continuous-training", "provider profile", "continuous training must be declared as yes or no")
-	}
 	require("3.1", "provider.code-of-practice-status", profile.CodeOfPracticeStatus, "Code of Practice status is missing")
 	if profile.CodeOfPracticeStatus != "" && profile.CodeOfPracticeStatus != "yes" && profile.CodeOfPracticeStatus != "no" {
 		report.gap("3.1", "provider.code-of-practice-status", "provider profile", "Code of Practice status must be yes or no")
 	}
 	if strings.TrimSpace(profile.CopyrightPolicyURL) == "" {
 		report.note("optional", "3.1", "provider.copyright-policy-url", "provider profile", "a public copyright policy link is encouraged by the template")
+	}
+}
+
+func (report *EUGPAIReport) addReleaseGaps(profile ReleaseProfile) {
+	require := func(section, field, value, message string) {
+		if strings.TrimSpace(value) == "" {
+			report.gap(section, field, "model release", message)
+		}
+	}
+	require("General", "summary.version", profile.SummaryVersion, "summary version is missing")
+	require("1.2", "model.public-name", profile.PublicName, "public model name is missing")
+	require("1.2", "model.version", profile.Version, "public model version is missing")
+	require("1.2", "model.market-placement-date", profile.MarketPlacementDate, "EU market-placement date is missing")
+	if profile.MarketPlacementDate != "" {
+		if _, err := time.Parse("2006-01-02", profile.MarketPlacementDate); err != nil {
+			report.gap("1.2", "model.market-placement-date", "model release", "market-placement date must use YYYY-MM-DD")
+		}
+	}
+	if profile.Origin != "new" && profile.Origin != "modified" {
+		report.gap("1.2", "model.origin", "model release", "model origin must be new or modified")
+	}
+	if profile.Origin == "modified" && strings.TrimSpace(profile.OriginalSummaryURL) == "" {
+		report.gap("1.2", "model.original-summary", "model release", "a modified model requires the original model public-summary URL")
+	}
+	if profile.ContinuousTraining != "yes" && profile.ContinuousTraining != "no" {
+		report.gap("1.3", "model.continuous-training", "model release", "continuous training must be declared as yes or no")
+	}
+}
+
+func ReleaseFromModel(inspection model.Inspection) ReleaseProfile {
+	return ReleaseProfile{
+		SummaryVersion: "1",
+		PublicName:     inspection.Model.Name,
+		Version:        inspection.Model.ID,
+		Origin:         "new",
 	}
 }
 

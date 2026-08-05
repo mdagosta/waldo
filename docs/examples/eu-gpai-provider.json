@@ -1,7 +1,6 @@
 {
-  "kind": "waldo-eu-gpai-provider-profile",
+  "kind": "waldo-disclosure-provider",
   "schema": 1,
-  "summary_version": "1.0",
   "provider": {
     "name": "Example AI, Inc.",
     "address": "123 Example Street, Example City",
@@ -13,14 +12,6 @@
     "name": "Example EU Representative GmbH",
     "address": "1 Example Platz, Berlin, Germany",
     "contact": "representative@example.test"
-  },
-  "model": {
-    "public_name": "Example Model 1",
-    "version": "1.0",
-    "market_placement_date": "2026-08-04",
-    "origin": "new",
-    "documentation_url": "https://example.test/models/1",
-    "continuous_training": "no"
   },
   "code_of_practice_status": "yes",
   "copyright_policy_url": "https://example.test/copyright-policy",

@@ -15,11 +15,22 @@ import (
 const Schema = 1
 
 type Config struct {
-	Schema    int       `json:"schema"`
-	Index     string    `json:"index,omitempty"`
-	Lookaside Lookaside `json:"lookaside,omitempty"`
-	Ingest    Ingest    `json:"ingest,omitempty"`
-	Model     Model     `json:"model,omitempty"`
+	Schema     int        `json:"schema"`
+	Index      string     `json:"index,omitempty"`
+	Lookaside  Lookaside  `json:"lookaside,omitempty"`
+	Ingest     Ingest     `json:"ingest,omitempty"`
+	Model      Model      `json:"model,omitempty"`
+	Disclosure Disclosure `json:"disclosure,omitempty"`
+	Signing    Signing    `json:"signing,omitempty"`
+}
+
+type Disclosure struct {
+	Provider string `json:"provider,omitempty"`
+}
+
+type Signing struct {
+	Method string `json:"method,omitempty"`
+	Key    string `json:"key,omitempty"`
 }
 
 type Ingest struct {
@@ -90,6 +101,9 @@ func Load() (Config, error) {
 	if err := validateModelBackend(config.Model.Backend); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
+	if err := validateSigning(config.Signing); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
 	return config, nil
 }
 
@@ -106,6 +120,9 @@ func Save(config Config) error {
 		return fmt.Errorf("lookaside cache maximum must not be negative")
 	}
 	if err := validateModelBackend(config.Model.Backend); err != nil {
+		return err
+	}
+	if err := validateSigning(config.Signing); err != nil {
 		return err
 	}
 	path, err := Path()
@@ -237,6 +254,16 @@ func EffectiveModelBackend(config Config) string {
 func validateModelBackend(backend string) error {
 	if backend != "" && backend != "auto" && backend != "mlx" && backend != "torchtitan" && backend != "pytorch" && backend != "fake" {
 		return fmt.Errorf("model backend must be auto, mlx, torchtitan, pytorch, or fake")
+	}
+	return nil
+}
+
+func validateSigning(signing Signing) error {
+	if signing.Method != "" && signing.Method != "sigstore-keyless" && signing.Method != "sigstore-key" {
+		return fmt.Errorf("signing method must be sigstore-keyless or sigstore-key")
+	}
+	if signing.Method == "sigstore-keyless" && signing.Key != "" {
+		return fmt.Errorf("signing.key cannot be used with sigstore-keyless")
 	}
 	return nil
 }

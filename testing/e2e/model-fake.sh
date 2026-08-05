@@ -29,6 +29,7 @@ model_export="$work/model-export"
 input="$work/training.txt"
 compose="$work/model.yaml"
 disclosure="$work/eu-gpai.json"
+provider="$work/provider.json"
 export WALDO_CONFIG="$work/config.json"
 
 echo "testing: complete fake-model lifecycle"
@@ -44,6 +45,20 @@ printf 'Small deterministic training record.\nA second preserved line.\n' > "$in
 "$binary" config set model.root "$models"
 "$binary" config set model.backend fake
 "$binary" config set index "$index_root"
+cat > "$provider" <<EOF
+{
+  "kind": "waldo-disclosure-provider",
+  "schema": 1,
+  "provider": {
+    "name": "OpenWALDO E2E",
+    "address": "1 Test Way, Test City",
+    "contact": "test@example.invalid"
+  },
+  "code_of_practice_status": "not-assessed",
+  "copyright_policy_url": "https://example.invalid/copyright"
+}
+EOF
+"$binary" config set disclosure.provider "$provider"
 
 destination="$index_root/core/e2e/model-corpus"
 "$binary" index ingest "$input" "$destination" \
@@ -146,8 +161,12 @@ fi
 "$binary" model summary manual | grep -q 'RUNS:.*1'
 "$binary" model list 'm*' | grep -q 'manual'
 "$binary" model bom manual | grep -q '"subject": "model"'
-"$binary" model export manual "$model_export" >/dev/null
-[ -s "$model_export/MODEL-BOM.json" ] || { echo "model export missing BOM" >&2; exit 1; }
+export_stderr="$work/model-export.stderr"
+"$binary" model export manual "$model_export" --allow-incomplete >/dev/null 2>"$export_stderr"
+[ -s "$model_export/BOM.json" ] || { echo "model export missing BOM" >&2; exit 1; }
+[ -s "$model_export/EU-BOM.json" ] || { echo "model export missing EU BOM" >&2; exit 1; }
+[ ! -e "$model_export/MODEL-BOM.json" ] || { echo "model export exposed internal MODEL-BOM name" >&2; exit 1; }
+grep -q 'model export is unsigned' "$export_stderr"
 if "$binary" model chat manual >/dev/null 2>&1; then
   echo "fake model unexpectedly supported chat" >&2
   exit 1

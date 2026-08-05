@@ -3,11 +3,13 @@ package cli
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo-new/internal/disclosure"
 	waldoindex "github.com/openwaldo/waldo-new/internal/index"
 )
 
@@ -23,6 +25,9 @@ var configKeys = []string{
 	"ingest.staging",
 	"model.root",
 	"model.backend",
+	"disclosure.provider",
+	"signing.method",
+	"signing.key",
 }
 
 func runConfigShow(context Context, args []string, stdout, _ io.Writer) error {
@@ -243,6 +248,44 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 			return usageError{message: "model.backend must be auto, mlx, torchtitan, pytorch, or fake"}
 		}
 		configuration.Model.Backend = values[0]
+	case "disclosure.provider":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		providerPath, err := filepath.Abs(values[0])
+		if err != nil {
+			return err
+		}
+		if _, err := disclosure.LoadProvider(providerPath); err != nil {
+			return usageError{message: fmt.Sprintf("disclosure.provider must name a valid provider JSON file: %v", err)}
+		}
+		configuration.Disclosure.Provider = providerPath
+	case "signing.method":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		if values[0] != "sigstore-keyless" && values[0] != "sigstore-key" {
+			return usageError{message: "signing.method must be sigstore-keyless or sigstore-key"}
+		}
+		configuration.Signing.Method = values[0]
+		if values[0] == "sigstore-keyless" {
+			configuration.Signing.Key = ""
+		}
+	case "signing.key":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		configuration.Signing.Key, err = filepath.Abs(values[0])
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(configuration.Signing.Key)
+		if err != nil {
+			return usageError{message: fmt.Sprintf("signing.key must name a readable key file: %v", err)}
+		}
+		if info.IsDir() {
+			return usageError{message: "signing.key must name a key file, not a directory"}
+		}
 	default:
 		return usageError{message: unknownConfigKey(key)}
 	}
@@ -288,6 +331,12 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.Model.Root = ""
 	case "model.backend":
 		configuration.Model.Backend = ""
+	case "disclosure.provider":
+		configuration.Disclosure.Provider = ""
+	case "signing.method":
+		configuration.Signing.Method = ""
+	case "signing.key":
+		configuration.Signing.Key = ""
 	default:
 		return usageError{message: unknownConfigKey(key)}
 	}
@@ -368,6 +417,21 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 		return value, err == nil, err
 	case "model.backend":
 		return config.EffectiveModelBackend(configuration), true, nil
+	case "disclosure.provider":
+		if configuration.Disclosure.Provider == "" {
+			return nil, false, nil
+		}
+		return configuration.Disclosure.Provider, true, nil
+	case "signing.method":
+		if configuration.Signing.Method == "" {
+			return nil, false, nil
+		}
+		return configuration.Signing.Method, true, nil
+	case "signing.key":
+		if configuration.Signing.Key == "" {
+			return nil, false, nil
+		}
+		return configuration.Signing.Key, true, nil
 	default:
 		return nil, false, fmt.Errorf("%s", unknownConfigKey(key))
 	}

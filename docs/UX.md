@@ -480,9 +480,9 @@ The corpus form accepts an export directory or its `EXPORT.json` directly.
 The model lifecycle also supports a fail-closed EU GPAI mapping:
 
 ```bash
+waldo config set disclosure.provider docs/examples/eu-gpai-provider.json
 waldo bom export smoke \
-  --format eu-gpai \
-  --provider docs/examples/eu-gpai-provider.json
+  --format eu-gpai
 ```
 
 With no output path, the converted document is written to standard output. An
@@ -492,6 +492,14 @@ explicit exception that emits a marked draft with all required, review, and
 optional gaps. A normal export emits nothing while required facts are missing.
 The current output is the machine-readable mapping and audit record; it does
 not pretend to be the Commission's official editable Word artifact.
+
+`waldo model export smoke ./release` creates the default native package with
+`BOM.json` and `EU-BOM.json`. Provider-level facts come from
+`disclosure.provider`; model-release facts remain model-specific. If
+`signing.method` is configured, WALDO automatically creates detached
+`BOM.sigstore.json` and `EU-BOM.sigstore.json` bundles and aborts publication
+on any signing failure. With no signing configuration it emits an unsigned
+warning.
 
 ## Common options
 

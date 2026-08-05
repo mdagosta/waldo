@@ -25,3 +25,4 @@ logs.
 - [0019: Fail closed into a real MLX backend on Apple Silicon](0019-real-mlx-backend.md)
 - [0020: Select training backends from host policy](0020-host-backend-policy.md)
 - [0021: Keep inference ephemeral and artifact-bound](0021-ephemeral-inference.md)
+- [0022: Export separate signed model release formats](0022-model-release-exports.md)

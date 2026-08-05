@@ -67,8 +67,15 @@ parameters belong in a model compose.
 
 `model bom` writes JSON to standard output unless an output file is supplied.
 `model export` requires a new destination directory because a model contains
-multiple artifacts and provenance records. `model rm` accepts only exact model
-names.
+multiple artifacts and provenance records. Its default `waldo` package exposes
+the portable aggregate as `BOM.json` and always adds `EU-BOM.json`; the managed
+model retains the internal `MODEL-BOM.json` name. Configure the provider once
+with `waldo config set disclosure.provider provider.json`. A normal export
+fails before publication if required disclosure facts are absent, while
+`--allow-incomplete` writes a conspicuously marked development draft. When
+`signing.method` is configured, export automatically signs both BOMs and fails
+if signing fails. Otherwise it succeeds with an unsigned warning. `model rm`
+accepts only exact model names.
 
 `model chat` opens the newest complete real-weight run identified by
 `current_run_id`, verifies its weights, configuration, and tokenizer against
@@ -198,8 +205,9 @@ into the configured model root.
 - `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, backend and
   simulation identity, observation hashes, and artifact hashes. Its
   `path_base` is `model-root`: every `run_bom` and artifact `path` resolves
-  from the directory containing `MODEL-BOM.json` in a managed model or model
-  export. Paths are portable and never contain a machine-specific model root.
+  from the directory containing `MODEL-BOM.json` in a managed model, or
+  `BOM.json` in a model export. Paths are portable and never contain a
+  machine-specific model root.
   `current_run_id` selects the newest complete, non-simulated run containing
   real weight artifacts; earlier simulated and real runs remain visible as
   provenance.

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo-new/internal/model"
 	"github.com/openwaldo/waldo-new/internal/record"
 	"github.com/openwaldo/waldo-new/internal/shard"
 	"github.com/parquet-go/parquet-go"
@@ -204,6 +205,100 @@ stages:
 		t.Fatalf("JSONL = %q", jsonl)
 	}
 	assertNoCacheFiles(t, cache)
+}
+
+func TestModelExportRequiresDisclosureAndPublishesBothBOMs(t *testing.T) {
+	models := filepath.Join(t.TempDir(), "models")
+	if _, err := (&model.Builder{Root: models}).Initialize("release", model.Architecture{
+		Family: "decoder-transformer", ContextTokens: 128, VocabularySize: 256,
+		HiddenSize: 64, IntermediateSize: 192, Layers: 2, AttentionHeads: 4,
+		KeyValueHeads: 2, TieEmbeddings: true, ParameterDType: "float32",
+		Tokenizer: model.Tokenizer{Name: "byte", Revision: "sha256:test"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	t.Setenv("WALDO_CONFIG", configPath)
+	if err := config.Save(config.Config{Model: config.Model{Root: models}}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	missingProviderOutput := filepath.Join(t.TempDir(), "missing-provider")
+	if code := Run([]string{"model", "export", "release", missingProviderOutput, "--allow-incomplete"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("missing provider code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "config set disclosure.provider") {
+		t.Fatalf("missing provider stderr = %q", stderr.String())
+	}
+	if _, err := os.Stat(missingProviderOutput); !os.IsNotExist(err) {
+		t.Fatalf("failed export created destination: %v", err)
+	}
+
+	provider := filepath.Join(t.TempDir(), "provider.json")
+	writeCLIFile(t, provider, `{
+  "kind": "waldo-disclosure-provider", "schema": 1,
+  "provider": {"name": "Example", "address": "1 Test Way", "contact": "test@example.invalid"},
+  "code_of_practice_status": "not-assessed",
+  "copyright_policy_url": "https://example.invalid/copyright"
+}`)
+	if err := config.Save(config.Config{Model: config.Model{Root: models}, Disclosure: config.Disclosure{Provider: provider}}); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	blockedOutput := filepath.Join(t.TempDir(), "blocked")
+	if code := Run([]string{"model", "export", "release", blockedOutput}, &stdout, &stderr); code != 1 {
+		t.Fatalf("incomplete disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "export blocked") {
+		t.Fatalf("incomplete disclosure stderr = %q", stderr.String())
+	}
+	if _, err := os.Stat(blockedOutput); !os.IsNotExist(err) {
+		t.Fatalf("blocked export created destination: %v", err)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	destination := filepath.Join(t.TempDir(), "release-export")
+	if code := Run([]string{"model", "export", "release", destination, "--allow-incomplete"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("model export code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	for _, name := range []string{"BOM.json", "EU-BOM.json"} {
+		if _, err := os.Stat(filepath.Join(destination, name)); err != nil {
+			t.Fatalf("missing %s: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(destination, "MODEL-BOM.json")); !os.IsNotExist(err) {
+		t.Fatalf("export retained internal MODEL-BOM name: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "model export is unsigned") {
+		t.Fatalf("unsigned export stderr = %q", stderr.String())
+	}
+	if _, err := model.Inspect(t.TempDir(), destination); err != nil {
+		t.Fatalf("inspect relocated export: %v", err)
+	}
+
+	configured, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configured.Signing.Method = "sigstore-keyless"
+	if err := config.Save(configured); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	stdout.Reset()
+	stderr.Reset()
+	unsignedFallback := filepath.Join(t.TempDir(), "must-not-fall-back")
+	if code := Run([]string{"model", "export", "release", unsignedFallback, "--allow-incomplete"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("configured signing failure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "cosign is not installed") {
+		t.Fatalf("configured signing failure stderr = %q", stderr.String())
+	}
+	if _, err := os.Stat(unsignedFallback); !os.IsNotExist(err) {
+		t.Fatalf("signing failure published an unsigned directory: %v", err)
+	}
 }
 
 func assertNoCacheFiles(t *testing.T, root string) {

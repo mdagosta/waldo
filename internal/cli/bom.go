@@ -108,19 +108,52 @@ func runBOMExport(context Context, args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 	var provider *disclosure.ProviderProfile
-	if options.Provider != "" {
-		profile, err := disclosure.LoadProvider(options.Provider)
+	providerPath := options.Provider
+	if providerPath == "" {
+		providerPath = configuration.Disclosure.Provider
+	}
+	if providerPath != "" {
+		profile, err := disclosure.LoadProvider(providerPath)
 		if err != nil {
 			return err
 		}
 		provider = &profile
 	}
-	report, err := disclosure.BuildEUGPAIReport(inspection, provider, time.Now())
+	report, err := disclosure.BuildEUGPAIReport(inspection, provider, disclosure.ReleaseFromModel(inspection), time.Now())
 	if err != nil {
 		return err
 	}
 	blocking := report.BlockingGaps()
-	if blocking > 0 && !options.AllowIncomplete {
+	if err := requireCompleteDisclosure(report, options.AllowIncomplete, stderr); err != nil {
+		return err
+	}
+	if options.Output == "" {
+		return writeJSON(stdout, report)
+	}
+	if err := disclosure.WriteEUGPAIReport(options.Output, report); err != nil {
+		return err
+	}
+	absolute, _ := filepath.Abs(options.Output)
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Output string                  `json:"output"`
+			Report disclosure.EUGPAIReport `json:"report"`
+		}{Output: absolute, Report: report})
+	}
+	fmt.Fprintf(stdout, "wrote %s EU GPAI disclosure mapping to %s\n", report.Status, absolute)
+	fmt.Fprintf(stdout, "  template      %s (%s)\n", report.Template.Document, report.Template.Version)
+	fmt.Fprintf(stdout, "  model         %s (%s)\n", report.Model.Name, shortModelHash(report.Model.ID))
+	fmt.Fprintf(stdout, "  corpora       %s unique across %s stages\n", humanInteger(int64(len(report.Training.UniqueCorpora))), humanInteger(int64(len(report.Training.Stages))))
+	fmt.Fprintf(stdout, "  gaps          %s\n", humanInteger(int64(len(report.Gaps))))
+	if blocking > 0 {
+		fmt.Fprintln(stdout, "  warning       incomplete draft; this is not a compliance finding")
+	}
+	return nil
+}
+
+func requireCompleteDisclosure(report disclosure.EUGPAIReport, allowIncomplete bool, stderr io.Writer) error {
+	blocking := report.BlockingGaps()
+	if blocking > 0 && !allowIncomplete {
 		fmt.Fprintf(stderr, "EU GPAI export blocked by %s required disclosure gaps:\n", humanInteger(int64(blocking)))
 		var required []disclosure.Gap
 		for _, gap := range report.Gaps {
@@ -143,27 +176,6 @@ func runBOMExport(context Context, args []string, stdout, stderr io.Writer) erro
 			fmt.Fprintf(stderr, "  ... and %s more\n", humanInteger(int64(len(required)-limit)))
 		}
 		return fmt.Errorf("no output written; supply the missing facts or use --allow-incomplete for a marked draft")
-	}
-	if options.Output == "" {
-		return writeJSON(stdout, report)
-	}
-	if err := disclosure.WriteEUGPAIReport(options.Output, report); err != nil {
-		return err
-	}
-	absolute, _ := filepath.Abs(options.Output)
-	if context.JSON {
-		return writeJSON(stdout, struct {
-			Output string                  `json:"output"`
-			Report disclosure.EUGPAIReport `json:"report"`
-		}{Output: absolute, Report: report})
-	}
-	fmt.Fprintf(stdout, "wrote %s EU GPAI disclosure mapping to %s\n", report.Status, absolute)
-	fmt.Fprintf(stdout, "  template      %s (%s)\n", report.Template.Document, report.Template.Version)
-	fmt.Fprintf(stdout, "  model         %s (%s)\n", report.Model.Name, shortModelHash(report.Model.ID))
-	fmt.Fprintf(stdout, "  corpora       %s unique across %s stages\n", humanInteger(int64(len(report.Training.UniqueCorpora))), humanInteger(int64(len(report.Training.Stages))))
-	fmt.Fprintf(stdout, "  gaps          %s\n", humanInteger(int64(len(report.Gaps))))
-	if blocking > 0 {
-		fmt.Fprintln(stdout, "  warning       incomplete draft; this is not a compliance finding")
 	}
 	return nil
 }
