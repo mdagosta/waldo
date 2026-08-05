@@ -43,9 +43,10 @@ func NewEnvironmentResolver(preference string) Resolver {
 	return EnvironmentResolver{
 		Preference: preference,
 		Resolvers: map[string]Resolver{
-			BackendMLX:     NewMLXResolver(),
-			BackendPyTorch: NewPyTorchResolver(),
-			BackendFake:    FakeResolver(),
+			BackendMLX:        NewMLXResolver(),
+			BackendTorchTitan: NewTorchTitanResolver(),
+			BackendPyTorch:    NewPyTorchResolver(),
+			BackendFake:       FakeResolver(),
 		},
 	}
 }
@@ -145,6 +146,9 @@ func (resolver EnvironmentResolver) resolver(name string) Resolver {
 	}
 	if name == BackendPyTorch {
 		return NewPyTorchResolver()
+	}
+	if name == BackendTorchTitan {
+		return NewTorchTitanResolver()
 	}
 	if name == BackendFake {
 		return FakeResolver()

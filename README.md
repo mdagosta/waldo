@@ -351,9 +351,9 @@ waldo model compose composed-small ./model.yaml
 Portable composes name architecture, corpora, objectives, and training
 parameters—not MLX, PyTorch, or a host path. Machine-local `model.backend=auto`
 selects MLX on Apple Silicon and prefers TorchTitan, then PyTorch, on Linux.
-Real training is implemented through MLX and single-process PyTorch; generation
-currently uses MLX. The fake backend is available only when explicitly
-configured for deterministic testing.
+Real training is implemented through MLX, single-process PyTorch, and
+single-node distributed TorchTitan; generation currently uses MLX. The fake
+backend is available only when explicitly configured for deterministic testing.
 
 After a real run:
 
@@ -424,14 +424,16 @@ Working end to end today:
   model composes;
 - real MLX training and generation on Apple Silicon, plus real single-process
   PyTorch training on Linux CPU, NVIDIA CUDA, or AMD ROCm installations;
+- real single-node TorchTitan training across all visible Linux GPUs with
+  TorchTitan device meshes and PyTorch FSDP2;
 - native WALDO, Hugging Face, MLX, GGUF, and Ollama model exports;
 - machine-readable EU GPAI disclosure mapping and gap analysis; and
 - optional fail-closed Sigstore signing for model release BOMs.
 
 Still deliberately pending:
 
-- TorchTitan and TensorFlow execution adapters, plus PyTorch generation and
-  distributed execution—the single-process PyTorch trainer is implemented;
+- TensorFlow execution, PyTorch generation, and multi-node TorchTitan
+  orchestration—the single-node distributed TorchTitan adapter is implemented;
 - model import, quantized GGUF variants, SFT, preference training, pinned chat
   templates, held-out evaluation, and cluster orchestration;
 - rendering the exact official editable EU template rather than the current

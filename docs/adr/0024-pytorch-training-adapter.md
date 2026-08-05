@@ -23,9 +23,8 @@ Safetensors tensor names. This permits a later WALDO run to initialize from a
 verified prior MLX or PyTorch terminal artifact without a conversion step.
 
 TorchTitan remains a separate distributed adapter. Its installation retains
-priority in Linux automatic selection, and WALDO fails closed if TorchTitan is
-selected before that adapter is available rather than silently choosing a
-different framework.
+priority in Linux automatic selection; ADR 0025 defines that adapter without
+changing this single-process PyTorch contract.
 
 ## Consequences
 

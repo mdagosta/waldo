@@ -14,9 +14,13 @@ import torch.nn.functional as functional
 
 PROTOCOL_SCHEMA = 1
 WORKER_REVISION = "builtin-pytorch-worker-schema-1"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1"
+IS_PRIMARY = True
 
 
 def emit(kind, **payload):
+    if not IS_PRIMARY:
+        return
     frame = {"kind": kind, "schema": PROTOCOL_SCHEMA}
     frame.update(payload)
     print(json.dumps(frame, separators=(",", ":")), flush=True)
@@ -232,7 +236,27 @@ class Trainer:
         self.parameters = begin["parameters"]
         self.artifact_directory = artifact_directory
         self.artifact_prefix = artifact_prefix.replace(os.sep, "/").strip("/")
-        self.device = torch.device(device_name)
+        self.distributed = device_name == "torchtitan"
+        self.rank = torch.distributed.get_rank() if self.distributed else 0
+        self.world_size = torch.distributed.get_world_size() if self.distributed else 1
+        if self.distributed:
+            local_rank = int(os.environ["LOCAL_RANK"])
+            self.device = torch.device(f"cuda:{local_rank}")
+            torch.cuda.set_device(self.device)
+            from torchtitan.distributed import ParallelDims
+
+            self.parallel_dims = ParallelDims(
+                dp_replicate=1,
+                dp_shard=self.world_size,
+                cp=1,
+                tp=1,
+                pp=1,
+                ep=1,
+                world_size=self.world_size,
+            )
+            self.parallel_dims.build_mesh()
+        else:
+            self.device = torch.device(device_name)
         self.sequence_length = self.parameters["sequence_length"]
         self.batch_size = self.parameters["batch_size"]
         self.target_steps = self.parameters["steps"]
@@ -269,6 +293,13 @@ class Trainer:
         if self.device.type == "cpu" and dtype == torch.float16:
             raise ValueError("float16 training is not supported by the PyTorch CPU adapter; use bfloat16 or float32")
         self.model.to(device=self.device, dtype=dtype)
+        if self.distributed:
+            from torch.distributed._composable.fsdp import fully_shard
+
+            fsdp_mesh = self.parallel_dims.get_mesh("fsdp")
+            for layer in self.model.layers:
+                fully_shard(layer, mesh=fsdp_mesh)
+            fully_shard(self.model, mesh=fsdp_mesh)
         optimizer_parameters = self.parameters["optimizer"]
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -364,30 +395,48 @@ class Trainer:
             self.record_evaluation(loss_value)
 
     def save_weights(self, path, kind, step):
-        save_safetensors(
-            path,
-            self.model.state_dict(),
-            {
-                "format": "openwaldo",
-                "kind": kind,
-                "schema": "1",
-                "backend": "pytorch",
-                "backend_revision": WORKER_REVISION,
-                "architecture_sha256": self.begin["architecture_sha256"],
-                "run_id": self.begin["run_id"],
-                "step": str(step),
-            },
-        )
+        if self.distributed:
+            from torch.distributed.checkpoint.state_dict import (
+                get_model_state_dict,
+                StateDictOptions,
+            )
+
+            tensors = get_model_state_dict(
+                self.model,
+                options=StateDictOptions(full_state_dict=True, cpu_offload=True),
+            )
+        else:
+            tensors = self.model.state_dict()
+        if IS_PRIMARY:
+            backend = "torchtitan" if self.distributed else "pytorch"
+            revision = TORCHTITAN_REVISION if self.distributed else WORKER_REVISION
+            save_safetensors(
+                path,
+                tensors,
+                {
+                    "format": "openwaldo",
+                    "kind": kind,
+                    "schema": "1",
+                    "backend": backend,
+                    "backend_revision": revision,
+                    "architecture_sha256": self.begin["architecture_sha256"],
+                    "run_id": self.begin["run_id"],
+                    "step": str(step),
+                },
+            )
+        if self.distributed:
+            torch.distributed.barrier()
 
     def save_checkpoint(self):
         name = f"checkpoints/step-{self.step_number:08d}.safetensors"
         path = os.path.join(self.artifact_directory, *name.split("/"))
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        self.save_weights(path, "waldo-pytorch-checkpoint", self.step_number)
+        backend_name = "torchtitan" if self.distributed else "pytorch"
+        self.save_weights(path, f"waldo-{backend_name}-checkpoint", self.step_number)
         item = {
             "step": self.step_number,
             "tokens": self.consumed_tokens,
-            "artifacts": [artifact(path, self.logical(name))],
+            "artifacts": [artifact(path, self.logical(name))] if IS_PRIMARY else [],
         }
         self.checkpoints.append(item)
         emit(
@@ -440,45 +489,52 @@ class Trainer:
 
         weights_name = "model.safetensors"
         weights_path = os.path.join(self.artifact_directory, weights_name)
-        self.save_weights(weights_path, "waldo-pytorch-model", self.step_number)
+        backend_name = "torchtitan" if self.distributed else "pytorch"
+        self.save_weights(weights_path, f"waldo-{backend_name}-model", self.step_number)
         config_name = "config.json"
         config_path = os.path.join(self.artifact_directory, config_name)
-        write_json(
-            config_path,
-            {
-                "kind": "waldo-pytorch-model-config",
-                "schema": 1,
-                "architecture_sha256": self.begin["architecture_sha256"],
-                "architecture": self.architecture,
-                "training_profile": self.parameters,
-                "initialization": None if self.initialization is None else {
-                    "source_run_id": self.initialization["source_run_id"],
-                    "artifact": self.initialization["artifact"],
+        backend_revision = TORCHTITAN_REVISION if self.distributed else WORKER_REVISION
+        if IS_PRIMARY:
+            write_json(
+                config_path,
+                {
+                    "kind": f"waldo-{backend_name}-model-config",
+                    "schema": 1,
+                    "architecture_sha256": self.begin["architecture_sha256"],
+                    "architecture": self.architecture,
+                    "training_profile": self.parameters,
+                    "initialization": None if self.initialization is None else {
+                        "source_run_id": self.initialization["source_run_id"],
+                        "artifact": self.initialization["artifact"],
+                    },
+                    "backend": {"name": backend_name, "revision": backend_revision, "version": torch.__version__, "device": str(self.device), "world_size": self.world_size},
                 },
-                "backend": {"name": "pytorch", "revision": WORKER_REVISION, "version": torch.__version__, "device": str(self.device)},
-            },
-        )
+            )
+            write_json(
+                os.path.join(self.artifact_directory, "tokenizer.json"),
+                {
+                    "kind": "waldo-byte-tokenizer",
+                    "schema": 1,
+                    "name": "byte",
+                    "revision": "builtin-byte-schema-1",
+                    "pad_id": 0,
+                    "bos_id": 1,
+                    "eos_id": 2,
+                    "byte_offset": 3,
+                    "vocabulary_size": 259,
+                },
+            )
         tokenizer_name = "tokenizer.json"
         tokenizer_path = os.path.join(self.artifact_directory, tokenizer_name)
-        write_json(
-            tokenizer_path,
-            {
-                "kind": "waldo-byte-tokenizer",
-                "schema": 1,
-                "name": "byte",
-                "revision": "builtin-byte-schema-1",
-                "pad_id": 0,
-                "bos_id": 1,
-                "eos_id": 2,
-                "byte_offset": 3,
-                "vocabulary_size": 259,
-            },
-        )
-        outputs = [
-            artifact(weights_path, self.logical(weights_name)),
-            artifact(config_path, self.logical(config_name)),
-            artifact(tokenizer_path, self.logical(tokenizer_name)),
-        ]
+        if self.distributed:
+            torch.distributed.barrier()
+        outputs = []
+        if IS_PRIMARY:
+            outputs = [
+                artifact(weights_path, self.logical(weights_name)),
+                artifact(config_path, self.logical(config_name)),
+                artifact(tokenizer_path, self.logical(tokenizer_name)),
+            ]
         emit(
             "complete",
             observation={
@@ -499,10 +555,23 @@ def run():
     artifact_directory = os.path.abspath(sys.argv[1])
     artifact_prefix = sys.argv[2]
     device = sys.argv[3]
+    global IS_PRIMARY
+    distributed = device == "torchtitan"
+    if distributed:
+        torch.distributed.init_process_group("nccl")
+        IS_PRIMARY = torch.distributed.get_rank() == 0
     os.makedirs(artifact_directory, exist_ok=True)
     trainer = None
     ended = False
-    for line in sys.stdin:
+    while True:
+        if distributed:
+            value = [sys.stdin.readline() if IS_PRIMARY else None]
+            torch.distributed.broadcast_object_list(value, src=0)
+            line = value[0]
+        else:
+            line = sys.stdin.readline()
+        if not line:
+            break
         frame = json.loads(line)
         if frame.get("schema") != PROTOCOL_SCHEMA:
             raise ValueError(f"unsupported worker input schema {frame.get('schema')}")
@@ -532,3 +601,6 @@ except Exception as error:
     traceback.print_exc(file=sys.stderr)
     emit("error", error=str(error))
     sys.exit(1)
+finally:
+    if torch.distributed.is_initialized():
+        torch.distributed.destroy_process_group()

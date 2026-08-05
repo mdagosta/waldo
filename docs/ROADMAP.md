@@ -159,15 +159,15 @@ the same files independently of an index checkout.
 - Select MLX automatically on Apple Silicon. **Implemented for the built-in
   byte tokenizer with verified Metal runtime discovery.**
 - On Linux, prefer an installed TorchTitan and then an installed PyTorch.
-  **Implemented. PyTorch executes locally; an installed preferred TorchTitan
-  still fails closed until its distributed adapter lands.**
+  **Implemented with a single-node TorchTitan distributed adapter and a
+  single-process PyTorch fallback.**
 - Persist the resolved backend and immutable environment facts in each run BOM.
-  **Implemented for MLX and PyTorch, including Python/framework versions,
-  selected devices, and accelerator facts.**
+  **Implemented for MLX, PyTorch, and TorchTitan, including Python/framework
+  versions, selected devices, node/world size, and accelerator facts.**
 - Keep the execution adapter portable across MLX, PyTorch, TensorFlow, and
   PyTorch-based distributed engines. **Backend-neutral contract plus real MLX
-  and single-process PyTorch adapters implemented; TensorFlow and distributed
-  TorchTitan remain.**
+  and single-process PyTorch adapters implemented, plus single-node TorchTitan
+  device-mesh/FSDP2 execution; TensorFlow and multi-node orchestration remain.**
 - Resolve compact compose parameters into a versioned AdamW/cosine training
   profile, deterministic bounded shuffle, continuous EOS packing contract,
   checkpoint/evaluation cadence, and planned token capacity. **Implemented.**

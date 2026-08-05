@@ -28,3 +28,4 @@ logs.
 - [0022: Export separate signed model release formats](0022-model-release-exports.md)
 - [0023: Reset unreleased schemas to version 1](0023-reset-unreleased-schemas.md)
 - [0024: Execute Linux training through the shared PyTorch worker contract](0024-pytorch-training-adapter.md)
+- [0025: Use TorchTitan for single-node distributed training](0025-torchtitan-distributed-adapter.md)

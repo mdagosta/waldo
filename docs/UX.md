@@ -435,10 +435,11 @@ On macOS, automatic backend resolution always selects MLX and requires Apple
 Silicon; it probes candidate Python runtimes and accepts MLX only after
 executing a real operation on Metal. On Linux, automatic resolution probes for
 TorchTitan first and PyTorch second. PyTorch is an executable single-process
-adapter for usable CPU, NVIDIA CUDA, and AMD ROCm installations; TorchTitan
-still fails explicitly at the missing distributed-adapter boundary. Both real
-workers accept the built-in byte-tokenizer presets and produce checkpoint and
-terminal Safetensors weights with the same internal tensor contract. If no
+adapter for usable CPU, NVIDIA CUDA, and AMD ROCm installations. TorchTitan
+launches one rank per visible GPU on a single Linux node and uses its device
+mesh with PyTorch FSDP2. The real workers accept the built-in byte-tokenizer
+presets and produce checkpoint and terminal Safetensors weights with the same
+internal tensor contract. If no
 compatible real backend is available, training warns and fails with
 installation guidance before creating a run; simulation is never an automatic
 fallback. `waldo config set model.backend fake` is the explicit

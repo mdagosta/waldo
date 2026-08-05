@@ -125,8 +125,9 @@ not introduce a second model compose or provenance lifecycle.
 
 The production resolver selects MLX on Apple Silicon and, on Linux, prefers
 TorchTitan before PyTorch. MLX and PyTorch are accepted only after a candidate
-Python runtime successfully executes a real operation on the selected device;
-TorchTitan remains fail-closed until its distributed adapter is implemented.
+Python runtime successfully executes a real operation on the selected device.
+TorchTitan additionally verifies every visible GPU and the required distributed
+APIs before selecting its single-node device-mesh/FSDP2 adapter.
 Automatic resolution fails when no real backend is usable. The fake adapter is
 reachable only through explicit machine-local test configuration.
 

@@ -16,15 +16,18 @@ func runPythonWorker(ctx context.Context, label, python, program string, request
 	if python == "" {
 		return Observation{}, fmt.Errorf("%s Python runtime is required", label)
 	}
+	arguments := []string{"-c", program, request.ArtifactDirectory, request.ArtifactPrefix}
+	arguments = append(arguments, extraArguments...)
+	return runWorkerCommand(ctx, label, exec.CommandContext(ctx, python, arguments...), request)
+}
+
+func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, request Request) (Observation, error) {
 	if request.Records == nil {
 		return Observation{}, fmt.Errorf("%s backend received no canonical record stream", label)
 	}
 	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 		return Observation{}, fmt.Errorf("create %s artifact directory: %w", label, err)
 	}
-	arguments := []string{"-c", program, request.ArtifactDirectory, request.ArtifactPrefix}
-	arguments = append(arguments, extraArguments...)
-	command := exec.CommandContext(ctx, python, arguments...)
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		return Observation{}, err
@@ -36,7 +39,7 @@ func runPythonWorker(ctx context.Context, label, python, program string, request
 	var stderr cappedBuffer
 	command.Stderr = &stderr
 	if err := command.Start(); err != nil {
-		return Observation{}, fmt.Errorf("start %s worker with %s: %w", label, python, err)
+		return Observation{}, fmt.Errorf("start %s worker: %w", label, err)
 	}
 
 	type workerResult struct {

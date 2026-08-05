@@ -17,6 +17,7 @@ Every test category has its own executable script:
 ./testing/e2e/model-fake.sh
 ./testing/e2e/model-mlx.sh
 ./testing/e2e/model-pytorch.sh
+./testing/e2e/model-torchtitan.sh
 ```
 
 Run all of them in that order with:
@@ -94,6 +95,19 @@ skip.
 
 ```bash
 ./testing/e2e/model-pytorch.sh
+```
+
+## Real TorchTitan model end to end
+
+`model-torchtitan.sh` runs on Linux when TorchTitan and at least one compatible
+NVIDIA CUDA or AMD ROCm GPU are available. It launches one worker rank per
+visible GPU, exercises TorchTitan's device mesh with PyTorch FSDP2, consumes
+WALDO's canonical stream, and verifies portable full Safetensors, checkpoints,
+observations, and distributed execution facts. Other environments report an
+explicit skip.
+
+```bash
+./testing/e2e/model-torchtitan.sh
 ```
 
 ## Guarded S3 E2E
