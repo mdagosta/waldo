@@ -179,6 +179,14 @@ stages:
 	if !strings.Contains(string(disclosureData), `"status": "incomplete-draft"`) || !strings.Contains(string(disclosureData), `"field": "provider.profile"`) || !strings.Contains(string(disclosureData), `"field": "training.observed-consumption"`) {
 		t.Fatalf("draft disclosure = %s", disclosureData)
 	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"bom", "export", "smoke", "--format", "eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("stdout disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.HasPrefix(stdout.String(), "{\n") || !strings.Contains(stdout.String(), `"kind": "waldo-eu-gpai-training-content"`) || !strings.Contains(stdout.String(), `"status": "incomplete-draft"`) {
+		t.Fatalf("stdout disclosure = %q", stdout.String())
+	}
 
 	jsonlDestination := filepath.Join(t.TempDir(), "jsonl-export")
 	stdout.Reset()
@@ -240,6 +248,13 @@ func TestParseBOMExportOptions(t *testing.T) {
 	}
 	if _, err := parseBOMExportOptions([]string{"smoke", "report.docx", "--format", "eu-gpai"}); err == nil || !strings.Contains(err.Error(), ".json") {
 		t.Fatalf("document output error = %v", err)
+	}
+	stdoutOptions, err := parseBOMExportOptions([]string{"smoke", "--format", "eu-gpai", "--allow-incomplete"})
+	if err != nil || stdoutOptions.Model != "smoke" || stdoutOptions.Output != "" || !stdoutOptions.AllowIncomplete {
+		t.Fatalf("stdout parse = %+v, %v", stdoutOptions, err)
+	}
+	if _, err := parseBOMExportOptions([]string{"smoke", "--format", "eu-gpai", "--force"}); err == nil || !strings.Contains(err.Error(), "requires an output file") {
+		t.Fatalf("stdout force error = %v", err)
 	}
 }
 

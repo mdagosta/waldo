@@ -228,6 +228,16 @@ from corpus manifests alone.
 The implemented audit UX is:
 
 ```bash
+waldo bom export <model-name-or-path> \
+  --format eu-gpai \
+  --provider provider.json
+```
+
+With no destination, the converted JSON document is written to standard
+output, so ordinary shell redirection works. A final positional destination
+writes the same document atomically instead:
+
+```bash
 waldo bom export <model-name-or-path> training-content.json \
   --format eu-gpai \
   --provider provider.json

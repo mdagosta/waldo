@@ -310,16 +310,18 @@ The corpus form accepts an export directory or its `EXPORT.json` directly.
 The model lifecycle also supports a fail-closed EU GPAI mapping:
 
 ```bash
-waldo bom export smoke training-content.json \
+waldo bom export smoke \
   --format eu-gpai \
   --provider docs/examples/eu-gpai-provider.json
 ```
 
-The output path is positional. `--allow-incomplete` is the explicit exception
-that writes a marked draft with all required, review, and optional gaps. A
-normal export writes nothing while required facts are missing. The current
-output is the machine-readable mapping and audit record; it does not pretend
-to be the Commission's official editable Word artifact.
+With no output path, the converted document is written to standard output. An
+optional final positional path such as `training-content.json` writes it
+atomically instead. `--format` remains a flag. `--allow-incomplete` is the
+explicit exception that emits a marked draft with all required, review, and
+optional gaps. A normal export emits nothing while required facts are missing.
+The current output is the machine-readable mapping and audit record; it does
+not pretend to be the Commission's official editable Word artifact.
 
 ## Common options
 

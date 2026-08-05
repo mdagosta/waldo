@@ -88,7 +88,7 @@ func runBOMExport(context Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
-	if !options.Force {
+	if options.Output != "" && !options.Force {
 		if _, err := os.Stat(options.Output); err == nil {
 			return fmt.Errorf("%s already exists; use --force to replace it", options.Output)
 		} else if !os.IsNotExist(err) {
@@ -144,6 +144,9 @@ func runBOMExport(context Context, args []string, stdout, stderr io.Writer) erro
 		}
 		return fmt.Errorf("no output written; supply the missing facts or use --allow-incomplete for a marked draft")
 	}
+	if options.Output == "" {
+		return writeJSON(stdout, report)
+	}
 	if err := disclosure.WriteEUGPAIReport(options.Output, report); err != nil {
 		return err
 	}
@@ -197,15 +200,21 @@ func parseBOMExportOptions(args []string) (bomExportOptions, error) {
 			positional = append(positional, argument)
 		}
 	}
-	if len(positional) != 2 || options.Format == "" {
-		return bomExportOptions{}, usageError{message: "usage: waldo bom export <model-name-or-path> <output.json> --format eu-gpai [--provider <profile.json>] [--allow-incomplete] [--force]"}
+	if (len(positional) != 1 && len(positional) != 2) || options.Format == "" {
+		return bomExportOptions{}, usageError{message: "usage: waldo bom export <model-name-or-path> [output.json] --format eu-gpai [--provider <profile.json>] [--allow-incomplete] [--force]"}
 	}
 	if options.Format != "eu-gpai" {
 		return bomExportOptions{}, usageError{message: fmt.Sprintf("unsupported BOM export format %q; use eu-gpai", options.Format)}
 	}
-	if strings.ToLower(filepath.Ext(positional[1])) != ".json" {
+	if len(positional) == 1 && options.Force {
+		return bomExportOptions{}, usageError{message: "--force requires an output file"}
+	}
+	if len(positional) == 2 && strings.ToLower(filepath.Ext(positional[1])) != ".json" {
 		return bomExportOptions{}, usageError{message: "eu-gpai output must use a .json filename; editable document rendering is not implemented yet"}
 	}
-	options.Model, options.Output = positional[0], positional[1]
+	options.Model = positional[0]
+	if len(positional) == 2 {
+		options.Output = positional[1]
+	}
 	return options, nil
 }
