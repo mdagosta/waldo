@@ -74,12 +74,26 @@ architecture does not have to appear as product vocabulary.
 There is no `compose` command group. A declarative model recipe is one input to
 `waldo model build`.
 
-Source-specific acquisition will be added after the model-lifecycle phase as
-bounded adapters in this same binary. Its first workflow writes raw artifacts
+Source-specific acquisition uses bounded adapters in this same binary. Its
+first workflow writes raw artifacts
 and acquisition evidence to a local directory, then stops. It does not hide
 ingestion, publication, or training behind a fetch command.
 
 ## Primary journeys
+
+### Acquire one upstream artifact
+
+```bash
+waldo fetch huggingface org/dataset data/train.parquet /tmp/dataset
+waldo index ingest /tmp/dataset /path/to/index/core/example \
+  --license CC-BY-4.0
+```
+
+The file argument is mandatory, so the first adapter cannot accidentally fetch
+an entire repository. `--revision` optionally selects a branch, tag, or commit;
+the acquisition record always stores the resolved commit. Download and hashing
+stream in one pass. The command writes only beneath the explicit directory and
+stops after `ACQUISITION.json` is durable.
 
 ### Inspect and verify an index
 
@@ -203,10 +217,10 @@ The command deliberately has one execution path. Its arguments are:
 | --- | --- |
 | `<input>` | Always. A file or recursively scanned directory. |
 | `<destination>` | Always. The new corpus path inside the index. |
-| `--title` | Always. Human-readable corpus title. |
-| `--license` | Always. License applying to this contribution. |
-| `--source` | Always. Acquisition/source URL recorded in provenance. |
-| `--source-category` | Always. GPAI-compatible source category. |
+| `--title` | Required for raw input; supplied as a proposal by a WALDO acquisition. |
+| `--license` | Always. Curated license applying to this contribution. |
+| `--source` | Required for raw input; supplied by a WALDO acquisition. |
+| `--source-category` | Required for raw input; supplied by a WALDO acquisition. |
 | `--description` | Optional. WALDO generates a plain default otherwise. |
 | `--source-name` | Optional. Defaults from the destination name. |
 | `--text-column` | Only when raw Parquet has no uniquely inferable text column. |
@@ -217,7 +231,8 @@ Publication is configured once through `waldo config set`; ingestion
 has no second per-run destination or alternate partial execution mode.
 
 When a WALDO fetcher produced the input, the invocation names its local deposit
-or acquisition record rather than repeating facts by hand.
+or acquisition record rather than repeating facts by hand. Ingestion verifies
+every declared artifact and refuses missing, corrupt, or undeclared files.
 
 ### Export a corpus selection
 

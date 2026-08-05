@@ -40,8 +40,8 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		Description: plan.Description, License: plan.License, Format: "parquet",
 		RecordSchema: shard.TextRecordSchema,
 		Sources: []index.Source{{
-			Name: plan.Source.Name, Source: plan.Source.Name, URL: plan.Source.URL,
-			Category: plan.Source.Category, SHA256: sourceHash, Files: files,
+			Name: plan.Source.Name, Source: firstNonEmpty(plan.Source.Origin, plan.Source.Name), Version: plan.Source.Version, URL: plan.Source.URL,
+			Category: plan.Source.Category, CollectedFrom: plan.Source.CollectedFrom, CollectedTo: plan.Source.CollectedTo, SHA256: sourceHash, Files: files,
 			Usage: index.Modalities{"text": usage},
 			Content: &index.Content{
 				Types: []string{"text"}, PersonalData: "unknown",
@@ -107,8 +107,12 @@ func sourceAcquisitionIdentity(plan Plan) (string, []index.SourceFile, error) {
 			name = input.Artifact.SHA256[:12] + "-" + name
 		}
 		seenNames[name] = true
+		evidenceURL := input.Artifact.SourceURL
+		if evidenceURL == "" {
+			evidenceURL = artifactEvidenceURL(plan.Source.URL, input.Artifact.SHA256)
+		}
 		files = append(files, index.SourceFile{
-			Name: name, URL: artifactEvidenceURL(plan.Source.URL, input.Artifact.SHA256), SHA256: input.Artifact.SHA256,
+			Name: name, URL: evidenceURL, SHA256: input.Artifact.SHA256,
 		})
 	}
 	data, err := json.Marshal(wire)
@@ -117,6 +121,15 @@ func sourceAcquisitionIdentity(plan Plan) (string, []index.SourceFile, error) {
 	}
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:]), files, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func artifactEvidenceURL(base, digest string) string {

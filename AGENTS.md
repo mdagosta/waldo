@@ -20,8 +20,9 @@ reason.
   materialization then verifies every object named by it.
 - A model **recipe** is consumed by `waldo model build`; there is no separate
   `compose` command group.
-- Fetchers are external producers and will live in another repository. This
-  repository owns their handoff contract, not their source-specific scripts.
+- Reviewed fetch adapters live behind `internal/acquire` in the single WALDO
+  binary. They stop at a local deposit and must not invoke ingestion,
+  lookaside publication, index mutation, or model operations.
 
 ## Dependency direction
 
