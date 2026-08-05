@@ -28,6 +28,13 @@ func TestResolveParametersPinsVersionedDefaultsAndOverrides(t *testing.T) {
 	if resolved.Profile != DefaultProfile || resolved.ProfileSchema != 1 || resolved.Epochs != 1 || resolved.Optimizer.Name != "adamw" || resolved.Optimizer.WeightDecay != 0.1 || resolved.Schedule.Name != "cosine" || resolved.Schedule.WarmupSteps != 100 || resolved.Data.Order != "bounded-shuffle-v1" || resolved.Data.Packing != "continuous-eos-v1" || resolved.CheckpointEvery != 500 || resolved.EvaluateEvery != 500 || resolved.PlannedTokenCapacity != 4_096_000 {
 		t.Fatalf("resolved = %+v", resolved)
 	}
+	encoded, err := json.Marshal(resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"epochs":1`)) {
+		t.Fatalf("resolved parameters do not persist the default epoch: %s", encoded)
+	}
 	zeroFloat := 0.0
 	zeroInt := int64(0)
 	buffer := 7

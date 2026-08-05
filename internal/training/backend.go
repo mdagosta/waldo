@@ -90,7 +90,7 @@ type Parameters struct {
 type ResolvedParameters struct {
 	Profile              string    `json:"profile"`
 	ProfileSchema        int       `json:"profile_schema"`
-	Epochs               int64     `json:"epochs"`
+	Epochs               int64     `json:"epochs,omitempty"`
 	Steps                int64     `json:"steps"`
 	BatchSize            int64     `json:"batch_size"`
 	SequenceLength       int64     `json:"sequence_length"`

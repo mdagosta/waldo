@@ -137,6 +137,56 @@ func TestInspectNormalizesLegacySchemaOneModelBOM(t *testing.T) {
 	}
 }
 
+func TestInspectAcceptsLegacyRunBOMWithoutEpochs(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root, NewID: func() (string, error) { return "legacy-epochs", nil }, Resolver: training.FakeResolver()}
+	if _, err := builder.Initialize("smoke", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	trained, err := builder.Train(context.Background(), "smoke", preparedFixture(t, testStage("pretrain")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := trained.Model.Runs[0]
+	runDirectory := filepath.Join(trained.Path, "runs", runDirectoryName(pin))
+	runBOM := trained.RunBOMs[0]
+	runBOM.Parameters.Epochs = 0
+	legacyHash, err := hashJSON(runBOM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN-BOM.json"), runBOM); err != nil {
+		t.Fatal(err)
+	}
+	legacyData, err := os.ReadFile(filepath.Join(runDirectory, "RUN-BOM.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(legacyData, []byte(`"epochs"`)) {
+		t.Fatalf("legacy run BOM unexpectedly contains epochs: %s", legacyData)
+	}
+	run := trained.Runs[0]
+	run.BOMSHA256 = legacyHash
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN.json"), run); err != nil {
+		t.Fatal(err)
+	}
+	record := trained.Model
+	record.Runs[0].BOMSHA256 = legacyHash
+	if err := writeJSONAtomic(filepath.Join(trained.Path, "MODEL.json"), record); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(filepath.Join(trained.Path, "MODEL-BOM.json"), modelBOM(record)); err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := Inspect(root, "smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.RunBOMs[0].Parameters.Epochs != 0 {
+		t.Fatalf("legacy epochs = %d, want omitted zero", inspection.RunBOMs[0].Parameters.Epochs)
+	}
+}
+
 func TestExportRejectsCorruptModelArtifact(t *testing.T) {
 	root := t.TempDir()
 	builder := Builder{Root: root, NewID: func() (string, error) { return "run0001", nil }, Resolver: training.FakeResolver()}
