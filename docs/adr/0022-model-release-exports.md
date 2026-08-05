@@ -60,4 +60,11 @@ architectures and tokenizer metadata their target runtimes can execute.
 - Release verification can distinguish integrity, signer identity, regulatory
   completeness, numerical conversion, and runtime compatibility.
 - New runtime formats add adapters rather than conditionals to model training
-  or the index/corpus domains.
+or the index/corpus domains.
+
+The schema-1 Hugging Face adapter uses the standard Llama configuration because
+WALDO's decoder architecture has the same RMSNorm, rotary attention, grouped
+query attention, and SwiGLU tensor shapes. It rewrites Safetensors header names
+and metadata while copying the tensor data section byte-for-byte. WALDO's byte
+tokenizer remains explicit custom tokenizer code; it is not mislabeled as a
+different pretrained tokenizer.

@@ -21,6 +21,7 @@ import (
 	"github.com/openwaldo/waldo-new/internal/inference"
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 	"github.com/openwaldo/waldo-new/internal/model"
+	"github.com/openwaldo/waldo-new/internal/modelexport"
 	"github.com/openwaldo/waldo-new/internal/shard"
 	"github.com/openwaldo/waldo-new/internal/signing"
 	"github.com/openwaldo/waldo-new/internal/training"
@@ -520,13 +521,27 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	euBOM = append(euBOM, '\n')
 	signed := signing.Configured(configuration.Signing)
-	options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM}}
+	finalize := func(string) error { return nil }
 	if signed {
-		options.Finalize = func(directory string) error {
+		finalize = func(directory string) error {
 			return signing.SignExport(context.Execution, configuration.Signing, directory, stderr)
 		}
 	}
-	output, err := model.ExportPackage(root, name, destination, options)
+	var output string
+	switch format {
+	case "waldo":
+		options := model.ExportOptions{Files: map[string][]byte{signing.EUBOM: euBOM}}
+		if signed {
+			options.Finalize = finalize
+		}
+		output, err = model.ExportPackage(root, name, destination, options)
+	case "huggingface":
+		options := modelexport.Options{EUBOM: euBOM}
+		if signed {
+			options.Finalize = finalize
+		}
+		output, err = modelexport.ExportHuggingFace(context.Execution, inspection, destination, options)
+	}
 	if err != nil {
 		return err
 	}
@@ -569,10 +584,10 @@ func parseModelExport(args []string) (string, string, string, bool, error) {
 		}
 	}
 	if len(positionals) != 2 {
-		return "", "", "", false, usageError{message: "usage: waldo model export <name> <directory> [--format waldo] [--allow-incomplete] [--json]"}
+		return "", "", "", false, usageError{message: "usage: waldo model export <name> <directory> [--format waldo|huggingface] [--allow-incomplete] [--json]"}
 	}
-	if format != "waldo" {
-		return "", "", "", false, usageError{message: fmt.Sprintf("model export format %q is not implemented yet; use waldo", format)}
+	if format != "waldo" && format != "huggingface" {
+		return "", "", "", false, usageError{message: fmt.Sprintf("model export format %q is not implemented yet; use waldo or huggingface", format)}
 	}
 	return positionals[0], positionals[1], format, allowIncomplete, nil
 }

@@ -71,8 +71,10 @@ and explicit draft disclosure output.
 MLX installation can execute on Metal. It builds a disposable index and tiny
 decoder model, streams canonical records into the embedded worker, performs
 real optimization, and validates the resulting Safetensors weights,
-checkpoints, evaluations, and non-simulated run observation. Other platforms
-report an explicit skip.
+checkpoints, evaluations, and non-simulated run observation. It also exports
+the current real run as Hugging Face, proves that the tensor payload is
+byte-identical after header-name conversion, checks Python syntax, and verifies
+the release inventory. Other platforms report an explicit skip.
 
 ```bash
 ./testing/e2e/model-mlx.sh

@@ -43,6 +43,8 @@ staging="$work/staging"
 models="$work/models"
 input="$work/training.txt"
 compose="$work/model.yaml"
+provider="$work/provider.json"
+huggingface_export="$work/huggingface-export"
 export WALDO_CONFIG="$work/config.json"
 
 echo "testing: real MLX model lifecycle with $mlx_python"
@@ -57,6 +59,16 @@ printf 'OpenWALDO trains real weights through MLX.\nThis tiny record exists only
 "$binary" config set model.root "$models" >/dev/null
 "$binary" config set model.backend auto >/dev/null
 "$binary" config set index "$index_root" >/dev/null
+cat > "$provider" <<EOF
+{
+  "kind": "waldo-disclosure-provider",
+  "schema": 1,
+  "provider": {"name": "OpenWALDO MLX E2E", "address": "Local test", "contact": "test@example.invalid"},
+  "code_of_practice_status": "not-assessed",
+  "copyright_policy_url": "https://example.invalid/copyright"
+}
+EOF
+"$binary" config set disclosure.provider "$provider" >/dev/null
 
 destination="$index_root/core/e2e/mlx"
 "$binary" index ingest "$input" "$destination" \
@@ -129,10 +141,48 @@ run_count=$(find "$models/mlx-smoke/runs" -type f -name RUN.json -print | wc -l 
 grep -ERq '"epochs"[[:space:]]*:[[:space:]]*2' "$models/mlx-smoke/runs" || { echo "training run BOM did not persist two epochs" >&2; exit 1; }
 weights_count=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors -print | wc -l | tr -d ' ')
 [ "$weights_count" -eq 2 ] || { echo "found $weights_count terminal MLX weights, want 2" >&2; exit 1; }
+current_weights=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors -print | sort | tail -1)
 
 chat=$("$binary" --json model chat mlx-smoke "OpenWALDO" --max-tokens 2 --temperature 0 --seed 7)
 printf '%s\n' "$chat" | grep -Eq '"run_id"[[:space:]]*:[[:space:]]*"[^"]+"'
 printf '%s\n' "$chat" | grep -Eq '"tokens"[[:space:]]*:[[:space:]]*[0-2]'
 printf '%s\n' "$chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
 
-echo "E2E MLX model passed: trained, resumed, checkpointed, evaluated, persisted Safetensors, and generated through chat"
+"$binary" model export mlx-smoke "$huggingface_export" --format huggingface --allow-incomplete >/dev/null
+"$mlx_python" - "$current_weights" "$huggingface_export" <<'PY'
+import hashlib
+import json
+import os
+import struct
+import sys
+
+source, root = sys.argv[1:]
+target = os.path.join(root, "model.safetensors")
+
+def tensor_payload(path):
+    with open(path, "rb") as stream:
+        length = struct.unpack("<Q", stream.read(8))[0]
+        header = json.loads(stream.read(length))
+        payload = hashlib.sha256(stream.read()).hexdigest()
+    return header, payload
+
+source_header, source_payload = tensor_payload(source)
+target_header, target_payload = tensor_payload(target)
+assert source_payload == target_payload
+assert target_header["__metadata__"]["format"] == "pt"
+assert "model.embed_tokens.weight" in target_header
+assert "embedding.weight" not in target_header
+for name in ("architecture.py", "tokenization_openwaldo.py"):
+    with open(os.path.join(root, name), encoding="utf-8") as stream:
+        compile(stream.read(), name, "exec")
+with open(os.path.join(root, "BOM.json"), encoding="utf-8") as stream:
+    bom = json.load(stream)
+assert bom["format"] == "huggingface"
+for item in bom["artifacts"]:
+    with open(os.path.join(root, item["path"]), "rb") as stream:
+        data = stream.read()
+    assert len(data) == item["bytes"]
+    assert hashlib.sha256(data).hexdigest() == item["sha256"]
+PY
+
+echo "E2E MLX model passed: trained, resumed, generated, and exported byte-identical Hugging Face tensors"

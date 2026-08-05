@@ -77,6 +77,16 @@ fails before publication if required disclosure facts are absent, while
 if signing fails. Otherwise it succeeds with an unsigned warning. `model rm`
 accepts only exact model names.
 
+`--format huggingface` exports the current verified, complete, non-simulated
+run as a standalone Transformers package. WALDO rewrites only the Safetensors
+header: tensor bytes remain unchanged while names move to the standard Llama
+layout and container metadata identifies PyTorch. The package includes
+`architecture.py`, the schema-1 byte tokenizer implementation and
+configuration, `BOM.json`, and `EU-BOM.json`. The tokenizer is custom code, so
+Transformers callers load it with `trust_remote_code=True`; the model itself
+uses the standard Llama configuration. A model without a usable real run is
+rejected rather than exporting simulated or incomplete artifacts.
+
 `model chat` opens the newest complete real-weight run identified by
 `current_run_id`, verifies its weights, configuration, and tokenizer against
 the model BOM, and then uses the backend recorded by that run. MLX sessions
