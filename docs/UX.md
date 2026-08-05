@@ -10,8 +10,9 @@ changes it.
    implementation phase.
 2. Keep the common path short. Put destructive and operational commands behind
    explicit nouns and verbs.
-3. Resolve index paths consistently from an explicit checkout or a path inside
-   one. Do not maintain an invisible index clone.
+3. Resolve index paths consistently from positional paths, discovering the
+   enclosing checkout by walking upward like Git. Do not maintain an invisible
+   index clone.
 4. Show a human-readable result by default and offer `--json` wherever output
    is useful to automation.
 5. Perform a preflight before moving large data or starting paid compute.
@@ -88,6 +89,7 @@ waldo index list science
 waldo index summary
 waldo index show science/plos
 waldo index verify
+waldo index verify /path/to/waldo-index/science/plos
 waldo index verify --offline
 waldo index verify science --objects
 ```
@@ -105,8 +107,9 @@ canonical object.
 path, including logical path, title, shard/document/token/byte totals, and a
 license summary. `index show` is the detailed view for one corpus or directory.
 
-Structural verification is local and fast. `--objects` explicitly opts into
-network access and verifies lookaside availability and hashes. For a
+`--offline` structural verification is local and fast. The default uses
+header-only network requests to establish canonical availability and size;
+`--objects` verifies lookaside availability and hashes every byte. For a
 rollup-backed corpus it also expands the content-addressed submanifest tree,
 checks every level's totals, and then verifies the resolved leaf objects.
 
@@ -170,6 +173,18 @@ waldo index ingest ~/data/books core/books/example \
   --source https://example.org/books \
   --source-category public-dataset
 ```
+
+When the current directory is outside the checkout, make the destination an
+absolute or filesystem-relative positional path instead:
+
+```bash
+waldo index ingest ~/data/books /path/to/waldo-index/core/books/example \
+  --title "Example Books" --license CC-BY-4.0 \
+  --source https://example.org/books --source-category public-dataset
+```
+
+WALDO discovers the checkout, then records only `core/books/example` in the
+ingestion plan and generated index metadata.
 
 WALDO assembles and verifies shards while a bounded worker pool publishes
 earlier shards to S3. It verifies the remote size and SHA-256, journals that
@@ -292,7 +307,9 @@ directly. Model BOM addressing is introduced with the model lifecycle.
 The final spelling will be validated while implementing the first commands,
 but these semantics should be consistent:
 
-- `--index <path>` selects an index checkout explicitly.
+- Index locations are positional. Absolute paths, `./`/`../` paths, corpus
+  directories, and manifest paths discover their enclosing checkout; omitted
+  paths discover from the current directory.
 - `--json` emits stable machine-readable output.
 - `--quiet` suppresses progress but not errors or final machine output.
 - `--dry-run` performs resolution and preflight without mutation.

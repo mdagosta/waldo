@@ -86,20 +86,10 @@ func (e usageError) Error() string { return e.message }
 func parseGlobals(args []string) (Context, []string, error) {
 	var context Context
 	remaining := make([]string, 0, len(args))
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch {
-		case arg == "--json":
+	for _, arg := range args {
+		if arg == "--json" {
 			context.JSON = true
-		case arg == "--index":
-			if i+1 == len(args) {
-				return Context{}, nil, fmt.Errorf("--index needs a checkout path")
-			}
-			i++
-			context.IndexPath = args[i]
-		case strings.HasPrefix(arg, "--index="):
-			context.IndexPath = strings.TrimPrefix(arg, "--index=")
-		default:
+		} else {
 			remaining = append(remaining, arg)
 		}
 	}

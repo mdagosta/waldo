@@ -43,9 +43,10 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	if err := os.WriteFile(input, []byte("# Example\n\nTraining text.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	root := emptyCLIIndex(t)
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
-		"index", "ingest", input, "core/example",
+		"index", "ingest", input, filepath.Join(root, "core", "example"),
 		"--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset",
 		"--dry-run", "--json",
@@ -56,8 +57,9 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	var output struct {
 		Identity string `json:"identity"`
 		Plan     struct {
-			Kind   string `json:"kind"`
-			Writer struct {
+			Kind        string `json:"kind"`
+			Destination string `json:"destination"`
+			Writer      struct {
 				RecordSchema int `json:"record_schema"`
 			} `json:"writer"`
 			Inputs []struct {
@@ -68,7 +70,7 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	if len(output.Identity) != 64 || output.Plan.Kind != "waldo-ingest-plan" || output.Plan.Writer.RecordSchema != 1 || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Adapter != "markdown" {
+	if len(output.Identity) != 64 || output.Plan.Kind != "waldo-ingest-plan" || output.Plan.Destination != "core/example" || output.Plan.Writer.RecordSchema != 1 || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Adapter != "markdown" {
 		t.Fatalf("index ingest output = %+v", output)
 	}
 }
@@ -106,9 +108,10 @@ func TestIndexIngestRejectsRemovedModeFlags(t *testing.T) {
 
 func TestIndexIngestExecutionRequiresWritableLookaside(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "missing.json"))
+	root := emptyCLIIndex(t)
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
-		"index", "ingest", "/does/not/need/to/exist", "core/example",
+		"index", "ingest", "/does/not/need/to/exist", filepath.Join(root, "core", "example"),
 		"--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset",
 	}, &stdout, &stderr)
@@ -148,7 +151,7 @@ func TestIndexIngestPublishesAndBuildsContributionOverlay(t *testing.T) {
 	t.Cleanup(func() { newIngestPublisher = originalPublisher })
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
-		"--index", root, "--json", "index", "ingest", input, "core/example",
+		"--json", "index", "ingest", input, filepath.Join(root, "core", "example"),
 		"--title", "Example", "--description", "Example corpus.",
 		"--license", "CC0-1.0", "--source", "https://example.test/data",
 		"--source-category", "public-dataset",
@@ -219,7 +222,7 @@ func TestIndexIngestPublishesToConfiguredLocalLookaside(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code := Run([]string{
-		"--index", root, "--json", "index", "ingest", input, "core/local-published",
+		"--json", "index", "ingest", input, filepath.Join(root, "core", "local-published"),
 		"--title", "Locally Published", "--license", "CC0-1.0",
 		"--source", "https://example.test/local", "--source-category", "public-dataset",
 	}, &stdout, &stderr)
@@ -259,6 +262,15 @@ func TestIndexIngestPublishesToConfiguredLocalLookaside(t *testing.T) {
 	if !bytes.Contains(manifest, []byte(object.URL)) {
 		t.Fatalf("manifest does not reference local published object %q", object.URL)
 	}
+}
+
+func emptyCLIIndex(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeCLIFile(t, filepath.Join(root, "index.json"), `{
+  "kind": "index", "schema": 2, "path": "", "entries": []
+}`)
+	return root
 }
 
 func TestShellQuoteHandlesSingleQuote(t *testing.T) {
@@ -364,6 +376,47 @@ func TestIndexVerifyRejectsConflictingVerificationLevels(t *testing.T) {
 	if code != 2 || !strings.Contains(stderr.String(), "different verification levels") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
+}
+
+func TestIndexVerifyAcceptsAbsoluteCorpusDirectory(t *testing.T) {
+	root := fixtureCLIIndex(t)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"index", "verify", filepath.Join(root, "books"), "--offline"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "1 directories, 1 corpora, 1 shards") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestRemovedIndexOptionIsRejected(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--index", "/tmp/index", "index", "list"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "unknown command") {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
+func fixtureCLIIndex(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	writeCLIFile(t, filepath.Join(root, "index.json"), `{
+  "kind": "index", "schema": 2, "path": "",
+  "entries": [{"name": "books", "type": "dir"}]
+}`)
+	writeCLIFile(t, filepath.Join(root, "books", "index.json"), `{
+  "kind": "index", "schema": 2, "path": "books",
+  "entries": [{"name": "books.json", "type": "manifest"}]
+}`)
+	writeCLIFile(t, filepath.Join(root, "books", "books.json"), `{
+  "kind": "manifest", "schema": 1, "name": "books", "title": "Books",
+  "description": "Fixture books.", "license": "CC0-1.0",
+  "sources": [{"name": "fixture", "source": "Fixture", "url": "https://example.test", "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+  "converted_by": {"tool": "test", "version": "1", "profile": "text", "recipe": "test/v1", "tokenizer": "byte"},
+  "shards": [{"url": "https://objects.example/item", "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sources": ["fixture"], "docs": 1, "tokens": 2, "bytes": 3}]
+}`)
+	return root
 }
 
 func TestLookasideStatusUsesNamedBackend(t *testing.T) {

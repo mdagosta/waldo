@@ -23,6 +23,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	target, err := waldoindex.ResolveDestination(options.Request.Destination)
+	if err != nil {
+		return err
+	}
+	options.Request.Destination = target.Rel
 	var configuration config.Config
 	if !options.DryRun {
 		configuration, err = config.Load()
@@ -53,10 +58,6 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		}{Identity: identity, Plan: plan})
 	}
 	if !options.DryRun {
-		target, err := waldoindex.Resolve(context.IndexPath, "")
-		if err != nil {
-			return err
-		}
 		if err := ingest.CheckContributionDestination(target.Root, plan); err != nil {
 			return err
 		}
@@ -110,7 +111,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		}
 		fmt.Fprintln(stdout, "next steps (after reviewing the overlay and confirming the checkout is unchanged):")
 		fmt.Fprintf(stdout, "  cp -R -- %s/. %s/\n", shellQuote(contribution.Root), shellQuote(target.Root))
-		fmt.Fprintf(stdout, "  waldo --index %s index verify\n", shellQuote(target.Root))
+		fmt.Fprintf(stdout, "  waldo index verify %s\n", shellQuote(target.Root))
 		fmt.Fprintf(stdout, "  git -C %s add --", shellQuote(target.Root))
 		for _, file := range contribution.Files {
 			fmt.Fprintf(stdout, " %s", shellQuote(file))

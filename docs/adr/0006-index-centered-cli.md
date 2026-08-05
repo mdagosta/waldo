@@ -17,12 +17,21 @@ Expose corpus workflows beneath `waldo index`. `index list` recursively lists
 the corpora beneath a path; `index show` provides one detailed view; `index ingest`,
 `update`, `export`, and `remove` own corpus mutation and materialization.
 
+Index locations are positional, not a global option. An existing checkout,
+subtree, corpus directory, or manifest anchors checkout discovery by walking
+upward like Git, and recursive commands begin at that positional target. When
+the path is omitted, discovery starts at the current directory. A prospective
+ingestion destination may be absolute even though the durable plan records
+only its checkout-relative path.
+
 Retain corpus as an internal domain and as terminology for the data itself. CLI
 organization follows the user's mental model, not the package graph.
 
 ## Consequences
 
 - Users have one place to discover all indexed-data operations.
+- Commands do not require users to separately name both a checkout root and a
+  target inside it.
 - Export fits because it exports a selection resolved from the index, not an
   arbitrary directory of files.
 - The `index` command group is broader, so its verbs and help text must clearly

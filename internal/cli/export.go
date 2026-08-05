@@ -32,8 +32,12 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 		return usageError{message: err.Error()}
 	}
 	targets := make([]waldoindex.Target, 0, len(options.Paths))
-	for _, path := range options.Paths {
-		target, err := waldoindex.Resolve(context.IndexPath, path)
+	for position, path := range options.Paths {
+		knownRoot := ""
+		if position > 0 {
+			knownRoot = targets[0].Root
+		}
+		target, err := waldoindex.Resolve(knownRoot, path)
 		if err != nil {
 			return err
 		}

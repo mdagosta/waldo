@@ -60,6 +60,37 @@ func TestResolveRejectsPathOutsideCheckout(t *testing.T) {
 	}
 }
 
+func TestResolveDiscoversCheckoutFromAbsoluteTargets(t *testing.T) {
+	root := fixtureIndex(t)
+	for _, test := range []struct {
+		path string
+		rel  string
+	}{
+		{path: root, rel: ""},
+		{path: filepath.Join(root, "alpha"), rel: "alpha"},
+		{path: filepath.Join(root, "alpha", "books.json"), rel: "alpha/books.json"},
+	} {
+		target, err := Resolve("", test.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target.Root != root || target.Rel != test.rel {
+			t.Errorf("Resolve(%q) = root %q rel %q, want root %q rel %q", test.path, target.Root, target.Rel, root, test.rel)
+		}
+	}
+}
+
+func TestResolveDestinationNormalizesProspectiveAbsolutePath(t *testing.T) {
+	root := fixtureIndex(t)
+	target, err := ResolveDestination(filepath.Join(root, "alpha", "new", "corpus"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Root != root || target.Rel != "alpha/new/corpus" || target.Abs != filepath.Join(root, "alpha", "new", "corpus") {
+		t.Fatalf("ResolveDestination() = %+v", target)
+	}
+}
+
 func TestVerifyRejectsUnsortedDirectory(t *testing.T) {
 	root := fixtureIndex(t)
 	writeFile(t, filepath.Join(root, "index.json"), `{

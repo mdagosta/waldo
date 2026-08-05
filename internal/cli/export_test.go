@@ -61,7 +61,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--index", root, "index", "export", "books", destination}, &stdout, &stderr)
+	code := Run([]string{"index", "export", filepath.Join(root, "books"), destination}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
@@ -99,7 +99,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	jsonlDestination := filepath.Join(t.TempDir(), "jsonl-export")
 	stdout.Reset()
 	stderr.Reset()
-	code = Run([]string{"--index", root, "index", "export", "books", "--format=jsonl", jsonlDestination}, &stdout, &stderr)
+	code = Run([]string{"index", "export", filepath.Join(root, "books"), "--format=jsonl", jsonlDestination}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("JSONL Run() code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}

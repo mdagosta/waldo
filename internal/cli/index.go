@@ -261,7 +261,7 @@ func resolveIndexArgument(context Context, args []string) (waldoindex.Target, er
 	if len(args) == 1 {
 		target = args[0]
 	}
-	return waldoindex.Resolve(context.IndexPath, target)
+	return waldoindex.Resolve("", target)
 }
 
 func printManifest(w io.Writer, path string, manifest waldoindex.Manifest) {
