@@ -80,6 +80,16 @@ directory, then stop. WALDO does not discover or execute those scripts.
 
 ## Primary journeys
 
+### Initialize an empty index
+
+```bash
+waldo index init /path/to/new-waldo-index
+```
+
+The destination must be new or empty. WALDO writes only the root schema-2
+`index.json`; it does not initialize Git, configure a lookaside, or create a
+corpus. Those remain separate, visible actions.
+
 ### Inspect and verify an index
 
 ```bash

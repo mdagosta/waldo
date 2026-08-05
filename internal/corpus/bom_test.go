@@ -187,6 +187,16 @@ func writeBOMFile(t *testing.T, path, contents string) {
 	}
 }
 
+func TestCanonicalRecordSchemaAllowsTokenizerNeutralConversion(t *testing.T) {
+	conversion := index.Conversion{Tool: "waldo", Version: "1", Profile: "canonical-text-schema-1", Recipe: "parquet-v1"}
+	if !completeConversion(conversion, 1) {
+		t.Fatal("canonical record schema 1 rejected tokenizer-neutral provenance")
+	}
+	if completeConversion(conversion, 0) {
+		t.Fatal("legacy record accepted missing tokenizer provenance")
+	}
+}
+
 func rollupBOMFixture(t *testing.T, declaredTokens int64) (string, string, string) {
 	t.Helper()
 	root := t.TempDir()

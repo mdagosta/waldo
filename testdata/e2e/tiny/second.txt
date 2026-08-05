@@ -1,0 +1,1 @@
+The second smoke-test document proves that a directory can contain more than one text adapter input.

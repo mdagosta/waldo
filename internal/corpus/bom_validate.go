@@ -44,7 +44,7 @@ func (bom BOM) Validate() error {
 		if manifest.Name == "" || manifest.Title == "" || manifest.Description == "" || manifest.License == "" || manifest.Format == "" || manifest.RecordSchema <= 0 {
 			return fmt.Errorf("manifest %s is missing resolved identity or format fields", manifest.Path)
 		}
-		if !completeConversion(manifest.ConvertedBy) {
+		if !completeConversion(manifest.ConvertedBy, manifest.RecordSchema) {
 			return fmt.Errorf("manifest %s has incomplete conversion provenance", manifest.Path)
 		}
 		names := map[string]bool{}
@@ -90,7 +90,7 @@ func (bom BOM) Validate() error {
 		if shard.URL == "" || !validSHA256(shard.SHA256) || shard.Format == "" || shard.RecordSchema <= 0 || shard.License == "" {
 			return fmt.Errorf("shard %d has incomplete resolved identity", position+1)
 		}
-		if !completeConversion(shard.ConvertedBy) {
+		if !completeConversion(shard.ConvertedBy, shard.RecordSchema) {
 			return fmt.Errorf("shard %s has incomplete conversion provenance", shard.SHA256[:12])
 		}
 		if shard.RecordsRoot != "" && !validSHA256(shard.RecordsRoot) {
@@ -205,8 +205,14 @@ func validGitHash(value string) bool {
 	return (len(value) == 40 || len(value) == 64) && strings.ToLower(value) == value && lowerHex(value)
 }
 
-func completeConversion(conversion index.Conversion) bool {
-	return conversion.Tool != "" && conversion.Version != "" && conversion.Profile != "" && conversion.Recipe != "" && conversion.Tokenizer != ""
+func completeConversion(conversion index.Conversion, recordSchema int) bool {
+	if conversion.Tool == "" || conversion.Version == "" || conversion.Profile == "" || conversion.Recipe == "" {
+		return false
+	}
+	// Canonical text record schema 1 deliberately persists tokenizer-neutral
+	// text. Legacy records must continue to identify the tokenizer whose counts
+	// and representation they encode.
+	return recordSchema == 1 || conversion.Tokenizer != ""
 }
 
 func lowerHex(value string) bool {

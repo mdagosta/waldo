@@ -58,6 +58,7 @@ hash checked and an independently readable OpenWALDO BOM.
 
 Implemented foundation:
 
+- Empty schema-2 index initialization
 - Ingestion and training-data contract (`docs/INGESTION-DESIGN.md`)
 - Basic text and Markdown ingestion
 - Canonical records and deterministic Parquet packing

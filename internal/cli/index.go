@@ -15,6 +15,27 @@ import (
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
+func runIndexInit(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) != 1 {
+		return usageError{message: "usage: waldo index init <directory>"}
+	}
+	root, err := waldoindex.Initialize(args[0])
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Path   string `json:"path"`
+			Schema int    `json:"schema"`
+		}{Path: root, Schema: 2})
+	}
+	fmt.Fprintf(stdout, "initialized WALDO index %s\n", root)
+	fmt.Fprintln(stdout, "  index schema  2")
+	fmt.Fprintln(stdout, "  corpora       0")
+	fmt.Fprintln(stdout, "Git initialization and the first signed-off commit remain explicit user actions.")
+	return nil
+}
+
 func runIndexList(context Context, args []string, stdout, _ io.Writer) error {
 	if len(args) > 1 {
 		return usageError{message: "usage: waldo index list [path]"}

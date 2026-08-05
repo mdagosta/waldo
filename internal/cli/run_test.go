@@ -75,6 +75,22 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	}
 }
 
+func TestIndexInitCreatesInspectableEmptyIndex(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "index")
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"index", "init", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("index init code = %d, stderr = %q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"index", "verify", root, "--offline"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("index verify code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "1 directories, 0 corpora, 0 shards") {
+		t.Fatalf("index verify output = %q", stdout.String())
+	}
+}
+
 func TestIndexIngestRejectsFormerToOption(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{

@@ -31,7 +31,7 @@ func commandTree() Command {
 		Details: "Global options:\n  --json     Emit structured command output; progress remains on stderr.\n  --help     Show command help.\n  --version  Show the WALDO version.\n\nIndex commands discover the checkout from their positional path, or from the current directory when no path is given.",
 		Children: []Command{
 			{Name: "index", Summary: "Manage indexed training data", Details: "Index paths are positional. Existing checkout, subtree, corpus-directory, and manifest paths discover their enclosing checkout automatically. With no path, WALDO discovers from the current directory. Recursive commands begin at the selected path.", Children: []Command{
-				{Name: "init", Summary: "Initialize an index checkout"},
+				{Name: "init", Summary: "Initialize an empty index", Usage: "waldo index init <directory> [--json]", Details: "Creates the smallest valid schema-2 index in a new or empty directory. It refuses nonempty directories and does not initialize Git, configure a lookaside, or create a corpus.", Handler: runIndexInit},
 				{Name: "list", Summary: "List all corpora beneath an index path", Usage: "waldo index list [path] [--json]", Handler: runIndexList},
 				{Name: "show", Summary: "Show an index entry or corpus manifest", Usage: "waldo index show [path] [--json]", Handler: runIndexShow},
 				{Name: "summary", Summary: "Summarize corpora, licenses, and totals", Usage: "waldo index summary [path] [--json]", Handler: runIndexSummary},

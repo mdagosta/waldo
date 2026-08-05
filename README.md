@@ -59,6 +59,7 @@ template from later model BOMs.
 ```bash
 go test ./...
 go run ./cmd/waldo --help
+./scripts/e2e/ingest-smoke.sh local
 ```
 
 Start with [VISION.md](VISION.md), then read [the UX contract](docs/UX.md),
