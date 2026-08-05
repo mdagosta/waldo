@@ -523,7 +523,7 @@ func TestConfigShowAndGetUseCanonicalKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"config", "get", "lookaside"}, &stdout, &stderr); code != 0 || strings.TrimSpace(stdout.String()) != "s3://bucket/root" {
+	if code := Run([]string{"config", "get", "lookaside"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "lookaside              s3://bucket/root") || !strings.Contains(stdout.String(), "lookaside.region       (unset)") || !strings.Contains(stdout.String(), "lookaside.workers      3") {
 		t.Fatalf("get code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
@@ -535,6 +535,46 @@ func TestConfigShowAndGetUseCanonicalKeys(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("config show missing %q: %s", want, stdout.String())
 		}
+	}
+}
+
+func TestConfigGetWithoutKeyListsAllSupportedValues(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"config", "get"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("get code = %d, stderr = %q", code, stderr.String())
+	}
+	for _, key := range configKeys {
+		if !strings.Contains(stdout.String(), key) {
+			t.Fatalf("config get missing %q: %s", key, stdout.String())
+		}
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"config", "get", "lookaside.region"}, &stdout, &stderr); code != 0 || strings.TrimSpace(stdout.String()) != "(unset)" {
+		t.Fatalf("unset leaf code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"config", "get", "lookaside.r"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "lookaside.region") {
+		t.Fatalf("partial prefix code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestConfigGetJSONPreservesOrderedMatchesAndUnsetState(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"--json", "config", "get", "lookaside"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("get code = %d, stderr = %q", code, stderr.String())
+	}
+	var output struct {
+		Matches []configMatch `json:"matches"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if len(output.Matches) != 5 || output.Matches[0].Key != "lookaside" || output.Matches[1].Key != "lookaside.region" || output.Matches[1].Set {
+		t.Fatalf("matches = %+v", output.Matches)
 	}
 }
 

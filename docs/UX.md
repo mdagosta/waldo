@@ -255,6 +255,7 @@ waldo config set lookaside.scratch /fast-disk/waldo
 waldo config set ingest.staging /fast-disk/waldo-ingest
 waldo config set model.root /fast-disk/waldo-models
 waldo config set lookaside.mirrors https://mirror.example/openwaldo/v1
+waldo config get lookaside
 waldo config show
 waldo lookaside status
 ```
@@ -282,6 +283,10 @@ Configuration keys are positional and intentionally limited:
 | `lookaside.scratch` | Verified-download scratch directory. |
 | `ingest.staging` | Ingestion scratch and recovery parent directory. |
 | `model.root` | Durable local model, run, BOM, and artifact directory. |
+
+`waldo config get` lists every supported key and its effective or unset value.
+Passing a prefix such as `lookaside` narrows the list to matching keys;
+passing an exact leaf such as `lookaside.region` prints only that value.
 
 `config set` replaces the named value, `config get` reads one value, `config
 show` displays the complete effective configuration, and `config unset`

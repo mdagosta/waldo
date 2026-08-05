@@ -64,28 +64,74 @@ func runConfigShow(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 func runConfigGet(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo config get <key> [--json]"}
+	if len(args) > 1 {
+		return usageError{message: "usage: waldo config get [key-or-prefix] [--json]"}
 	}
 	configuration, err := config.Load()
 	if err != nil {
 		return err
 	}
-	value, set, err := configValue(configuration, args[0])
+	selector := ""
+	if len(args) == 1 {
+		selector = strings.TrimSuffix(args[0], ".")
+	}
+	matches, err := matchingConfigValues(configuration, selector)
 	if err != nil {
-		return usageError{message: err.Error()}
+		return err
 	}
-	if !set {
-		return fmt.Errorf("configuration key %q is not set", args[0])
+	if len(matches) == 0 {
+		return usageError{message: unknownConfigKey(selector)}
 	}
-	if context.JSON {
+	exactLeaf := len(matches) == 1 && matches[0].Key == selector
+	if context.JSON && exactLeaf {
 		return writeJSON(stdout, struct {
 			Key   string `json:"key"`
 			Value any    `json:"value"`
-		}{Key: args[0], Value: value})
+			Set   bool   `json:"set"`
+		}{Key: matches[0].Key, Value: matches[0].Value, Set: matches[0].Set})
 	}
-	printConfigValue(stdout, "", value)
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Matches []configMatch `json:"matches"`
+		}{Matches: matches})
+	}
+	if exactLeaf {
+		if !matches[0].Set {
+			fmt.Fprintln(stdout, "(unset)")
+			return nil
+		}
+		printConfigValue(stdout, "", matches[0].Value)
+		return nil
+	}
+	for _, match := range matches {
+		if !match.Set {
+			fmt.Fprintf(stdout, "  %-22s (unset)\n", match.Key)
+			continue
+		}
+		printConfigValue(stdout, match.Key, match.Value)
+	}
 	return nil
+}
+
+type configMatch struct {
+	Key   string `json:"key"`
+	Value any    `json:"value"`
+	Set   bool   `json:"set"`
+}
+
+func matchingConfigValues(configuration config.Config, selector string) ([]configMatch, error) {
+	matches := []configMatch{}
+	for _, key := range configKeys {
+		if selector != "" && !strings.HasPrefix(key, selector) {
+			continue
+		}
+		value, set, err := configValue(configuration, key)
+		if err != nil {
+			return nil, err
+		}
+		matches = append(matches, configMatch{Key: key, Value: value, Set: set})
+	}
+	return matches, nil
 }
 
 func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
