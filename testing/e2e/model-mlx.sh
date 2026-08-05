@@ -118,7 +118,7 @@ weights=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors -print)
 checkpoint_count=$(find "$models/mlx-smoke/runs" -type f -name 'step-*.safetensors' -print | wc -l | tr -d ' ')
 [ "$checkpoint_count" -eq 2 ] || { echo "found $checkpoint_count MLX checkpoints, want 2" >&2; exit 1; }
 
-train_output=$("$binary" model train mlx-smoke core/e2e/mlx)
+train_output=$("$binary" model train mlx-smoke core/e2e/mlx --epochs 2)
 printf '%s\n' "$train_output"
 printf '%s\n' "$train_output" | grep -q 'backend       mlx@builtin-mlx-worker-schema-1'
 summary=$("$binary" --json model summary mlx-smoke)
@@ -126,6 +126,7 @@ printf '%s\n' "$summary" | grep -Eq '"runs"[[:space:]]*:[[:space:]]*\['
 printf '%s\n' "$summary" | grep -Eq '"initialization"[[:space:]]*:'
 run_count=$(find "$models/mlx-smoke/runs" -type f -name RUN.json -print | wc -l | tr -d ' ')
 [ "$run_count" -eq 2 ] || { echo "found $run_count MLX runs, want 2" >&2; exit 1; }
+grep -ERq '"epochs"[[:space:]]*:[[:space:]]*2' "$models/mlx-smoke/runs" || { echo "training run BOM did not persist two epochs" >&2; exit 1; }
 weights_count=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors -print | wc -l | tr -d ' ')
 [ "$weights_count" -eq 2 ] || { echo "found $weights_count terminal MLX weights, want 2" >&2; exit 1; }
 

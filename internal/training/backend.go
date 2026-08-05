@@ -73,6 +73,7 @@ func (function ResolverFunc) Resolve(ctx context.Context, request ResolveRequest
 
 type Parameters struct {
 	Profile              string   `json:"profile,omitempty" yaml:"profile,omitempty"`
+	Epochs               int64    `json:"epochs,omitempty" yaml:"epochs,omitempty"`
 	Steps                int64    `json:"steps" yaml:"steps"`
 	BatchSize            int64    `json:"batch_size" yaml:"batch_size"`
 	SequenceLength       int64    `json:"sequence_length" yaml:"sequence_length"`
@@ -89,6 +90,7 @@ type Parameters struct {
 type ResolvedParameters struct {
 	Profile              string    `json:"profile"`
 	ProfileSchema        int       `json:"profile_schema"`
+	Epochs               int64     `json:"epochs"`
 	Steps                int64     `json:"steps"`
 	BatchSize            int64     `json:"batch_size"`
 	SequenceLength       int64     `json:"sequence_length"`

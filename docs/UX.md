@@ -415,6 +415,7 @@ Changing `lookaside` preserves the existing `lookaside.region` and
 ```bash
 waldo model init smoke --preset 10m
 waldo model train smoke core/books
+waldo model train smoke core/books --epochs 3
 waldo model compose smoke configs/smoke.yaml
 ```
 
@@ -423,6 +424,12 @@ and ordered training stages using index paths. The command validates every
 selection, creates the model if absent, and executes its stages. Existing names
 are refused unless `--replace` is explicitly supplied; replacement is prepared
 fully before the old model is removed.
+
+Direct `model train` defaults to one epoch. `--epochs` is the sole direct-run
+training-budget flag and means complete passes over every selected record.
+Preflight distinguishes index reference tokens from exact model-token targets,
+then shows epochs, derived optimizer updates, batch size, and sequence length
+before backend launch. A step is one optimizer update, not one corpus pass.
 
 On macOS, automatic backend resolution always selects MLX and requires Apple
 Silicon; it probes candidate Python runtimes and accepts MLX only after

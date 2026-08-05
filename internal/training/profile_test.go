@@ -25,7 +25,7 @@ func TestResolveParametersPinsVersionedDefaultsAndOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Profile != DefaultProfile || resolved.ProfileSchema != 1 || resolved.Optimizer.Name != "adamw" || resolved.Optimizer.WeightDecay != 0.1 || resolved.Schedule.Name != "cosine" || resolved.Schedule.WarmupSteps != 100 || resolved.Data.Order != "bounded-shuffle-v1" || resolved.Data.Packing != "continuous-eos-v1" || resolved.CheckpointEvery != 500 || resolved.EvaluateEvery != 500 || resolved.PlannedTokenCapacity != 4_096_000 {
+	if resolved.Profile != DefaultProfile || resolved.ProfileSchema != 1 || resolved.Epochs != 1 || resolved.Optimizer.Name != "adamw" || resolved.Optimizer.WeightDecay != 0.1 || resolved.Schedule.Name != "cosine" || resolved.Schedule.WarmupSteps != 100 || resolved.Data.Order != "bounded-shuffle-v1" || resolved.Data.Packing != "continuous-eos-v1" || resolved.CheckpointEvery != 500 || resolved.EvaluateEvery != 500 || resolved.PlannedTokenCapacity != 4_096_000 {
 		t.Fatalf("resolved = %+v", resolved)
 	}
 	zeroFloat := 0.0
@@ -49,6 +49,11 @@ func TestResolveParametersPinsVersionedDefaultsAndOverrides(t *testing.T) {
 	bad.Profile = "unknown"
 	if _, err := ResolveParameters(bad); err == nil {
 		t.Fatal("unknown profile accepted")
+	}
+	bad = parameters
+	bad.Epochs = -1
+	if _, err := ResolveParameters(bad); err == nil {
+		t.Fatal("negative epochs accepted")
 	}
 }
 
@@ -108,6 +113,31 @@ func TestCountByteTargetsUsesUTF8BytesAndEOS(t *testing.T) {
 	}
 	if targets != 4 {
 		t.Fatalf("byte targets = %d, want 4", targets)
+	}
+}
+
+func TestByteTargetsAndRecordSourceRepeatExactEpochs(t *testing.T) {
+	inputs := []Input{writeTrainingShard(t, []string{"A", "é"})}
+	oneEpoch, err := CountByteTargets(context.Background(), inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targets, err := ByteTargetsForEpochs(oneEpoch, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each epoch contains five tokens including EOS. Across two continuous
+	// epochs only the first token lacks a prediction target: 5*2-1 = 9.
+	if targets != 9 {
+		t.Fatalf("two-epoch targets = %d, want 9", targets)
+	}
+	parameters, err := ResolveParameters(Parameters{Epochs: 2, Steps: 1, BatchSize: 1, SequenceLength: 16, LearningRate: 0.001, Seed: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := collectRecords(t, inputs, parameters)
+	if len(got) != 4 {
+		t.Fatalf("two-epoch record count = %d, want 4: %v", len(got), got)
 	}
 }
 

@@ -22,6 +22,13 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if parameters.Steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {
 		return ResolvedParameters{}, fmt.Errorf("steps, batch_size, sequence_length, and learning_rate must be finite and positive")
 	}
+	epochs := parameters.Epochs
+	if epochs == 0 {
+		epochs = 1
+	}
+	if epochs < 1 || epochs > 1_000_000 {
+		return ResolvedParameters{}, fmt.Errorf("epochs must be in 1..1000000")
+	}
 	capacity, overflow := multiplyInt64(parameters.Steps, parameters.BatchSize, parameters.SequenceLength)
 	if overflow {
 		return ResolvedParameters{}, fmt.Errorf("planned token capacity overflows int64")
@@ -73,7 +80,7 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	}
 	return ResolvedParameters{
 		Profile: profile, ProfileSchema: ProfileSchema,
-		Steps: parameters.Steps, BatchSize: parameters.BatchSize,
+		Epochs: epochs, Steps: parameters.Steps, BatchSize: parameters.BatchSize,
 		SequenceLength: parameters.SequenceLength, LearningRate: parameters.LearningRate,
 		Seed: parameters.Seed, PlannedTokenCapacity: capacity,
 		Optimizer:       Optimizer{Name: "adamw", WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},

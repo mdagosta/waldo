@@ -52,9 +52,18 @@ more recursive index selections, deduplicates them into an OpenWALDO BOM,
 materializes hash-verified Parquet through the shared cache, audits every
 canonical record, and appends one run. Its current compact default is one pass,
 batch size 8, the architecture context length, learning rate 0.0003, and seed
-42. For the built-in byte tokenizer, WALDO counts the exact packed byte-token
-targets rather than reusing the manifest's reference-token estimate. Exact or
-multi-stage parameters belong in a model compose.
+42. `--epochs <n>` controls complete passes over the selected records and
+defaults to 1. For the built-in byte tokenizer, WALDO counts exact packed
+byte-token targets for all epochs rather than reusing the manifest's reference
+token estimate. It then reports and persists the derived optimizer-step count:
+
+```text
+steps = ceil(byte targets / (batch size × sequence length))
+```
+
+Epoch boundaries remain part of one continuous-EOS token stream, while each
+epoch gets a deterministic seed-derived shuffle. Exact low-level or multi-stage
+parameters belong in a model compose.
 
 `model bom` writes JSON to standard output unless an output file is supplied.
 `model export` requires a new destination directory because a model contains

@@ -345,14 +345,15 @@ func runModelBOM(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) < 2 {
-		return usageError{message: "usage: waldo model train <name> <index-path...> [--json]"}
+	name, paths, epochs, err := parseModelTrain(args)
+	if err != nil {
+		return err
 	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
 	}
-	inspection, err := model.Inspect(root, args[0])
+	inspection, err := model.Inspect(root, name)
 	if err != nil {
 		return err
 	}
@@ -360,7 +361,7 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	stage, err := prepareDefaultTrainingStage(context, inspection, args[1:], cache, stderr)
+	stage, err := prepareDefaultTrainingStage(context, inspection, paths, epochs, cache, stderr)
 	if err != nil {
 		return err
 	}
@@ -368,7 +369,7 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	result, err := builder.Train(context.Execution, args[0], stage)
+	result, err := builder.Train(context.Execution, name, stage)
 	if err != nil {
 		return err
 	}
@@ -376,6 +377,35 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 		return fmt.Errorf("purge successful training scratch: %w", err)
 	}
 	return writeModelMutationResult(context, stdout, result, "trained")
+}
+
+func parseModelTrain(args []string) (string, []string, int64, error) {
+	epochs := int64(1)
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--epochs":
+			value, next, err := optionValue(args, index, "--epochs")
+			if err != nil {
+				return "", nil, 0, err
+			}
+			parsed, err := strconv.ParseInt(value, 10, 64)
+			if err != nil || parsed < 1 || parsed > 1_000_000 {
+				return "", nil, 0, usageError{message: "--epochs must be an integer in 1..1000000"}
+			}
+			epochs = parsed
+			index = next
+		case strings.HasPrefix(argument, "-"):
+			return "", nil, 0, usageError{message: fmt.Sprintf("unknown model train option %q", argument)}
+		default:
+			positionals = append(positionals, argument)
+		}
+	}
+	if len(positionals) < 2 {
+		return "", nil, 0, usageError{message: "usage: waldo model train <name> <index-path...> [--epochs <n>] [--json]"}
+	}
+	return positionals[0], positionals[1:], epochs, nil
 }
 
 func runModelCompose(context Context, args []string, stdout, stderr io.Writer) error {
@@ -734,7 +764,7 @@ func configuredModelBuilder(commandContext Context, progress io.Writer) (model.B
 	return builder, nil
 }
 
-func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
+func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, epochs int64, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
 	architecture := inspection.Model.Architecture
 	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
 		return model.PreparedStage{}, fmt.Errorf("automatic one-pass training currently requires byte@builtin-byte-schema-1 with vocabulary_size 259")
@@ -756,13 +786,17 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	stage := model.Stage{
 		Name: fmt.Sprintf("train-%04d", len(inspection.Model.Runs)+1), Type: "pre-training",
 		Objective: "causal-language-modeling", Corpora: append([]string(nil), paths...),
-		Parameters: training.Parameters{Steps: 1, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
+		Parameters: training.Parameters{Epochs: epochs, Steps: 1, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
 	}
 	prepared, err := materializeModelStage(context, stage, bom, cache, progress)
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
-	tokenTargets, err := training.CountByteTargets(context.Execution, prepared.Inputs)
+	oneEpochTargets, err := training.CountByteTargets(context.Execution, prepared.Inputs)
+	if err != nil {
+		return model.PreparedStage{}, err
+	}
+	tokenTargets, err := training.ByteTargetsForEpochs(oneEpochTargets, epochs)
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
@@ -772,6 +806,11 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 		steps++
 	}
 	prepared.Stage.Parameters.Steps = steps
+	epochLabel := "epochs"
+	if epochs == 1 {
+		epochLabel = "epoch"
+	}
+	fmt.Fprintf(progress, "preflight/%s          training %s %s, %s byte targets, %s optimizer steps (%s × %s tokens)\n", stage.Name, humanInteger(epochs), epochLabel, humanCount(tokenTargets), humanInteger(steps), humanInteger(batch), humanInteger(sequence))
 	return model.PrepareStage(prepared.Stage, prepared.BOM, prepared.Inputs)
 }
 
@@ -792,7 +831,7 @@ func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cach
 }
 
 func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
-	fmt.Fprintf(progress, "preflight/%s          resolving %s shards, %s records, %s tokens\n", stage.Name, humanInteger(bom.Totals.Shards), humanCount(bom.Totals.Docs), humanCount(bom.Totals.Tokens))
+	fmt.Fprintf(progress, "preflight/%s          resolving %s shards, %s records, %s reference tokens\n", stage.Name, humanInteger(bom.Totals.Shards), humanCount(bom.Totals.Docs), humanCount(bom.Totals.Tokens))
 	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
 		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
 			fmt.Fprintf(progress, "  shard %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])

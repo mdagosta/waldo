@@ -19,10 +19,15 @@ schema-1 profile: AdamW constants, cosine schedule and warmup, global batch and
 sequence length, planned token capacity, deterministic bounded shuffle,
 continuous EOS packing, and checkpoint/evaluation cadence. Pointer-valued
 portable overrides distinguish an omitted default from an explicit zero.
+Epoch count is also persisted and defaults to one. Direct training derives its
+step count from exact tokenizer targets across the requested epochs; it does
+not treat index reference-token estimates as an execution budget.
 
 WALDO's training domain owns canonical Parquet decoding and produces records in
 a deterministic order. Shards are sorted and seeded, then records pass through
 a bounded-memory shuffle whose SplitMix64 algorithm is part of the contract.
+Multiple epochs repeat the canonical inputs with a deterministic epoch-derived
+shuffle seed while preserving continuous packing across epoch boundaries.
 Both its record-count and retained-byte limits are persisted. A framework
 worker never reads Parquet or an index.
 

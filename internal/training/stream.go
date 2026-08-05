@@ -48,9 +48,24 @@ func CountByteTargets(ctx context.Context, inputs []Input) (int64, error) {
 	return tokens - 1, nil
 }
 
+// ByteTargetsForEpochs expands a one-epoch next-token target count while
+// preserving continuous packing across epoch boundaries. CountByteTargets
+// excludes the stream's first token once, not once per epoch.
+func ByteTargetsForEpochs(oneEpochTargets, epochs int64) (int64, error) {
+	if oneEpochTargets < 1 || epochs < 1 {
+		return 0, fmt.Errorf("byte targets and epochs must be positive")
+	}
+	tokensPerEpoch := oneEpochTargets + 1
+	if tokensPerEpoch <= 0 || tokensPerEpoch > math.MaxInt64/epochs {
+		return 0, fmt.Errorf("epoch byte-token target count overflows int64")
+	}
+	return tokensPerEpoch*epochs - 1, nil
+}
+
 type canonicalRecordSource struct {
 	inputs      []Input
 	seed        uint64
+	epochs      int64
 	buffer      int
 	bufferBytes int64
 }
@@ -58,6 +73,9 @@ type canonicalRecordSource struct {
 func NewCanonicalRecordSource(inputs []Input, parameters ResolvedParameters) (RecordSource, error) {
 	if len(inputs) == 0 {
 		return nil, fmt.Errorf("canonical record source requires at least one shard input")
+	}
+	if parameters.Epochs < 1 {
+		return nil, fmt.Errorf("canonical record source requires at least one epoch")
 	}
 	if parameters.Data.Order != "bounded-shuffle-v1" || parameters.Data.ShuffleBufferRecords < 1 || parameters.Data.ShuffleBufferBytes < 1 {
 		return nil, fmt.Errorf("unsupported canonical record order %q", parameters.Data.Order)
@@ -69,19 +87,29 @@ func NewCanonicalRecordSource(inputs []Input, parameters ResolvedParameters) (Re
 		}
 		return ordered[i].Path < ordered[j].Path
 	})
-	random := newSplitMix64(parameters.Seed)
-	for index := len(ordered) - 1; index > 0; index-- {
-		other := random.intn(index + 1)
-		ordered[index], ordered[other] = ordered[other], ordered[index]
-	}
-	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes}, nil
+	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, epochs: parameters.Epochs, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes}, nil
 }
 
 func (source *canonicalRecordSource) Stream(ctx context.Context, consume func(Record) error) error {
 	if consume == nil {
 		return fmt.Errorf("record consumer is required")
 	}
-	random := newSplitMix64(source.seed ^ 0x6a09e667f3bcc909)
+	for epoch := int64(0); epoch < source.epochs; epoch++ {
+		if err := source.streamEpoch(ctx, epoch, consume); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (source *canonicalRecordSource) streamEpoch(ctx context.Context, epoch int64, consume func(Record) error) error {
+	inputs := append([]Input(nil), source.inputs...)
+	inputRandom := newSplitMix64(source.seed + uint64(epoch)*0x9e3779b97f4a7c15)
+	for index := len(inputs) - 1; index > 0; index-- {
+		other := inputRandom.intn(index + 1)
+		inputs[index], inputs[other] = inputs[other], inputs[index]
+	}
+	random := newSplitMix64(source.seed ^ 0x6a09e667f3bcc909 ^ uint64(epoch)*0xbf58476d1ce4e5b9)
 	buffer := make([]Record, 0, source.buffer)
 	var bufferedBytes int64
 	emit := func(record Record) error {
@@ -90,7 +118,7 @@ func (source *canonicalRecordSource) Stream(ctx context.Context, consume func(Re
 		}
 		return consume(record)
 	}
-	for _, input := range source.inputs {
+	for _, input := range inputs {
 		err := shard.WalkRecords(input.Path, func(_ int64, view shard.RecordView) error {
 			record := Record{ID: view.ID, Text: view.Text, Source: view.Source, License: view.License, Language: view.Language}
 			recordBytes := recordMemoryBytes(record)
@@ -113,7 +141,7 @@ func (source *canonicalRecordSource) Stream(ctx context.Context, consume func(Re
 			return nil
 		})
 		if err != nil {
-			return fmt.Errorf("stream canonical shard %s: %w", input.SHA256, err)
+			return fmt.Errorf("stream canonical shard %s in epoch %d: %w", input.SHA256, epoch+1, err)
 		}
 	}
 	for len(buffer) > 0 {
