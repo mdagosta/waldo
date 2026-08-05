@@ -31,7 +31,7 @@ func preflight(recipe Recipe, progress func(Progress)) (Plan, []resolvedStage, e
 	plan := Plan{
 		Kind: "waldo-model-build-plan", Schema: PlanSchema, Name: recipe.Name,
 		ArchitectureSHA256: architectureHash, Architecture: recipe.Architecture,
-		Forecast: forecast, Backend: recipe.Backend,
+		Forecast: forecast,
 	}
 	resolved := make([]resolvedStage, 0, len(recipe.Stages))
 	for _, stage := range recipe.Stages {

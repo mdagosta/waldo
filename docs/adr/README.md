@@ -20,3 +20,4 @@ logs.
 - [0014: Execute external fetchers only through explicit ingest recipe](0014-explicit-ingest-recipe.md)
 - [0015: Keep ingest manifests compact and token counts referential](0015-compact-ingest-manifests.md)
 - [0016: Forecast against a versioned accelerator catalog](0016-versioned-hardware-forecast.md)
+- [0017: Resolve training backends outside portable model recipes](0017-portable-training-backend-contract.md)

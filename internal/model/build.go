@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"time"
 
 	"github.com/openwaldo/waldo-new/internal/training"
@@ -22,11 +25,11 @@ type Progress struct {
 }
 
 type Builder struct {
-	Root           string
-	Now            func() time.Time
-	NewID          func() (string, error)
-	ResolveBackend func(training.Identity) (training.Backend, error)
-	Progress       func(Progress)
+	Root     string
+	Now      func() time.Time
+	NewID    func() (string, error)
+	Resolver training.Resolver
+	Progress func(Progress)
 }
 
 func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, error) {
@@ -44,14 +47,6 @@ func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, er
 	if newID == nil {
 		newID = randomID
 	}
-	resolve := builder.ResolveBackend
-	if resolve == nil {
-		resolve = resolveBuiltinBackend
-	}
-	backend, err := resolve(recipe.Backend)
-	if err != nil {
-		return Inspection{}, err
-	}
 	modelPath := filepath.Join(builder.Root, recipe.Name)
 	if _, err := os.Stat(modelPath); err == nil {
 		return Inspection{}, fmt.Errorf("model %q already exists; use a future explicit continuation workflow rather than rebuilding it", recipe.Name)
@@ -62,6 +57,27 @@ func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, er
 	if err != nil {
 		return Inspection{}, err
 	}
+	architectureJSON, err := json.Marshal(plan.Architecture)
+	if err != nil {
+		return Inspection{}, err
+	}
+	resolver := builder.Resolver
+	if resolver == nil {
+		resolver = builtinResolver()
+	}
+	selection, err := resolver.Resolve(ctx, training.ResolveRequest{
+		ArchitectureSHA256: plan.ArchitectureSHA256,
+		Architecture:       architectureJSON,
+		Objectives:         planObjectives(plan),
+	})
+	if err != nil {
+		return Inspection{}, fmt.Errorf("resolve training backend: %w", err)
+	}
+	if err := validateSelection(selection, plan); err != nil {
+		return Inspection{}, err
+	}
+	plan.Execution = selection.Execution
+	backend := selection.Backend
 	planHash, err := hashJSON(plan)
 	if err != nil {
 		return Inspection{}, err
@@ -87,7 +103,7 @@ func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, er
 		runBOM := RunBOM{
 			Kind: "openwaldo-bom", Schema: RunBOMSchema, Subject: "training-run",
 			ID: runID, ModelID: record.ID, Stage: stage.Plan.Name, StageType: stage.Plan.Type, Ordinal: ordinal + 1,
-			Objective: stage.Plan.Objective, Backend: plan.Backend,
+			Objective: stage.Plan.Objective, Execution: plan.Execution,
 			ArchitectureSHA256: plan.ArchitectureSHA256, CorpusBOMSHA256: stage.Plan.CorpusBOMSHA256,
 			CorpusBOM: stage.BOM, Files: stage.Files, Parameters: stage.Plan.Parameters,
 		}
@@ -118,12 +134,21 @@ func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, er
 			return Inspection{}, err
 		}
 		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunRunning, Message: "training backend started"})
-		artifactPath := filepath.ToSlash(filepath.Join("artifacts", "fake-model.json"))
+		artifactPrefix := "artifacts"
 		observation, backendErr := backend.Run(ctx, training.Request{
-			RunID: runID, ArchitectureSHA256: plan.ArchitectureSHA256, BOM: stage.BOM,
+			RunID: runID, Stage: stage.Plan.Name, Objective: stage.Plan.Objective,
+			ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: architectureJSON, BOM: stage.BOM,
 			Inputs: stage.Inputs, Parameters: stage.Plan.Parameters,
-			OutputPath: filepath.Join(runDirectory, filepath.FromSlash(artifactPath)), ArtifactPath: artifactPath,
+			ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix,
+			Report: func(event training.Event) {
+				builder.report(Progress{Phase: "training", Stage: stage.Plan.Name, RunID: runID, State: RunRunning, Message: event.Message})
+			},
 		})
+		if backendErr == nil {
+			if err := validateBackendObservation(runDirectory, stage.Plan, observation); err != nil {
+				backendErr = fmt.Errorf("invalid backend observation: %w", err)
+			}
+		}
 		run.Finished = formatTime(now())
 		if backendErr != nil {
 			run.State = RunFailed
@@ -211,11 +236,57 @@ func persistModel(modelPath string, record *ModelRecord, now time.Time) error {
 	return writeJSONAtomic(filepath.Join(modelPath, "MODEL-BOM.json"), modelBOM(*record))
 }
 
-func resolveBuiltinBackend(identity training.Identity) (training.Backend, error) {
-	if identity.Name != "fake" || identity.Revision != training.FakeRevision {
-		return nil, fmt.Errorf("training backend %s@%s is unavailable; Phase 4 supports fake@%s", identity.Name, identity.Revision, training.FakeRevision)
+func builtinResolver() training.Resolver {
+	return training.ResolverFunc(func(_ context.Context, _ training.ResolveRequest) (training.Selection, error) {
+		backend := training.Fake{}
+		descriptor := backend.Descriptor()
+		return training.Selection{
+			Backend: backend,
+			Execution: training.Execution{
+				Backend: descriptor.Identity, Framework: descriptor.Framework, Runtime: "builtin",
+				Host: training.Host{OS: runtime.GOOS, Architecture: runtime.GOARCH}, Nodes: 1, WorldSize: 1,
+			},
+		}, nil
+	})
+}
+
+func validateSelection(selection training.Selection, plan Plan) error {
+	if selection.Backend == nil {
+		return fmt.Errorf("resolved training backend is nil")
 	}
-	return training.Fake{}, nil
+	descriptor := selection.Backend.Descriptor()
+	if descriptor.Identity.Name == "" || descriptor.Identity.Revision == "" || descriptor.Framework == "" {
+		return fmt.Errorf("resolved training backend has an incomplete descriptor")
+	}
+	if selection.Execution.Backend != descriptor.Identity || selection.Execution.Framework != descriptor.Framework {
+		return fmt.Errorf("resolved execution does not match backend %s@%s", descriptor.Identity.Name, descriptor.Identity.Revision)
+	}
+	if selection.Execution.Host.OS == "" || selection.Execution.Host.Architecture == "" || selection.Execution.Nodes <= 0 || selection.Execution.WorldSize <= 0 {
+		return fmt.Errorf("resolved execution has incomplete host or topology facts")
+	}
+	supported := make(map[string]bool, len(descriptor.Capabilities.Objectives))
+	for _, objective := range descriptor.Capabilities.Objectives {
+		supported[objective] = true
+	}
+	for _, stage := range plan.Stages {
+		if !supported[stage.Objective] {
+			return fmt.Errorf("training backend %s@%s does not support objective %s", descriptor.Identity.Name, descriptor.Identity.Revision, stage.Objective)
+		}
+	}
+	return nil
+}
+
+func planObjectives(plan Plan) []string {
+	seen := make(map[string]bool)
+	for _, stage := range plan.Stages {
+		seen[stage.Objective] = true
+	}
+	objectives := make([]string, 0, len(seen))
+	for objective := range seen {
+		objectives = append(objectives, objective)
+	}
+	sort.Strings(objectives)
+	return objectives
 }
 
 func (builder Builder) report(progress Progress) {

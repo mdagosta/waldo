@@ -116,6 +116,13 @@ Owns the adapter boundary to an execution framework. A backend receives an
 explicit request and returns observed results. It does not own model state or
 BOM persistence.
 
+Portable recipes never name an execution framework. An environment-aware
+resolver selects an MLX, PyTorch, TensorFlow, or distributed PyTorch/TorchTitan
+adapter before model state is created. Every adapter exposes the same narrow
+capability, request, progress, and observation contracts. Framework-specific
+workers may translate the canonical architecture and training request, but may
+not introduce a second model recipe or provenance lifecycle.
+
 The application writes a `planned` run before launching the backend, advances
 it to `running`, and persists exactly one terminal state: `complete`, `failed`,
 or `interrupted`. Backend-reported consumed tokens and output hashes are

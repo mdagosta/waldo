@@ -34,10 +34,6 @@ architecture:
     name: example-tokenizer
     revision: sha256:replace-with-immutable-tokenizer-identity
 
-backend:
-  name: fake
-  revision: builtin-fake-schema-1
-
 stages:
   - name: pretrain
     type: pre-training
@@ -60,8 +56,9 @@ carries it into the immutable plan and run OpenWALDO BOM for model-specific
 training-content disclosure.
 
 The local corpus path is not identity. The resolved corpus OpenWALDO BOM hash,
-architecture, backend revision, parameters, and ordered stages form the
-immutable build plan.
+architecture, automatically resolved execution backend, parameters, and
+ordered stages form the immutable build plan. Recipes do not select a backend;
+the same recipe remains portable across supported execution environments.
 
 ## Commands
 

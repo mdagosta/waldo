@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -18,6 +19,13 @@ import (
 )
 
 type backendFunc func(context.Context, training.Request) (training.Observation, error)
+
+func (backendFunc) Descriptor() training.Descriptor {
+	return training.Descriptor{
+		Identity: training.Identity{Name: "test", Revision: "test-schema-1"}, Framework: "test",
+		Capabilities: training.Capabilities{Objectives: []string{"causal-language-modeling"}},
+	}
+}
 
 func (function backendFunc) Run(ctx context.Context, request training.Request) (training.Observation, error) {
 	return function(ctx, request)
@@ -44,6 +52,17 @@ func TestLoadRecipeIsStrictAndResolvesCorpusRelativeToRecipe(t *testing.T) {
 	}
 }
 
+func TestRecipeRejectsBackendSelection(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "smoke.yaml")
+	data := recipeYAML("exports/corpus", "backend:\n  name: fake\n  revision: builtin-fake-schema-1\n")
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadRecipe(path); err == nil || !strings.Contains(err.Error(), "field backend not found") {
+		t.Fatalf("LoadRecipe backend error = %v", err)
+	}
+}
+
 func TestBuildPersistsPlanRunAndModelBOMs(t *testing.T) {
 	root := t.TempDir()
 	export := writeModelExport(t, t.TempDir())
@@ -59,6 +78,9 @@ func TestBuildPersistsPlanRunAndModelBOMs(t *testing.T) {
 	}
 	if len(inspection.Runs) != 1 || inspection.Runs[0].Observation == nil || !inspection.Runs[0].Observation.Simulated {
 		t.Fatalf("runs = %+v", inspection.Runs)
+	}
+	if inspection.Plan.Execution.Backend.Name != "fake" || inspection.Plan.Execution.Framework != "fake" || inspection.Plan.Execution.Host.OS == "" || inspection.Plan.Execution.Host.Architecture == "" {
+		t.Fatalf("execution = %+v", inspection.Plan.Execution)
 	}
 	pin := inspection.Model.Runs[0]
 	runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
@@ -77,6 +99,9 @@ func TestBuildPersistsPlanRunAndModelBOMs(t *testing.T) {
 	if len(bomBytes) == 0 || pin.BOMSHA256 != wantBOMHash || runBOM.CorpusBOM.Subject != "corpus" {
 		t.Fatalf("pin = %+v, run BOM = %+v", pin, runBOM)
 	}
+	if !reflect.DeepEqual(runBOM.Execution, inspection.Plan.Execution) {
+		t.Fatalf("run execution = %+v, plan execution = %+v", runBOM.Execution, inspection.Plan.Execution)
+	}
 	artifact := pin.Artifacts[0]
 	artifactPath := filepath.Join(runDirectory, filepath.FromSlash(artifact.Path))
 	data, err := os.ReadFile(artifactPath)
@@ -89,6 +114,25 @@ func TestBuildPersistsPlanRunAndModelBOMs(t *testing.T) {
 	}
 	if _, err := builder.Build(context.Background(), recipe); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("second Build() error = %v", err)
+	}
+}
+
+func TestBuildRejectsInconsistentResolvedBackendBeforeCreatingModel(t *testing.T) {
+	root := t.TempDir()
+	recipe := validRecipe(writeModelExport(t, t.TempDir()))
+	builder := Builder{
+		Root: root,
+		Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+			selection := testSelection(training.Fake{})
+			selection.Execution.Framework = "pytorch"
+			return selection, nil
+		}),
+	}
+	if _, err := builder.Build(context.Background(), recipe); err == nil || !strings.Contains(err.Error(), "does not match backend") {
+		t.Fatalf("Build error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, recipe.Name)); !os.IsNotExist(err) {
+		t.Fatalf("model exists after resolver failure: %v", err)
 	}
 }
 
@@ -136,11 +180,12 @@ func TestBuildPersistsFailureAndInterruption(t *testing.T) {
 			recipe := validRecipe(writeModelExport(t, t.TempDir()))
 			builder := Builder{
 				Root: root, NewID: func() (string, error) { return "run0001", nil },
-				ResolveBackend: func(training.Identity) (training.Backend, error) {
-					return backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+				Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+					backend := backendFunc(func(context.Context, training.Request) (training.Observation, error) {
 						return training.Observation{}, test.err
-					}), nil
-				},
+					})
+					return testSelection(backend), nil
+				}),
 			}
 			if _, err := builder.Build(context.Background(), recipe); err == nil {
 				t.Fatal("Build succeeded")
@@ -164,7 +209,6 @@ func validRecipe(export string) Recipe {
 			HiddenSize: 64, IntermediateSize: 192, Layers: 2, AttentionHeads: 4, KeyValueHeads: 2,
 			TieEmbeddings: true, ParameterDType: "float32", Tokenizer: Tokenizer{Name: "byte", Revision: "sha256:example"},
 		},
-		Backend: training.Identity{Name: "fake", Revision: training.FakeRevision},
 		Stages: []Stage{{Name: "pretrain", Type: "pre-training", Objective: "causal-language-modeling", Corpus: export, Parameters: training.Parameters{
 			Steps: 2, BatchSize: 1, SequenceLength: 64, LearningRate: 0.001, Seed: 7,
 		}}},
@@ -175,8 +219,18 @@ func recipeYAML(corpusPath, suffix string) string {
 	return "kind: waldo-model-recipe\n" +
 		"schema: 1\nname: smoke\n" +
 		"architecture:\n  family: decoder-transformer\n  context_tokens: 128\n  vocabulary_size: 256\n  hidden_size: 64\n  intermediate_size: 192\n  layers: 2\n  attention_heads: 4\n  key_value_heads: 2\n  tie_embeddings: true\n  parameter_dtype: float32\n  tokenizer:\n    name: byte\n    revision: sha256:example\n" +
-		"backend:\n  name: fake\n  revision: " + training.FakeRevision + "\n" +
 		"stages:\n  - name: pretrain\n    type: pre-training\n    objective: causal-language-modeling\n    corpus: " + corpusPath + "\n    parameters:\n      steps: 2\n      batch_size: 1\n      sequence_length: 64\n      learning_rate: 0.001\n      seed: 7\n" + suffix
+}
+
+func testSelection(backend training.Backend) training.Selection {
+	descriptor := backend.Descriptor()
+	return training.Selection{
+		Backend: backend,
+		Execution: training.Execution{
+			Backend: descriptor.Identity, Framework: descriptor.Framework, Runtime: "test",
+			Host: training.Host{OS: "test-os", Architecture: "test-arch"}, Nodes: 1, WorldSize: 1,
+		},
+	}
 }
 
 func writeModelExport(t *testing.T, parent string) string {

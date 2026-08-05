@@ -419,9 +419,10 @@ resources, creates the model if absent, and executes stages. Reusing a trained
 model requires an explicit continuation option; replacing it requires a
 separate explicit option.
 
-The Phase-4 backend is `fake@builtin-fake-schema-1`. It exercises the complete
-state and provenance path but emits an artifact that explicitly contains no
-trained weights. The schema-1 recipe and durable layout are documented in
+The current development backend resolves to `fake@builtin-fake-schema-1`. It
+exercises the complete state and provenance path but emits an artifact that
+explicitly contains no trained weights. Backend selection is not part of the
+portable recipe. The schema-1 recipe and durable layout are documented in
 `docs/MODEL-LIFECYCLE.md`.
 
 ### Inspect provenance

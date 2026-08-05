@@ -154,6 +154,9 @@ the same files independently of an index checkout.
 - Select PyTorch automatically on single-node Linux
 - Select TorchTitan for explicitly configured multi-node Linux runs
 - Persist the resolved backend and immutable environment facts in the plan
+- Keep the execution adapter portable across MLX, PyTorch, TensorFlow, and
+  PyTorch-based distributed engines. **Backend-neutral contract implemented;
+  real environment resolvers and adapters remain.**
 - Streaming shard consumption
 - Checkpoint and resume
 - Actual consumption totals

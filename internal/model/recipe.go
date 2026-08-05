@@ -22,12 +22,11 @@ const RecipeSchema = 1
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 type Recipe struct {
-	Kind         string            `json:"kind" yaml:"kind"`
-	Schema       int               `json:"schema" yaml:"schema"`
-	Name         string            `json:"name" yaml:"name"`
-	Architecture Architecture      `json:"architecture" yaml:"architecture"`
-	Backend      training.Identity `json:"backend" yaml:"backend"`
-	Stages       []Stage           `json:"stages" yaml:"stages"`
+	Kind         string       `json:"kind" yaml:"kind"`
+	Schema       int          `json:"schema" yaml:"schema"`
+	Name         string       `json:"name" yaml:"name"`
+	Architecture Architecture `json:"architecture" yaml:"architecture"`
+	Stages       []Stage      `json:"stages" yaml:"stages"`
 }
 
 type Architecture struct {
@@ -106,9 +105,6 @@ func (recipe Recipe) Validate() error {
 	}
 	if err := recipe.Architecture.Validate(); err != nil {
 		return err
-	}
-	if recipe.Backend.Name == "" || recipe.Backend.Revision == "" {
-		return fmt.Errorf("backend name and immutable revision are required")
 	}
 	if len(recipe.Stages) == 0 {
 		return fmt.Errorf("at least one training stage is required")

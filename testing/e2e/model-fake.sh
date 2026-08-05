@@ -82,9 +82,6 @@ architecture:
   tokenizer:
     name: byte
     revision: sha256:model-e2e
-backend:
-  name: fake
-  revision: builtin-fake-schema-1
 stages:
   - name: pretrain
     type: pre-training

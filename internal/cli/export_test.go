@@ -115,9 +115,6 @@ architecture:
   tokenizer:
     name: byte
     revision: sha256:fixture
-backend:
-  name: fake
-  revision: builtin-fake-schema-1
 stages:
   - name: pretrain
     type: pre-training

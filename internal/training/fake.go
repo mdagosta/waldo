@@ -19,6 +19,16 @@ const FakeRevision = "builtin-fake-schema-1"
 // that it is not trained weights and must never be accepted by a real backend.
 type Fake struct{}
 
+func (Fake) Descriptor() Descriptor {
+	return Descriptor{
+		Identity:  Identity{Name: "fake", Revision: FakeRevision},
+		Framework: "fake",
+		Capabilities: Capabilities{
+			Objectives: []string{"causal-language-modeling"},
+		},
+	}
+}
+
 func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return Observation{}, err
@@ -39,7 +49,9 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 		return Observation{}, err
 	}
 	payload = append(payload, '\n')
-	if err := writeArtifactAtomic(request.OutputPath, payload); err != nil {
+	artifactName := "fake-model.json"
+	outputPath := filepath.Join(request.ArtifactDirectory, artifactName)
+	if err := writeArtifactAtomic(outputPath, payload); err != nil {
 		return Observation{}, fmt.Errorf("write fake artifact: %w", err)
 	}
 	digest := sha256.Sum256(payload)
@@ -57,7 +69,7 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 	}
 	return Observation{
 		Simulated: true, Steps: request.Parameters.Steps, ConsumedTokens: capacity,
-		Artifacts: []Artifact{{Path: request.ArtifactPath, SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(payload))}},
+		Artifacts: []Artifact{{Path: filepath.ToSlash(filepath.Join(request.ArtifactPrefix, artifactName)), SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(payload))}},
 	}, nil
 }
 

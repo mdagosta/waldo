@@ -32,7 +32,7 @@ type Plan struct {
 	ArchitectureSHA256 string               `json:"architecture_sha256"`
 	Architecture       Architecture         `json:"architecture"`
 	Forecast           ArchitectureForecast `json:"forecast"`
-	Backend            training.Identity    `json:"backend"`
+	Execution          training.Execution   `json:"execution"`
 	Stages             []PlannedStage       `json:"stages"`
 }
 
@@ -93,7 +93,7 @@ type RunBOM struct {
 	StageType          string                `json:"stage_type"`
 	Ordinal            int                   `json:"ordinal"`
 	Objective          string                `json:"objective"`
-	Backend            training.Identity     `json:"backend"`
+	Execution          training.Execution    `json:"execution"`
 	ArchitectureSHA256 string                `json:"architecture_sha256"`
 	CorpusBOMSHA256    string                `json:"corpus_bom_sha256"`
 	CorpusBOM          corpus.BOM            `json:"corpus_bom"`
@@ -199,7 +199,7 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 		if run.Kind != "waldo-training-run" || run.Schema != RunSchema || run.ID != pin.ID || run.State != pin.State || run.BOMSHA256 != pin.BOMSHA256 || runBOMHash != pin.BOMSHA256 || runBOM.ID != pin.ID || runBOM.ModelID != record.ID || runBOM.Stage != pin.Stage || runBOM.Ordinal != pin.Ordinal {
 			return Inspection{}, fmt.Errorf("run %s does not match its model pin", pin.ID)
 		}
-		if runBOM.Stage != planned.Name || runBOM.StageType != planned.Type || runBOM.Objective != planned.Objective || runBOM.CorpusBOMSHA256 != planned.CorpusBOMSHA256 || runBOM.ArchitectureSHA256 != plan.ArchitectureSHA256 || !reflect.DeepEqual(runBOM.Backend, plan.Backend) || !reflect.DeepEqual(runBOM.Parameters, planned.Parameters) || len(runBOM.Files) != planned.Files || runBOM.CorpusBOM.Totals.Docs != planned.Docs || runBOM.CorpusBOM.Totals.Tokens != planned.Tokens {
+		if runBOM.Stage != planned.Name || runBOM.StageType != planned.Type || runBOM.Objective != planned.Objective || runBOM.CorpusBOMSHA256 != planned.CorpusBOMSHA256 || runBOM.ArchitectureSHA256 != plan.ArchitectureSHA256 || !reflect.DeepEqual(runBOM.Execution, plan.Execution) || !reflect.DeepEqual(runBOM.Parameters, planned.Parameters) || len(runBOM.Files) != planned.Files || runBOM.CorpusBOM.Totals.Docs != planned.Docs || runBOM.CorpusBOM.Totals.Tokens != planned.Tokens {
 			return Inspection{}, fmt.Errorf("run %s does not match its immutable build plan", pin.ID)
 		}
 		var exportedBytes int64
