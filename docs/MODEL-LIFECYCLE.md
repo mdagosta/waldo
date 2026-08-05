@@ -87,6 +87,12 @@ Transformers callers load it with `trust_remote_code=True`; the model itself
 uses the standard Llama configuration. A model without a usable real run is
 rejected rather than exporting simulated or incomplete artifacts.
 
+`--format mlx` emits the same standard Llama tensor names with Safetensors
+metadata for MLX, an executable binding to MLX-LM's Llama model, and the same
+explicit byte tokenizer. It is a separate package, not a second copy bundled
+into the Hugging Face export. Tensor data is again copied byte-for-byte; only
+the container header and surrounding runtime files differ.
+
 `model chat` opens the newest complete real-weight run identified by
 `current_run_id`, verifies its weights, configuration, and tokenizer against
 the model BOM, and then uses the backend recorded by that run. MLX sessions

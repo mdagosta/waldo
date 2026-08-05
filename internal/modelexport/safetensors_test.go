@@ -11,6 +11,7 @@ import (
 func TestRewriteHuggingFaceWeightsRenamesHeaderWithoutChangingTensorBytes(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "source.safetensors")
 	destination := filepath.Join(t.TempDir(), "model.safetensors")
+	mlxDestination := filepath.Join(t.TempDir(), "model.safetensors")
 	header, err := json.Marshal(map[string]any{
 		"__metadata__":                     map[string]string{"format": "openwaldo"},
 		"embedding.weight":                 map[string]any{"dtype": "F32", "shape": []int{1}, "data_offsets": []int{0, 4}},
@@ -67,6 +68,27 @@ func TestRewriteHuggingFaceWeightsRenamesHeaderWithoutChangingTensorBytes(t *tes
 	}
 	if got := output[8+length:]; string(got) != string(data) {
 		t.Fatalf("tensor bytes = %q, want %q", got, data)
+	}
+	if err := rewriteMLXWeights(source, mlxDestination); err != nil {
+		t.Fatal(err)
+	}
+	mlxOutput, err := os.ReadFile(mlxDestination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mlxLength := binary.LittleEndian.Uint64(mlxOutput[:8])
+	var mlxHeader map[string]json.RawMessage
+	if err := json.Unmarshal(mlxOutput[8:8+mlxLength], &mlxHeader); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(mlxHeader["__metadata__"], &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if metadata["format"] != "mlx" || metadata["export_format"] != "mlx" {
+		t.Fatalf("MLX metadata = %v", metadata)
+	}
+	if got := mlxOutput[8+mlxLength:]; string(got) != string(data) {
+		t.Fatalf("MLX tensor bytes = %q, want %q", got, data)
 	}
 }
 

@@ -541,6 +541,12 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportHuggingFace(context.Execution, inspection, destination, options)
+	case "mlx":
+		options := modelexport.Options{EUBOM: euBOM}
+		if signed {
+			options.Finalize = finalize
+		}
+		output, err = modelexport.ExportMLX(context.Execution, inspection, destination, options)
 	}
 	if err != nil {
 		return err
@@ -584,10 +590,10 @@ func parseModelExport(args []string) (string, string, string, bool, error) {
 		}
 	}
 	if len(positionals) != 2 {
-		return "", "", "", false, usageError{message: "usage: waldo model export <name> <directory> [--format waldo|huggingface] [--allow-incomplete] [--json]"}
+		return "", "", "", false, usageError{message: "usage: waldo model export <name> <directory> [--format waldo|huggingface|mlx] [--allow-incomplete] [--json]"}
 	}
-	if format != "waldo" && format != "huggingface" {
-		return "", "", "", false, usageError{message: fmt.Sprintf("model export format %q is not implemented yet; use waldo or huggingface", format)}
+	if format != "waldo" && format != "huggingface" && format != "mlx" {
+		return "", "", "", false, usageError{message: fmt.Sprintf("model export format %q is not implemented yet; use waldo, huggingface, or mlx", format)}
 	}
 	return positionals[0], positionals[1], format, allowIncomplete, nil
 }

@@ -44,6 +44,14 @@ type releaseArtifact struct {
 }
 
 func ExportHuggingFace(ctx context.Context, inspection model.Inspection, destination string, options Options) (string, error) {
+	return exportLlamaPackage(ctx, inspection, destination, options, "huggingface")
+}
+
+func ExportMLX(ctx context.Context, inspection model.Inspection, destination string, options Options) (string, error) {
+	return exportLlamaPackage(ctx, inspection, destination, options, "mlx")
+}
+
+func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destination string, options Options, format string) (string, error) {
 	_ = ctx
 	artifacts, err := inference.ResolveArtifacts(inspection)
 	if err != nil {
@@ -62,8 +70,16 @@ func ExportHuggingFace(ctx context.Context, inspection model.Inspection, destina
 	}
 	committed := false
 	defer func() { cleanup(committed) }()
-	if err := rewriteHuggingFaceWeights(artifacts.Weights, filepath.Join(temporary, "model.safetensors")); err != nil {
-		return "", fmt.Errorf("convert Hugging Face weights: %w", err)
+	rewrite := rewriteHuggingFaceWeights
+	architectureSource := huggingFaceArchitectureSource
+	readme := huggingFaceReadme
+	if format == "mlx" {
+		rewrite = rewriteMLXWeights
+		architectureSource = mlxArchitectureSource
+		readme = mlxReadme
+	}
+	if err := rewrite(artifacts.Weights, filepath.Join(temporary, "model.safetensors")); err != nil {
+		return "", fmt.Errorf("convert %s weights: %w", format, err)
 	}
 	configuration := huggingFaceConfig(inspection.Model.Architecture)
 	if err := writeJSON(filepath.Join(temporary, "config.json"), configuration); err != nil {
@@ -74,8 +90,8 @@ func ExportHuggingFace(ctx context.Context, inspection model.Inspection, destina
 		"generation_config.json":    []byte(huggingFaceGenerationConfig),
 		"special_tokens_map.json":   []byte(huggingFaceSpecialTokens),
 		"tokenization_openwaldo.py": []byte(huggingFaceTokenizerSource),
-		"architecture.py":           []byte(huggingFaceArchitectureSource),
-		"README.md":                 []byte(huggingFaceReadme),
+		"architecture.py":           []byte(architectureSource),
+		"README.md":                 []byte(readme),
 	}
 	tokenizerConfiguration, err := json.MarshalIndent(map[string]any{
 		"auto_map":  map[string]any{"AutoTokenizer": []any{"tokenization_openwaldo.OpenWALDOByteTokenizer", nil}},
@@ -109,7 +125,7 @@ func ExportHuggingFace(ctx context.Context, inspection model.Inspection, destina
 	if err != nil {
 		return "", err
 	}
-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: "huggingface", ModelID: inspection.Model.ID, Name: inspection.Model.Name, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
 	if err := writeJSON(filepath.Join(temporary, "BOM.json"), bom); err != nil {
 		return "", err
 	}
@@ -300,4 +316,24 @@ This package uses the standard Transformers Llama causal-language-model
 architecture with OpenWALDO's schema-1 byte tokenizer. Load the tokenizer with
 ` + "`trust_remote_code=True`" + `. ` + "`BOM.json`" + ` inventories every release file and
 ` + "`EU-BOM.json`" + ` contains the EU GPAI training-content disclosure mapping.
+`
+
+const mlxArchitectureSource = `"""Executable architecture binding for this OpenWALDO MLX release."""
+from mlx_lm.models.llama import Model, ModelArgs
+
+OpenWALDOForCausalLM = Model
+OpenWALDOConfig = ModelArgs
+`
+
+const mlxReadme = `---
+library_name: mlx
+pipeline_tag: text-generation
+---
+
+# OpenWALDO MLX model export
+
+This package uses MLX-LM's standard Llama implementation and OpenWALDO's
+schema-1 byte tokenizer. The Safetensors payload is copied without numerical
+conversion. ` + "`BOM.json`" + ` inventories every release file and ` + "`EU-BOM.json`" + `
+contains the EU GPAI training-content disclosure mapping.
 `

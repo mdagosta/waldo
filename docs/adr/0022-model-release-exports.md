@@ -68,3 +68,8 @@ query attention, and SwiGLU tensor shapes. It rewrites Safetensors header names
 and metadata while copying the tensor data section byte-for-byte. WALDO's byte
 tokenizer remains explicit custom tokenizer code; it is not mislabeled as a
 different pretrained tokenizer.
+
+The MLX adapter uses the same verified Llama name map, marks the Safetensors
+container for MLX, and binds `architecture.py` to MLX-LM's Llama
+implementation. It remains a separate release package even though its tensor
+payload can be identical to the Hugging Face package.

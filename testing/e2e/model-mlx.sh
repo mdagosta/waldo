@@ -45,6 +45,7 @@ input="$work/training.txt"
 compose="$work/model.yaml"
 provider="$work/provider.json"
 huggingface_export="$work/huggingface-export"
+mlx_export="$work/mlx-export"
 export WALDO_CONFIG="$work/config.json"
 
 echo "testing: real MLX model lifecycle with $mlx_python"
@@ -149,15 +150,15 @@ printf '%s\n' "$chat" | grep -Eq '"tokens"[[:space:]]*:[[:space:]]*[0-2]'
 printf '%s\n' "$chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
 
 "$binary" model export mlx-smoke "$huggingface_export" --format huggingface --allow-incomplete >/dev/null
-"$mlx_python" - "$current_weights" "$huggingface_export" <<'PY'
+"$binary" model export mlx-smoke "$mlx_export" --format mlx --allow-incomplete >/dev/null
+"$mlx_python" - "$current_weights" "$huggingface_export" "$mlx_export" <<'PY'
 import hashlib
 import json
 import os
 import struct
 import sys
 
-source, root = sys.argv[1:]
-target = os.path.join(root, "model.safetensors")
+source, huggingface_root, mlx_root = sys.argv[1:]
 
 def tensor_payload(path):
     with open(path, "rb") as stream:
@@ -166,23 +167,27 @@ def tensor_payload(path):
         payload = hashlib.sha256(stream.read()).hexdigest()
     return header, payload
 
-source_header, source_payload = tensor_payload(source)
-target_header, target_payload = tensor_payload(target)
-assert source_payload == target_payload
-assert target_header["__metadata__"]["format"] == "pt"
-assert "model.embed_tokens.weight" in target_header
-assert "embedding.weight" not in target_header
-for name in ("architecture.py", "tokenization_openwaldo.py"):
-    with open(os.path.join(root, name), encoding="utf-8") as stream:
-        compile(stream.read(), name, "exec")
-with open(os.path.join(root, "BOM.json"), encoding="utf-8") as stream:
-    bom = json.load(stream)
-assert bom["format"] == "huggingface"
-for item in bom["artifacts"]:
-    with open(os.path.join(root, item["path"]), "rb") as stream:
-        data = stream.read()
-    assert len(data) == item["bytes"]
-    assert hashlib.sha256(data).hexdigest() == item["sha256"]
+_, source_payload = tensor_payload(source)
+for root, release_format, container_format in (
+    (huggingface_root, "huggingface", "pt"),
+    (mlx_root, "mlx", "mlx"),
+):
+    target_header, target_payload = tensor_payload(os.path.join(root, "model.safetensors"))
+    assert source_payload == target_payload
+    assert target_header["__metadata__"]["format"] == container_format
+    assert "model.embed_tokens.weight" in target_header
+    assert "embedding.weight" not in target_header
+    for name in ("architecture.py", "tokenization_openwaldo.py"):
+        with open(os.path.join(root, name), encoding="utf-8") as stream:
+            compile(stream.read(), name, "exec")
+    with open(os.path.join(root, "BOM.json"), encoding="utf-8") as stream:
+        bom = json.load(stream)
+    assert bom["format"] == release_format
+    for item in bom["artifacts"]:
+        with open(os.path.join(root, item["path"]), "rb") as stream:
+            data = stream.read()
+        assert len(data) == item["bytes"]
+        assert hashlib.sha256(data).hexdigest() == item["sha256"]
 PY
 
-echo "E2E MLX model passed: trained, resumed, generated, and exported byte-identical Hugging Face tensors"
+echo "E2E MLX model passed: trained, resumed, generated, and exported byte-identical Hugging Face and MLX tensors"

@@ -3,7 +3,7 @@ package cli
 import "testing"
 
 func TestParseModelExportFormats(t *testing.T) {
-	for _, format := range []string{"waldo", "huggingface"} {
+	for _, format := range []string{"waldo", "huggingface", "mlx"} {
 		name, destination, got, incomplete, err := parseModelExport([]string{"model", "release", "--format", format, "--allow-incomplete"})
 		if err != nil {
 			t.Fatalf("format %s: %v", format, err)

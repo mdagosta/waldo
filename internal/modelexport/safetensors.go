@@ -13,6 +13,14 @@ import (
 var waldoLayerTensor = regexp.MustCompile(`^layers\.([0-9]+)\.(.+)$`)
 
 func rewriteHuggingFaceWeights(source, destination string) error {
+	return rewriteLlamaWeights(source, destination, "pt", "huggingface")
+}
+
+func rewriteMLXWeights(source, destination string) error {
+	return rewriteLlamaWeights(source, destination, "mlx", "mlx")
+}
+
+func rewriteLlamaWeights(source, destination, containerFormat, exportFormat string) error {
 	input, err := os.Open(source)
 	if err != nil {
 		return err
@@ -43,8 +51,8 @@ func rewriteHuggingFaceWeights(source, destination string) error {
 				return fmt.Errorf("decode Safetensors metadata: %w", err)
 			}
 			metadata["source_format"] = metadata["format"]
-			metadata["format"] = "pt"
-			metadata["export_format"] = "huggingface"
+			metadata["format"] = containerFormat
+			metadata["export_format"] = exportFormat
 			descriptor, err = json.Marshal(metadata)
 			if err != nil {
 				return err

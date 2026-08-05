@@ -72,9 +72,10 @@ MLX installation can execute on Metal. It builds a disposable index and tiny
 decoder model, streams canonical records into the embedded worker, performs
 real optimization, and validates the resulting Safetensors weights,
 checkpoints, evaluations, and non-simulated run observation. It also exports
-the current real run as Hugging Face, proves that the tensor payload is
-byte-identical after header-name conversion, checks Python syntax, and verifies
-the release inventory. Other platforms report an explicit skip.
+the current real run as separate Hugging Face and MLX packages, proves that
+both tensor payloads are byte-identical after header-name conversion, checks
+Python syntax, and verifies both release inventories. Other platforms report
+an explicit skip.
 
 ```bash
 ./testing/e2e/model-mlx.sh
