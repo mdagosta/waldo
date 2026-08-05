@@ -47,7 +47,9 @@ Owns content-addressed object transport and lifecycle:
 - Verified download scratch, purged after successful consumers
 - Header-only canonical-object reachability and size probes
 - Anonymous HTTP and S3 reads
-- Authenticated writes
+- Authenticated S3 reads and writes through the internal AWS SDK
+- Bucket-scoped interactive credentials in the OS keychain, with the AWS
+  environment and workload-role chain as the headless fallback
 - Mirrors
 - Availability and integrity checks
 - Safe garbage collection

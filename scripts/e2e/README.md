@@ -30,7 +30,9 @@ WALDO_E2E_AWS_REGION=us-west-2 \
 ./scripts/e2e/ingest-smoke.sh s3://example-test-bucket/waldo-e2e
 ```
 
-AWS credentials come from the standard credential chain and are never written
-to WALDO configuration. The selected prefix must be publicly readable because
+For unattended execution, AWS credentials come from the SDK's environment or
+workload-role chain; an interactive user may instead run `waldo lookaside
+login`. Credentials are never written to WALDO configuration. The selected
+prefix must be publicly readable because
 canonical WALDO S3 reads are anonymous. The script never deletes remote S3
 objects; use a lifecycle policy on the disposable prefix.

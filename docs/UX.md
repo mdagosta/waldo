@@ -35,8 +35,8 @@ waldo
 │   ├── export
 │   └── remove
 ├── lookaside
-│   ├── configure
 │   ├── login
+│   ├── logout
 │   ├── status
 │   ├── verify
 │   ├── mirror
@@ -150,14 +150,21 @@ destination, and lookaside configuration before conversion. On success
 it should explain the exact Git review and DCO commit steps without creating a
 pull request itself.
 
-Configure the writable lookaside once. Credentials are resolved through the
-standard AWS credential chain and are never stored in WALDO configuration:
+Configure the writable lookaside once, then store the bucket's access and
+secret keys in the operating system credential vault. The secret prompt does
+not echo and neither key is written to WALDO configuration:
 
 ```bash
 waldo config set lookaside s3://openwaldo/lookaside/v1
 waldo config set lookaside.region us-east-2
 waldo config set lookaside.workers 4
+waldo lookaside login
 ```
+
+`lookaside login` is bucket-scoped, so changing prefixes in the same bucket
+does not require another login. `waldo lookaside logout` removes the saved
+keys. Environment and workload-role credentials remain supported for headless
+execution when no WALDO keychain login exists.
 
 For a complete local integration test, configure a filesystem-backed writable
 lookaside instead:

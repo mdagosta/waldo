@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/openwaldo/waldo-new/internal/config"
 )
 
 func TestS3PublisherUploadsVerifiesAndReusesObject(t *testing.T) {
@@ -64,6 +65,45 @@ func TestParseEndpointStyleS3Base(t *testing.T) {
 	if err != nil || bucket != "openwaldo" || prefix != "lookaside/v1" {
 		t.Fatalf("parse = %q, %q, %v", bucket, prefix, err)
 	}
+}
+
+func TestS3PublisherPrefersStoredCredentials(t *testing.T) {
+	store := &memoryCredentialStore{credentials: Credentials{AccessKey: "stored-access", SecretKey: "stored-secret"}, found: true}
+	publisher, err := newS3Publisher(context.Background(), config.Publish{URL: "s3://bucket/prefix", Region: "us-east-2"}, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, ok := publisher.api.(*s3.Client)
+	if !ok {
+		t.Fatalf("publisher API = %T", publisher.api)
+	}
+	resolved, err := client.Options().Credentials.Retrieve(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.AccessKeyID != "stored-access" || resolved.SecretAccessKey != "stored-secret" || resolved.SessionToken != "" {
+		t.Fatalf("resolved credentials = %+v", resolved)
+	}
+}
+
+type memoryCredentialStore struct {
+	credentials Credentials
+	found       bool
+	err         error
+}
+
+func (store *memoryCredentialStore) Get(string) (Credentials, bool, error) {
+	return store.credentials, store.found, store.err
+}
+
+func (store *memoryCredentialStore) Set(_ string, credentials Credentials) error {
+	store.credentials, store.found = credentials, true
+	return store.err
+}
+
+func (store *memoryCredentialStore) Delete(string) error {
+	store.credentials, store.found = Credentials{}, false
+	return store.err
 }
 
 type fakeS3Object struct {

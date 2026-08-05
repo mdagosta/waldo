@@ -15,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	awscredentials "github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
@@ -34,6 +35,10 @@ type S3Publisher struct {
 }
 
 func NewS3Publisher(ctx context.Context, publish config.Publish) (*S3Publisher, error) {
+	return newS3Publisher(ctx, publish, KeyringCredentialStore{})
+}
+
+func newS3Publisher(ctx context.Context, publish config.Publish, store CredentialStore) (*S3Publisher, error) {
 	bucket, prefix, err := parseS3Base(publish.URL)
 	if err != nil {
 		return nil, err
@@ -41,6 +46,14 @@ func NewS3Publisher(ctx context.Context, publish config.Publish) (*S3Publisher, 
 	options := []func(*awsconfig.LoadOptions) error{}
 	if publish.Region != "" {
 		options = append(options, awsconfig.WithRegion(publish.Region))
+	}
+	// A WALDO keychain login takes precedence. If the platform keychain cannot
+	// be queried, preserve the AWS SDK's environment, workload-role, and shared
+	// configuration chain for headless systems; login itself still fails closed.
+	if credentials, found, credentialErr := store.Get(publish.URL); credentialErr == nil && found {
+		options = append(options, awsconfig.WithCredentialsProvider(
+			awscredentials.NewStaticCredentialsProvider(credentials.AccessKey, credentials.SecretKey, ""),
+		))
 	}
 	awsConfiguration, err := awsconfig.LoadDefaultConfig(ctx, options...)
 	if err != nil {

@@ -26,11 +26,12 @@ func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) err
 	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
-			Root    string          `json:"root"`
-			Mirrors []string        `json:"mirrors"`
-			Publish *config.Publish `json:"publish,omitempty"`
-			Stats   lookaside.Stats `json:"stats"`
-		}{Root: cache.Root(), Mirrors: cache.Mirrors(), Publish: configuration.Lookaside.Publish, Stats: stats})
+			Root        string                     `json:"root"`
+			Mirrors     []string                   `json:"mirrors"`
+			Publish     *config.Publish            `json:"publish,omitempty"`
+			Credentials *lookasideCredentialStatus `json:"credentials,omitempty"`
+			Stats       lookaside.Stats            `json:"stats"`
+		}{Root: cache.Root(), Mirrors: cache.Mirrors(), Publish: configuration.Lookaside.Publish, Credentials: credentialStatus(configuration.Lookaside.Publish), Stats: stats})
 	}
 	fmt.Fprintf(stdout, "lookaside scratch  %s\n", cache.Root())
 	fmt.Fprintf(stdout, "  objects        %s\n", humanInteger(stats.Objects))
@@ -54,6 +55,16 @@ func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) err
 	} else {
 		publish := configuration.Lookaside.Publish
 		fmt.Fprintf(stdout, "  publish        %s (%d workers)\n", publish.URL, publish.Workers)
+		if status := credentialStatus(publish); status != nil {
+			switch {
+			case status.Error != "":
+				fmt.Fprintf(stdout, "  credentials    unavailable: %s\n", status.Error)
+			case status.Present:
+				fmt.Fprintf(stdout, "  credentials    OS keychain %s (%s)\n", status.Scope, status.AccessKey)
+			default:
+				fmt.Fprintln(stdout, "  credentials    no WALDO login; AWS default chain fallback")
+			}
+		}
 	}
 	return nil
 }

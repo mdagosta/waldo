@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,6 +17,33 @@ import (
 )
 
 type cliPublisher struct{ objects map[string]int64 }
+
+type cliCredentialStore struct {
+	credentials lookaside.Credentials
+	found       bool
+	err         error
+}
+
+func (store *cliCredentialStore) Get(string) (lookaside.Credentials, bool, error) {
+	return store.credentials, store.found, store.err
+}
+
+func (store *cliCredentialStore) Set(_ string, credentials lookaside.Credentials) error {
+	store.credentials, store.found = credentials, true
+	return store.err
+}
+
+func (store *cliCredentialStore) Delete(string) error {
+	store.credentials, store.found = lookaside.Credentials{}, false
+	return store.err
+}
+
+func useCLICredentialStore(t *testing.T, store lookaside.CredentialStore) {
+	t.Helper()
+	previous := lookasideCredentialStore
+	lookasideCredentialStore = store
+	t.Cleanup(func() { lookasideCredentialStore = previous })
+}
 
 func (publisher *cliPublisher) BaseURL() string { return "s3://openwaldo/lookaside/v1" }
 func (publisher *cliPublisher) Publish(_ context.Context, source, digest string, size int64, progress func(lookaside.PublishProgress)) (lookaside.PublishedObject, error) {
@@ -351,7 +379,8 @@ func TestFlagRichHelpExplainsRetainedOptions(t *testing.T) {
 		want []string
 	}{
 		{[]string{"index", "ingest", "--help"}, []string{"Required:", "--text-column", "waldo config set", "no transport or scratch flags"}},
-		{[]string{"config", "set", "--help"}, []string{"lookaside.scratch", "file:///tmp", "standard AWS credential chain"}},
+		{[]string{"config", "set", "--help"}, []string{"lookaside.scratch", "file:///tmp", "waldo lookaside login", "OS credential vault"}},
+		{[]string{"lookaside", "login", "--help"}, []string{"S3 access key", "hidden secret key", "operating system credential vault"}},
 		{[]string{"index", "export", "--help"}, []string{"--force", "purged only after", "OpenWALDO BOM"}},
 	} {
 		var stdout, stderr bytes.Buffer
@@ -454,6 +483,7 @@ func TestConfigSetPersistsLookasideSettings(t *testing.T) {
 	configurationPath := filepath.Join(t.TempDir(), "config.json")
 	scratchRoot := filepath.Join(t.TempDir(), "objects")
 	t.Setenv("WALDO_CONFIG", configurationPath)
+	useCLICredentialStore(t, &cliCredentialStore{})
 	var stdout, stderr bytes.Buffer
 	commands := [][]string{
 		{"config", "set", "lookaside", "s3://bucket/lookaside/v1/"},
@@ -484,6 +514,58 @@ func TestConfigSetPersistsLookasideSettings(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), scratchRoot) || !strings.Contains(stdout.String(), "https://mirror.example/lookaside/v1") {
 		t.Fatalf("lookaside status = %q", stdout.String())
+	}
+}
+
+func TestLookasideLoginStatusAndLogoutUseCredentialStore(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Lookaside: config.Lookaside{Publish: &config.Publish{URL: "s3://openwaldo/waldo-index", Region: "us-east-2", Workers: 2}}}); err != nil {
+		t.Fatal(err)
+	}
+	store := &cliCredentialStore{}
+	useCLICredentialStore(t, store)
+	previousPrompt := promptS3Credentials
+	promptS3Credentials = func(io.Writer) (lookaside.Credentials, error) {
+		return lookaside.Credentials{AccessKey: "AKIAEXAMPLE1234", SecretKey: "never-print-this-secret"}, nil
+	}
+	t.Cleanup(func() { promptS3Credentials = previousPrompt })
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"lookaside", "login"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("login code = %d, stderr = %q", code, stderr.String())
+	}
+	if !store.found || store.credentials.AccessKey != "AKIAEXAMPLE1234" || store.credentials.SecretKey != "never-print-this-secret" {
+		t.Fatalf("stored credentials = %+v, found=%v", store.credentials, store.found)
+	}
+	if strings.Contains(stdout.String(), "AKIAEXAMPLE1234") || strings.Contains(stdout.String(), "never-print-this-secret") || !strings.Contains(stdout.String(), "…1234") {
+		t.Fatalf("login output leaked or omitted credential identity: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"lookaside", "status"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "OS keychain s3://openwaldo (…1234)") {
+		t.Fatalf("status code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "never-print-this-secret") || strings.Contains(stdout.String(), "AKIAEXAMPLE1234") {
+		t.Fatalf("status leaked credentials: %q", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"lookaside", "logout"}, &stdout, &stderr); code != 0 || store.found {
+		t.Fatalf("logout code = %d, found=%v, stderr = %q", code, store.found, stderr.String())
+	}
+}
+
+func TestLookasideLoginRequiresConfiguredS3(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Lookaside: config.Lookaside{Publish: &config.Publish{URL: "file:///tmp/waldo-published", Workers: 2}}}); err != nil {
+		t.Fatal(err)
+	}
+	useCLICredentialStore(t, &cliCredentialStore{})
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"lookaside", "login"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "requires a configured s3:// lookaside") {
+		t.Fatalf("login code = %d, stderr = %q", code, stderr.String())
 	}
 }
 
