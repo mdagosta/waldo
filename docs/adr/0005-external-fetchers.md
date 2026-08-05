@@ -1,6 +1,6 @@
 # ADR 0005: Keep fetchers external, bounded, and local-first
 
-- Status: accepted
+- Status: superseded by ADR 0014
 - Date: 2026-08-04
 
 ## Context

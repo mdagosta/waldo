@@ -14,17 +14,18 @@ import (
 )
 
 type Plan struct {
-	Kind        string      `json:"kind"`
-	Schema      int         `json:"schema"`
-	Destination string      `json:"destination"`
-	Title       string      `json:"title"`
-	Description string      `json:"description"`
-	License     string      `json:"license"`
-	Source      PlanSource  `json:"source"`
-	Mode        string      `json:"mode"`
-	MemoryBytes int64       `json:"memory_bytes"`
-	Writer      WriterPlan  `json:"writer"`
-	Inputs      []PlanInput `json:"inputs"`
+	Kind        string             `json:"kind"`
+	Schema      int                `json:"schema"`
+	Destination string             `json:"destination"`
+	Title       string             `json:"title"`
+	Description string             `json:"description"`
+	License     string             `json:"license"`
+	Source      PlanSource         `json:"source"`
+	Mode        string             `json:"mode"`
+	MemoryBytes int64              `json:"memory_bytes"`
+	Writer      WriterPlan         `json:"writer"`
+	Inputs      []PlanInput        `json:"inputs"`
+	Composition *index.Composition `json:"composition,omitempty"`
 }
 
 type PlanSource struct {
@@ -50,6 +51,7 @@ type PlanInput struct {
 	Artifact   Artifact `json:"artifact"`
 	Adapter    string   `json:"adapter"`
 	TextColumn string   `json:"text_column,omitempty"`
+	SourcePath string   `json:"source_path,omitempty"`
 }
 
 type PlanRequest struct {
@@ -61,6 +63,8 @@ type PlanRequest struct {
 	Mode        string
 	MemoryBytes int64
 	TextColumn  string
+	InputRoot   string
+	Composition *index.Composition
 }
 
 func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
@@ -101,6 +105,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		Kind: "waldo-ingest-plan", Schema: 1,
 		Destination: request.Destination, Title: request.Title, Description: request.Description, License: request.License,
 		Source: request.Source, Mode: mode, MemoryBytes: memory,
+		Composition: request.Composition,
 		Writer: WriterPlan{
 			Format: "parquet", RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
 			CompressedTarget: 256 << 20, CompressedMaximum: 512 << 20,
@@ -114,6 +119,17 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 	}
 	for _, artifact := range probe.Artifacts {
 		input := PlanInput{Artifact: artifact}
+		if request.InputRoot != "" {
+			root, err := filepath.Abs(request.InputRoot)
+			if err != nil {
+				return Plan{}, err
+			}
+			relative, err := filepath.Rel(root, artifact.Path)
+			if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+				return Plan{}, fmt.Errorf("input %s is outside compose output %s", artifact.Path, root)
+			}
+			input.SourcePath = filepath.ToSlash(relative)
+		}
 		switch artifact.Format {
 		case "text", "markdown":
 			input.Adapter = artifact.Format
@@ -185,6 +201,12 @@ func (plan Plan) Validate() error {
 		artifact := input.Artifact
 		if !filepath.IsAbs(artifact.Path) || artifact.Path <= previous || artifact.Bytes < 0 || !validSHA256(artifact.SHA256) {
 			return fmt.Errorf("plan inputs must have sorted absolute paths, sizes, and hashes")
+		}
+		if input.SourcePath != "" {
+			cleanSource := filepath.ToSlash(filepath.Clean(filepath.FromSlash(input.SourcePath)))
+			if cleanSource == "." || cleanSource != input.SourcePath || strings.HasPrefix(cleanSource, "../") || filepath.IsAbs(filepath.FromSlash(input.SourcePath)) {
+				return fmt.Errorf("input %s has invalid source path %q", artifact.Path, input.SourcePath)
+			}
 		}
 		switch input.Adapter {
 		case "text", "markdown":

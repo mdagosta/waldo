@@ -17,6 +17,17 @@ Run the filesystem-backed path with no credentials or network access:
 ./scripts/e2e/ingest-smoke.sh local
 ```
 
+Run the same lifecycle through a real shell fetcher and strict ingest compose:
+
+```bash
+./scripts/e2e/ingest-smoke.sh local compose
+```
+
+Compose mode creates a disposable `waldo-fetchers` fixture. The script copies
+raw data only into `WALDO_FETCH_DIR`; WALDO probes it, performs normal canonical
+conversion and publication, records compose/script hashes in the manifest, and
+purges the prepared input workspace after staging the contribution.
+
 Set `WALDO_E2E_KEEP=1` to retain the temporary workspace for inspection.
 
 The S3 path intentionally has two guards. Its URL must contain an explicit

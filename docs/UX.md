@@ -75,9 +75,11 @@ architecture does not have to appear as product vocabulary.
 There is no `compose` command group. A declarative model recipe is one input to
 `waldo model build`.
 
-Source-specific acquisition is outside this binary. A separate repository will
-contain reviewed shell scripts that write raw artifacts and evidence to a local
-directory, then stop. WALDO does not discover or execute those scripts.
+Source-specific acquisition implementations remain outside this binary. A
+separate repository contains reviewed shell scripts and strict ingest-compose
+files. Normal ingestion consumes a user-prepared local directory. When the user
+explicitly supplies a compose to `index ingest`, WALDO runs only the scripts
+named by that file; they populate private temporary input space and stop.
 
 ## Primary journeys
 
@@ -219,7 +221,8 @@ user actions. Human output lists every overlay file and prints copy, full-index
 verification, staged-diff checking, and `git commit -s` commands. WALDO does
 not run those commands on the user's behalf.
 
-The command deliberately has one execution path. Its arguments are:
+The command deliberately converges on one conversion and publication path. Its
+direct-input arguments are:
 
 | Argument | When to use it |
 | --- | --- |
@@ -234,6 +237,38 @@ The command deliberately has one execution path. Its arguments are:
 | `--text-column` | Only when raw Parquet has no uniquely inferable text column. |
 | `--dry-run` | Probe and print the immutable plan without writing or publishing. |
 | `--json` | Global option for structured output and progress events. |
+
+The same command accepts a strict YAML or JSON compose identified by
+`kind: waldo-ingest-compose` and `schema: 1`:
+
+```bash
+waldo index ingest ../waldo-fetchers/composes/common-pile/foodista.yaml \
+  /path/to/waldo-index/core/common-pile/foodista --dry-run
+```
+
+A compose supplies title, description, license, source facts, optional Parquet
+text-column mapping, and an ordered list of external script paths and literal
+arguments. Relative script paths resolve from the compose file. WALDO hashes
+the compose and every executable before execution, runs each script directly
+without an intervening shell, and rechecks those hashes afterward. Scripts
+share a private temporary directory as their working directory and receive its
+absolute path in `WALDO_FETCH_DIR`; they must write only acquired artifacts
+there. `WALDO_COMPOSE_FILE` names the absolute compose path.
+
+Compose input rejects all corpus-metadata flags so the reviewed file completely
+describes the run. `--dry-run` validates the compose, destination, scripts, and
+Git evidence but does not execute a script or create temporary files. A real
+run probes the produced directory and enters the same immutable plan, adapter,
+Parquet, upload, journal, and contribution backend as direct ingestion.
+Successful runs purge the entire prepared input workspace. Failed runs retain
+verified preparation state beneath `ingest.staging`; an unchanged retry reuses
+it, while a partially executed preparation is cleared and rerun.
+
+Generated manifests retain the compose content hash, repository/commit when
+discoverable, dirty-checkout status, and every executed script path and hash.
+Each acquired file also records its relative path, bytes, detected format,
+adapter, and mapping. Secrets and environment values are never written to the
+manifest.
 
 Publication is configured once through `waldo config set`; ingestion
 has no second per-run destination or alternate partial execution mode.

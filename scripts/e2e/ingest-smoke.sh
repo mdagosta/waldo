@@ -2,12 +2,14 @@
 set -eu
 
 usage() {
-  echo "usage: $0 local | s3://bucket/waldo-e2e[/prefix]" >&2
+  echo "usage: $0 local|s3://bucket/waldo-e2e[/prefix] [direct|compose]" >&2
   exit 2
 }
 
-[ "$#" -eq 1 ] || usage
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage
 transport=$1
+mode=${2:-direct}
+case "$mode" in direct|compose) ;; *) usage ;; esac
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH= cd -- "$script_dir/../.." && pwd)
@@ -67,6 +69,32 @@ printf 'Plain UTF-8: café, 東京, and 🚀.\nSecond line preserved exactly.\n'
 printf '# Markdown title\n\nA paragraph with "quotes", a backslash \\, and trailing punctuation!\n\n- one\n- two\n' > "$fixture/02-markdown.md"
 cp "$fixture/01-plain.txt" "$fixture/03-duplicate.txt"
 
+ingest_input=$fixture
+if [ "$mode" = "compose" ]; then
+  compose_root="$work/waldo-fetchers"
+  mkdir -p "$compose_root"
+  fetcher="$compose_root/fetch-fixture.sh"
+  compose="$compose_root/tiny.yaml"
+  printf '%s\n' '#!/bin/sh' 'set -eu' 'cp "$1"/* "$WALDO_FETCH_DIR"/' > "$fetcher"
+  chmod 755 "$fetcher"
+  printf '%s\n' \
+    'kind: waldo-ingest-compose' \
+    'schema: 1' \
+    'title: Tiny-E2E-Corpus' \
+    'description: Disposable-ingestion-smoke-test' \
+    'license: CC0-1.0' \
+    'source:' \
+    '  name: tiny' \
+    '  url: https://example.invalid/waldo-e2e' \
+    '  category: public-dataset' \
+    'steps:' \
+    '  - name: fetch-fixture' \
+    '    run: fetch-fixture.sh' \
+    '    args:' \
+    "      - $fixture" > "$compose"
+  ingest_input=$compose
+fi
+
 echo "initializing empty index"
 "$binary" index init "$index_root"
 
@@ -85,12 +113,20 @@ common_arguments="--title Tiny-E2E-Corpus --description Disposable-ingestion-smo
 echo "preflighting ingestion"
 # The arguments are fixed test data rather than user input; intentional word
 # splitting keeps this POSIX script dependency-free.
-# shellcheck disable=SC2086
-"$binary" index ingest "$fixture" "$destination" $common_arguments --dry-run
+if [ "$mode" = "compose" ]; then
+  "$binary" index ingest "$ingest_input" "$destination" --dry-run
+else
+  # shellcheck disable=SC2086
+  "$binary" index ingest "$ingest_input" "$destination" $common_arguments --dry-run
+fi
 
 echo "running ingestion"
-# shellcheck disable=SC2086
-"$binary" index ingest "$fixture" "$destination" $common_arguments
+if [ "$mode" = "compose" ]; then
+  "$binary" index ingest "$ingest_input" "$destination"
+else
+  # shellcheck disable=SC2086
+  "$binary" index ingest "$ingest_input" "$destination" $common_arguments
+fi
 
 if [ "$transport" = "local" ]; then
   published_count=$(find "$work/lookaside" -type f -print | wc -l | tr -d ' ')
@@ -154,6 +190,10 @@ if find "$staging" -path '*/objects/*' -type f -print | grep . >/dev/null 2>&1; 
   echo "successful ingestion left staged object files behind" >&2
   exit 1
 fi
+if find "$staging/composes" -mindepth 1 -print 2>/dev/null | grep . >/dev/null 2>&1; then
+  echo "successful composed ingestion left prepared source files behind" >&2
+  exit 1
+fi
 if find "$scratch" -type f -print 2>/dev/null | grep . >/dev/null 2>&1; then
   echo "successful verification/export left scratch object files behind" >&2
   exit 1
@@ -163,3 +203,4 @@ echo "E2E ingest passed: generated, initialized, published, applied, verified, e
 echo "  index:      $index_root"
 echo "  lookaside:  $lookaside_url"
 echo "  records:    $line_count"
+echo "  mode:       $mode"

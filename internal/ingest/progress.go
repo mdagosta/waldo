@@ -20,6 +20,7 @@ type ProgressEvent struct {
 	Bytes          int64  `json:"bytes,omitempty"`
 	TotalBytes     int64  `json:"total_bytes,omitempty"`
 	ReclaimedBytes int64  `json:"reclaimed_bytes,omitempty"`
+	Message        string `json:"message,omitempty"`
 }
 
 type ProgressSink func(ProgressEvent)

@@ -19,8 +19,11 @@ and export selected shards as native objects or canonical JSONL with an
 `EXPORT.json` provenance record. It can also probe text/Markdown/raw Parquet,
 write canonical schema-1 Parquet, publish shards to S3 with bounded concurrency
 and remote checksum verification, reclaim staging safely, and create a Git
-review overlay. A filesystem-backed publisher exercises the same path locally
-for integration tests. Phase 4 now includes strict model recipes, verified
+review overlay. Direct local inputs and strict external ingest composes converge
+on that same backend; composed fetcher scripts populate temporary source space,
+are pinned in manifest evidence, and are purged after successful contribution.
+A filesystem-backed publisher exercises the same path locally for integration
+tests. Phase 4 now includes strict model recipes, verified
 corpus inputs, immutable build plans, durable model/run OpenWALDO BOMs, and a
 fake backend that proves complete/failure/interruption orchestration without
 claiming to train real weights. A fail-closed EU GPAI export maps the model and
@@ -52,7 +55,8 @@ template from later model BOMs.
 - The common path should be obvious; advanced maintenance should remain out of
   the way until it is needed.
 - Fetchers are external shell scripts maintained in a separate repository.
-  WALDO begins with local input supplied explicitly to `index ingest`.
+  WALDO consumes local input directly or executes only scripts explicitly named
+  by a supplied ingest compose; canonical conversion remains inside WALDO.
 
 ## Development
 
@@ -60,6 +64,7 @@ template from later model BOMs.
 go test ./...
 go run ./cmd/waldo --help
 ./scripts/e2e/ingest-smoke.sh local
+./scripts/e2e/ingest-smoke.sh local compose
 ```
 
 Start with [VISION.md](VISION.md), then read [the UX contract](docs/UX.md),

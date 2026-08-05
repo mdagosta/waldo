@@ -52,6 +52,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			Tool: "waldo index ingest", Version: "0.1.0-dev",
 			Profile: "canonical-text-schema-1", Recipe: shard.TextWriterRecipe,
 		},
+		ComposedBy: plan.Composition,
 		Processing: &index.Processing{Steps: []index.ProcessingStep{
 			{Name: "decode", Description: "Read the accepted text or projected Parquet mapping without an interchange materialization."},
 			{Name: "validate", Description: "Require scalar NUL-free UTF-8 records within the accepted size limit."},
@@ -89,6 +90,7 @@ func sourceAcquisitionIdentity(plan Plan) (string, []index.SourceFile, error) {
 		Format     string `json:"format"`
 		Adapter    string `json:"adapter"`
 		TextColumn string `json:"text_column,omitempty"`
+		SourcePath string `json:"source_path,omitempty"`
 	}
 	wire := struct {
 		Kind      string             `json:"kind"`
@@ -100,15 +102,19 @@ func sourceAcquisitionIdentity(plan Plan) (string, []index.SourceFile, error) {
 	for _, input := range plan.Inputs {
 		wire.Artifacts = append(wire.Artifacts, artifactIdentity{
 			SHA256: input.Artifact.SHA256, Bytes: input.Artifact.Bytes,
-			Format: input.Artifact.Format, Adapter: input.Adapter, TextColumn: input.TextColumn,
+			Format: input.Artifact.Format, Adapter: input.Adapter, TextColumn: input.TextColumn, SourcePath: input.SourcePath,
 		})
-		name := filepath.Base(input.Artifact.Path)
+		name := input.SourcePath
+		if name == "" {
+			name = filepath.Base(input.Artifact.Path)
+		}
 		if seenNames[name] {
 			name = input.Artifact.SHA256[:12] + "-" + name
 		}
 		seenNames[name] = true
 		files = append(files, index.SourceFile{
 			Name: name, URL: artifactEvidenceURL(plan.Source.URL, input.Artifact.SHA256), SHA256: input.Artifact.SHA256,
+			Bytes: input.Artifact.Bytes, Format: input.Artifact.Format, Adapter: input.Adapter, TextColumn: input.TextColumn,
 		})
 	}
 	data, err := json.Marshal(wire)

@@ -69,10 +69,15 @@ Implemented foundation:
 - Manifest and navigation generation
 - Durable staging and recovery
 - DCO-oriented Git handoff
+- Strict YAML/JSON ingest compose detection without a separate command
+- Explicit sequential external fetcher execution into WALDO-owned temporary input
+- Compose, Git, script, and resolved-artifact evidence in manifests and BOMs
+- Successful prepared-source purge and verified retry state
 
-The first end-to-end contribution path is complete. Source-specific fetchers
-are intentionally outside this repository: a separate project will provide
-reviewed shell scripts that stop after writing to a local directory.
+The direct and composed end-to-end contribution paths are complete.
+Source-specific fetchers remain outside this repository; a separate project
+provides reviewed shell scripts and compose files. Scripts stop after writing
+to WALDO's supplied temporary directory.
 
 Exit: a directory of source documents becomes a reviewable, reproducible index
 contribution through one command.

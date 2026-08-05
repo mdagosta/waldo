@@ -27,19 +27,20 @@ type Entry struct {
 // decoder deliberately permits unknown fields so additive metadata does not
 // make an older reader reject an otherwise compatible index.
 type Manifest struct {
-	Kind         string      `json:"kind"`
-	Schema       int         `json:"schema"`
-	Name         string      `json:"name"`
-	Title        string      `json:"title"`
-	Description  string      `json:"description"`
-	License      string      `json:"license"`
-	Format       string      `json:"format,omitempty"`
-	Sources      []Source    `json:"sources"`
-	ConvertedBy  Conversion  `json:"converted_by"`
-	RecordSchema int         `json:"record_schema,omitempty"`
-	Processing   *Processing `json:"processing,omitempty"`
-	Shards       []Shard     `json:"-"`
-	Rollup       *Rollup     `json:"-"`
+	Kind         string       `json:"kind"`
+	Schema       int          `json:"schema"`
+	Name         string       `json:"name"`
+	Title        string       `json:"title"`
+	Description  string       `json:"description"`
+	License      string       `json:"license"`
+	Format       string       `json:"format,omitempty"`
+	Sources      []Source     `json:"sources"`
+	ConvertedBy  Conversion   `json:"converted_by"`
+	RecordSchema int          `json:"record_schema,omitempty"`
+	Processing   *Processing  `json:"processing,omitempty"`
+	ComposedBy   *Composition `json:"composed_by,omitempty"`
+	Shards       []Shard      `json:"-"`
+	Rollup       *Rollup      `json:"-"`
 }
 
 // UnmarshalJSON accepts the schema-1 polymorphic shards field: an inline
@@ -179,8 +180,30 @@ type ProcessingStep struct {
 }
 
 type SourceFile struct {
+	Name       string `json:"name"`
+	URL        string `json:"url"`
+	SHA256     string `json:"sha256"`
+	Bytes      int64  `json:"bytes,omitempty"`
+	Format     string `json:"format,omitempty"`
+	Adapter    string `json:"adapter,omitempty"`
+	TextColumn string `json:"text_column,omitempty"`
+}
+
+// Composition pins the explicitly supplied fetch-and-ingest compose and every
+// external script WALDO executed before probing the resulting local artifacts.
+// Script arguments remain pinned by the compose hash and are not repeated here.
+type Composition struct {
+	Path       string            `json:"path"`
+	SHA256     string            `json:"sha256"`
+	Repository string            `json:"repository,omitempty"`
+	Commit     string            `json:"commit,omitempty"`
+	Dirty      bool              `json:"dirty"`
+	Steps      []CompositionStep `json:"steps"`
+}
+
+type CompositionStep struct {
 	Name   string `json:"name"`
-	URL    string `json:"url"`
+	Script string `json:"script"`
 	SHA256 string `json:"sha256"`
 }
 

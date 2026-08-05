@@ -67,6 +67,11 @@ func (bom BOM) Validate() error {
 				return fmt.Errorf("manifest %s processing: %w", manifest.Path, err)
 			}
 		}
+		if manifest.ComposedBy != nil {
+			if err := index.ValidateComposition(*manifest.ComposedBy); err != nil {
+				return fmt.Errorf("manifest %s composed_by: %w", manifest.Path, err)
+			}
+		}
 		if err := index.ValidateModalities("manifest "+manifest.Path, manifest.Modalities); err != nil {
 			return err
 		}

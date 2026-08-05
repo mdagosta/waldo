@@ -20,8 +20,10 @@ reason.
   materialization then verifies every object named by it.
 - A model **recipe** is consumed by `waldo model build`; there is no separate
   `compose` command group.
-- Fetchers are external producers and will live in another repository. This
-  repository owns their handoff contract, not their source-specific scripts.
+- Fetchers are external shell scripts that live in another repository. WALDO
+  may execute them only when the user explicitly supplies a strict
+  `waldo-ingest-compose`; scripts populate WALDO-owned temporary input space
+  and never own conversion, publication, or index mutation.
 
 ## Dependency direction
 

@@ -46,6 +46,9 @@ func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {
 	if bom.Manifests[0].Processing == nil || len(bom.Manifests[0].Processing.Steps) != 1 || bom.Modalities["text"].Tokens != 30 || bom.Manifests[0].Modalities["text"].Samples != 3 || bom.Shards[0].Modalities["text"].ContentBytes != 240 {
 		t.Fatalf("disclosure provenance was not preserved = %+v / %+v", bom.Manifests[0], bom.Shards[0])
 	}
+	if bom.Manifests[0].ComposedBy == nil || bom.Manifests[0].ComposedBy.Path != "composes/books.yaml" || len(bom.Manifests[0].ComposedBy.Steps) != 1 {
+		t.Fatalf("composition evidence was not preserved = %+v", bom.Manifests[0].ComposedBy)
+	}
 	if bom.Totals.Shards != 1 || bom.Totals.Docs != 3 || bom.Totals.Tokens != 30 || bom.Totals.Bytes != 300 {
 		t.Fatalf("bom totals = %+v", bom.Totals)
 	}
@@ -164,6 +167,8 @@ func bomFixture(t *testing.T) string {
     "files": [{"name": "input", "url": "https://example.test/input", "sha256": %q}]}],
   "converted_by": {"tool": "test", "version": "1", "profile": "text", "recipe": "test/v1", "tokenizer": "byte"},
   "processing": {"steps": [{"name": "normalize", "description": "Normalize text."}]},
+  "composed_by": {"path": "composes/books.yaml", "sha256": %q,
+    "steps": [{"name": "fetch", "script": "fetchers/books.sh", "sha256": %q}]},
   "shards": [
     {"url": "https://example.test/a", "sha256": %q, "sources": ["source"], "docs": 2, "tokens": 20, "bytes": 200,
      "modalities": {"text": {"samples": 2, "tokens": 20, "content_bytes": 160}}},
@@ -172,7 +177,7 @@ func bomFixture(t *testing.T) string {
      "docs": 3, "tokens": 30, "bytes": 300,
      "modalities": {"text": {"samples": 3, "tokens": 30, "content_bytes": 240}}}
   ]
-}`, strings.Repeat("a", 64), strings.Repeat("d", 64), strings.Repeat("b", 64), strings.Repeat("c", 64))
+}`, strings.Repeat("a", 64), strings.Repeat("d", 64), strings.Repeat("e", 64), strings.Repeat("f", 64), strings.Repeat("b", 64), strings.Repeat("c", 64))
 	writeBOMFile(t, filepath.Join(root, "books", "books.json"), manifest)
 	return root
 }

@@ -2,15 +2,15 @@
 
 Fetchers are source-specific shell scripts maintained in a separate repository.
 They are not WALDO commands, Go packages, runtime plugins, or part of this
-repository's release. They download upstream material into a user-selected
-local directory and record what they observed. A fetch ends there: it does not
-invoke WALDO, publish to a lookaside, mutate an index, or start model training.
+repository's release. They download upstream material into a supplied local
+directory and stop. They never publish to a lookaside, mutate an index, convert
+canonical Parquet, or start model training.
 
-The separate fetcher project will finalize its script conventions and local
-acquisition schema later. Until then, this document records only the ownership
-boundary. WALDO consumes ordinary local files and directories through
-`waldo index ingest`; it does not currently interpret a fetcher-specific
-acquisition record. Conversely, `waldo index export` materializes an already
+WALDO normally consumes ordinary local files and directories through
+`waldo index ingest`. It can also consume a strict ingest compose from the
+fetcher repository. That compose names reviewed scripts and corpus metadata;
+WALDO executes the scripts into private staging and then treats their output as
+ordinary local input. Conversely, `waldo index export` materializes an already
 indexed corpus and its OpenWALDO BOM into a local directory.
 
 ## A fetcher owns
@@ -68,12 +68,59 @@ do not make a legal-compliance determination.
 ## Repository and execution boundary
 
 - Fetchers ship as reviewed shell scripts from their own repository.
-- WALDO does not discover, download, install, or execute fetcher scripts.
-- Network, pagination, authentication, retries, and source-specific concerns
-  do not enter this repository's CLI or Go packages.
-- The user explicitly runs ingestion after reviewing a local acquisition.
-- Any future machine-readable handoff must be reviewed as a versioned contract;
-  it is not implied by this document.
+- WALDO does not discover, download, or install fetcher scripts.
+- The user explicitly authorizes execution by passing one compose file as the
+  first positional argument to `waldo index ingest`.
+- WALDO executes only relative regular non-symlink executable paths named by
+  that strict compose, in declaration order and without an intervening shell.
+- All steps share a WALDO-owned temporary working directory, also exposed as
+  `WALDO_FETCH_DIR`. `WALDO_COMPOSE_FILE` identifies the compose being run.
+- Network, pagination, authentication, retries, and source-specific behavior
+  remain inside the scripts. WALDO inherits the invoking environment but never
+  records environment or secret values.
+- Scripts and composes are hashed before execution and rechecked afterward.
+- WALDO independently probes and hashes every produced artifact before it can
+  enter an immutable ingestion plan.
+
+Fetcher execution is explicit trust, not an operating-system sandbox. A script
+runs with the invoking user's permissions and inherited environment. The
+reviewed contract requires it to write acquired artifacts only beneath
+`WALDO_FETCH_DIR`; WALDO ensures that only regular non-symlink files found
+there become ingestion inputs.
+
+## Ingest compose schema 1
+
+Compose files are strict YAML or JSON. Unknown fields, multiple YAML documents,
+absolute script paths, duplicate step names, missing scripts, symlinks, and
+non-executable scripts are rejected.
+
+```yaml
+kind: waldo-ingest-compose
+schema: 1
+title: Foodista
+description: Community-contributed cooking and food articles.
+license: CC-BY-3.0
+source:
+  name: common-pile/foodista_filtered
+  url: https://huggingface.co/datasets/common-pile/foodista_filtered
+  category: public-dataset
+text_column: text
+steps:
+  - name: fetch
+    run: ../../fetchers/common-pile.sh
+    args:
+      - foodista_filtered
+```
+
+`description`, `source.name`, `text_column`, and each step's `args` are
+optional. `title`, `license`, `source.url`, `source.category`, and at least one
+step are required. The destination is never embedded; it remains the second
+positional argument to `index ingest`.
+
+The initial schema supports the same source categories as executable direct
+ingestion: `public-dataset`, `private-third-party`, and `other`. Categories
+whose EU GPAI evidence is structurally required will be enabled only when the
+compose can express that evidence without flags or inference.
 
 ## Non-goals
 

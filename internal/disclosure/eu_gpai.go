@@ -125,12 +125,13 @@ type CorpusUse struct {
 }
 
 type ManifestEvidence struct {
-	Path       string            `json:"path"`
-	SHA256     string            `json:"sha256"`
-	Name       string            `json:"name"`
-	Title      string            `json:"title"`
-	Sources    []index.Source    `json:"sources"`
-	Processing *index.Processing `json:"processing,omitempty"`
+	Path       string             `json:"path"`
+	SHA256     string             `json:"sha256"`
+	Name       string             `json:"name"`
+	Title      string             `json:"title"`
+	Sources    []index.Source     `json:"sources"`
+	Processing *index.Processing  `json:"processing,omitempty"`
+	ComposedBy *index.Composition `json:"composed_by,omitempty"`
 }
 
 type Gap struct {
@@ -342,7 +343,7 @@ func (report *EUGPAIReport) addCorpusGaps(item CorpusUse) {
 func corpusUse(hash string, bom corpus.BOM) *CorpusUse {
 	result := &CorpusUse{BOMSHA256: hash, Paths: append([]string(nil), bom.Paths...), Totals: bom.Totals, Modalities: cloneModalities(bom.Modalities), Licenses: bom.Licenses}
 	for _, manifest := range bom.Manifests {
-		result.Manifests = append(result.Manifests, ManifestEvidence{Path: manifest.Path, SHA256: manifest.SHA256, Name: manifest.Name, Title: manifest.Title, Sources: manifest.Sources, Processing: manifest.Processing})
+		result.Manifests = append(result.Manifests, ManifestEvidence{Path: manifest.Path, SHA256: manifest.SHA256, Name: manifest.Name, Title: manifest.Title, Sources: manifest.Sources, Processing: manifest.Processing, ComposedBy: manifest.ComposedBy})
 	}
 	return result
 }

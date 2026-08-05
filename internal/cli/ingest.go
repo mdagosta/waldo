@@ -7,6 +7,7 @@ import (
 	"io"
 	"path"
 	"strings"
+	"sync"
 
 	"github.com/openwaldo/waldo-new/internal/config"
 	waldoindex "github.com/openwaldo/waldo-new/internal/index"
@@ -18,16 +19,42 @@ var newIngestPublisher = func(ctx context.Context, publish config.Publish) (look
 	return lookaside.NewPublisher(ctx, publish)
 }
 
+var ingestComposeRunner ingest.CommandRunner = ingest.ExecCommandRunner{}
+
 func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) error {
 	options, err := parseIndexIngest(args)
 	if err != nil {
 		return err
+	}
+	loadedCompose, composed, err := ingest.LoadCompose(options.Inputs[0])
+	if err != nil {
+		return err
+	}
+	if composed {
+		if len(options.MetadataOptions) > 0 {
+			return usageError{message: fmt.Sprintf("compose input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))}
+		}
+		options.Request.Title = loadedCompose.Compose.Title
+		options.Request.Description = loadedCompose.Compose.Description
+		options.Request.License = loadedCompose.Compose.License
+		options.Request.Source = ingest.PlanSource{
+			Name: loadedCompose.Compose.Source.Name, URL: loadedCompose.Compose.Source.URL, Category: loadedCompose.Compose.Source.Category,
+		}
+		options.Request.TextColumn = loadedCompose.Compose.TextColumn
+	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
+		return usageError{message: "direct index ingest requires --title, --license, --source, and --source-category"}
 	}
 	target, err := waldoindex.ResolveDestination(options.Request.Destination)
 	if err != nil {
 		return err
 	}
 	options.Request.Destination = target.Rel
+	if options.Request.Source.Name == "" {
+		options.Request.Source.Name = path.Base(strings.TrimSuffix(target.Rel, "/"))
+	}
+	if composed && options.DryRun {
+		return writeComposePreflight(context, stdout, loadedCompose, target.Rel)
+	}
 	var configuration config.Config
 	if !options.DryRun {
 		configuration, err = config.Load()
@@ -39,9 +66,41 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		}
 	}
 	execution := ingest.WithProgress(context.Execution, ingestProgressReporter(stderr, context.JSON))
-	probe, err := ingest.ProbePaths(execution, options.Inputs)
-	if err != nil {
-		return err
+	var probe ingest.Probe
+	var prepared *ingest.PreparedCompose
+	if composed {
+		if err := ingest.CheckContributionDestinationPath(target.Root, target.Rel); err != nil {
+			return err
+		}
+		stagingBase, err := config.EffectiveStagingBase(configuration)
+		if err != nil {
+			return err
+		}
+		scratchRoot, err := config.EffectiveScratchRoot(configuration)
+		if err != nil {
+			return err
+		}
+		if err := ingest.ValidateWorkLocations(target.Root, stagingBase, scratchRoot); err != nil {
+			return err
+		}
+		composeOutput := io.Writer(stderr)
+		if context.JSON {
+			composeOutput = &composeJSONLogWriter{output: stderr}
+		}
+		result, err := ingest.PrepareCompose(execution, loadedCompose, target.Rel, stagingBase, ingestComposeRunner, composeOutput, composeOutput)
+		if err != nil {
+			return err
+		}
+		prepared = &result
+		probe = result.Probe
+		composition := result.Loaded.Evidence
+		options.Request.Composition = &composition
+		options.Request.InputRoot = result.Inputs
+	} else {
+		probe, err = ingest.ProbePaths(execution, options.Inputs)
+		if err != nil {
+			return err
+		}
 	}
 	plan, err := ingest.NewPlan(probe, options.Request)
 	if err != nil {
@@ -88,6 +147,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		contribution, err := ingest.StageContribution(target.Root, staging, plan, manifest)
 		if err != nil {
 			return err
+		}
+		if prepared != nil {
+			if err := ingest.PurgePreparedCompose(*prepared); err != nil {
+				return err
+			}
 		}
 		if context.JSON {
 			return writeJSON(stdout, struct {
@@ -144,6 +208,46 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	return nil
 }
 
+type composeJSONLogWriter struct {
+	mu     sync.Mutex
+	output io.Writer
+}
+
+func (writer *composeJSONLogWriter) Write(data []byte) (int, error) {
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	message := strings.TrimRight(string(data), "\r\n")
+	if message == "" {
+		return len(data), nil
+	}
+	err := json.NewEncoder(writer.output).Encode(ingest.ProgressEvent{Phase: "fetch", Status: "output", Message: message})
+	if err != nil {
+		return 0, err
+	}
+	return len(data), nil
+}
+
+func writeComposePreflight(context Context, stdout io.Writer, loaded ingest.LoadedCompose, destination string) error {
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Kind        string               `json:"kind"`
+			Destination string               `json:"destination"`
+			Compose     ingest.LoadedCompose `json:"compose"`
+		}{Kind: "waldo-ingest-compose-preflight", Destination: destination, Compose: loaded})
+	}
+	fmt.Fprintf(stdout, "ingest compose %s\n", loaded.Path)
+	fmt.Fprintf(stdout, "  sha256      %s\n", loaded.SHA256)
+	fmt.Fprintf(stdout, "  destination %s\n", destination)
+	fmt.Fprintf(stdout, "  title       %s\n", loaded.Compose.Title)
+	fmt.Fprintf(stdout, "  license     %s\n", loaded.Compose.License)
+	fmt.Fprintf(stdout, "  source      %s (%s)\n", loaded.Compose.Source.URL, loaded.Compose.Source.Category)
+	for position, script := range loaded.Scripts {
+		fmt.Fprintf(stdout, "  step %d      %s -> %s (%s)\n", position+1, script.Name, script.Path, script.SHA256[:12])
+	}
+	fmt.Fprintln(stdout, "dry run complete; no scripts were executed and no files were written")
+	return nil
+}
+
 func shellQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
@@ -160,6 +264,10 @@ func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSi
 			short = short[:12]
 		}
 		switch {
+		case event.Phase == "fetch" && event.Status == "started":
+			fmt.Fprintf(output, "fetch %d  %s started\n", event.Sequence, event.Input)
+		case event.Phase == "fetch" && event.Status == "completed":
+			fmt.Fprintf(output, "fetch %d  %s completed\n", event.Sequence, event.Input)
 		case event.Phase == "input" && event.Status == "probing":
 			fmt.Fprintf(output, "probing  %s\n", event.Input)
 		case event.Phase == "input" && event.Status == "detected":
@@ -184,9 +292,10 @@ func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSi
 }
 
 type indexIngestOptions struct {
-	Request ingest.PlanRequest
-	Inputs  []string
-	DryRun  bool
+	Request         ingest.PlanRequest
+	Inputs          []string
+	DryRun          bool
+	MetadataOptions []string
 }
 
 func parseIndexIngest(args []string) (indexIngestOptions, error) {
@@ -206,18 +315,25 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 			options.DryRun = true
 		case "--title":
 			options.Request.Title, err = value("--title")
+			options.MetadataOptions = append(options.MetadataOptions, "--title")
 		case "--description":
 			options.Request.Description, err = value("--description")
+			options.MetadataOptions = append(options.MetadataOptions, "--description")
 		case "--license":
 			options.Request.License, err = value("--license")
+			options.MetadataOptions = append(options.MetadataOptions, "--license")
 		case "--source":
 			options.Request.Source.URL, err = value("--source")
+			options.MetadataOptions = append(options.MetadataOptions, "--source")
 		case "--source-name":
 			options.Request.Source.Name, err = value("--source-name")
+			options.MetadataOptions = append(options.MetadataOptions, "--source-name")
 		case "--source-category":
 			options.Request.Source.Category, err = value("--source-category")
+			options.MetadataOptions = append(options.MetadataOptions, "--source-category")
 		case "--text-column":
 			options.Request.TextColumn, err = value("--text-column")
+			options.MetadataOptions = append(options.MetadataOptions, "--text-column")
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return indexIngestOptions{}, usageError{message: fmt.Sprintf("unknown index ingest option %q", arg)}
@@ -233,12 +349,5 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 	}
 	options.Request.Destination = options.Inputs[1]
 	options.Inputs = options.Inputs[:1]
-	request := &options.Request
-	if request.Title == "" || request.License == "" || request.Source.URL == "" || request.Source.Category == "" {
-		return indexIngestOptions{}, usageError{message: "index ingest requires --title, --license, --source, and --source-category"}
-	}
-	if request.Source.Name == "" {
-		request.Source.Name = path.Base(strings.TrimSuffix(request.Destination, "/"))
-	}
 	return options, nil
 }

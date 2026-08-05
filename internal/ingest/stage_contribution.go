@@ -165,6 +165,12 @@ func pathWithin(parent, child string) bool {
 // CheckContributionDestination performs the checkout collision check before
 // expensive conversion or lookaside admission begins.
 func CheckContributionDestination(indexRoot string, plan Plan) error {
+	return CheckContributionDestinationPath(indexRoot, plan.Destination)
+}
+
+// CheckContributionDestinationPath allows composed ingestion to reject an
+// occupied destination before it executes potentially expensive fetchers.
+func CheckContributionDestinationPath(indexRoot, destinationPath string) error {
 	root, err := filepath.Abs(indexRoot)
 	if err != nil {
 		return err
@@ -172,9 +178,9 @@ func CheckContributionDestination(indexRoot string, plan Plan) error {
 	if _, err := index.LoadDirectory(root); err != nil {
 		return fmt.Errorf("load index root: %w", err)
 	}
-	destination := filepath.Join(root, filepath.FromSlash(plan.Destination))
+	destination := filepath.Join(root, filepath.FromSlash(destinationPath))
 	if _, err := os.Stat(destination); err == nil {
-		return fmt.Errorf("index destination %s already exists", plan.Destination)
+		return fmt.Errorf("index destination %s already exists", destinationPath)
 	} else if !os.IsNotExist(err) {
 		return err
 	}

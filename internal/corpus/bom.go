@@ -57,6 +57,7 @@ type ManifestPin struct {
 	ConvertedBy  index.Conversion          `json:"converted_by"`
 	Sources      []index.Source            `json:"sources"`
 	Processing   *index.Processing         `json:"processing,omitempty"`
+	ComposedBy   *index.Composition        `json:"composed_by,omitempty"`
 	Totals       index.Measures            `json:"totals"`
 	Modalities   index.Modalities          `json:"modalities,omitempty"`
 	Licenses     map[string]index.Measures `json:"licenses"`
@@ -144,6 +145,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 		ConvertedBy:  corpus.Manifest.ConvertedBy,
 		Sources:      append([]index.Source(nil), corpus.Manifest.Sources...),
 		Processing:   corpus.Manifest.Processing,
+		ComposedBy:   corpus.Manifest.ComposedBy,
 		Licenses:     map[string]index.Measures{},
 	}
 	addShard := func(shard index.Shard, subManifestSHA256 string) {

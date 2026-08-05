@@ -164,9 +164,17 @@ func verifyManifest(path string, manifest Manifest) error {
 		}
 		sources[source.Name] = true
 		for j, file := range source.Files {
-			if file.Name == "" || file.URL == "" || !sha256Pattern.MatchString(file.SHA256) {
+			if file.Name == "" || file.URL == "" || !sha256Pattern.MatchString(file.SHA256) || file.Bytes < 0 {
 				return fmt.Errorf("%s: source %q file %d requires name, URL, and lowercase 64-character sha256", path, source.Name, j+1)
 			}
+			if file.TextColumn != "" && file.Adapter != "parquet" {
+				return fmt.Errorf("%s: source %q file %d has text_column without parquet adapter", path, source.Name, j+1)
+			}
+		}
+	}
+	if manifest.ComposedBy != nil {
+		if err := ValidateComposition(*manifest.ComposedBy); err != nil {
+			return fmt.Errorf("%s: composed_by: %w", path, err)
 		}
 	}
 	for i, shard := range manifest.Shards {
@@ -195,6 +203,22 @@ func verifyManifest(path string, manifest Manifest) error {
 	}
 	if err := validateManifestProvenance(manifest); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
+// ValidateComposition validates the portable audit evidence carried by an
+// index manifest and copied into an OpenWALDO BOM.
+func ValidateComposition(composition Composition) error {
+	if composition.Path == "" || !sha256Pattern.MatchString(composition.SHA256) || len(composition.Steps) == 0 {
+		return fmt.Errorf("path, sha256, and steps are required")
+	}
+	seenSteps := map[string]bool{}
+	for i, step := range composition.Steps {
+		if step.Name == "" || seenSteps[step.Name] || step.Script == "" || !sha256Pattern.MatchString(step.SHA256) {
+			return fmt.Errorf("step %d requires unique name, script, and lowercase 64-character sha256", i+1)
+		}
+		seenSteps[step.Name] = true
 	}
 	return nil
 }
