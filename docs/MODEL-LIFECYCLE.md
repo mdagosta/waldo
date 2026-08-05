@@ -77,6 +77,10 @@ fails before publication if required disclosure facts are absent, while
 if signing fails. Otherwise it succeeds with an unsigned warning. `model rm`
 accepts only exact model names.
 
+The complete package layouts, BOM layers, conversion rules, signing behavior,
+failure modes, and consumer examples are in
+[the model export guide](MODEL-EXPORTS.md).
+
 `--format huggingface` exports the current verified, complete, non-simulated
 run as a standalone Transformers package. WALDO rewrites only the Safetensors
 header: tensor bytes remain unchanged while names move to the standard Llama

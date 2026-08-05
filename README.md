@@ -55,7 +55,9 @@ The stable corpus contract is documented in
 training-data shape are documented in
 [the ingestion design](docs/INGESTION-DESIGN.md).
 The framework-neutral model formats and MLX backend boundary are documented
-in [the model lifecycle guide](docs/MODEL-LIFECYCLE.md).
+in [the model lifecycle guide](docs/MODEL-LIFECYCLE.md). Package layouts,
+format conversion, BOMs, disclosure, and signing are documented in
+[the model export guide](docs/MODEL-EXPORTS.md).
 The accompanying [EU GPAI disclosure mapping](docs/EU-GPAI-DISCLOSURE.md)
 defines the provenance needed to render the Commission's public training-content
 template from later model BOMs.

@@ -505,6 +505,8 @@ Exactly one runtime representation is selected with `--format waldo`,
 `huggingface`, `mlx`, `gguf`, or `ollama`. The GGUF package contains
 `model.gguf`; the Ollama package adds a `Modelfile` that can be passed directly
 to `ollama create`. Neither package duplicates the weights as Safetensors.
+See [the model export guide](MODEL-EXPORTS.md) for the package layouts, BOM
+semantics, format conversions, disclosure requirements, and signing contract.
 
 ## Common options
 
