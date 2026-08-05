@@ -246,10 +246,10 @@ func writeComposePreflight(context Context, stdout io.Writer, loaded ingest.Load
 	fmt.Fprintf(stdout, "  title       %s\n", loaded.Compose.Title)
 	fmt.Fprintf(stdout, "  license     %s\n", loaded.Compose.License)
 	fmt.Fprintf(stdout, "  source      %s (%s)\n", loaded.Compose.Source.URL, loaded.Compose.Source.Category)
-	for position, script := range loaded.Scripts {
-		fmt.Fprintf(stdout, "  step %d      %s -> %s (%s)\n", position+1, script.Name, script.Path, script.SHA256[:12])
+	for position, executable := range loaded.Executables {
+		fmt.Fprintf(stdout, "  step %d      %s -> %s (%s)\n", position+1, executable.Name, executable.Path, executable.SHA256[:12])
 	}
-	fmt.Fprintln(stdout, "dry run complete; no scripts were executed and no files were written")
+	fmt.Fprintln(stdout, "dry run complete; no commands were executed and no files were written")
 	return nil
 }
 

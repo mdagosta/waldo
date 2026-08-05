@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestLoadComposeStrictlyResolvesAndHashesScripts(t *testing.T) {
+func TestLoadComposeStrictlyResolvesAndHashesExecutables(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "fetch.sh")
 	writeExecutable(t, script, "#!/bin/sh\n")
@@ -27,18 +28,18 @@ source:
   category: public-dataset
 steps:
   - name: fetch
-    run: fetch.sh
+    exec: ./fetch.sh
     args: [one, two]
 `)
 	loaded, found, err := LoadCompose(composePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found || loaded.Compose.Title != "Example" || len(loaded.Scripts) != 1 || len(loaded.SHA256) != 64 || len(loaded.Scripts[0].SHA256) != 64 {
+	if !found || loaded.Compose.Title != "Example" || len(loaded.Executables) != 1 || len(loaded.SHA256) != 64 || len(loaded.Executables[0].SHA256) != 64 {
 		t.Fatalf("loaded = %+v, found = %v", loaded, found)
 	}
-	if loaded.Scripts[0].Path != script || strings.Join(loaded.Scripts[0].Args, ",") != "one,two" {
-		t.Fatalf("script = %+v", loaded.Scripts[0])
+	if loaded.Executables[0].Path != script || strings.Join(loaded.Executables[0].Args, ",") != "one,two" {
+		t.Fatalf("executable = %+v", loaded.Executables[0])
 	}
 
 	ordinary := filepath.Join(root, "ordinary.txt")
@@ -50,7 +51,7 @@ steps:
 	}
 }
 
-func TestLoadComposeRejectsUnknownFieldsAndNonExecutableScripts(t *testing.T) {
+func TestLoadComposeRejectsUnknownFieldsAndNonExecutableCommands(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "fetch.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o644); err != nil {
@@ -63,7 +64,7 @@ schema: 1
 title: Example
 license: CC0-1.0
 source: {url: https://example.test, category: public-dataset}
-steps: [{name: fetch, run: fetch.sh}]
+steps: [{name: fetch, exec: ./fetch.sh}]
 `)
 	if _, found, err := LoadCompose(composePath); !found || err == nil || !strings.Contains(err.Error(), "not executable") {
 		t.Fatalf("non-executable LoadCompose() found=%v err=%v", found, err)
@@ -76,7 +77,7 @@ title: Example
 license: CC0-1.0
 unknown: true
 source: {url: https://example.test, category: public-dataset}
-steps: [{name: fetch, run: fetch.sh}]
+steps: [{name: fetch, exec: ./fetch.sh}]
 `)
 	if _, found, err := LoadCompose(composePath); !found || err == nil || !strings.Contains(err.Error(), "field unknown") {
 		t.Fatalf("unknown-field LoadCompose() found=%v err=%v", found, err)
@@ -94,7 +95,7 @@ schema: 1
 title: Example
 license: CC0-1.0
 source: {url: https://example.test, category: public-dataset}
-steps: [{name: fetch, run: fetch.sh}]
+steps: [{name: fetch, exec: ./fetch.sh}]
 `)
 	loaded, _, err := LoadCompose(composePath)
 	if err != nil {
@@ -143,7 +144,7 @@ schema: 1
 title: Example
 license: CC0-1.0
 source: {url: https://example.test, category: public-dataset}
-steps: [{name: fetch, run: fetch.sh}]
+steps: [{name: fetch, exec: ./fetch.sh}]
 `)
 	loaded, _, err := LoadCompose(composePath)
 	if err != nil {
@@ -159,6 +160,66 @@ steps: [{name: fetch, run: fetch.sh}]
 	}
 	if string(data) != "from executable fetcher\n" {
 		t.Fatalf("fetched output = %q", data)
+	}
+}
+
+func TestLoadComposeResolvesBareExecThroughPATH(t *testing.T) {
+	root := t.TempDir()
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	command := filepath.Join(bin, "fixture-fetch")
+	writeExecutable(t, command, "#!/bin/sh\nset -eu\nprintf 'from PATH command\\n' > \"$WALDO_FETCH_DIR/path.txt\"\n")
+	t.Setenv("PATH", bin)
+	composePath := filepath.Join(root, "example.yaml")
+	writeComposeFixture(t, composePath, `
+kind: waldo-ingest-compose
+schema: 1
+title: Example
+license: CC0-1.0
+source: {url: https://example.test, category: public-dataset}
+steps: [{name: fetch, exec: fixture-fetch}]
+`)
+	loaded, found, err := LoadCompose(composePath)
+	if err != nil || !found {
+		t.Fatalf("LoadCompose() found=%v err=%v", found, err)
+	}
+	if loaded.Executables[0].Exec != "fixture-fetch" || loaded.Executables[0].Path != command {
+		t.Fatalf("resolved executable = %+v", loaded.Executables[0])
+	}
+	prepared, err := PrepareCompose(context.Background(), loaded, "core/example", t.TempDir(), ExecCommandRunner{}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(prepared.Inputs, "path.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "from PATH command\n" {
+		t.Fatalf("PATH command output = %q", data)
+	}
+}
+
+func TestLoadComposeRejectsLegacyRunAndMissingPATHCommand(t *testing.T) {
+	root := t.TempDir()
+	composePath := filepath.Join(root, "example.yaml")
+	base := `
+kind: waldo-ingest-compose
+schema: 1
+title: Example
+license: CC0-1.0
+source: {url: https://example.test, category: public-dataset}
+steps: [{name: fetch, %s}]
+`
+	writeComposeFixture(t, composePath, fmt.Sprintf(base, "run: fetch.sh"))
+	if _, found, err := LoadCompose(composePath); !found || err == nil || !strings.Contains(err.Error(), "field run not found") {
+		t.Fatalf("legacy run LoadCompose() found=%v err=%v", found, err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	writeComposeFixture(t, composePath, fmt.Sprintf(base, "exec: missing-fetch-command"))
+	if _, found, err := LoadCompose(composePath); !found || err == nil || !strings.Contains(err.Error(), "not found in PATH") {
+		t.Fatalf("missing PATH command LoadCompose() found=%v err=%v", found, err)
 	}
 }
 

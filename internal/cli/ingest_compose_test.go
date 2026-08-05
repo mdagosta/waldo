@@ -16,7 +16,7 @@ import (
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
-func TestIndexIngestComposeDryRunDoesNotExecuteScripts(t *testing.T) {
+func TestIndexIngestComposeDryRunDoesNotExecuteCommands(t *testing.T) {
 	composePath := writeCLICompose(t)
 	root := emptyCLIIndex(t)
 	runner := &cliComposeRunner{}
@@ -30,7 +30,7 @@ func TestIndexIngestComposeDryRunDoesNotExecuteScripts(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
-	if runner.calls != 0 || !strings.Contains(stdout.String(), "no scripts were executed") || !strings.Contains(stdout.String(), "fetch ->") {
+	if runner.calls != 0 || !strings.Contains(stdout.String(), "no commands were executed") || !strings.Contains(stdout.String(), "fetch ->") {
 		t.Fatalf("runner calls=%d stdout=%q", runner.calls, stdout.String())
 	}
 
@@ -130,7 +130,7 @@ source:
   category: public-dataset
 steps:
   - name: fetch
-    run: fetch.sh
+    exec: ./fetch.sh
     args: [fixture]
 `
 	if err := os.WriteFile(composePath, []byte(contents), 0o644); err != nil {

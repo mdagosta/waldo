@@ -30,7 +30,7 @@ const (
 var composeStepName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // Compose describes source preparation followed by the normal WALDO ingest
-// pipeline. Scripts are source-specific external producers; their only output
+// pipeline. Commands are source-specific external producers; their only output
 // is a WALDO-owned temporary directory.
 type Compose struct {
 	Kind        string        `json:"kind" yaml:"kind"`
@@ -51,20 +51,21 @@ type ComposeSource struct {
 
 type ComposeStep struct {
 	Name string   `json:"name" yaml:"name"`
-	Run  string   `json:"run" yaml:"run"`
+	Exec string   `json:"exec" yaml:"exec"`
 	Args []string `json:"args,omitempty" yaml:"args,omitempty"`
 }
 
 type LoadedCompose struct {
-	Compose  Compose           `json:"compose"`
-	Path     string            `json:"path"`
-	SHA256   string            `json:"sha256"`
-	Evidence index.Composition `json:"evidence"`
-	Scripts  []ResolvedScript  `json:"scripts"`
+	Compose     Compose              `json:"compose"`
+	Path        string               `json:"path"`
+	SHA256      string               `json:"sha256"`
+	Evidence    index.Composition    `json:"evidence"`
+	Executables []ResolvedExecutable `json:"executables"`
 }
 
-type ResolvedScript struct {
+type ResolvedExecutable struct {
 	Name   string   `json:"name"`
+	Exec   string   `json:"exec"`
 	Path   string   `json:"path"`
 	SHA256 string   `json:"sha256"`
 	Args   []string `json:"args,omitempty"`
@@ -123,11 +124,11 @@ func LoadCompose(path string) (LoadedCompose, bool, error) {
 	loaded := LoadedCompose{Compose: compose, Path: abs, SHA256: hex.EncodeToString(digest[:])}
 	loaded.Evidence = index.Composition{Path: filepath.Base(abs), SHA256: loaded.SHA256}
 	for _, step := range compose.Steps {
-		resolved, err := resolveComposeScript(abs, step)
+		resolved, err := resolveComposeExecutable(abs, step)
 		if err != nil {
 			return LoadedCompose{}, true, err
 		}
-		loaded.Scripts = append(loaded.Scripts, resolved)
+		loaded.Executables = append(loaded.Executables, resolved)
 		loaded.Evidence.Steps = append(loaded.Evidence.Steps, index.CompositionStep{
 			Name: step.Name, Script: filepath.ToSlash(relativeEvidencePath(filepath.Dir(abs), resolved.Path)), SHA256: resolved.SHA256,
 		})
@@ -164,8 +165,11 @@ func (compose Compose) Validate() error {
 			return fmt.Errorf("step %d has invalid or duplicate name %q", position+1, step.Name)
 		}
 		seen[step.Name] = true
-		if strings.TrimSpace(step.Run) == "" || filepath.IsAbs(step.Run) {
-			return fmt.Errorf("step %q run must be a relative script path", step.Name)
+		if strings.TrimSpace(step.Exec) == "" {
+			return fmt.Errorf("step %q exec is required", step.Name)
+		}
+		if strings.ContainsRune(step.Exec, '\x00') {
+			return fmt.Errorf("step %q exec contains NUL", step.Name)
 		}
 		for _, argument := range step.Args {
 			if strings.ContainsRune(argument, '\x00') {
@@ -176,24 +180,39 @@ func (compose Compose) Validate() error {
 	return nil
 }
 
-func resolveComposeScript(composePath string, step ComposeStep) (ResolvedScript, error) {
-	path := filepath.Clean(filepath.Join(filepath.Dir(composePath), filepath.FromSlash(step.Run)))
-	info, err := os.Lstat(path)
-	if err != nil {
-		return ResolvedScript{}, fmt.Errorf("compose step %q script %s: %w", step.Name, path, err)
+func resolveComposeExecutable(composePath string, step ComposeStep) (ResolvedExecutable, error) {
+	path := filepath.FromSlash(step.Exec)
+	if strings.ContainsAny(step.Exec, `/\\`) {
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(filepath.Dir(composePath), path)
+		}
+		path = filepath.Clean(path)
+	} else {
+		resolved, err := exec.LookPath(step.Exec)
+		if err != nil {
+			return ResolvedExecutable{}, fmt.Errorf("compose step %q exec %q was not found in PATH: %w", step.Name, step.Exec, err)
+		}
+		path, err = filepath.Abs(resolved)
+		if err != nil {
+			return ResolvedExecutable{}, fmt.Errorf("resolve compose step %q exec %q: %w", step.Name, step.Exec, err)
+		}
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return ResolvedScript{}, fmt.Errorf("compose step %q script %s must be a regular non-symlink file", step.Name, path)
+	info, err := os.Stat(path)
+	if err != nil {
+		return ResolvedExecutable{}, fmt.Errorf("compose step %q executable %s: %w", step.Name, path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return ResolvedExecutable{}, fmt.Errorf("compose step %q executable %s must resolve to a regular file", step.Name, path)
 	}
 	if info.Mode()&0o111 == 0 {
-		return ResolvedScript{}, fmt.Errorf("compose step %q script %s is not executable", step.Name, path)
+		return ResolvedExecutable{}, fmt.Errorf("compose step %q executable %s is not executable", step.Name, path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ResolvedScript{}, err
+		return ResolvedExecutable{}, err
 	}
 	digest := sha256.Sum256(data)
-	return ResolvedScript{Name: step.Name, Path: path, SHA256: hex.EncodeToString(digest[:]), Args: append([]string(nil), step.Args...)}, nil
+	return ResolvedExecutable{Name: step.Name, Exec: step.Exec, Path: path, SHA256: hex.EncodeToString(digest[:]), Args: append([]string(nil), step.Args...)}, nil
 }
 
 func relativeEvidencePath(base, path string) string {
@@ -211,12 +230,20 @@ func populateGitEvidence(loaded *LoadedCompose) {
 	}
 	loaded.Evidence.Path = filepath.ToSlash(relativeEvidencePath(root, loaded.Path))
 	for index := range loaded.Evidence.Steps {
-		loaded.Evidence.Steps[index].Script = filepath.ToSlash(relativeEvidencePath(root, loaded.Scripts[index].Path))
+		loaded.Evidence.Steps[index].Script = evidenceExecutablePath(root, loaded.Executables[index].Path)
 	}
 	loaded.Evidence.Commit, _ = gitOutput(root, "rev-parse", "HEAD")
 	loaded.Evidence.Repository, _ = gitOutput(root, "config", "--get", "remote.origin.url")
 	status, _ := gitOutput(root, "status", "--porcelain", "--untracked-files=normal")
 	loaded.Evidence.Dirty = status != ""
+}
+
+func evidenceExecutablePath(root, path string) string {
+	relative, err := filepath.Rel(root, path)
+	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(relative)
+	}
+	return filepath.ToSlash(path)
 }
 
 func gitOutput(directory string, arguments ...string) (string, error) {
@@ -263,14 +290,14 @@ func ComposeIdentity(loaded LoadedCompose, destination string) string {
 	hash.Write([]byte(loaded.SHA256))
 	hash.Write([]byte{0})
 	hash.Write([]byte(destination))
-	for _, script := range loaded.Scripts {
+	for _, executable := range loaded.Executables {
 		hash.Write([]byte{0})
-		hash.Write([]byte(script.SHA256))
+		hash.Write([]byte(executable.SHA256))
 	}
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-// PrepareCompose executes each explicitly declared script in order. Scripts
+// PrepareCompose executes each explicitly declared command in order. Commands
 // share one WALDO-owned working directory and contractually stop after
 // populating it; the resulting regular files are independently probed.
 func PrepareCompose(ctx context.Context, loaded LoadedCompose, destination, stagingBase string, runner CommandRunner, stdout, stderr io.Writer) (PreparedCompose, error) {
@@ -322,18 +349,18 @@ func PrepareCompose(ctx context.Context, loaded LoadedCompose, destination, stag
 		return PreparedCompose{}, err
 	}
 	environment := composeEnvironment(inputs, loaded.Path)
-	for position, script := range loaded.Scripts {
-		if err := verifyComposeScript(script); err != nil {
+	for position, executable := range loaded.Executables {
+		if err := verifyComposeExecutable(executable); err != nil {
 			return PreparedCompose{}, err
 		}
-		emitProgress(ctx, ProgressEvent{Phase: "fetch", Status: "started", Input: script.Name, Sequence: position + 1})
-		if err := runner.Run(ctx, script.Path, script.Args, inputs, environment, stdout, stderr); err != nil {
-			return PreparedCompose{}, fmt.Errorf("compose step %q failed: %w", script.Name, err)
+		emitProgress(ctx, ProgressEvent{Phase: "fetch", Status: "started", Input: executable.Name, Sequence: position + 1})
+		if err := runner.Run(ctx, executable.Path, executable.Args, inputs, environment, stdout, stderr); err != nil {
+			return PreparedCompose{}, fmt.Errorf("compose step %q failed: %w", executable.Name, err)
 		}
-		if err := verifyComposeScript(script); err != nil {
+		if err := verifyComposeExecutable(executable); err != nil {
 			return PreparedCompose{}, err
 		}
-		emitProgress(ctx, ProgressEvent{Phase: "fetch", Status: "completed", Input: script.Name, Sequence: position + 1})
+		emitProgress(ctx, ProgressEvent{Phase: "fetch", Status: "completed", Input: executable.Name, Sequence: position + 1})
 	}
 	composeData, err := os.ReadFile(loaded.Path)
 	if err != nil {
@@ -354,21 +381,21 @@ func PrepareCompose(ctx context.Context, loaded LoadedCompose, destination, stag
 	return PreparedCompose{Loaded: loaded, Workspace: workspace, Inputs: inputs, Probe: probe}, nil
 }
 
-func verifyComposeScript(script ResolvedScript) error {
-	info, err := os.Lstat(script.Path)
+func verifyComposeExecutable(executable ResolvedExecutable) error {
+	info, err := os.Stat(executable.Path)
 	if err != nil {
-		return fmt.Errorf("recheck compose step %q script: %w", script.Name, err)
+		return fmt.Errorf("recheck compose step %q executable: %w", executable.Name, err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
-		return fmt.Errorf("compose step %q script changed type or is no longer executable", script.Name)
+	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		return fmt.Errorf("compose step %q executable changed type or is no longer executable", executable.Name)
 	}
-	data, err := os.ReadFile(script.Path)
+	data, err := os.ReadFile(executable.Path)
 	if err != nil {
 		return err
 	}
 	digest := sha256.Sum256(data)
-	if hex.EncodeToString(digest[:]) != script.SHA256 {
-		return fmt.Errorf("compose step %q script changed after compose validation", script.Name)
+	if hex.EncodeToString(digest[:]) != executable.SHA256 {
+		return fmt.Errorf("compose step %q executable changed after compose validation", executable.Name)
 	}
 	return nil
 }

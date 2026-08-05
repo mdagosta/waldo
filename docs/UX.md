@@ -253,17 +253,18 @@ waldo index ingest ../waldo-fetchers/composes/common-pile/foodista.yaml \
 ```
 
 A compose supplies title, description, license, source facts, optional Parquet
-text-column mapping, and an ordered list of external script paths and literal
-arguments. Relative script paths resolve from the compose file. WALDO hashes
-the compose and every executable before execution, runs each script directly
-without an intervening shell, and rechecks those hashes afterward. Scripts
+text-column mapping, and an ordered list of `exec` commands and literal
+arguments. Bare command names resolve through `PATH`; commands containing a
+path separator resolve explicitly from the compose file unless absolute. WALDO
+hashes the compose and every resolved executable before execution, runs each
+command directly without an intervening shell, and rechecks those hashes afterward. Commands
 share a private temporary directory as their working directory and receive its
 absolute path in `WALDO_FETCH_DIR`; they must write only acquired artifacts
 there. `WALDO_COMPOSE_FILE` names the absolute compose path.
 
 Compose input rejects all corpus-metadata flags so the reviewed file completely
-describes the run. `--dry-run` validates the compose, destination, scripts, and
-Git evidence but does not execute a script or create temporary files. A real
+describes the run. `--dry-run` validates the compose, destination, commands, and
+Git evidence but does not execute a command or create temporary files. A real
 run probes the produced directory and enters the same immutable plan, adapter,
 Parquet, upload, journal, and contribution backend as direct ingestion.
 Successful runs purge the entire prepared input workspace. Failed runs retain
@@ -277,7 +278,7 @@ per-record inventory. A composed run uses the existing
 Dirty or uncommitted composes are marked and include the compose SHA-256. The
 manifest has one entry per published Parquet shard containing its URL,
 SHA-256, document count, reference-token estimate, and encoded byte size.
-Detailed processing prose, script arrays, modality duplication, and input
+Detailed processing prose, command arrays, modality duplication, and input
 inventories stay out of Git. Secrets and environment values are never written
 to the manifest.
 

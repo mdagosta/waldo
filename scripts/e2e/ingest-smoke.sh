@@ -89,7 +89,7 @@ if [ "$mode" = "compose" ]; then
     '  category: public-dataset' \
     'steps:' \
     '  - name: fetch-fixture' \
-    '    run: fetch-fixture.sh' \
+    '    exec: ./fetch-fixture.sh' \
     '    args:' \
     "      - $fixture" > "$compose"
   ingest_input=$compose

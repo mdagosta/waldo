@@ -21,10 +21,12 @@ require corpus metadata flags. A regular file strictly identified by
 all metadata flags.
 
 An ingest compose provides corpus/source metadata, an optional raw-Parquet text
-column, and an ordered list of relative executable paths with literal
-arguments. WALDO resolves and hashes the compose and scripts before execution,
-runs scripts directly without a shell, and rechecks the bytes afterward. Each
-script receives the same private temporary directory as its working directory
+column, and an ordered list of `exec` commands with literal arguments. A bare
+command name resolves through `PATH`; a command containing a path separator is
+an explicit path relative to the compose file unless absolute. WALDO resolves
+and hashes the compose and executable before execution, runs commands directly
+without a shell, and rechecks the bytes afterward. Each command receives the
+same private temporary directory as its working directory
 and through `WALDO_FETCH_DIR`. It may populate acquired artifacts there and
 does not convert to canonical Parquet, publish objects, or mutate the index.
 
@@ -35,13 +37,13 @@ source material. Failed preparation or ingestion retains deterministic,
 verified preparation state for an unchanged retry.
 
 Dry-run validates corpus metadata, destination resolution, compose syntax,
-script executability, script hashes, and available Git evidence. It does not
-execute scripts, create staging state, contact sources, publish, or write an
+command resolution, executable hashes, and available Git evidence. It does not
+execute commands, create staging state, contact sources, publish, or write an
 index contribution.
 
 The generated manifest uses the existing `converted_by.collector` field to pin
 the compose repository, commit, and path. Dirty or uncommitted compositions
-are marked and add the compose SHA-256. Script and per-artifact details remain
+are marked and add the compose SHA-256. Command and per-artifact details remain
 execution evidence and are not copied into the Git manifest. Environment and
 secret values are never persisted. ADR 0015 fixes this compact boundary
 explicitly.
@@ -49,7 +51,9 @@ explicitly.
 No other command executes index or fetcher code. Index inspection,
 verification, BOM construction, export, and model workflows remain data-only.
 Fetcher execution is not an OS sandbox: explicitly selecting a compose trusts
-its reviewed scripts with the invoking user's permissions. Only regular files
+its reviewed commands with the invoking user's permissions. No shell syntax is
+implicitly interpreted; a compose must explicitly execute a shell when that is
+intended. Only regular files
 beneath the WALDO-owned output directory are admitted as ingestion inputs.
 
 ## Consequences
@@ -57,7 +61,7 @@ beneath the WALDO-owned output directory are admitted as ingestion inputs.
 - Direct local-directory ingestion remains the primary and shortest workflow.
 - Reusable fetchers and corpus composes can evolve in `waldo-fetchers` without
   entering the WALDO binary.
-- Passing a compose explicitly authorizes its reviewed scripts to execute;
+- Passing a compose explicitly authorizes its reviewed commands to execute;
   merely cloning or inspecting an index does not.
 - A compose is a complete auditable source-preparation declaration, so CLI
   metadata overrides are forbidden.

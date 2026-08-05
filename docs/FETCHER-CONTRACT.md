@@ -71,14 +71,18 @@ do not make a legal-compliance determination.
 - WALDO does not discover, download, or install fetcher scripts.
 - The user explicitly authorizes execution by passing one compose file as the
   first positional argument to `waldo index ingest`.
-- WALDO executes only relative regular non-symlink executable paths named by
-  that strict compose, in declaration order and without an intervening shell.
+- Each step uses `exec`. A bare name is resolved through the invoking process's
+  `PATH`; a value containing `/` or `\\` is an explicit path, resolved relative
+  to the compose file unless absolute.
+- WALDO resolves each command to a regular executable, pins and hashes that
+  resolved file, and runs it in declaration order without an intervening shell.
 - All steps share a WALDO-owned temporary working directory, also exposed as
   `WALDO_FETCH_DIR`. `WALDO_COMPOSE_FILE` identifies the compose being run.
 - Network, pagination, authentication, retries, and source-specific behavior
   remain inside the scripts. WALDO inherits the invoking environment but never
   records environment or secret values.
-- Scripts and composes are hashed before execution and rechecked afterward.
+- Resolved executables and composes are hashed before execution and rechecked
+  afterward.
 - WALDO independently probes and hashes every produced artifact before it can
   enter an immutable ingestion plan.
 
@@ -91,8 +95,7 @@ there become ingestion inputs.
 ## Ingest compose schema 1
 
 Compose files are strict YAML or JSON. Unknown fields, multiple YAML documents,
-absolute script paths, duplicate step names, missing scripts, symlinks, and
-non-executable scripts are rejected.
+duplicate step names, missing commands, and non-executable files are rejected.
 
 ```yaml
 kind: waldo-ingest-compose
@@ -107,7 +110,7 @@ source:
 text_column: text
 steps:
   - name: fetch
-    run: ../../fetchers/common-pile.sh
+    exec: ../../fetchers/common-pile.sh
     args:
       - foodista_filtered
 ```
@@ -116,6 +119,12 @@ steps:
 optional. `title`, `license`, `source.url`, `source.category`, and at least one
 step are required. The destination is never embedded; it remains the second
 positional argument to `index ingest`.
+
+`exec: curl` searches `PATH`; `exec: ./fetch.sh`, `exec: ../fetch.sh`, and
+`exec: /opt/fetch.sh` are explicit paths. WALDO does not interpret pipelines,
+redirections, variables, globbing, or shell built-ins. When shell evaluation is
+intentionally required, declare the shell itself (for example `exec: sh`) and
+pass its program through `args`.
 
 The initial schema supports the same source categories as executable direct
 ingestion: `public-dataset`, `private-third-party`, and `other`. Categories
