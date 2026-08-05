@@ -39,7 +39,7 @@ needs it.
 
 ## Consequences
 
-- One recipe can run on multiple supported environments.
+- One model compose can run on multiple supported environments.
 - Framework selection and machine facts remain auditable without polluting the
   portable model compose.
 - Adding TensorFlow or another backend does not change lifecycle persistence or

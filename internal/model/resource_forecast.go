@@ -51,10 +51,14 @@ var acceleratorCatalog = []acceleratorProfile{
 	{manufacturer: "AMD", accelerator: "Instinct MI350X", memoryBytes: 288 << 30, counts: []int{1, 4, 8}, throughput: 400, scale4: .82, scale8: .75},
 }
 
-// ForecastCompose verifies every corpus export through the normal model
-// preflight and returns a read-only estimate. It creates no model or run state.
+// ForecastCompose validates the portable compose and estimates its declared
+// training budget. Index resolution is unnecessary because the workload is
+// steps * batch size * sequence length for each stage.
 func ForecastCompose(compose Compose) (ResourceForecast, error) {
-	plan, _, err := preflight(compose, nil)
+	if err := compose.Validate(); err != nil {
+		return ResourceForecast{}, err
+	}
+	plan, err := forecastPlanForCompose(compose)
 	if err != nil {
 		return ResourceForecast{}, err
 	}

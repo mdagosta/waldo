@@ -14,7 +14,6 @@ import (
 
 	"github.com/openwaldo/waldo-new/internal/corpus"
 	"github.com/openwaldo/waldo-new/internal/index"
-	"github.com/openwaldo/waldo-new/internal/provenance"
 	"github.com/openwaldo/waldo-new/internal/training"
 )
 
@@ -31,31 +30,19 @@ func (function backendFunc) Run(ctx context.Context, request training.Request) (
 	return function(ctx, request)
 }
 
-func TestLoadComposeIsStrictAndResolvesCorpusRelativeToCompose(t *testing.T) {
-	directory := t.TempDir()
-	path := filepath.Join(directory, "smoke.yaml")
-	if err := os.WriteFile(path, []byte(composeYAML("exports/corpus", "")), 0o644); err != nil {
+func TestLoadComposeIsStrictAndKeepsIndexPathsLogical(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "smoke.yaml")
+	if err := os.WriteFile(path, []byte(composeYAML("")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	compose, loaded, err := LoadCompose(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded != path || compose.Stages[0].Corpus != filepath.Join(directory, "exports", "corpus") {
-		t.Fatalf("loaded = %q, corpus = %q", loaded, compose.Stages[0].Corpus)
+	if loaded != path || !reflect.DeepEqual(compose.Stages[0].Corpora, []string{"core/books", "science/papers"}) {
+		t.Fatalf("loaded = %q, corpora = %v", loaded, compose.Stages[0].Corpora)
 	}
-	if err := os.WriteFile(path, []byte(composeYAML("exports/corpus", "surprise: true\n")), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := LoadCompose(path); err == nil {
-		t.Fatal("LoadCompose accepted an unknown field")
-	}
-}
-
-func TestComposeRejectsBackendSelection(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "smoke.yaml")
-	data := composeYAML("exports/corpus", "backend:\n  name: fake\n  revision: builtin-fake-schema-1\n")
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(composeYAML("backend:\n  name: fake\n")), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := LoadCompose(path); err == nil || !strings.Contains(err.Error(), "field backend not found") {
@@ -63,218 +50,195 @@ func TestComposeRejectsBackendSelection(t *testing.T) {
 	}
 }
 
-func TestBuildPersistsPlanRunAndModelBOMs(t *testing.T) {
+func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	root := t.TempDir()
-	export := writeModelExport(t, t.TempDir())
-	recipe := validCompose(export)
 	clock := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 	builder := Builder{Root: root, Now: func() time.Time { return clock }, NewID: func() (string, error) { return "run0001", nil }}
-	inspection, err := builder.Build(context.Background(), recipe)
+	initialized, err := builder.Initialize("smoke", testArchitecture())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspection.Model.ID != inspection.Model.PlanSHA256 || len(inspection.Model.Runs) != 1 || inspection.Model.Runs[0].State != RunComplete {
-		t.Fatalf("model = %+v", inspection.Model)
+	if len(initialized.Model.Runs) != 0 || initialized.Plan.Kind != "waldo-model-plan" {
+		t.Fatalf("initialized = %+v", initialized)
 	}
-	if len(inspection.Runs) != 1 || inspection.Runs[0].Observation == nil || !inspection.Runs[0].Observation.Simulated {
-		t.Fatalf("runs = %+v", inspection.Runs)
-	}
-	if inspection.Plan.Execution.Backend.Name != "fake" || inspection.Plan.Execution.Framework != "fake" || inspection.Plan.Execution.Host.OS == "" || inspection.Plan.Execution.Host.Architecture == "" {
-		t.Fatalf("execution = %+v", inspection.Plan.Execution)
-	}
-	pin := inspection.Model.Runs[0]
-	runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
-	bomBytes, err := os.ReadFile(filepath.Join(runDirectory, "RUN-BOM.json"))
+	trained, err := builder.Train(context.Background(), "smoke", preparedFixture(t, testStage("pretrain")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var runBOM RunBOM
-	if err := readJSON(filepath.Join(runDirectory, "RUN-BOM.json"), &runBOM); err != nil {
-		t.Fatal(err)
+	if trained.Model.ID != initialized.Model.ID || trained.Model.PlanSHA256 != initialized.Model.PlanSHA256 || len(trained.Model.Runs) != 1 || trained.Model.Runs[0].State != RunComplete {
+		t.Fatalf("trained model = %+v", trained.Model)
 	}
-	wantBOMHash, err := hashJSON(runBOM)
+	if trained.RunBOMs[0].Execution.Backend.Name != "fake" || trained.RunBOMs[0].Execution.Host.OS == "" || trained.Runs[0].Observation == nil || !trained.Runs[0].Observation.Simulated {
+		t.Fatalf("run = %+v, BOM = %+v", trained.Runs[0], trained.RunBOMs[0])
+	}
+	artifact := trained.Model.Runs[0].Artifacts[0]
+	data, err := os.ReadFile(filepath.Join(trained.Path, "runs", runDirectoryName(trained.Model.Runs[0]), filepath.FromSlash(artifact.Path)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bomBytes) == 0 || pin.BOMSHA256 != wantBOMHash || runBOM.CorpusBOM.Subject != "corpus" {
-		t.Fatalf("pin = %+v, run BOM = %+v", pin, runBOM)
-	}
-	if !reflect.DeepEqual(runBOM.Execution, inspection.Plan.Execution) {
-		t.Fatalf("run execution = %+v, plan execution = %+v", runBOM.Execution, inspection.Plan.Execution)
-	}
-	artifact := pin.Artifacts[0]
-	artifactPath := filepath.Join(runDirectory, filepath.FromSlash(artifact.Path))
-	data, err := os.ReadFile(artifactPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(data)
-	if artifact.SHA256 != hex.EncodeToString(digest[:]) || !strings.Contains(string(data), "no trained model weights") {
-		t.Fatalf("artifact = %+v, contents = %q", artifact, data)
-	}
-	if _, err := builder.Build(context.Background(), recipe); err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("second Build() error = %v", err)
+	if !strings.Contains(string(data), "no trained model weights") {
+		t.Fatalf("artifact = %q", data)
 	}
 }
 
-func TestBuildRejectsInconsistentResolvedBackendBeforeCreatingModel(t *testing.T) {
+func TestTrainRejectsResolverMismatchBeforeAddingRun(t *testing.T) {
 	root := t.TempDir()
-	recipe := validCompose(writeModelExport(t, t.TempDir()))
-	builder := Builder{
-		Root: root,
-		Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
-			selection := testSelection(training.Fake{})
-			selection.Execution.Framework = "pytorch"
-			return selection, nil
-		}),
+	builder := Builder{Root: root}
+	if _, err := builder.Initialize("smoke", testArchitecture()); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := builder.Build(context.Background(), recipe); err == nil || !strings.Contains(err.Error(), "does not match backend") {
-		t.Fatalf("Build error = %v", err)
+	builder.Resolver = training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		selection := testSelection(training.Fake{})
+		selection.Execution.Framework = "pytorch"
+		return selection, nil
+	})
+	if _, err := builder.Train(context.Background(), "smoke", preparedFixture(t, testStage("pretrain"))); err == nil || !strings.Contains(err.Error(), "does not match backend") {
+		t.Fatalf("Train error = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, recipe.Name)); !os.IsNotExist(err) {
-		t.Fatalf("model exists after resolver failure: %v", err)
-	}
-}
-
-func TestBuildPreflightsAllExportsBeforeCreatingModel(t *testing.T) {
-	root := t.TempDir()
-	recipe := validCompose(writeModelExport(t, t.TempDir()))
-	recipe.Stages = append(recipe.Stages, Stage{Name: "second", Type: "fine-tuning", Objective: "causal-language-modeling", Corpus: filepath.Join(t.TempDir(), "missing"), Parameters: recipe.Stages[0].Parameters})
-	if _, err := (Builder{Root: root}).Build(context.Background(), recipe); err == nil {
-		t.Fatal("Build succeeded")
-	}
-	if _, err := os.Stat(filepath.Join(root, recipe.Name)); !os.IsNotExist(err) {
-		t.Fatalf("model exists after preflight failure: %v", err)
-	}
-}
-
-func TestBuildRejectsCorruptExportBeforeCreatingModel(t *testing.T) {
-	root := t.TempDir()
-	export := writeModelExport(t, t.TempDir())
-	document, path, err := provenance.LoadCorpusExport(export)
+	inspection, err := Inspect(root, "smoke")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(filepath.Dir(path), filepath.FromSlash(document.Files[0].Path)), []byte("corrupt"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := (Builder{Root: root}).Build(context.Background(), validCompose(export)); err == nil {
-		t.Fatal("Build accepted corrupt export")
-	}
-	if _, err := os.Stat(filepath.Join(root, "smoke")); !os.IsNotExist(err) {
-		t.Fatalf("model exists after corrupt preflight: %v", err)
+	if len(inspection.Model.Runs) != 0 {
+		t.Fatalf("runs = %+v", inspection.Model.Runs)
 	}
 }
 
-func TestBuildPersistsFailureAndInterruption(t *testing.T) {
+func TestTrainPersistsFailureAndInterruption(t *testing.T) {
 	for _, test := range []struct {
 		name  string
 		err   error
 		state RunState
-	}{
-		{name: "failed", err: errors.New("trainer exited"), state: RunFailed},
-		{name: "interrupted", err: context.Canceled, state: RunInterrupted},
-	} {
+	}{{"failed", errors.New("trainer exited"), RunFailed}, {"interrupted", context.Canceled, RunInterrupted}} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			recipe := validCompose(writeModelExport(t, t.TempDir()))
-			builder := Builder{
-				Root: root, NewID: func() (string, error) { return "run0001", nil },
-				Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
-					backend := backendFunc(func(context.Context, training.Request) (training.Observation, error) {
-						return training.Observation{}, test.err
-					})
-					return testSelection(backend), nil
-				}),
+			backend := backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+				return training.Observation{}, test.err
+			})
+			builder := Builder{Root: root, NewID: func() (string, error) { return "run0001", nil }, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+				return testSelection(backend), nil
+			})}
+			if _, err := builder.Initialize("smoke", testArchitecture()); err != nil {
+				t.Fatal(err)
 			}
-			if _, err := builder.Build(context.Background(), recipe); err == nil {
-				t.Fatal("Build succeeded")
+			if _, err := builder.Train(context.Background(), "smoke", preparedFixture(t, testStage("pretrain"))); err == nil {
+				t.Fatal("Train succeeded")
 			}
-			inspection, err := Inspect(root, recipe.Name)
+			inspection, err := Inspect(root, "smoke")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if inspection.Model.Runs[0].State != test.state || inspection.Runs[0].State != test.state || inspection.Runs[0].Error != test.err.Error() {
-				t.Fatalf("inspection = %+v", inspection)
+			if inspection.Runs[0].State != test.state || inspection.Runs[0].Error != test.err.Error() {
+				t.Fatalf("run = %+v", inspection.Runs[0])
 			}
 		})
 	}
 }
 
-func validCompose(export string) Compose {
-	return Compose{
-		Kind: "waldo-model-compose", Schema: 1, Name: "smoke",
-		Architecture: Architecture{
-			Family: "decoder-transformer", ContextTokens: 128, VocabularySize: 256,
-			HiddenSize: 64, IntermediateSize: 192, Layers: 2, AttentionHeads: 4, KeyValueHeads: 2,
-			TieEmbeddings: true, ParameterDType: "float32", Tokenizer: Tokenizer{Name: "byte", Revision: "sha256:example"},
-		},
-		Stages: []Stage{{Name: "pretrain", Type: "pre-training", Objective: "causal-language-modeling", Corpus: export, Parameters: training.Parameters{
-			Steps: 2, BatchSize: 1, SequenceLength: 64, LearningRate: 0.001, Seed: 7,
-		}}},
-	}
-}
-
-func composeYAML(corpusPath, suffix string) string {
-	return "kind: waldo-model-compose\n" +
-		"schema: 1\nname: smoke\n" +
-		"architecture:\n  family: decoder-transformer\n  context_tokens: 128\n  vocabulary_size: 256\n  hidden_size: 64\n  intermediate_size: 192\n  layers: 2\n  attention_heads: 4\n  key_value_heads: 2\n  tie_embeddings: true\n  parameter_dtype: float32\n  tokenizer:\n    name: byte\n    revision: sha256:example\n" +
-		"stages:\n  - name: pretrain\n    type: pre-training\n    objective: causal-language-modeling\n    corpus: " + corpusPath + "\n    parameters:\n      steps: 2\n      batch_size: 1\n      sequence_length: 64\n      learning_rate: 0.001\n      seed: 7\n" + suffix
-}
-
-func testSelection(backend training.Backend) training.Selection {
-	descriptor := backend.Descriptor()
-	return training.Selection{
-		Backend: backend,
-		Execution: training.Execution{
-			Backend: descriptor.Identity, Framework: descriptor.Framework, Runtime: "test",
-			Host: training.Host{OS: "test-os", Architecture: "test-arch"}, Nodes: 1, WorldSize: 1,
-		},
-	}
-}
-
-func writeModelExport(t *testing.T, parent string) string {
-	t.Helper()
-	directory, err := os.MkdirTemp(parent, "export-")
+func TestComposeReplacementIsTransactional(t *testing.T) {
+	root := t.TempDir()
+	compose := validCompose()
+	stage := preparedFixture(t, compose.Stages[0])
+	builder := Builder{Root: root, NewID: func() (string, error) { return "run0001", nil }}
+	first, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false); err == nil || !strings.Contains(err.Error(), "--replace") {
+		t.Fatalf("second compose error = %v", err)
+	}
+	failingBackend := backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+		return training.Observation{}, errors.New("replacement failed")
+	})
+	builder.Resolver = training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(failingBackend), nil
+	})
+	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, true); err == nil {
+		t.Fatal("replacement succeeded")
+	}
+	after, err := Inspect(root, "smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Model.ID != first.Model.ID || after.Model.Runs[0].State != RunComplete {
+		t.Fatalf("replacement changed original: %+v", after.Model)
+	}
+}
+
+func TestListExportAndRemoveModels(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root}
+	if _, err := builder.Initialize("alpha", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Initialize("beta", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := List(root, []string{"a*"})
+	if err != nil || len(listed) != 1 || listed[0].Name != "alpha" {
+		t.Fatalf("listed = %+v, err = %v", listed, err)
+	}
+	destination := filepath.Join(t.TempDir(), "alpha-export")
+	if _, err := Export(root, "alpha", destination); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Export(root, "alpha", filepath.Join(root, "alpha", "recursive-export")); err == nil {
+		t.Fatal("Export accepted a destination inside its source model")
+	}
+	if _, err := Inspect(t.TempDir(), destination); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(root, []string{"alpha", "beta"}); err != nil {
+		t.Fatal(err)
+	}
+	listed, err = List(root, nil)
+	if err != nil || len(listed) != 0 {
+		t.Fatalf("listed = %+v, err = %v", listed, err)
+	}
+}
+
+func validCompose() Compose {
+	return Compose{Kind: "waldo-model-compose", Schema: 1, Architecture: testArchitecture(), Stages: []Stage{testStage("pretrain")}}
+}
+
+func testArchitecture() Architecture {
+	return Architecture{Family: "decoder-transformer", ContextTokens: 128, VocabularySize: 256, HiddenSize: 64, IntermediateSize: 192, Layers: 2, AttentionHeads: 4, KeyValueHeads: 2, TieEmbeddings: true, ParameterDType: "float32", Tokenizer: Tokenizer{Name: "byte", Revision: "sha256:example"}}
+}
+
+func testStage(name string) Stage {
+	return Stage{Name: name, Type: "pre-training", Objective: "causal-language-modeling", Corpora: []string{"example"}, Parameters: training.Parameters{Steps: 2, BatchSize: 1, SequenceLength: 64, LearningRate: 0.001, Seed: 7}}
+}
+
+func preparedFixture(t *testing.T, stage Stage) PreparedStage {
+	t.Helper()
 	data := []byte("canonical parquet fixture")
 	digestArray := sha256.Sum256(data)
 	digest := hex.EncodeToString(digestArray[:])
-	relative := "data/example/example.parquet"
-	path := filepath.Join(directory, filepath.FromSlash(relative))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	path := filepath.Join(t.TempDir(), digest)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	conversion := index.Conversion{Tool: "test", Version: "1", Profile: "text", Recipe: "test/v1", Tokenizer: "byte"}
 	measures := index.Measures{Shards: 1, Docs: 1, Tokens: 128, Bytes: int64(len(data))}
 	bom := corpus.BOM{
-		Kind: "openwaldo-bom", Schema: 1, Subject: "corpus", Paths: []string{"example"},
-		Manifests: []corpus.ManifestPin{{
-			Path: "example/example.json", SHA256: strings.Repeat("a", 64), Name: "example", Title: "Example",
-			Description: "Model fixture.", License: "CC0-1.0", Format: "parquet", RecordSchema: 1,
-			ConvertedBy: conversion, Sources: []index.Source{{Name: "fixture", Source: "Fixture", URL: "https://example.test", SHA256: strings.Repeat("b", 64)}},
-			Totals: measures, Licenses: map[string]index.Measures{"CC0-1.0": measures},
-		}},
-		Shards: []corpus.ShardPin{{
-			Manifest: "example/example.json", URL: "https://objects.example/" + digest, SHA256: digest,
-			Format: "parquet", RecordSchema: 1, License: "CC0-1.0", ConvertedBy: conversion,
-			Docs: 1, Tokens: 128, Bytes: int64(len(data)),
-		}},
-		Totals: measures, Licenses: map[string]index.Measures{"CC0-1.0": measures},
+		Kind: "openwaldo-bom", Schema: 1, Subject: "corpus", Paths: []string{"example"}, Licenses: map[string]index.Measures{"CC0-1.0": measures}, Totals: measures,
+		Manifests: []corpus.ManifestPin{{Path: "example/example.json", SHA256: strings.Repeat("a", 64), Name: "example", Title: "Example", Description: "Model fixture.", License: "CC0-1.0", Format: "parquet", RecordSchema: 1, ConvertedBy: conversion, Sources: []index.Source{{Name: "fixture", Source: "Fixture", URL: "https://example.test", SHA256: strings.Repeat("b", 64)}}, Totals: measures, Licenses: map[string]index.Measures{"CC0-1.0": measures}}},
+		Shards:    []corpus.ShardPin{{Manifest: "example/example.json", URL: "https://objects.example/" + digest, SHA256: digest, Format: "parquet", RecordSchema: 1, License: "CC0-1.0", ConvertedBy: conversion, Docs: 1, Tokens: 128, Bytes: int64(len(data))}},
 	}
-	files := []corpus.ExportedFile{{
-		Path: relative, Manifest: "example/example.json", ObjectSHA256: digest, SHA256: digest,
-		Format: "parquet", License: "CC0-1.0", Docs: 1, Tokens: 128,
-		ObjectBytes: int64(len(data)), Bytes: int64(len(data)),
-	}}
-	document := provenance.NewCorpusExport(bom, "native", files, time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC))
-	if err := provenance.WriteCorpusExport(directory, document); err != nil {
+	prepared, err := PrepareStage(stage, bom, []training.Input{{Path: path, SHA256: digest, Bytes: int64(len(data))}})
+	if err != nil {
 		t.Fatal(err)
 	}
-	return directory
+	return prepared
+}
+
+func composeYAML(suffix string) string {
+	return "kind: waldo-model-compose\nschema: 1\n" +
+		"architecture:\n  family: decoder-transformer\n  context_tokens: 128\n  vocabulary_size: 256\n  hidden_size: 64\n  intermediate_size: 192\n  layers: 2\n  attention_heads: 4\n  key_value_heads: 2\n  tie_embeddings: true\n  parameter_dtype: float32\n  tokenizer:\n    name: byte\n    revision: sha256:example\n" +
+		"stages:\n  - name: pretrain\n    type: pre-training\n    objective: causal-language-modeling\n    corpora:\n      - core/books\n      - science/papers\n    parameters:\n      steps: 2\n      batch_size: 1\n      sequence_length: 64\n      learning_rate: 0.001\n      seed: 7\n" + suffix
+}
+
+func testSelection(backend training.Backend) training.Selection {
+	descriptor := backend.Descriptor()
+	return training.Selection{Backend: backend, Execution: training.Execution{Backend: descriptor.Identity, Framework: descriptor.Framework, Runtime: "test", Host: training.Host{OS: "test-os", Architecture: "test-arch"}, Nodes: 1, WorldSize: 1}}
 }

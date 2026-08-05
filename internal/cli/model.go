@@ -5,12 +5,18 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"os"
+	"path/filepath"
+	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/openwaldo/waldo-new/internal/config"
 	"github.com/openwaldo/waldo-new/internal/corpus"
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 	"github.com/openwaldo/waldo-new/internal/model"
+	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo-new/internal/training"
 )
 
 func runModelForecast(context Context, args []string, stdout, _ io.Writer) error {
@@ -154,69 +160,97 @@ func approximateDuration(seconds int64) string {
 	return fmt.Sprintf("%d days", days)
 }
 
-func runModelBuild(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo model build <compose.yaml> [--json]"}
-	}
-	compose, composePath, err := model.LoadCompose(args[0])
+func runModelInit(context Context, args []string, stdout, stderr io.Writer) error {
+	name, presetName, err := parseModelInit(args)
 	if err != nil {
 		return err
 	}
-	configuration, err := config.Load()
+	preset, err := model.PresetByName(presetName)
+	if err != nil {
+		return usageError{message: err.Error()}
+	}
+	builder, err := configuredModelBuilder(context, stderr)
 	if err != nil {
 		return err
 	}
-	root, err := config.EffectiveModelRoot(configuration)
-	if err != nil {
-		return err
-	}
-	builder := model.Builder{
-		Root: root,
-		Progress: func(progress model.Progress) {
-			if context.JSON {
-				_ = json.NewEncoder(stderr).Encode(progress)
-				return
-			}
-			label := progress.Phase
-			if progress.Stage != "" {
-				label += "/" + progress.Stage
-			}
-			if progress.State != "" {
-				fmt.Fprintf(stderr, "%-22s %-11s %s\n", label, progress.State, progress.Message)
-			} else {
-				fmt.Fprintf(stderr, "%-22s %s\n", label, progress.Message)
-			}
-		},
-	}
-	inspection, err := builder.Build(context.Execution, compose)
+	inspection, err := builder.Initialize(name, preset.Architecture)
 	if err != nil {
 		return err
 	}
 	if context.JSON {
-		return writeJSON(stdout, struct {
-			Compose string           `json:"compose"`
-			Result  model.Inspection `json:"result"`
-		}{Compose: composePath, Result: inspection})
+		return writeJSON(stdout, inspection)
 	}
-	fmt.Fprintf(stdout, "model %s built with simulated training\n", inspection.Model.Name)
+	fmt.Fprintf(stdout, "initialized model %s\n", name)
+	fmt.Fprintf(stdout, "  preset        %s\n", preset.Name)
 	fmt.Fprintf(stdout, "  location      %s\n", inspection.Path)
 	fmt.Fprintf(stdout, "  model id      %s\n", shortModelHash(inspection.Model.ID))
-	fmt.Fprintf(stdout, "  architecture  %s\n", shortModelHash(inspection.Model.ArchitectureSHA256))
 	fmt.Fprintf(stdout, "  estimate      %s parameters, %s weights\n", humanIntegerUint(inspection.Model.Forecast.ApproximateParameters), humanBytesUint(inspection.Model.Forecast.ParameterBytes))
-	fmt.Fprintf(stdout, "  runs          %s complete\n", humanInteger(int64(len(inspection.Model.Runs))))
-	fmt.Fprintln(stdout, "  warning       fake backend only; artifacts are not trained model weights")
 	return nil
 }
 
-func runModelInspect(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo model inspect <name-or-path> [--json]"}
+func parseModelInit(args []string) (string, string, error) {
+	var positionals []string
+	preset := ""
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		switch {
+		case argument == "--preset":
+			value, next, err := optionValue(args, index, "--preset")
+			if err != nil {
+				return "", "", err
+			}
+			preset, index = value, next
+		case strings.HasPrefix(argument, "--preset="):
+			preset = strings.TrimPrefix(argument, "--preset=")
+		case strings.HasPrefix(argument, "-"):
+			return "", "", usageError{message: fmt.Sprintf("unknown model init option %q", argument)}
+		default:
+			positionals = append(positionals, argument)
+		}
 	}
-	configuration, err := config.Load()
+	if len(positionals) != 1 || preset == "" {
+		return "", "", usageError{message: "usage: waldo model init <name> --preset <preset>"}
+	}
+	return positionals[0], preset, nil
+}
+
+func runModelList(context Context, args []string, stdout, _ io.Writer) error {
+	for _, argument := range args {
+		if strings.HasPrefix(argument, "-") {
+			return usageError{message: fmt.Sprintf("unknown model list option %q", argument)}
+		}
+	}
+	root, err := configuredModelRoot()
 	if err != nil {
 		return err
 	}
-	root, err := config.EffectiveModelRoot(configuration)
+	models, err := model.List(root, args)
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, models)
+	}
+	if len(models) == 0 {
+		return nil
+	}
+	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "NAME\tSTATE\tPARAMETERS\tRUNS\tUPDATED (UTC)")
+	for _, item := range models {
+		state := "untrained"
+		if item.State != "" {
+			state = string(item.State)
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", item.Name, state, humanCount(int64(item.Parameters)), humanInteger(int64(item.Runs)), item.Updated)
+	}
+	return table.Flush()
+}
+
+func runModelSummary(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) != 1 {
+		return usageError{message: "usage: waldo model summary <name> [--json]"}
+	}
+	root, err := configuredModelRoot()
 	if err != nil {
 		return err
 	}
@@ -227,17 +261,29 @@ func runModelInspect(context Context, args []string, stdout, _ io.Writer) error 
 	if context.JSON {
 		return writeJSON(stdout, inspection)
 	}
-	fmt.Fprintf(stdout, "model %s\n", inspection.Model.Name)
-	fmt.Fprintf(stdout, "  location      %s\n", inspection.Path)
-	fmt.Fprintf(stdout, "  model id      %s\n", shortModelHash(inspection.Model.ID))
-	fmt.Fprintf(stdout, "  created       %s\n", inspection.Model.Created)
-	fmt.Fprintf(stdout, "  architecture  %s %s, %s layers, width %s, %s/%s heads\n",
+	state := "untrained"
+	if len(inspection.Model.Runs) > 0 {
+		state = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
+	}
+	var consumed int64
+	for _, run := range inspection.Runs {
+		if run.Observation != nil {
+			consumed += run.Observation.ConsumedTokens
+		}
+	}
+	fmt.Fprintf(stdout, "NAME:          %s\n", inspection.Model.Name)
+	fmt.Fprintf(stdout, "STATE:         %s\n", state)
+	fmt.Fprintf(stdout, "MODEL ID:      %s\n", shortModelHash(inspection.Model.ID))
+	fmt.Fprintf(stdout, "CREATED:       %s\n", inspection.Model.Created)
+	fmt.Fprintf(stdout, "PARAMETERS:    %s\n", humanIntegerUint(inspection.Model.Forecast.ApproximateParameters))
+	fmt.Fprintf(stdout, "WEIGHTS:       %s\n", humanBytesUint(inspection.Model.Forecast.ParameterBytes))
+	fmt.Fprintf(stdout, "RUNS:          %s\n", humanInteger(int64(len(inspection.Model.Runs))))
+	fmt.Fprintf(stdout, "TOKENS:        %s\n", humanCount(consumed))
+	fmt.Fprintf(stdout, "ARCHITECTURE:  %s %s, %s layers, width %s, %s/%s heads\n",
 		shortModelHash(inspection.Model.ArchitectureSHA256), inspection.Model.Architecture.Family,
 		humanIntegerUint(inspection.Model.Architecture.Layers), humanIntegerUint(inspection.Model.Architecture.HiddenSize),
 		humanIntegerUint(inspection.Model.Architecture.AttentionHeads), humanIntegerUint(inspection.Model.Architecture.KeyValueHeads))
-	fmt.Fprintf(stdout, "  tokenizer     %s@%s\n", inspection.Model.Architecture.Tokenizer.Name, inspection.Model.Architecture.Tokenizer.Revision)
-	fmt.Fprintf(stdout, "  estimate      %s parameters, %s weights\n", humanIntegerUint(inspection.Model.Forecast.ApproximateParameters), humanBytesUint(inspection.Model.Forecast.ParameterBytes))
-	fmt.Fprintf(stdout, "  runs          %s\n", humanInteger(int64(len(inspection.Model.Runs))))
+	fmt.Fprintf(stdout, "TOKENIZER:     %s@%s\n", inspection.Model.Architecture.Tokenizer.Name, inspection.Model.Architecture.Tokenizer.Revision)
 	for position, pin := range inspection.Model.Runs {
 		tokens := int64(0)
 		simulated := ""
@@ -247,8 +293,337 @@ func runModelInspect(context Context, args []string, stdout, _ io.Writer) error 
 				simulated = ", simulated"
 			}
 		}
-		fmt.Fprintf(stdout, "    %04d %-16s %-11s %s tokens%s\n", pin.Ordinal, pin.Stage, pin.State, humanCount(tokens), simulated)
+		fmt.Fprintf(stdout, "RUN %04d:      %-16s %-11s %s tokens%s\n", pin.Ordinal, pin.Stage, pin.State, humanCount(tokens), simulated)
 	}
+	return nil
+}
+
+func runModelBOM(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) < 1 || len(args) > 2 {
+		return usageError{message: "usage: waldo model bom <name> [output.json] [--json]"}
+	}
+	root, err := configuredModelRoot()
+	if err != nil {
+		return err
+	}
+	inspection, err := model.Inspect(root, args[0])
+	if err != nil {
+		return err
+	}
+	if len(args) == 1 {
+		return writeJSON(stdout, inspection.BOM)
+	}
+	output, err := filepath.Abs(args[1])
+	if err != nil {
+		return err
+	}
+	file, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if err := writeJSON(file, inspection.BOM); err != nil {
+		_ = file.Close()
+		_ = os.Remove(output)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Output string `json:"output"`
+		}{output})
+	}
+	fmt.Fprintf(stdout, "wrote model OpenWALDO BOM to %s\n", output)
+	return nil
+}
+
+func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) < 2 {
+		return usageError{message: "usage: waldo model train <name> <index-path...> [--json]"}
+	}
+	root, err := configuredModelRoot()
+	if err != nil {
+		return err
+	}
+	inspection, err := model.Inspect(root, args[0])
+	if err != nil {
+		return err
+	}
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		return err
+	}
+	stage, err := prepareDefaultTrainingStage(context, inspection, args[1:], cache, stderr)
+	if err != nil {
+		return err
+	}
+	builder, err := configuredModelBuilder(context, stderr)
+	if err != nil {
+		return err
+	}
+	result, err := builder.Train(context.Execution, args[0], stage)
+	if err != nil {
+		return err
+	}
+	if _, err := cache.PurgeUsed(); err != nil {
+		return fmt.Errorf("purge successful training scratch: %w", err)
+	}
+	return writeModelMutationResult(context, stdout, result, "trained")
+}
+
+func runModelCompose(context Context, args []string, stdout, stderr io.Writer) error {
+	name, path, replace, err := parseModelCompose(args)
+	if err != nil {
+		return err
+	}
+	compose, composePath, err := model.LoadCompose(path)
+	if err != nil {
+		return err
+	}
+	root, err := configuredModelRoot()
+	if err != nil {
+		return err
+	}
+	if !replace {
+		exists, err := model.Exists(root, name)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("model %q already exists; use --replace to recreate it", name)
+		}
+	}
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		return err
+	}
+	prepared := make([]model.PreparedStage, 0, len(compose.Stages))
+	for _, stage := range compose.Stages {
+		resolved, err := prepareModelStage(context, stage, cache, stderr)
+		if err != nil {
+			return err
+		}
+		prepared = append(prepared, resolved)
+	}
+	builder, err := configuredModelBuilder(context, stderr)
+	if err != nil {
+		return err
+	}
+	result, err := builder.Compose(context.Execution, name, compose, prepared, replace)
+	if err != nil {
+		return err
+	}
+	if _, err := cache.PurgeUsed(); err != nil {
+		return fmt.Errorf("purge successful compose scratch: %w", err)
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Compose string           `json:"compose"`
+			Result  model.Inspection `json:"result"`
+		}{Compose: composePath, Result: result})
+	}
+	return writeModelMutationResult(context, stdout, result, "composed")
+}
+
+func parseModelCompose(args []string) (string, string, bool, error) {
+	var positionals []string
+	replace := false
+	for _, argument := range args {
+		switch {
+		case argument == "--replace":
+			replace = true
+		case strings.HasPrefix(argument, "-"):
+			return "", "", false, usageError{message: fmt.Sprintf("unknown model compose option %q", argument)}
+		default:
+			positionals = append(positionals, argument)
+		}
+	}
+	if len(positionals) != 2 {
+		return "", "", false, usageError{message: "usage: waldo model compose <name> <compose-file> [--replace] [--json]"}
+	}
+	return positionals[0], positionals[1], replace, nil
+}
+
+func runModelExport(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) != 2 {
+		return usageError{message: "usage: waldo model export <name> <directory> [--json]"}
+	}
+	root, err := configuredModelRoot()
+	if err != nil {
+		return err
+	}
+	output, err := model.Export(root, args[0], args[1])
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Name   string `json:"name"`
+			Output string `json:"output"`
+		}{args[0], output})
+	}
+	fmt.Fprintf(stdout, "exported model %s to %s\n", args[0], output)
+	return nil
+}
+
+func runModelRemove(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) == 0 {
+		return usageError{message: "usage: waldo model rm <name...> [--json]"}
+	}
+	root, err := configuredModelRoot()
+	if err != nil {
+		return err
+	}
+	removed, err := model.Remove(root, args)
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Removed []string `json:"removed"`
+		}{removed})
+	}
+	for _, name := range removed {
+		fmt.Fprintf(stdout, "removed model %s\n", name)
+	}
+	return nil
+}
+
+func runModelChat(_ Context, args []string, _, _ io.Writer) error {
+	if len(args) != 1 {
+		return usageError{message: "usage: waldo model chat <name>"}
+	}
+	root, err := configuredModelRoot()
+	if err != nil {
+		return err
+	}
+	inspection, err := model.Inspect(root, args[0])
+	if err != nil {
+		return err
+	}
+	if len(inspection.Model.Runs) == 0 {
+		return fmt.Errorf("model %q is untrained", args[0])
+	}
+	return fmt.Errorf("model %q has no chat-capable real-weight artifact; the MLX backend is the next training slice", args[0])
+}
+
+func configuredModelRoot() (string, error) {
+	configuration, err := config.Load()
+	if err != nil {
+		return "", err
+	}
+	return config.EffectiveModelRoot(configuration)
+}
+
+func configuredModelBuilder(context Context, progress io.Writer) (model.Builder, error) {
+	root, err := configuredModelRoot()
+	if err != nil {
+		return model.Builder{}, err
+	}
+	return model.Builder{Root: root, Progress: func(event model.Progress) {
+		if context.JSON {
+			_ = json.NewEncoder(progress).Encode(event)
+			return
+		}
+		label := event.Phase
+		if event.Stage != "" {
+			label += "/" + event.Stage
+		}
+		if event.State != "" {
+			fmt.Fprintf(progress, "%-22s %-11s %s\n", label, event.State, event.Message)
+		} else {
+			fmt.Fprintf(progress, "%-22s %s\n", label, event.Message)
+		}
+	}}, nil
+}
+
+func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
+	targets, err := resolveIndexArguments(paths)
+	if err != nil {
+		return model.PreparedStage{}, err
+	}
+	policy, err := corpus.NewLicensePolicy(nil, nil)
+	if err != nil {
+		return model.PreparedStage{}, err
+	}
+	bom, err := corpus.BuildBOM(context.Execution, targets, policy, cache)
+	if err != nil {
+		return model.PreparedStage{}, err
+	}
+	batch := int64(8)
+	sequence := int64(inspection.Model.Architecture.ContextTokens)
+	steps := bom.Totals.Tokens / (batch * sequence)
+	if bom.Totals.Tokens%(batch*sequence) != 0 {
+		steps++
+	}
+	if steps < 1 {
+		steps = 1
+	}
+	stage := model.Stage{
+		Name: fmt.Sprintf("train-%04d", len(inspection.Model.Runs)+1), Type: "pre-training",
+		Objective: "causal-language-modeling", Corpora: append([]string(nil), paths...),
+		Parameters: training.Parameters{Steps: steps, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
+	}
+	return materializeModelStage(context, stage, bom, cache, progress)
+}
+
+func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
+	targets, err := resolveIndexArguments(stage.Corpora)
+	if err != nil {
+		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
+	}
+	policy, err := corpus.NewLicensePolicy(nil, nil)
+	if err != nil {
+		return model.PreparedStage{}, err
+	}
+	bom, err := corpus.BuildBOM(context.Execution, targets, policy, cache)
+	if err != nil {
+		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
+	}
+	return materializeModelStage(context, stage, bom, cache, progress)
+}
+
+func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
+	fmt.Fprintf(progress, "preflight/%s          resolving %s shards, %s records, %s tokens\n", stage.Name, humanInteger(bom.Totals.Shards), humanCount(bom.Totals.Docs), humanCount(bom.Totals.Tokens))
+	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
+		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
+			fmt.Fprintf(progress, "  shard %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
+		}
+	})
+	if err != nil {
+		return model.PreparedStage{}, err
+	}
+	seen := map[string]bool{}
+	var paths []string
+	var inputs []training.Input
+	for _, object := range materialized.Objects {
+		if seen[object.Shard.SHA256] {
+			continue
+		}
+		seen[object.Shard.SHA256] = true
+		paths = append(paths, object.Path)
+		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes})
+	}
+	audited, err := shard.Audit(context.Execution, paths)
+	if err != nil {
+		return model.PreparedStage{}, fmt.Errorf("stage %s shard audit: %w", stage.Name, err)
+	}
+	if audited.Records != bom.Totals.Docs || audited.Tokens != bom.Totals.Tokens || audited.EncodedBytes != bom.Totals.Bytes {
+		return model.PreparedStage{}, fmt.Errorf("stage %s audited totals differ from index manifests", stage.Name)
+	}
+	return model.PrepareStage(stage, bom, inputs)
+}
+
+func writeModelMutationResult(context Context, stdout io.Writer, inspection model.Inspection, verb string) error {
+	if context.JSON {
+		return writeJSON(stdout, inspection)
+	}
+	fmt.Fprintf(stdout, "%s model %s\n", verb, inspection.Model.Name)
+	fmt.Fprintf(stdout, "  location      %s\n", inspection.Path)
+	fmt.Fprintf(stdout, "  model id      %s\n", shortModelHash(inspection.Model.ID))
+	fmt.Fprintf(stdout, "  runs          %s\n", humanInteger(int64(len(inspection.Model.Runs))))
+	fmt.Fprintln(stdout, "  warning       fake backend only; artifacts are not trained model weights")
 	return nil
 }
 

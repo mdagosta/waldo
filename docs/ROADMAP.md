@@ -91,12 +91,15 @@ Implemented foundation:
 - Model identity and immutable architecture
 - Strict declarative YAML/JSON model composes
 - Ordered curriculum, architectural, and transparent resource validation
-- Complete native corpus-export verification and OpenWALDO BOM attachment
+- Direct index selection, canonical shard audit, and OpenWALDO BOM attachment
 - Durable planned/running/complete/failed/interrupted run state machine
 - Deterministic fake backend with completion, failure, and interruption tests
-- Immutable build plans plus model and run OpenWALDO BOMs
-- `waldo model build` and `waldo model inspect`
-- Training-stage classification in the compose, plan, and run BOM
+- Immutable architecture plans plus model and run OpenWALDO BOMs
+- Named-model `init`, `list`, `summary`, `bom`, `train`, `compose`, `export`,
+  `chat`, and `rm` command surface; chat remains capability-gated until real
+  weights exist
+- Direct index-backed training selections through the verified shard cache
+- Training-stage classification in the compose and run BOM
 - EU GPAI training-content gap analysis and fail-closed
   `bom export --format eu-gpai`
 
@@ -156,7 +159,7 @@ the same files independently of an index checkout.
 - Select MLX automatically on Apple Silicon
 - Select PyTorch automatically on single-node Linux
 - Select TorchTitan for explicitly configured multi-node Linux runs
-- Persist the resolved backend and immutable environment facts in the plan
+- Persist the resolved backend and immutable environment facts in each run BOM
 - Keep the execution adapter portable across MLX, PyTorch, TensorFlow, and
   PyTorch-based distributed engines. **Backend-neutral contract implemented;
   real environment resolvers and adapters remain.**

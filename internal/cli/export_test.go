@@ -97,10 +97,9 @@ func TestIndexExportEndToEnd(t *testing.T) {
 		t.Fatalf("bom show output = %q", stdout.String())
 	}
 
-	recipe := filepath.Join(t.TempDir(), "smoke.yaml")
-	recipeData := fmt.Sprintf(`kind: waldo-model-compose
+	compose := filepath.Join(t.TempDir(), "smoke.yaml")
+	composeData := fmt.Sprintf(`kind: waldo-model-compose
 schema: 1
-name: smoke
 architecture:
   family: decoder-transformer
   context_tokens: 128
@@ -119,32 +118,33 @@ stages:
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
-    corpus: %q
+    corpora:
+      - %q
     parameters:
       steps: 2
       batch_size: 1
       sequence_length: 64
       learning_rate: 0.001
       seed: 7
-`, destination)
-	if err := os.WriteFile(recipe, []byte(recipeData), 0o644); err != nil {
+`, filepath.Join(root, "books"))
+	if err := os.WriteFile(compose, []byte(composeData), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"model", "build", recipe}, &stdout, &stderr); code != 0 {
-		t.Fatalf("model build code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	if code := Run([]string{"model", "compose", "smoke", compose}, &stdout, &stderr); code != 0 {
+		t.Fatalf("model compose code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "simulated training") || !strings.Contains(stderr.String(), "preflight/pretrain") {
-		t.Fatalf("model build stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	if !strings.Contains(stdout.String(), "composed model smoke") || !strings.Contains(stderr.String(), "preflight/pretrain") {
+		t.Fatalf("model compose stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"model", "inspect", "smoke"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("model inspect code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	if code := Run([]string{"model", "summary", "smoke"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("model summary code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "complete") || !strings.Contains(stdout.String(), "simulated") {
-		t.Fatalf("model inspect stdout = %q", stdout.String())
+		t.Fatalf("model summary stdout = %q", stdout.String())
 	}
 	for _, name := range []string{"PLAN.json", "MODEL.json", "MODEL-BOM.json"} {
 		if _, err := os.Stat(filepath.Join(models, "smoke", name)); err != nil {

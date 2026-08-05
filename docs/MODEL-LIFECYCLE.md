@@ -1,23 +1,59 @@
 # Model lifecycle
 
-Phase 4 proves model orchestration and provenance without coupling WALDO to an
-ML framework. The enabled backend is deliberately fake: it writes a small
-deterministic document that states it is not trained weights. A successful
-Phase-4 build proves compose resolution, corpus verification, state transitions,
-and artifact hashing; it does not prove that training occurred.
+The model lifecycle separates a stable architecture from an append-only history
+of explicit training runs. The current backend is deliberately fake: it proves
+index resolution, shard verification, state transitions, BOM persistence, and
+artifact hashing without claiming to produce trained weights.
 
-All formats in this document use schema 1.
+All durable formats in this document use schema 1.
+
+## Machine configuration
+
+Logical corpus paths use one configured index checkout. Model state and the
+verified shard cache have independent locations:
+
+```bash
+waldo config set index /path/to/waldo-index
+waldo config set model.root /fast-disk/waldo-models
+waldo config set lookaside.cache /fast-disk/waldo-cache
+```
+
+Defaults are `~/.waldo/models` and `~/.waldo/cache`.
+
+## Basic commands
+
+```bash
+waldo model init small --preset 10m
+waldo model list 'small*'
+waldo model summary small
+waldo model train small core/books science/papers
+waldo model bom small
+waldo model export small ./small-export
+waldo model chat small
+waldo model rm small
+```
+
+`init` creates an untrained immutable architecture. `train` resolves one or
+more recursive index selections, deduplicates them into an OpenWALDO BOM,
+materializes hash-verified Parquet through the shared cache, audits every
+canonical record, and appends one run. Its current compact default is one pass,
+batch size 8, the architecture context length, learning rate 0.0003, and seed
+42. Exact or multi-stage parameters belong in a model compose.
+
+`model bom` writes JSON to standard output unless an output file is supplied.
+`model export` requires a new destination directory because a model contains
+multiple artifacts and provenance records. `model rm` accepts only exact model
+names. `chat` currently validates the model and then reports that no
+chat-capable real weights exist; MLX is the next backend slice.
 
 ## Model compose
 
-Model compose files are strict YAML or JSON. Unknown fields, additional YAML documents,
-incomplete architecture, unsupported objectives, and ambiguous backend
-revisions are rejected.
+A model compose is strict YAML or JSON. The command supplies the local model
+name, so the portable file contains no name and can be reused:
 
 ```yaml
 kind: waldo-model-compose
 schema: 1
-name: smoke
 
 architecture:
   family: decoder-transformer
@@ -38,43 +74,39 @@ stages:
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
-    corpus: ../exports/core/EXPORT.json
+    corpora:
+      - core/books
+      - core/common-pile/foodista
     parameters:
-      steps: 10
+      steps: 10000
       batch_size: 2
       sequence_length: 1024
       learning_rate: 0.0003
       seed: 7
 ```
 
-`corpus` currently names a native corpus export directory or its `EXPORT.json`. It is
-resolved relative to the compose. WALDO verifies every exported file against
-the export record before it creates the model and requires canonical Parquet
-record schema 1 for the current causal-language-modeling objective.
-`type` is one of `pre-training`, `fine-tuning`, `alignment`, or `other`; WALDO
-carries it into the immutable plan and run OpenWALDO BOM for model-specific
-training-content disclosure.
-
-The local corpus path is not identity. The resolved corpus OpenWALDO BOM hash,
-architecture, automatically resolved execution backend, parameters, and
-ordered stages form the immutable build plan. Composes do not select a backend;
-the same compose remains portable across supported execution environments.
-
-## Commands
-
-Models default to `~/.waldo/models`. Override that durable location when a
-different disk is more appropriate:
+Run it with:
 
 ```bash
-waldo config set model.root /fast-disk/waldo-models
-waldo model build model.yaml
-waldo model inspect smoke
-waldo model inspect /fast-disk/waldo-models/smoke
+waldo model compose example model.yaml
 ```
 
-`model build` refuses to reuse an existing model name. Additional training and
-replacement will have separate explicit workflows; there is no overwrite or
-continuation flag hidden in the initial command.
+Unknown fields, additional YAML documents, incomplete architecture, unsupported
+objectives, empty corpus selections, duplicate stage names, and invalid
+parameters are rejected. Corpus values are index paths, never raw directories
+or corpus exports. Explicit paths discover their checkout; logical paths use
+the current or configured checkout.
+
+An existing name is refused. Explicit replacement uses one flag:
+
+```bash
+waldo model compose example model.yaml --replace
+```
+
+WALDO resolves and audits every stage and builds the replacement in a sibling
+temporary directory. The old model remains intact if parsing, preflight,
+backend resolution, or training fails. Only a complete replacement is swapped
+into the configured model root.
 
 ## Durable layout
 
@@ -88,25 +120,22 @@ continuation flag hidden in the initial command.
         ├── RUN-BOM.json
         ├── RUN.json
         └── artifacts/
-            └── fake-model.json
 ```
 
-- `PLAN.json` is immutable and content-identifies the initial model build.
-- `RUN-BOM.json` is written before backend launch. It embeds the corpus
-  OpenWALDO BOM and pins the exported files, architecture, backend, objective,
-  and parameters without machine-local paths.
+- `PLAN.json` content-identifies the immutable architecture and local model
+  name. Adding training does not change model identity.
+- `RUN-BOM.json` embeds the resolved corpus OpenWALDO BOM and pins architecture,
+  backend, objective, parameters, and execution environment before launch.
 - `RUN.json` moves atomically through `planned`, `running`, and exactly one of
-  `complete`, `failed`, or `interrupted`. Observations never replace planned
-  totals.
-- `MODEL-BOM.json` aggregates run-BOM hashes, terminal state, observation
-  hashes, and output artifact hashes.
+  `complete`, `failed`, or `interrupted`.
+- `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, observation
+  hashes, and artifact hashes.
 
-Timestamps and local paths are operational observations rather than inputs to
-model identity.
+Machine-local index roots and cache paths never enter identity. Run BOMs retain
+logical index paths, manifest and shard hashes, licenses, source evidence, and
+the index Git identity when available.
 
 ## Resource forecast
-
-Before allocating hardware, run:
 
 ```bash
 waldo model forecast model.yaml
@@ -114,18 +143,12 @@ waldo model forecast /path/to/waldo-index/core/books
 waldo model forecast core/books science/papers
 ```
 
-A model compose supplies its architecture and complete training budget. Direct
-index paths instead resolve one deduplicated selection, recommend the largest
-model rung supported by roughly 20 tokens per parameter, and forecast one pass
-over that data. Multiple paths must belong to the same checkout. Logical paths
-use the current checkout or the checkout configured with:
+A compose supplies exact architecture and training budgets. Direct index paths
+resolve a deduplicated selection, recommend the largest model rung supported by
+roughly 20 tokens per parameter, and forecast one pass. Forecast creates no
+model or run state.
 
-```bash
-waldo config set index /path/to/waldo-index
-```
-
-WALDO creates no model or run state. It lists only accelerator configurations
-that have enough memory, sorted from slowest to fastest:
+Only configurations that fit are shown, from slowest to fastest:
 
 ```text
 GPUS  MFR     ACCELERATOR                    MEMORY/GPU  APPROX. TIME
@@ -133,10 +156,19 @@ GPUS  MFR     ACCELERATOR                    MEMORY/GPU  APPROX. TIME
    8  NVIDIA  H100 SXM                           80 GB       44 hours
 ```
 
-The actual rows and times depend on the model compose. The estimate uses planned
-tokens, approximate model parameters, optimizer and activation memory, device
-headroom, and conservative effective throughput from a versioned hardware
-catalog. Approximate time covers the complete planned workload, including a
-small allowance for checkpoints, evaluation, and final artifacts. JSON output
-includes the catalog revision, formula, effective throughput, required memory,
-and unrounded duration used to produce the compact table.
+The estimate uses planned tokens, approximate parameters, optimizer and
+activation memory, device headroom, and conservative effective throughput from
+a versioned hardware catalog. JSON includes the formula and unrounded inputs.
+
+## Backend boundary
+
+Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
+run is written, the environment-aware resolver chooses an adapter and records
+its immutable identity, framework, runtime, host, accelerator, node count, and
+world size in the run BOM. Every adapter receives the same architecture,
+verified BOM, local content-addressed shard paths, parameters, artifact
+directory, and progress sink.
+
+The deterministic fake adapter is the only enabled backend today. MLX,
+streaming tokenization and packing, checkpoint/resume, evaluation, real
+consumption observations, and Safetensors export are Phase 5 work.

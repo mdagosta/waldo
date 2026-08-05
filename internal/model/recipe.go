@@ -24,7 +24,6 @@ var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 type Compose struct {
 	Kind         string       `json:"kind" yaml:"kind"`
 	Schema       int          `json:"schema" yaml:"schema"`
-	Name         string       `json:"name" yaml:"name"`
 	Architecture Architecture `json:"architecture" yaml:"architecture"`
 	Stages       []Stage      `json:"stages" yaml:"stages"`
 }
@@ -52,7 +51,7 @@ type Stage struct {
 	Name       string              `json:"name" yaml:"name"`
 	Type       string              `json:"type" yaml:"type"`
 	Objective  string              `json:"objective" yaml:"objective"`
-	Corpus     string              `json:"corpus" yaml:"corpus"`
+	Corpora    []string            `json:"corpora" yaml:"corpora"`
 	Parameters training.Parameters `json:"parameters" yaml:"parameters"`
 }
 
@@ -87,12 +86,6 @@ func LoadCompose(path string) (Compose, string, error) {
 	if err := compose.Validate(); err != nil {
 		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
-	for i := range compose.Stages {
-		if !filepath.IsAbs(compose.Stages[i].Corpus) {
-			compose.Stages[i].Corpus = filepath.Join(filepath.Dir(absolute), compose.Stages[i].Corpus)
-		}
-		compose.Stages[i].Corpus = filepath.Clean(compose.Stages[i].Corpus)
-	}
 	return compose, absolute, nil
 }
 
@@ -124,9 +117,6 @@ func (compose Compose) Validate() error {
 	if compose.Kind != "waldo-model-compose" || compose.Schema != ComposeSchema {
 		return fmt.Errorf("unsupported model compose identity %q schema %d", compose.Kind, compose.Schema)
 	}
-	if !validName.MatchString(compose.Name) {
-		return fmt.Errorf("model name must match %s", validName.String())
-	}
 	if err := compose.Architecture.Validate(); err != nil {
 		return err
 	}
@@ -145,8 +135,13 @@ func (compose Compose) Validate() error {
 		if stage.Objective != "causal-language-modeling" {
 			return fmt.Errorf("stage %s has unsupported objective %q", stage.Name, stage.Objective)
 		}
-		if stage.Corpus == "" {
-			return fmt.Errorf("stage %s requires an exported corpus OpenWALDO BOM", stage.Name)
+		if len(stage.Corpora) == 0 {
+			return fmt.Errorf("stage %s requires at least one index path in corpora", stage.Name)
+		}
+		for _, corpusPath := range stage.Corpora {
+			if corpusPath == "" {
+				return fmt.Errorf("stage %s contains an empty corpus index path", stage.Name)
+			}
 		}
 		parameters := stage.Parameters
 		if parameters.Steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {

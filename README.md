@@ -25,8 +25,8 @@ review overlay. Direct local inputs and strict external ingest recipes converge
 on that same backend; recipe-driven fetcher scripts populate temporary source space,
 are pinned in manifest evidence, and are purged after successful contribution.
 A filesystem-backed publisher exercises the same path locally for integration
-tests. Phase 4 now includes strict model composes, verified
-corpus inputs, immutable build plans, durable model/run OpenWALDO BOMs, and a
+tests. Phase 4 now includes strict model composes, direct verified index
+selections, immutable architecture plans, append-only runs, durable model/run OpenWALDO BOMs, and a
 fake backend that proves complete/failure/interruption orchestration without
 claiming to train real weights. A fail-closed EU GPAI export maps the model and
 its training BOMs to the pinned Commission template fields and reports missing

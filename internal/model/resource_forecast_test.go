@@ -6,7 +6,7 @@ import (
 )
 
 func TestForecastPlanFiltersNonFitsAndSortsSlowestFirst(t *testing.T) {
-	recipe := validCompose("unused")
+	recipe := validCompose()
 	architecture, err := recipe.Architecture.Forecast()
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +45,7 @@ func TestForecastPlanRejectsModelTooLargeForCatalog(t *testing.T) {
 	}
 	_, err = forecastPlan(Plan{
 		Architecture: architecture, Forecast: forecast,
-		Stages: []PlannedStage{{Name: "pretrain", Parameters: validCompose("unused").Stages[0].Parameters, PlannedTokens: 1}},
+		Stages: []PlannedStage{{Name: "pretrain", Parameters: validCompose().Stages[0].Parameters, PlannedTokens: 1}},
 	})
 	if err == nil || !strings.Contains(err.Error(), "does not fit any hardware configuration") {
 		t.Fatalf("error = %v", err)

@@ -116,7 +116,7 @@ Owns the adapter boundary to an execution framework. A backend receives an
 explicit request and returns observed results. It does not own model state or
 BOM persistence.
 
-Portable recipes never name an execution framework. An environment-aware
+Portable model composes never name an execution framework. An environment-aware
 resolver selects an MLX, PyTorch, TensorFlow, or distributed PyTorch/TorchTitan
 adapter before model state is created. Every adapter exposes the same narrow
 capability, request, progress, and observation contracts. Framework-specific

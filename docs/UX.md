@@ -409,17 +409,19 @@ returns a key to its default. Backend schemes are values, not separate flags.
 Changing `lookaside` preserves the existing `lookaside.region` and
 `lookaside.workers` values; switching to `file://` clears the S3-only region.
 
-### Build a model from a compose
+### Create and train models
 
 ```bash
-waldo model build configs/smoke.yaml
+waldo model init smoke --preset 10m
+waldo model train smoke core/books
+waldo model compose smoke configs/smoke.yaml
 ```
 
-The model compose declares model identity, architecture, and ordered training stages.
-The command validates the complete compose and corpus selections, forecasts
-resources, creates the model if absent, and executes stages. Reusing a trained
-model requires an explicit continuation option; replacing it requires a
-separate explicit option.
+The CLI name is the local model handle. A model compose declares architecture
+and ordered training stages using index paths. The command validates every
+selection, creates the model if absent, and executes its stages. Existing names
+are refused unless `--replace` is explicitly supplied; replacement is prepared
+fully before the old model is removed.
 
 The current development backend resolves to `fake@builtin-fake-schema-1`. It
 exercises the complete state and provenance path but emits an artifact that
@@ -432,7 +434,8 @@ portable compose. The schema-1 compose and durable layout are documented in
 ```bash
 waldo bom show ~/training-data
 waldo bom verify ~/training-data
-waldo model inspect smoke
+waldo model summary smoke
+waldo model bom smoke
 ```
 
 Inspection distinguishes declared inputs, verified materialization, backend-

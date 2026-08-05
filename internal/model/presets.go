@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/openwaldo/waldo-new/internal/training"
 )
@@ -10,6 +11,23 @@ import (
 type Preset struct {
 	Name         string
 	Architecture Architecture
+}
+
+func PresetByName(name string) (Preset, error) {
+	for _, candidate := range modelPresets {
+		if candidate.Name == name {
+			return candidate, nil
+		}
+	}
+	return Preset{}, fmt.Errorf("unknown model preset %q; use %s", name, strings.Join(PresetNames(), ", "))
+}
+
+func PresetNames() []string {
+	names := make([]string, 0, len(modelPresets))
+	for _, candidate := range modelPresets {
+		names = append(names, candidate.Name)
+	}
+	return names
 }
 
 var modelPresets = []Preset{

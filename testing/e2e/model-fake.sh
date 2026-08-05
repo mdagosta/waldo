@@ -25,7 +25,7 @@ cache="$work/cache"
 scratch="$work/scratch"
 staging="$work/staging"
 models="$work/models"
-export_root="$work/export"
+model_export="$work/model-export"
 input="$work/training.txt"
 compose="$work/model.yaml"
 disclosure="$work/eu-gpai.json"
@@ -42,6 +42,7 @@ printf 'Small deterministic training record.\nA second preserved line.\n' > "$in
 "$binary" config set lookaside.scratch "$scratch"
 "$binary" config set ingest.staging "$staging"
 "$binary" config set model.root "$models"
+"$binary" config set index "$index_root"
 
 destination="$index_root/core/e2e/model-corpus"
 "$binary" index ingest "$input" "$destination" \
@@ -61,13 +62,9 @@ done
 cp -R "$contribution"/. "$index_root"/
 
 "$binary" index audit "$destination"
-"$binary" index export "$destination" "$export_root" --format native
-"$binary" bom verify "$export_root/EXPORT.json"
-
 cat > "$compose" <<EOF
 kind: waldo-model-compose
 schema: 1
-name: smoke
 architecture:
   family: decoder-transformer
   context_tokens: 128
@@ -86,7 +83,8 @@ stages:
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
-    corpus: export
+    corpora:
+      - core/e2e/model-corpus
     parameters:
       steps: 2
       batch_size: 1
@@ -109,16 +107,16 @@ forecast_json=$("$binary" --json model forecast "$compose")
 printf '%s\n' "$forecast_json" | grep -Eq '"catalog"[[:space:]]*:[[:space:]]*"openwaldo-training-hardware-'
 printf '%s\n' "$forecast_json" | grep -Eq '"approximate_seconds"[[:space:]]*:'
 
-build_output=$("$binary" model build "$compose")
+build_output=$("$binary" model compose smoke "$compose")
 printf '%s\n' "$build_output"
-printf '%s\n' "$build_output" | grep -q 'built with simulated training'
+printf '%s\n' "$build_output" | grep -q 'composed model smoke'
 
-inspect_output=$("$binary" model inspect smoke)
+inspect_output=$("$binary" model summary smoke)
 printf '%s\n' "$inspect_output"
 printf '%s\n' "$inspect_output" | grep -q 'complete'
 printf '%s\n' "$inspect_output" | grep -q 'simulated'
 
-json_inspection=$("$binary" --json model inspect smoke)
+json_inspection=$("$binary" --json model summary smoke)
 printf '%s\n' "$json_inspection" | grep -Eq '"state"[[:space:]]*:[[:space:]]*"complete"'
 printf '%s\n' "$json_inspection" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*true'
 
@@ -130,10 +128,25 @@ run_count=$(find "$models/smoke/runs" -type f -name RUN.json -print | wc -l | tr
 artifact_count=$(find "$models/smoke/runs" -type f -name fake-model.json -print | wc -l | tr -d ' ')
 [ "$artifact_count" -eq 1 ] || { echo "found $artifact_count fake artifacts, want 1" >&2; exit 1; }
 
-if "$binary" model build "$compose" >/dev/null 2>&1; then
-  echo "model build replaced an existing model" >&2
+if "$binary" model compose smoke "$compose" >/dev/null 2>&1; then
+  echo "model compose replaced an existing model without --replace" >&2
   exit 1
 fi
+"$binary" model compose smoke "$compose" --replace >/dev/null
+
+"$binary" model init manual --preset 10m >/dev/null
+"$binary" model train manual core/e2e/model-corpus >/dev/null
+"$binary" model summary manual | grep -q 'RUNS:.*1'
+"$binary" model list 'm*' | grep -q 'manual'
+"$binary" model bom manual | grep -q '"subject": "model"'
+"$binary" model export manual "$model_export" >/dev/null
+[ -s "$model_export/MODEL-BOM.json" ] || { echo "model export missing BOM" >&2; exit 1; }
+if "$binary" model chat manual >/dev/null 2>&1; then
+  echo "fake model unexpectedly supported chat" >&2
+  exit 1
+fi
+"$binary" model rm manual >/dev/null
+[ ! -e "$models/manual" ] || { echo "model rm left manual model" >&2; exit 1; }
 if "$binary" bom export smoke "$disclosure" --format eu-gpai >/dev/null 2>&1; then
   echo "complete EU GPAI export unexpectedly passed without required facts" >&2
   exit 1
@@ -147,4 +160,4 @@ if find "$scratch" -type f -print 2>/dev/null | grep . >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "E2E fake model passed: ingested, audited, exported, forecasted, built, inspected, refused replacement, and disclosed"
+echo "E2E fake model passed: ingested, audited, forecasted, initialized, trained, composed, replaced, summarized, listed, exported, removed, and disclosed"

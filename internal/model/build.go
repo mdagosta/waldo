@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
 	"time"
@@ -32,32 +33,75 @@ type Builder struct {
 	Progress func(Progress)
 }
 
-func (builder Builder) Build(ctx context.Context, compose Compose) (Inspection, error) {
-	if err := compose.Validate(); err != nil {
-		return Inspection{}, err
+func ValidateName(name string) error {
+	if !validName.MatchString(name) {
+		return fmt.Errorf("model name must match %s", validName.String())
 	}
+	return nil
+}
+
+// Initialize creates an untrained model with an immutable architecture.
+func (builder Builder) Initialize(name string, architecture Architecture) (Inspection, error) {
 	if builder.Root == "" {
 		return Inspection{}, fmt.Errorf("model root is required")
 	}
-	now := builder.Now
-	if now == nil {
-		now = time.Now
+	if err := ValidateName(name); err != nil {
+		return Inspection{}, err
 	}
-	newID := builder.NewID
-	if newID == nil {
-		newID = randomID
+	if err := architecture.Validate(); err != nil {
+		return Inspection{}, err
 	}
-	modelPath := filepath.Join(builder.Root, compose.Name)
+	modelPath := filepath.Join(builder.Root, name)
 	if _, err := os.Stat(modelPath); err == nil {
-		return Inspection{}, fmt.Errorf("model %q already exists; use a future explicit continuation workflow rather than rebuilding it", compose.Name)
+		return Inspection{}, fmt.Errorf("model %q already exists", name)
 	} else if !os.IsNotExist(err) {
 		return Inspection{}, err
 	}
-	plan, stages, err := preflight(compose, builder.Progress)
+	plan, err := composePlan(name, Compose{Architecture: architecture})
 	if err != nil {
 		return Inspection{}, err
 	}
-	architectureJSON, err := json.Marshal(plan.Architecture)
+	planHash, err := hashJSON(plan)
+	if err != nil {
+		return Inspection{}, err
+	}
+	now := builder.clock()
+	created := now()
+	record := ModelRecord{
+		Kind: "waldo-model", Schema: ModelSchema, ID: planHash, Name: name,
+		PlanSHA256: planHash, ArchitectureSHA256: plan.ArchitectureSHA256,
+		Architecture: plan.Architecture, Forecast: plan.Forecast,
+		Created: formatTime(created), Updated: formatTime(created),
+	}
+	if err := initializeModel(builder.Root, modelPath, plan, record); err != nil {
+		return Inspection{}, err
+	}
+	builder.report(Progress{Phase: "model", Message: "persisted immutable model architecture and OpenWALDO BOM"})
+	return Inspect(builder.Root, name)
+}
+
+// Train appends one explicit run to an existing model. The model architecture
+// and identity remain unchanged; the aggregate model BOM gains a run pin.
+func (builder Builder) Train(ctx context.Context, name string, prepared PreparedStage) (Inspection, error) {
+	inspection, err := Inspect(builder.Root, name)
+	if err != nil {
+		return Inspection{}, err
+	}
+	stage := prepared.Stage
+	prepared, err = PrepareStage(stage, prepared.BOM, prepared.Inputs)
+	if err != nil {
+		return Inspection{}, err
+	}
+	if err := validateStage(stage, inspection.Model.Architecture); err != nil {
+		return Inspection{}, err
+	}
+	if err := prepared.BOM.Validate(); err != nil {
+		return Inspection{}, fmt.Errorf("stage %s corpus OpenWALDO BOM: %w", stage.Name, err)
+	}
+	if len(prepared.Inputs) == 0 {
+		return Inspection{}, fmt.Errorf("stage %s has no verified shard inputs", stage.Name)
+	}
+	architectureJSON, err := json.Marshal(inspection.Model.Architecture)
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -66,110 +110,164 @@ func (builder Builder) Build(ctx context.Context, compose Compose) (Inspection, 
 		resolver = builtinResolver()
 	}
 	selection, err := resolver.Resolve(ctx, training.ResolveRequest{
-		ArchitectureSHA256: plan.ArchitectureSHA256,
+		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
 		Architecture:       architectureJSON,
-		Objectives:         planObjectives(plan),
+		Objectives:         []string{stage.Objective},
 	})
 	if err != nil {
 		return Inspection{}, fmt.Errorf("resolve training backend: %w", err)
 	}
-	if err := validateSelection(selection, plan); err != nil {
+	if err := validateSelection(selection, []string{stage.Objective}); err != nil {
 		return Inspection{}, err
 	}
-	plan.Execution = selection.Execution
-	backend := selection.Backend
-	planHash, err := hashJSON(plan)
+
+	runID, err := builder.identifier()()
 	if err != nil {
 		return Inspection{}, err
 	}
-	record := ModelRecord{
-		Kind: "waldo-model", Schema: ModelSchema, ID: planHash, Name: compose.Name,
-		PlanSHA256: planHash, ArchitectureSHA256: plan.ArchitectureSHA256,
-		Architecture: plan.Architecture, Forecast: plan.Forecast,
-		Created: formatTime(now()), Updated: formatTime(now()),
-	}
-	if err := initializeModel(builder.Root, modelPath, plan, record); err != nil {
+	ordinal := len(inspection.Model.Runs) + 1
+	pin := RunPin{ID: runID, Stage: stage.Name, Ordinal: ordinal, State: RunPlanned}
+	runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
+	bomHash, err := hashJSON(prepared.BOM)
+	if err != nil {
 		return Inspection{}, err
 	}
-	builder.report(Progress{Phase: "model", Message: "persisted immutable build plan and initial model OpenWALDO BOM"})
-
-	for ordinal, stage := range stages {
-		runID, err := newID()
-		if err != nil {
-			return Inspection{}, err
-		}
-		pin := RunPin{ID: runID, Stage: stage.Plan.Name, Ordinal: ordinal + 1, State: RunPlanned}
-		runDirectory := filepath.Join(modelPath, "runs", runDirectoryName(pin))
-		runBOM := RunBOM{
-			Kind: "openwaldo-bom", Schema: RunBOMSchema, Subject: "training-run",
-			ID: runID, ModelID: record.ID, Stage: stage.Plan.Name, StageType: stage.Plan.Type, Ordinal: ordinal + 1,
-			Objective: stage.Plan.Objective, Execution: plan.Execution,
-			ArchitectureSHA256: plan.ArchitectureSHA256, CorpusBOMSHA256: stage.Plan.CorpusBOMSHA256,
-			CorpusBOM: stage.BOM, Files: stage.Files, Parameters: stage.Plan.Parameters,
-		}
-		runBOMHash, err := hashJSON(runBOM)
-		if err != nil {
-			return Inspection{}, err
-		}
-		pin.BOMSHA256 = runBOMHash
-		run := RunRecord{
-			Kind: "waldo-training-run", Schema: RunSchema, ID: runID,
-			State: RunPlanned, BOMSHA256: runBOMHash, Planned: formatTime(now()),
-		}
-		if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN-BOM.json"), runBOM); err != nil {
-			return Inspection{}, err
-		}
-		if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN.json"), run); err != nil {
-			return Inspection{}, err
-		}
-		record.Runs = append(record.Runs, pin)
-		if err := persistModel(modelPath, &record, now()); err != nil {
-			return Inspection{}, err
-		}
-		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunPlanned, Message: "persisted run OpenWALDO BOM"})
-
-		run.State = RunRunning
-		run.Started = formatTime(now())
-		if err := persistRunAndPin(modelPath, runDirectory, &record, pin, run, now()); err != nil {
-			return Inspection{}, err
-		}
-		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunRunning, Message: "training backend started"})
-		artifactPrefix := "artifacts"
-		observation, backendErr := backend.Run(ctx, training.Request{
-			RunID: runID, Stage: stage.Plan.Name, Objective: stage.Plan.Objective,
-			ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: architectureJSON, BOM: stage.BOM,
-			Inputs: stage.Inputs, Parameters: stage.Plan.Parameters,
-			ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix,
-			Report: func(event training.Event) {
-				builder.report(Progress{Phase: "training", Stage: stage.Plan.Name, RunID: runID, State: RunRunning, Message: event.Message})
-			},
-		})
-		if backendErr == nil {
-			if err := validateBackendObservation(runDirectory, stage.Plan, observation); err != nil {
-				backendErr = fmt.Errorf("invalid backend observation: %w", err)
-			}
-		}
-		run.Finished = formatTime(now())
-		if backendErr != nil {
-			run.State = RunFailed
-			if errors.Is(backendErr, context.Canceled) || errors.Is(backendErr, context.DeadlineExceeded) {
-				run.State = RunInterrupted
-			}
-			run.Error = backendErr.Error()
-			if err := persistRunAndPin(modelPath, runDirectory, &record, pin, run, now()); err != nil {
-				return Inspection{}, errors.Join(backendErr, err)
-			}
-			builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: run.State, Message: run.Error})
-			return Inspection{}, fmt.Errorf("stage %s: %w", pin.Stage, backendErr)
-		}
-		run.State = RunComplete
-		run.Observation = &observation
-		if err := persistRunAndPin(modelPath, runDirectory, &record, pin, run, now()); err != nil {
-			return Inspection{}, err
-		}
-		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunComplete, Message: "persisted simulated observations and artifact hashes"})
+	runBOM := RunBOM{
+		Kind: "openwaldo-bom", Schema: RunBOMSchema, Subject: "training-run",
+		ID: runID, ModelID: inspection.Model.ID, Stage: stage.Name, StageType: stage.Type,
+		Ordinal: ordinal, Objective: stage.Objective, Execution: selection.Execution,
+		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
+		CorpusBOMSHA256:    bomHash, CorpusBOM: prepared.BOM, Parameters: stage.Parameters,
 	}
-	return Inspect(builder.Root, compose.Name)
+	runBOMHash, err := hashJSON(runBOM)
+	if err != nil {
+		return Inspection{}, err
+	}
+	pin.BOMSHA256 = runBOMHash
+	now := builder.clock()
+	run := RunRecord{Kind: "waldo-training-run", Schema: RunSchema, ID: runID, State: RunPlanned, BOMSHA256: runBOMHash, Planned: formatTime(now())}
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN-BOM.json"), runBOM); err != nil {
+		return Inspection{}, err
+	}
+	if err := writeJSONAtomic(filepath.Join(runDirectory, "RUN.json"), run); err != nil {
+		return Inspection{}, err
+	}
+	record := inspection.Model
+	record.Runs = append(record.Runs, pin)
+	if err := persistModel(inspection.Path, &record, now()); err != nil {
+		return Inspection{}, err
+	}
+	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunPlanned, Message: "persisted run OpenWALDO BOM"})
+
+	run.State = RunRunning
+	run.Started = formatTime(now())
+	if err := persistRunAndPin(inspection.Path, runDirectory, &record, pin, run, now()); err != nil {
+		return Inspection{}, err
+	}
+	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunRunning, Message: "training backend started"})
+	artifactPrefix := "artifacts"
+	observation, backendErr := selection.Backend.Run(ctx, training.Request{
+		RunID: runID, Stage: stage.Name, Objective: stage.Objective,
+		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
+		Architecture:       architectureJSON, BOM: prepared.BOM, Inputs: prepared.Inputs,
+		Parameters: stage.Parameters, ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix),
+		ArtifactPrefix: artifactPrefix,
+		Report: func(event training.Event) {
+			builder.report(Progress{Phase: "training", Stage: stage.Name, RunID: runID, State: RunRunning, Message: event.Message})
+		},
+	})
+	if backendErr == nil {
+		capacity, _ := multiplyInt64(stage.Parameters.Steps, stage.Parameters.BatchSize, stage.Parameters.SequenceLength)
+		planned := PlannedStage{Name: stage.Name, Parameters: stage.Parameters, PlannedTokens: capacity}
+		if err := validateBackendObservation(runDirectory, planned, observation); err != nil {
+			backendErr = fmt.Errorf("invalid backend observation: %w", err)
+		}
+	}
+	run.Finished = formatTime(now())
+	if backendErr != nil {
+		run.State = RunFailed
+		if errors.Is(backendErr, context.Canceled) || errors.Is(backendErr, context.DeadlineExceeded) {
+			run.State = RunInterrupted
+		}
+		run.Error = backendErr.Error()
+		if err := persistRunAndPin(inspection.Path, runDirectory, &record, pin, run, now()); err != nil {
+			return Inspection{}, errors.Join(backendErr, err)
+		}
+		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: run.State, Message: run.Error})
+		return Inspection{}, fmt.Errorf("stage %s: %w", pin.Stage, backendErr)
+	}
+	run.State = RunComplete
+	run.Observation = &observation
+	if err := persistRunAndPin(inspection.Path, runDirectory, &record, pin, run, now()); err != nil {
+		return Inspection{}, err
+	}
+	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunComplete, Message: "persisted training observations and artifact hashes"})
+	return Inspect(builder.Root, name)
+}
+
+// Compose creates a model and executes every prepared stage. Work is built in
+// a sibling temporary directory so --replace never destroys a valid model on
+// parse, preflight, resolver, or backend failure.
+func (builder Builder) Compose(ctx context.Context, name string, compose Compose, stages []PreparedStage, replace bool) (Inspection, error) {
+	if err := compose.Validate(); err != nil {
+		return Inspection{}, err
+	}
+	if err := ValidateName(name); err != nil {
+		return Inspection{}, err
+	}
+	if len(stages) != len(compose.Stages) {
+		return Inspection{}, fmt.Errorf("compose has %d stages but %d prepared stages", len(compose.Stages), len(stages))
+	}
+	for index := range stages {
+		if !reflect.DeepEqual(stages[index].Stage, compose.Stages[index]) {
+			return Inspection{}, fmt.Errorf("prepared stage %d does not match model compose", index+1)
+		}
+	}
+	if err := os.MkdirAll(builder.Root, 0o755); err != nil {
+		return Inspection{}, err
+	}
+	destination := filepath.Join(builder.Root, name)
+	if _, err := os.Stat(destination); err == nil && !replace {
+		return Inspection{}, fmt.Errorf("model %q already exists; use --replace to recreate it", name)
+	} else if err != nil && !os.IsNotExist(err) {
+		return Inspection{}, err
+	}
+	temporaryRoot, err := os.MkdirTemp(builder.Root, ".waldo-compose-*")
+	if err != nil {
+		return Inspection{}, err
+	}
+	defer os.RemoveAll(temporaryRoot)
+	temporaryBuilder := builder
+	temporaryBuilder.Root = temporaryRoot
+	if _, err := temporaryBuilder.Initialize(name, compose.Architecture); err != nil {
+		return Inspection{}, err
+	}
+	for _, stage := range stages {
+		if _, err := temporaryBuilder.Train(ctx, name, stage); err != nil {
+			return Inspection{}, err
+		}
+	}
+	newPath := filepath.Join(temporaryRoot, name)
+	backup := filepath.Join(builder.Root, fmt.Sprintf(".waldo-replaced-%s-%d", name, time.Now().UnixNano()))
+	hadExisting := false
+	if _, err := os.Stat(destination); err == nil {
+		hadExisting = true
+		if err := os.Rename(destination, backup); err != nil {
+			return Inspection{}, fmt.Errorf("prepare replacement of model %q: %w", name, err)
+		}
+	}
+	if err := os.Rename(newPath, destination); err != nil {
+		if hadExisting {
+			_ = os.Rename(backup, destination)
+		}
+		return Inspection{}, fmt.Errorf("publish model %q: %w", name, err)
+	}
+	if hadExisting {
+		if err := os.RemoveAll(backup); err != nil {
+			return Inspection{}, fmt.Errorf("remove replaced model backup %s: %w", backup, err)
+		}
+	}
+	return Inspect(builder.Root, name)
 }
 
 func initializeModel(root, destination string, plan Plan, record ModelRecord) error {
@@ -240,17 +338,14 @@ func builtinResolver() training.Resolver {
 	return training.ResolverFunc(func(_ context.Context, _ training.ResolveRequest) (training.Selection, error) {
 		backend := training.Fake{}
 		descriptor := backend.Descriptor()
-		return training.Selection{
-			Backend: backend,
-			Execution: training.Execution{
-				Backend: descriptor.Identity, Framework: descriptor.Framework, Runtime: "builtin",
-				Host: training.Host{OS: runtime.GOOS, Architecture: runtime.GOARCH}, Nodes: 1, WorldSize: 1,
-			},
-		}, nil
+		return training.Selection{Backend: backend, Execution: training.Execution{
+			Backend: descriptor.Identity, Framework: descriptor.Framework, Runtime: "builtin",
+			Host: training.Host{OS: runtime.GOOS, Architecture: runtime.GOARCH}, Nodes: 1, WorldSize: 1,
+		}}, nil
 	})
 }
 
-func validateSelection(selection training.Selection, plan Plan) error {
+func validateSelection(selection training.Selection, objectives []string) error {
 	if selection.Backend == nil {
 		return fmt.Errorf("resolved training backend is nil")
 	}
@@ -268,25 +363,26 @@ func validateSelection(selection training.Selection, plan Plan) error {
 	for _, objective := range descriptor.Capabilities.Objectives {
 		supported[objective] = true
 	}
-	for _, stage := range plan.Stages {
-		if !supported[stage.Objective] {
-			return fmt.Errorf("training backend %s@%s does not support objective %s", descriptor.Identity.Name, descriptor.Identity.Revision, stage.Objective)
+	for _, objective := range objectives {
+		if !supported[objective] {
+			return fmt.Errorf("training backend %s@%s does not support objective %s", descriptor.Identity.Name, descriptor.Identity.Revision, objective)
 		}
 	}
 	return nil
 }
 
-func planObjectives(plan Plan) []string {
-	seen := make(map[string]bool)
-	for _, stage := range plan.Stages {
-		seen[stage.Objective] = true
+func (builder Builder) clock() func() time.Time {
+	if builder.Now != nil {
+		return builder.Now
 	}
-	objectives := make([]string, 0, len(seen))
-	for objective := range seen {
-		objectives = append(objectives, objective)
+	return time.Now
+}
+
+func (builder Builder) identifier() func() (string, error) {
+	if builder.NewID != nil {
+		return builder.NewID
 	}
-	sort.Strings(objectives)
-	return objectives
+	return randomID
 }
 
 func (builder Builder) report(progress Progress) {
@@ -301,4 +397,17 @@ func randomID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(value[:]), nil
+}
+
+func planObjectives(plan Plan) []string {
+	seen := make(map[string]bool)
+	for _, stage := range plan.Stages {
+		seen[stage.Objective] = true
+	}
+	objectives := make([]string, 0, len(seen))
+	for objective := range seen {
+		objectives = append(objectives, objective)
+	}
+	sort.Strings(objectives)
+	return objectives
 }
