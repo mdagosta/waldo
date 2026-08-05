@@ -17,6 +17,7 @@ var configKeys = []string{
 	"lookaside.mirrors",
 	"lookaside.scratch",
 	"ingest.staging",
+	"model.root",
 }
 
 func runConfigShow(context Context, args []string, stdout, _ io.Writer) error {
@@ -146,6 +147,14 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		if err != nil {
 			return err
 		}
+	case "model.root":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		configuration.Model.Root, err = filepath.Abs(values[0])
+		if err != nil {
+			return err
+		}
 	default:
 		return usageError{message: unknownConfigKey(key)}
 	}
@@ -181,6 +190,8 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.Lookaside.Scratch = ""
 	case "ingest.staging":
 		configuration.Ingest.Staging = ""
+	case "model.root":
+		configuration.Model.Root = ""
 	default:
 		return usageError{message: unknownConfigKey(key)}
 	}
@@ -245,6 +256,9 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 		return value, err == nil, err
 	case "ingest.staging":
 		value, err := config.EffectiveStagingBase(configuration)
+		return value, err == nil, err
+	case "model.root":
+		value, err := config.EffectiveModelRoot(configuration)
 		return value, err == nil, err
 	default:
 		return nil, false, fmt.Errorf("%s", unknownConfigKey(key))

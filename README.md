@@ -20,17 +20,22 @@ and export selected shards as native objects or canonical JSONL with an
 write canonical schema-1 Parquet, publish shards to S3 with bounded concurrency
 and remote checksum verification, reclaim staging safely, and create a Git
 review overlay. A filesystem-backed publisher exercises the same path locally
-for integration tests. Other commands remain visible as an honest roadmap.
+for integration tests. Phase 4 now includes strict model recipes, verified
+corpus inputs, immutable build plans, durable model/run OpenWALDO BOMs, and a
+fake backend that proves complete/failure/interruption orchestration without
+claiming to train real weights. Other commands remain visible as an honest
+roadmap.
 
 Recursive `waldo index verify` checks index structure plus the reachability and
 declared size of every canonical object using header-only requests. Use
 `--offline` for metadata alone or `--objects` to download and hash every byte.
 
 The stable corpus contract is documented in
-[the OpenWALDO BOM guide](docs/OPENWALDO-BOM.md). The next phase is corpus
-contribution; its proposed ingestion and training-data shape is documented in
-[the ingestion design](docs/INGESTION-DESIGN.md) for review before
-implementation.
+[the OpenWALDO BOM guide](docs/OPENWALDO-BOM.md). Corpus ingestion and its
+training-data shape are documented in
+[the ingestion design](docs/INGESTION-DESIGN.md).
+The framework-neutral model formats and fake-backend boundary are documented
+in [the model lifecycle guide](docs/MODEL-LIFECYCLE.md).
 The accompanying [EU GPAI disclosure mapping](docs/EU-GPAI-DISCLOSURE.md)
 defines the provenance needed to render the Commission's public training-content
 template from later model BOMs.

@@ -243,6 +243,7 @@ and exported-file hashes in `EXPORT.json`. It does not build or train a model.
 ```bash
 waldo config set lookaside.scratch /fast-disk/waldo
 waldo config set ingest.staging /fast-disk/waldo-ingest
+waldo config set model.root /fast-disk/waldo-models
 waldo config set lookaside.mirrors https://mirror.example/openwaldo/v1
 waldo config show
 waldo lookaside status
@@ -270,6 +271,7 @@ Configuration keys are positional and intentionally limited:
 | `lookaside.mirrors` | Complete ordered list of read fallbacks. |
 | `lookaside.scratch` | Verified-download scratch directory. |
 | `ingest.staging` | Ingestion scratch and recovery parent directory. |
+| `model.root` | Durable local model, run, BOM, and artifact directory. |
 
 `config set` replaces the named value, `config get` reads one value, `config
 show` displays the complete effective configuration, and `config unset`
@@ -286,6 +288,11 @@ The command validates the complete recipe and corpus selections, forecasts
 resources, creates the model if absent, and executes stages. Reusing a trained
 model requires an explicit continuation option; replacing it requires a
 separate explicit option.
+
+The Phase-4 backend is `fake@builtin-fake-schema-1`. It exercises the complete
+state and provenance path but emits an artifact that explicitly contains no
+trained weights. The schema-1 recipe and durable layout are documented in
+`docs/MODEL-LIFECYCLE.md`.
 
 ### Inspect provenance
 

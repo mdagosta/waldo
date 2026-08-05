@@ -14,3 +14,4 @@ logs.
 - [0008: Expand submanifest trees before materialization](0008-verified-submanifests.md)
 - [0009: Stabilize the corpus export BOM](0009-stable-corpus-bom.md)
 - [0010: Canonical text uses record schema 1 Parquet](0010-canonical-text-parquet.md)
+- [0011: Separate immutable model plans, run BOMs, and observed state](0011-model-plan-and-boms.md)

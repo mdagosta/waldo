@@ -49,9 +49,9 @@ func commandTree() Command {
 			}},
 			{Name: "model", Summary: "Build and inspect provenance-carrying models", Children: []Command{
 				{Name: "create", Summary: "Create an untrained model"},
-				{Name: "build", Summary: "Build a model from a declarative recipe"},
+				{Name: "build", Summary: "Build a model from a declarative recipe", Usage: "waldo model build <recipe.yaml> [--json]", Details: "Preflights the complete recipe and exported corpus files, creates an immutable model plan, and executes its ordered stages. Phase 4 enables only the deterministic fake backend; real training backends come later. Existing models are never continued or replaced implicitly.", Handler: runModelBuild},
 				{Name: "train", Summary: "Add an explicit training run"},
-				{Name: "inspect", Summary: "Inspect architecture, runs, and lineage"},
+				{Name: "inspect", Summary: "Inspect architecture, runs, and lineage", Usage: "waldo model inspect <name-or-path> [--json]", Handler: runModelInspect},
 				{Name: "test", Summary: "Evaluate a model on a corpus selection"},
 				{Name: "chat", Summary: "Generate interactively with a local model"},
 				{Name: "fork", Summary: "Create a model with inherited lineage"},
@@ -66,7 +66,7 @@ func commandTree() Command {
 			{Name: "config", Summary: "Inspect and change machine-local preferences", Children: []Command{
 				{Name: "show", Summary: "Show effective configuration", Usage: "waldo config show [--json]", Handler: runConfigShow},
 				{Name: "get", Summary: "Read one configuration value", Usage: "waldo config get <key> [--json]", Handler: runConfigGet},
-				{Name: "set", Summary: "Set one configuration value", Usage: "waldo config set <key> <value...> [--json]", Details: "Keys:\n  lookaside             Writable s3:// or file:// lookaside URL.\n  lookaside.region      AWS region when it cannot be inferred.\n  lookaside.workers     Concurrent completed-shard uploads (1..32).\n  lookaside.mirrors     Ordered fallback read URLs; values replace the list.\n  lookaside.scratch     Verified-download scratch directory.\n  ingest.staging        Ingestion scratch and recovery parent directory.\n\nExamples:\n  waldo config set lookaside file:///tmp/waldo-published\n  waldo config set lookaside s3://bucket/prefix\n  waldo config set lookaside.workers 4\n\nCredentials come from the standard AWS credential chain and are never saved by WALDO.", Handler: runConfigSet},
+				{Name: "set", Summary: "Set one configuration value", Usage: "waldo config set <key> <value...> [--json]", Details: "Keys:\n  lookaside             Writable s3:// or file:// lookaside URL.\n  lookaside.region      AWS region when it cannot be inferred.\n  lookaside.workers     Concurrent completed-shard uploads (1..32).\n  lookaside.mirrors     Ordered fallback read URLs; values replace the list.\n  lookaside.scratch     Verified-download scratch directory.\n  ingest.staging        Ingestion scratch and recovery parent directory.\n  model.root            Durable local model, run, and artifact directory.\n\nExamples:\n  waldo config set lookaside file:///tmp/waldo-published\n  waldo config set lookaside s3://bucket/prefix\n  waldo config set lookaside.workers 4\n  waldo config set model.root /fast-disk/waldo-models\n\nCredentials come from the standard AWS credential chain and are never saved by WALDO.", Handler: runConfigSet},
 				{Name: "unset", Summary: "Return one configuration value to its default", Usage: "waldo config unset <key> [--json]", Handler: runConfigUnset},
 			}},
 		},

@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -17,10 +18,15 @@ type Config struct {
 	Schema    int       `json:"schema"`
 	Lookaside Lookaside `json:"lookaside,omitempty"`
 	Ingest    Ingest    `json:"ingest,omitempty"`
+	Model     Model     `json:"model,omitempty"`
 }
 
 type Ingest struct {
 	Staging string `json:"staging,omitempty"`
+}
+
+type Model struct {
+	Root string `json:"root,omitempty"`
 }
 
 type Lookaside struct {
@@ -182,6 +188,30 @@ func EffectiveStagingBase(config Config) (string, error) {
 		return "", fmt.Errorf("find user cache directory: %w", err)
 	}
 	return filepath.Join(cache, "waldo", "ingest"), nil
+}
+
+func EffectiveModelRoot(config Config) (string, error) {
+	if config.Model.Root != "" {
+		return filepath.Abs(config.Model.Root)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("find home directory: %w", err)
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "waldo", "models"), nil
+	}
+	if runtime.GOOS == "windows" {
+		data, err := os.UserConfigDir()
+		if err != nil {
+			return "", fmt.Errorf("find user data directory: %w", err)
+		}
+		return filepath.Join(data, "waldo", "models"), nil
+	}
+	if data := os.Getenv("XDG_DATA_HOME"); data != "" {
+		return filepath.Join(data, "waldo", "models"), nil
+	}
+	return filepath.Join(home, ".local", "share", "waldo", "models"), nil
 }
 
 // EffectiveStagingRoot returns a private, plan-specific staging directory.

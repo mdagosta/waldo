@@ -14,7 +14,7 @@ func TestSaveLoadAndEffectiveScratch(t *testing.T) {
 		Scratch: filepath.Join(t.TempDir(), "scratch"),
 		Mirrors: []string{"https://one.example/root/", "https://one.example/root", "s3://bucket/root"},
 		Publish: &Publish{URL: "s3://bucket/write/", Region: "us-west-2", Workers: 3},
-	}, Ingest: Ingest{Staging: filepath.Join(t.TempDir(), "ingest")}}
+	}, Ingest: Ingest{Staging: filepath.Join(t.TempDir(), "ingest")}, Model: Model{Root: filepath.Join(t.TempDir(), "models")}}
 	if err := Save(want); err != nil {
 		t.Fatal(err)
 	}

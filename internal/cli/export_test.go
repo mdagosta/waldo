@@ -55,9 +55,10 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	writeCLIFile(t, filepath.Join(root, "books", "books.json"), manifest)
 
 	cache := filepath.Join(t.TempDir(), "cache")
+	models := filepath.Join(t.TempDir(), "models")
 	destination := filepath.Join(t.TempDir(), "export")
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
-	if err := config.Save(config.Config{Lookaside: config.Lookaside{Scratch: cache}}); err != nil {
+	if err := config.Save(config.Config{Lookaside: config.Lookaside{Scratch: cache}, Model: config.Model{Root: models}}); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
@@ -94,6 +95,63 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "OpenWALDO corpus export") || !strings.Contains(stdout.String(), "native") {
 		t.Fatalf("bom show output = %q", stdout.String())
+	}
+
+	recipe := filepath.Join(t.TempDir(), "smoke.yaml")
+	recipeData := fmt.Sprintf(`kind: waldo-model-recipe
+schema: 1
+name: smoke
+architecture:
+  family: decoder-transformer
+  context_tokens: 128
+  vocabulary_size: 256
+  hidden_size: 64
+  intermediate_size: 192
+  layers: 2
+  attention_heads: 4
+  key_value_heads: 2
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    name: byte
+    revision: sha256:fixture
+backend:
+  name: fake
+  revision: builtin-fake-schema-1
+stages:
+  - name: pretrain
+    objective: causal-language-modeling
+    corpus: %q
+    parameters:
+      steps: 2
+      batch_size: 1
+      sequence_length: 64
+      learning_rate: 0.001
+      seed: 7
+`, destination)
+	if err := os.WriteFile(recipe, []byte(recipeData), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"model", "build", recipe}, &stdout, &stderr); code != 0 {
+		t.Fatalf("model build code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "simulated training") || !strings.Contains(stderr.String(), "preflight/pretrain") {
+		t.Fatalf("model build stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"model", "inspect", "smoke"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("model inspect code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "complete") || !strings.Contains(stdout.String(), "simulated") {
+		t.Fatalf("model inspect stdout = %q", stdout.String())
+	}
+	for _, name := range []string{"PLAN.json", "MODEL.json", "MODEL-BOM.json"} {
+		if _, err := os.Stat(filepath.Join(models, "smoke", name)); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	jsonlDestination := filepath.Join(t.TempDir(), "jsonl-export")

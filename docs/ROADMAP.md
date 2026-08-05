@@ -78,13 +78,19 @@ contribution through one command.
 
 ## Phase 4: model lifecycle with a fake backend
 
+Implemented foundation:
+
 - Model identity and immutable architecture
-- Declarative build recipes
-- Curriculum and resource validation
-- OpenWALDO BOM attachment
-- Durable run state machine
-- Fake backend for completion, failure, and interruption tests
-- Model and run BOMs
+- Strict declarative YAML/JSON build recipes
+- Ordered curriculum, architectural, and transparent resource validation
+- Complete native corpus-export verification and OpenWALDO BOM attachment
+- Durable planned/running/complete/failed/interrupted run state machine
+- Deterministic fake backend with completion, failure, and interruption tests
+- Immutable build plans plus model and run OpenWALDO BOMs
+- `waldo model build` and `waldo model inspect`
+
+Remaining:
+
 - EU GPAI training-content gap analysis and `bom export --format eu-gpai`
 
 Exit: orchestration and provenance work end to end without Python or a GPU.

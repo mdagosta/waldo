@@ -352,7 +352,7 @@ func TestFlagRichHelpExplainsRetainedOptions(t *testing.T) {
 
 func TestPlannedCommandIsHonest(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"model", "build"}, &stdout, &stderr); code != 1 {
+	if code := Run([]string{"model", "train"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("Run() code = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "not reached its implementation phase") {
@@ -515,7 +515,7 @@ func TestConfigShowAndGetUseCanonicalKeys(t *testing.T) {
 	if code := Run([]string{"config", "show"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("show code = %d, stderr = %q", code, stderr.String())
 	}
-	for _, want := range []string{"lookaside", "lookaside.workers", "lookaside.scratch", "ingest.staging"} {
+	for _, want := range []string{"lookaside", "lookaside.workers", "lookaside.scratch", "ingest.staging", "model.root"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("config show missing %q: %s", want, stdout.String())
 		}

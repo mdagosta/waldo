@@ -10,6 +10,7 @@ require (
 	github.com/klauspost/compress v1.17.9
 	github.com/parquet-go/parquet-go v0.30.1
 	go.etcd.io/bbolt v1.4.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
