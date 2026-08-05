@@ -333,6 +333,8 @@ passing an exact leaf such as `lookaside.region` prints only that value.
 `config set` replaces the named value, `config get` reads one value, `config
 show` displays the complete effective configuration, and `config unset`
 returns a key to its default. Backend schemes are values, not separate flags.
+Changing `lookaside` preserves the existing `lookaside.region` and
+`lookaside.workers` values; switching to `file://` clears the S3-only region.
 
 ### Build a model from a recipe
 

@@ -517,6 +517,40 @@ func TestConfigSetPersistsLookasideSettings(t *testing.T) {
 	}
 }
 
+func TestConfigSetLookasidePreservesRegionAndWorkers(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Lookaside: config.Lookaside{Publish: &config.Publish{
+		URL: "s3://bucket/old-prefix", Region: "us-east-2", Workers: 7,
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"config", "set", "lookaside", "s3://bucket/new-prefix"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("code=%d stderr=%q", code, stderr.String())
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publish := configuration.Lookaside.Publish
+	if publish == nil || publish.URL != "s3://bucket/new-prefix" || publish.Region != "us-east-2" || publish.Workers != 7 {
+		t.Fatalf("publish = %+v", publish)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"config", "set", "lookaside", "file:///tmp/waldo-test-lookaside"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("file code=%d stderr=%q", code, stderr.String())
+	}
+	configuration, err = config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.Lookaside.Publish == nil || configuration.Lookaside.Publish.Region != "" || configuration.Lookaside.Publish.Workers != 7 {
+		t.Fatalf("file publish = %+v", configuration.Lookaside.Publish)
+	}
+}
+
 func TestLookasideLoginStatusAndLogoutUseCredentialStore(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	if err := config.Save(config.Config{Lookaside: config.Lookaside{Publish: &config.Publish{URL: "s3://openwaldo/waldo-index", Region: "us-east-2", Workers: 2}}}); err != nil {

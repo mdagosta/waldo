@@ -148,11 +148,15 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		if len(values) != 1 {
 			return oneConfigValue(key)
 		}
-		workers := 0
+		publish := config.Publish{}
 		if configuration.Lookaside.Publish != nil {
-			workers = configuration.Lookaside.Publish.Workers
+			publish = *configuration.Lookaside.Publish
 		}
-		configuration.Lookaside.Publish = &config.Publish{URL: values[0], Workers: workers}
+		publish.URL = values[0]
+		if !strings.HasPrefix(strings.TrimSpace(values[0]), "s3://") {
+			publish.Region = ""
+		}
+		configuration.Lookaside.Publish = &publish
 	case "lookaside.region":
 		if len(values) != 1 {
 			return oneConfigValue(key)
