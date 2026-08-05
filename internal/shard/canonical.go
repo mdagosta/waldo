@@ -21,6 +21,7 @@ import (
 )
 
 var canonicalColumns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta"}
+var legacyColumns = []string{"sha256", "kind", "text", "source", "source_name", "license", "license_raw", "lang", "lang_score", "date", "tokens", "meta"}
 
 type RecordView struct {
 	ID       string `json:"id"`
@@ -104,7 +105,7 @@ func Summarize(paths []string) (Summary, error) {
 	licenses, recipes := map[string]bool{}, map[string]bool{}
 	var total Summary
 	for _, path := range paths {
-		file, parquetFile, size, err := openCanonical(path)
+		file, parquetFile, size, err := openShard(path)
 		if err != nil {
 			return Summary{}, err
 		}
@@ -167,7 +168,7 @@ func Audit(ctx context.Context, paths []string) (Summary, error) {
 	licenses, recipes := map[string]bool{}, map[string]bool{}
 	var total Summary
 	for _, path := range paths {
-		file, parquetFile, size, err := openCanonical(path)
+		file, parquetFile, size, err := openShard(path)
 		if err != nil {
 			return Summary{}, err
 		}
@@ -216,7 +217,7 @@ func Audit(ctx context.Context, paths []string) (Summary, error) {
 }
 
 func WalkRecords(path string, callback func(int64, RecordView) error) error {
-	file, parquetFile, _, err := openCanonical(path)
+	file, parquetFile, _, err := openShard(path)
 	if err != nil {
 		return err
 	}
@@ -249,7 +250,7 @@ func ExportRecord(path, id string, output io.Writer) error {
 	return nil
 }
 
-func openCanonical(path string) (*os.File, *parquet.File, int64, error) {
+func openShard(path string) (*os.File, *parquet.File, int64, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, nil, 0, err
@@ -273,11 +274,13 @@ func openCanonical(path string) (*os.File, *parquet.File, int64, error) {
 		}
 		got[i] = column[0]
 	}
-	if !slices.Equal(got, canonicalColumns) {
+	canonical := slices.Equal(got, canonicalColumns)
+	legacy := slices.Equal(got, legacyColumns)
+	if !canonical && !legacy {
 		file.Close()
-		return nil, nil, 0, fmt.Errorf("columns are %v, want %v", got, canonicalColumns)
+		return nil, nil, 0, fmt.Errorf("columns are %v, want canonical %v or established schema-1 %v", got, canonicalColumns, legacyColumns)
 	}
-	if value, ok := pf.Lookup("waldo.record_schema"); !ok || value != strconv.Itoa(TextRecordSchema) {
+	if value, ok := pf.Lookup("waldo.record_schema"); (canonical && (!ok || value != strconv.Itoa(TextRecordSchema))) || (legacy && ok && value != strconv.Itoa(TextRecordSchema)) {
 		file.Close()
 		return nil, nil, 0, fmt.Errorf("unsupported or missing waldo.record_schema")
 	}
@@ -307,50 +310,116 @@ func footerSummary(file *parquet.File, size int64) (Summary, bool) {
 }
 
 func scan(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
+	columns := columnNames(file)
+	if slices.Equal(columns, legacyColumns) {
+		return scanLegacy(file, validate, callback)
+	}
+	if slices.Equal(columns, canonicalColumns) {
+		return scanCanonical(file, validate, callback)
+	}
+	return Summary{}, fmt.Errorf("unsupported schema-1 physical columns %v", columns)
+}
+
+func scanCanonical(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
 	reader := parquet.NewGenericReader[TextRow](file)
 	defer reader.Close()
 	rows := make([]TextRow, 512)
-	licenses := map[string]bool{}
-	var result Summary
-	recipe, _ := file.Lookup("waldo.recipe")
-	result.Recipes = []string{recipe}
+	consumer := newRowConsumer(file, validate, callback)
 	for {
 		count, readErr := reader.Read(rows)
 		for i := 0; i < count; i++ {
 			row := rows[i]
 			canonical := record.Record{SHA256: hex.EncodeToString(row.ContentSHA256[:]), Kind: record.KindPretrain, Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, LicenseRaw: stringValue(row.LicenseRaw), Lang: stringValue(row.Language), LangScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount)}
-			meta := stringValue(row.Meta)
-			if validate {
-				if row.TokenCount == nil {
-					return result, fmt.Errorf("record %d (%s): token_count is required", result.Records, canonical.SHA256)
-				}
-				if err := canonical.Validate(); err != nil {
-					return result, fmt.Errorf("record %d: %w", result.Records, err)
-				}
-				if meta != "" && (!json.Valid([]byte(meta)) || meta[0] != '{') {
-					return result, fmt.Errorf("record %d (%s): meta is not a JSON object", result.Records, canonical.SHA256)
-				}
+			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil); err != nil {
+				return consumer.finish(), err
 			}
-			view := RecordView{ID: canonical.SHA256, Text: canonical.Text, Source: canonical.Source, License: canonical.License, Language: canonical.Lang, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text))}
-			if callback != nil {
-				if err := callback(result.Records, view, canonical, meta); err != nil {
-					return result, err
-				}
-			}
-			result.Records++
-			result.Tokens += canonical.Tokens
-			result.ContentBytes += int64(len(canonical.Text))
-			licenses[canonical.License] = true
 		}
 		if errors.Is(readErr, io.EOF) || (readErr == nil && count == 0) {
 			break
 		}
 		if readErr != nil {
-			return result, readErr
+			return consumer.finish(), readErr
 		}
 	}
-	result.Licenses = keys(licenses)
-	return result, nil
+	return consumer.finish(), nil
+}
+
+func scanLegacy(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
+	reader := parquet.NewGenericReader[Row](file)
+	defer reader.Close()
+	rows := make([]Row, 512)
+	consumer := newRowConsumer(file, validate, callback)
+	for {
+		count, readErr := reader.Read(rows)
+		for i := 0; i < count; i++ {
+			row := rows[i]
+			canonical := record.Record{SHA256: row.SHA256, Kind: row.Kind, Text: row.Text, Source: row.Source, SourceName: row.SourceName, License: row.License, LicenseRaw: row.LicenseRaw, Lang: row.Lang, LangScore: row.LangScore, Date: row.Date, Tokens: row.Tokens}
+			if err := consumer.add(canonical, row.Meta, true); err != nil {
+				return consumer.finish(), err
+			}
+		}
+		if errors.Is(readErr, io.EOF) || (readErr == nil && count == 0) {
+			break
+		}
+		if readErr != nil {
+			return consumer.finish(), readErr
+		}
+	}
+	return consumer.finish(), nil
+}
+
+type rowConsumer struct {
+	validate bool
+	callback func(int64, RecordView, record.Record, string) error
+	result   Summary
+	licenses map[string]bool
+}
+
+func newRowConsumer(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) *rowConsumer {
+	recipe, _ := file.Lookup("waldo.recipe")
+	return &rowConsumer{validate: validate, callback: callback, result: Summary{Recipes: []string{recipe}}, licenses: map[string]bool{}}
+}
+
+func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPresent bool) error {
+	position := consumer.result.Records
+	if consumer.validate {
+		if !tokenPresent {
+			return fmt.Errorf("record %d (%s): token_count is required", position, canonical.SHA256)
+		}
+		if err := canonical.Validate(); err != nil {
+			return fmt.Errorf("record %d: %w", position, err)
+		}
+		if meta != "" && (!json.Valid([]byte(meta)) || meta[0] != '{') {
+			return fmt.Errorf("record %d (%s): meta is not a JSON object", position, canonical.SHA256)
+		}
+	}
+	view := RecordView{ID: canonical.SHA256, Text: canonical.Text, Source: canonical.Source, License: canonical.License, Language: canonical.Lang, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text))}
+	if consumer.callback != nil {
+		if err := consumer.callback(position, view, canonical, meta); err != nil {
+			return err
+		}
+	}
+	consumer.result.Records++
+	consumer.result.Tokens += canonical.Tokens
+	consumer.result.ContentBytes += int64(len(canonical.Text))
+	consumer.licenses[canonical.License] = true
+	return nil
+}
+
+func (consumer *rowConsumer) finish() Summary {
+	consumer.result.Licenses = keys(consumer.licenses)
+	return consumer.result
+}
+
+func columnNames(file *parquet.File) []string {
+	columns := file.Schema().Columns()
+	names := make([]string, len(columns))
+	for index, column := range columns {
+		if len(column) == 1 {
+			names[index] = column[0]
+		}
+	}
+	return names
 }
 
 func keys(values map[string]bool) []string {

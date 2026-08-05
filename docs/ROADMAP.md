@@ -38,7 +38,8 @@ Implemented:
 
 - License include/exclude policy
 - Immutable OpenWALDO BOM with Git, manifest, shard, source, and license pins
-- Local content-addressed scratch with atomic verified materialization
+- Retained content-addressed cache plus disposable download scratch with
+  atomic verified materialization
 - Anonymous HTTP and S3 lookaside reads plus local-file fixtures
 - Positional machine configuration for scratch, staging, publication, and ordered read mirrors
 - `waldo index verify --objects`
@@ -54,7 +55,7 @@ Implemented:
 Exit: a selection from the public index can be materialized with every object
 hash checked and an independently readable OpenWALDO BOM.
 
-## Phase 3: corpus contribution
+## Phase 3: corpus contribution — complete
 
 Implemented foundation:
 
@@ -83,7 +84,7 @@ to WALDO's supplied temporary directory.
 Exit: a directory of source documents becomes a reviewable, reproducible index
 contribution through one command.
 
-## Phase 4: model lifecycle with a fake backend
+## Phase 4: model lifecycle with a fake backend — complete
 
 Implemented foundation:
 
@@ -120,16 +121,39 @@ Exit: orchestration and provenance work end to end without Python or a GPU.
   **Implemented.**
 - Reuse one canonical record reader and invariant checker across ingestion,
   index audit, local shard tooling, export, and the future training backend.
+  **Implemented for both established and tokenizer-neutral schema-1 physical
+  layouts.**
 - Separate retained, verified shard caching from disposable partial-download
   scratch, with bounded retention and explicit machine configuration.
+  **Implemented.**
 
 Exit: bytes admitted to an index are not merely reachable and hash-identical;
 they are proven readable as canonical WALDO records, and operators can inspect
 the same files independently of an index checkout.
 
+## Robustness gate before real training — complete
+
+- Adversarial shard tests for hashes, tokens, metadata, required fields,
+  footer totals, duplicates, cancellation, truncation, and physical schemas
+- Recursive path, glob, and deterministic deduplication tests
+- Cache retention, LRU eviction, corruption repair, and partial-download cleanup
+- Manifest-versus-streamed-total validation through `index audit`
+- Complete raw-input through fake-model and EU GPAI lifecycle E2E
+- Guarded S3 write and public-index read/audit entry points
+- Live audit of the real Foodista corpus using the established schema-1 layout
+
 ## Phase 5: one real training backend
 
-- Select MLX or PyTorch as the first backend
+- Add `waldo model forecast <recipe>` before any resource allocation.
+  **Implemented.**
+- Forecast runtime and memory across exact Apple, NVIDIA, and AMD accelerator
+  profiles, including viable 1, 4, and 8 accelerator configurations per node.
+  **Implemented with a versioned planning catalog; empirical calibration is
+  ongoing.**
+- Select MLX automatically on Apple Silicon
+- Select PyTorch automatically on single-node Linux
+- Select TorchTitan for explicitly configured multi-node Linux runs
+- Persist the resolved backend and immutable environment facts in the plan
 - Streaming shard consumption
 - Checkpoint and resume
 - Actual consumption totals
@@ -152,7 +176,7 @@ deferred until this smaller lifecycle is reliable.
 
 ## Phase 7: operations and transition
 
-- Lookaside mirroring, scrubbing, and explicit object removal
+- Lookaside mirroring; scrubbing and explicit object removal are implemented
 - Append-only corpus updates
 - Compatibility aliases where they materially help users
 - Packaging and releases

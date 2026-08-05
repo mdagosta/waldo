@@ -4,10 +4,96 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
+	"time"
 
 	"github.com/openwaldo/waldo-new/internal/config"
 	"github.com/openwaldo/waldo-new/internal/model"
 )
+
+func runModelForecast(context Context, args []string, stdout, _ io.Writer) error {
+	if len(args) != 1 {
+		return usageError{message: "usage: waldo model forecast <recipe.yaml> [--json]"}
+	}
+	recipe, recipePath, err := model.LoadRecipe(args[0])
+	if err != nil {
+		return err
+	}
+	report, err := model.ForecastRecipe(recipe)
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Recipe   string                 `json:"recipe"`
+			Forecast model.ResourceForecast `json:"forecast"`
+		}{Recipe: recipePath, Forecast: report})
+	}
+	writeModelForecast(stdout, report)
+	return nil
+}
+
+func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
+	type row struct {
+		manufacturer string
+		accelerator  string
+		GPUs         string
+		memory       string
+		duration     string
+	}
+	rows := make([]row, 0, len(report.Configurations))
+	manufacturerWidth, acceleratorWidth := len("MFR"), len("ACCELERATOR")
+	GPUsWidth, memoryWidth, durationWidth := len("GPUS"), len("MEMORY/GPU"), len("APPROX. TIME")
+	for _, configuration := range report.Configurations {
+		candidate := row{
+			manufacturer: configuration.Manufacturer,
+			accelerator:  configuration.Accelerator,
+			GPUs:         fmt.Sprintf("%d", configuration.GPUs),
+			memory:       hardwareMemory(configuration.MemoryPerGPUBytes),
+			duration:     approximateDuration(configuration.ApproximateSeconds),
+		}
+		rows = append(rows, candidate)
+		manufacturerWidth = max(manufacturerWidth, len(candidate.manufacturer))
+		acceleratorWidth = max(acceleratorWidth, len(candidate.accelerator))
+		GPUsWidth = max(GPUsWidth, len(candidate.GPUs))
+		memoryWidth = max(memoryWidth, len(candidate.memory))
+		durationWidth = max(durationWidth, len(candidate.duration))
+	}
+	fmt.Fprintf(stdout, "%-*s  %-*s  %*s  %*s  %*s\n", manufacturerWidth, "MFR", acceleratorWidth, "ACCELERATOR", GPUsWidth, "GPUS", memoryWidth, "MEMORY/GPU", durationWidth, "APPROX. TIME")
+	for _, candidate := range rows {
+		fmt.Fprintf(stdout, "%-*s  %-*s  %*s  %*s  %*s\n", manufacturerWidth, candidate.manufacturer, acceleratorWidth, candidate.accelerator, GPUsWidth, candidate.GPUs, memoryWidth, candidate.memory, durationWidth, candidate.duration)
+	}
+}
+
+func hardwareMemory(bytes uint64) string {
+	const gibibyte = uint64(1 << 30)
+	if bytes%gibibyte == 0 {
+		return fmt.Sprintf("%d GB", bytes/gibibyte)
+	}
+	return humanBytesUint(bytes)
+}
+
+func approximateDuration(seconds int64) string {
+	hours := float64(seconds) / float64(time.Hour/time.Second)
+	if hours < 1 {
+		return "under 1 hour"
+	}
+	if hours < 100 {
+		value := int64(math.Round(hours))
+		if value < 1 {
+			value = 1
+		}
+		if value == 1 {
+			return "1 hour"
+		}
+		return fmt.Sprintf("%d hours", value)
+	}
+	days := int64(math.Round(hours / 24))
+	if days == 1 {
+		return "1 day"
+	}
+	return fmt.Sprintf("%d days", days)
+}
 
 func runModelBuild(context Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) != 1 {

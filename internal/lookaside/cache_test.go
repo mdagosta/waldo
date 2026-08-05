@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFetchVerifiesAndCachesHTTPObject(t *testing.T) {
@@ -143,6 +144,63 @@ func TestPersistentCacheRetainsVerifiedObjectAndCleansScratch(t *testing.T) {
 	}
 }
 
+func TestPersistentCachePrunesLeastRecentlyUsedObjects(t *testing.T) {
+	root, scratch := t.TempDir(), t.TempDir()
+	cache, err := NewCache(root, nil, WithPersistentStorage(scratch, 3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPath, _ := cache.Path(digestOf("old"))
+	newPath, _ := cache.Path(digestOf("new"))
+	for path, value := range map[string]string{oldPath: "old", newPath: "new"} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(value), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	if err := os.Chtimes(oldPath, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newPath, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewCache(root, nil, WithPersistentStorage(scratch, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+		t.Fatalf("least-recently-used object remains: %v", err)
+	}
+	if data, err := os.ReadFile(newPath); err != nil || string(data) != "new" {
+		t.Fatalf("newest object = %q, %v", data, err)
+	}
+}
+
+func TestFailedDownloadLeavesNeitherCacheNorScratchObject(t *testing.T) {
+	root, scratch := t.TempDir(), t.TempDir()
+	cache, err := NewCache(root, &http.Client{Transport: failingTransport{}}, WithPersistentStorage(scratch, 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := digestOf("complete content")
+	if _, err := cache.Fetch(context.Background(), "https://objects.example/item", digest, 0); err == nil || !strings.Contains(err.Error(), "unexpected EOF") {
+		t.Fatalf("Fetch() error = %v", err)
+	}
+	destination, _ := cache.Path(digest)
+	if _, err := os.Stat(destination); !os.IsNotExist(err) {
+		t.Fatalf("partial cache object remains: %v", err)
+	}
+	entries, err := os.ReadDir(scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("scratch entries = %v", entries)
+	}
+}
+
 func TestFetchFallsBackToConfiguredMirror(t *testing.T) {
 	content := "from mirror"
 	digest := digestOf(content)
@@ -238,6 +296,22 @@ func TestProbeLocalFileUsesStat(t *testing.T) {
 type fakeTransport struct {
 	content  string
 	requests int
+}
+
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(&failingReader{}), Header: make(http.Header)}, nil
+}
+
+type failingReader struct{ sent bool }
+
+func (reader *failingReader) Read(buffer []byte) (int, error) {
+	if reader.sent {
+		return 0, io.ErrUnexpectedEOF
+	}
+	reader.sent = true
+	return copy(buffer, "partial"), nil
 }
 
 type fallbackTransport struct {

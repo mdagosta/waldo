@@ -2,8 +2,6 @@
 package shard
 
 import (
-	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 
@@ -26,14 +24,6 @@ type Row struct {
 	Meta       string `parquet:"meta"`
 }
 
-func (row Row) appendJSONL(dst []byte) ([]byte, error) {
-	return (record.Record{
-		SHA256: row.SHA256, Kind: row.Kind, Text: row.Text, Source: row.Source,
-		SourceName: row.SourceName, License: row.License, LicenseRaw: row.LicenseRaw,
-		Lang: row.Lang, LangScore: row.LangScore, Date: row.Date, Tokens: row.Tokens,
-	}).AppendCanonical(dst, []byte(row.Meta))
-}
-
 type Statistics struct {
 	Bytes  int64
 	Docs   int64
@@ -47,86 +37,28 @@ func WriteJSONL(dst io.Writer, src io.ReaderAt, size int64) (Statistics, error) 
 	if err != nil {
 		return Statistics{}, err
 	}
-	if schema, ok := file.Lookup("waldo.record_schema"); ok && schema == fmt.Sprint(TextRecordSchema) {
-		return writeCanonicalTextJSONL(dst, file)
-	}
-	reader := parquet.NewGenericReader[Row](file)
-	defer reader.Close()
-	rows := make([]Row, 512)
-	line := make([]byte, 0, 64<<10)
-	var stats Statistics
-	recordNumber := 0
-	for {
-		count, readErr := reader.Read(rows)
-		for i := 0; i < count; i++ {
-			line, err = rows[i].appendJSONL(line[:0])
-			if err != nil {
-				return stats, fmt.Errorf("record %d: %w", recordNumber, err)
-			}
-			n, writeErr := dst.Write(line)
-			stats.Bytes += int64(n)
-			if writeErr != nil {
-				return stats, writeErr
-			}
-			stats.Docs++
-			stats.Tokens += rows[i].Tokens
-			recordNumber++
-		}
-		if errors.Is(readErr, io.EOF) {
-			return stats, nil
-		}
-		if readErr != nil {
-			return stats, readErr
-		}
-		if count == 0 {
-			return stats, nil
-		}
-	}
+	return writeSchemaOneJSONL(dst, file)
 }
 
-func writeCanonicalTextJSONL(dst io.Writer, file *parquet.File) (Statistics, error) {
-	reader := parquet.NewGenericReader[TextRow](file)
-	defer reader.Close()
-	rows := make([]TextRow, 512)
+func writeSchemaOneJSONL(dst io.Writer, file *parquet.File) (Statistics, error) {
 	line := make([]byte, 0, 64<<10)
 	var stats Statistics
-	recordNumber := 0
-	for {
-		count, readErr := reader.Read(rows)
-		for i := 0; i < count; i++ {
-			row := rows[i]
-			canonical := record.Record{
-				SHA256: hex.EncodeToString(row.ContentSHA256[:]), Kind: record.KindPretrain,
-				Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName),
-				License: row.License, LicenseRaw: stringValue(row.LicenseRaw),
-				Lang: stringValue(row.Language), LangScore: int64(int32Value(row.LanguageScore)),
-				Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount),
-			}
-			meta := []byte(stringValue(row.Meta))
-			var err error
-			line, err = canonical.AppendCanonical(line[:0], meta)
-			if err != nil {
-				return stats, fmt.Errorf("record %d: %w", recordNumber, err)
-			}
-			n, writeErr := dst.Write(line)
-			stats.Bytes += int64(n)
-			if writeErr != nil {
-				return stats, writeErr
-			}
-			stats.Docs++
-			stats.Tokens += canonical.Tokens
-			recordNumber++
+	_, err := scan(file, false, func(position int64, _ RecordView, canonical record.Record, meta string) error {
+		var appendErr error
+		line, appendErr = canonical.AppendCanonical(line[:0], []byte(meta))
+		if appendErr != nil {
+			return fmt.Errorf("record %d: %w", position, appendErr)
 		}
-		if errors.Is(readErr, io.EOF) {
-			return stats, nil
+		n, writeErr := dst.Write(line)
+		stats.Bytes += int64(n)
+		if writeErr != nil {
+			return writeErr
 		}
-		if readErr != nil {
-			return stats, readErr
-		}
-		if count == 0 {
-			return stats, nil
-		}
-	}
+		stats.Docs++
+		stats.Tokens += canonical.Tokens
+		return nil
+	})
+	return stats, err
 }
 
 func stringValue(value *string) string {

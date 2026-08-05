@@ -358,8 +358,10 @@ func TestModelBuildOwnsRecipes(t *testing.T) {
 	if code := Run([]string{"model", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "build") {
-		t.Fatalf("model help does not contain build:\n%s", stdout.String())
+	for _, want := range []string{"forecast", "build", "inspect"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("model help does not contain %s:\n%s", want, stdout.String())
+		}
 	}
 }
 

@@ -14,6 +14,7 @@ Every test category has its own executable script:
 ./testing/vet.sh
 ./testing/e2e/ingest-direct.sh
 ./testing/e2e/ingest-recipe.sh
+./testing/e2e/model-fake.sh
 ```
 
 Run all of them in that order with:
@@ -25,8 +26,9 @@ Run all of them in that order with:
 ## Ingestion end to end
 
 The two public ingest scripts run a shared private lifecycle harness and build
-the current WALDO source entirely in a fresh temporary directory. They initialize an index, configure isolated machine
-state, generates UTF-8 and multiline input plus a duplicate, ingests it,
+the current WALDO source entirely in a fresh temporary directory. They
+initialize an index, configure isolated machine state, generate UTF-8 and
+multiline input plus a duplicate, ingest it,
 applies the review overlay, recursively verifies the corpus, exports canonical
 JSONL, verifies its OpenWALDO BOM, compares retained records with their source
 bytes, performs a full index audit, exercises shard summary/audit/list/export
@@ -50,6 +52,17 @@ Run either lifecycle directly:
 
 Set `WALDO_E2E_KEEP=1` to retain the temporary workspace for inspection.
 
+## Fake model end to end
+
+`model-fake.sh` builds its corpus from raw text, audits it, exports native
+Parquet, runs the complete fake backend lifecycle, inspects the persisted model
+and run, refuses implicit replacement, and exercises fail-closed plus explicit
+draft EU GPAI disclosure output.
+
+```bash
+./testing/e2e/model-fake.sh
+```
+
 ## Guarded S3 E2E
 
 The S3 path is opt-in, requires an explicit `waldo-e2e` prefix, and never
@@ -65,6 +78,24 @@ WALDO_E2E_AWS_REGION=us-west-2 \
 Use a lifecycle policy on the disposable prefix. Credentials come from the
 AWS SDK environment/workload chain or a prior interactive
 `waldo lookaside login`; they are never written into test fixtures.
+
+The explicit live-test wrapper makes the write authorization more visible:
+
+```bash
+WALDO_LIVE_ALLOW_S3=1 \
+WALDO_E2E_AWS_REGION=us-west-2 \
+./testing/live/s3-ingest.sh s3://example-test-bucket/waldo-e2e
+```
+
+Audit one small corpus from a real index with network reads and the configured
+local cache, but no remote writes:
+
+```bash
+WALDO_LIVE_ALLOW_PUBLIC_INDEX=1 \
+./testing/live/public-index-audit.sh ../waldo-index/core/common-pile/foodista
+```
+
+Live tests are never included in `testing/all.sh`.
 
 ## Intended growth
 

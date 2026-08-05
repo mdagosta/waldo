@@ -59,6 +59,7 @@ func commandTree() Command {
 			}},
 			{Name: "model", Summary: "Build and inspect provenance-carrying models", Children: []Command{
 				{Name: "create", Summary: "Create an untrained model"},
+				{Name: "forecast", Summary: "Estimate viable GPU configurations and runtime", Usage: "waldo model forecast <recipe.yaml> [--json]", Details: "Verifies the recipe and every native corpus export without creating model state. Human output lists only configurations that fit, sorted from slowest to fastest. Approximate time covers the complete planned workload and is shown in hours below 100 hours, then in days.", Handler: runModelForecast},
 				{Name: "build", Summary: "Build a model from a declarative recipe", Usage: "waldo model build <recipe.yaml> [--json]", Details: "Preflights the complete recipe and exported corpus files, creates an immutable model plan, and executes its ordered stages. Phase 4 enables only the deterministic fake backend; real training backends come later. Existing models are never continued or replaced implicitly.", Handler: runModelBuild},
 				{Name: "train", Summary: "Add an explicit training run"},
 				{Name: "inspect", Summary: "Inspect architecture, runs, and lineage", Usage: "waldo model inspect <name-or-path> [--json]", Handler: runModelInspect},

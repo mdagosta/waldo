@@ -109,10 +109,26 @@ model identity.
 
 ## Resource forecast
 
-WALDO validates architectural divisibility and sequence length before any
-write. It reports an approximate parameter and weight-byte count using
-embeddings, decoder projections, gated MLP matrices, and normalization weights;
-biases are excluded and the formula is recorded with the estimate. This is a
-transparent size estimate, not a promise that a particular accelerator can
-train the model. Real backend memory forecasting belongs with the backend that
-knows its optimizer, activation, sharding, and precision behavior.
+Before allocating hardware, run:
+
+```bash
+waldo model forecast recipe.yaml
+```
+
+WALDO verifies the recipe and every native corpus export but creates no model
+or run state. It lists only accelerator configurations that have enough memory,
+sorted from slowest to fastest:
+
+```text
+MFR     ACCELERATOR                    GPUS  MEMORY/GPU  APPROX. TIME
+Apple   M4 Max 40-core GPU                1       128 GB       48 days
+NVIDIA  H100 SXM                          8        80 GB       44 hours
+```
+
+The actual rows and times depend on the recipe. The estimate uses planned
+tokens, approximate model parameters, optimizer and activation memory, device
+headroom, and conservative effective throughput from a versioned hardware
+catalog. Approximate time covers the complete planned workload, including a
+small allowance for checkpoints, evaluation, and final artifacts. JSON output
+includes the catalog revision, formula, effective throughput, required memory,
+and unrounded duration used to produce the compact table.
