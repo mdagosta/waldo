@@ -70,7 +70,7 @@ func TestLookasideListJSONWithoutIndex(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Objects) != 1 || result.Objects[0].Name != digest || result.Totals.Objects != 1 || result.Totals.Canonical != 1 {
+	if len(result.Objects) != 1 || result.Objects[0].Name != digest || result.Totals.Objects != 1 || result.Totals.Canonical != 1 || result.Totals.WithinLookaside != 1 {
 		t.Fatalf("result = %+v", result)
 	}
 }

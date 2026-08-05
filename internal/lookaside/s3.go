@@ -184,7 +184,8 @@ func newS3PublisherWithAPI(api s3API, baseURL string) (*S3Publisher, error) {
 	return &S3Publisher{api: api, baseURL: strings.TrimRight(baseURL, "/"), bucket: bucket, prefix: prefix}, nil
 }
 
-func (publisher *S3Publisher) BaseURL() string { return publisher.baseURL }
+func (publisher *S3Publisher) BaseURL() string      { return publisher.baseURL }
+func (publisher *S3Publisher) InventoryURL() string { return "s3://" + publisher.bucket }
 
 func (publisher *S3Publisher) Publish(ctx context.Context, source, digest string, size int64, progress func(PublishProgress)) (PublishedObject, error) {
 	if err := VerifyFile(source, digest, size); err != nil {
@@ -270,25 +271,27 @@ func (publisher *S3Publisher) List(ctx context.Context) ([]ListedObject, error) 
 	if !ok {
 		return nil, fmt.Errorf("S3 client does not support object listing")
 	}
-	prefix := strings.Trim(publisher.prefix, "/")
-	if prefix != "" {
-		prefix += "/"
+	configuredPrefix := strings.Trim(publisher.prefix, "/")
+	configuredPrefixWithSlash := configuredPrefix
+	if configuredPrefixWithSlash != "" {
+		configuredPrefixWithSlash += "/"
 	}
 	objects := []ListedObject{}
 	var continuation *string
 	for {
 		output, err := api.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
-			Bucket: aws.String(publisher.bucket), Prefix: aws.String(prefix), ContinuationToken: continuation,
+			Bucket: aws.String(publisher.bucket), ContinuationToken: continuation,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("list S3 lookaside %s: %w", publisher.baseURL, err)
 		}
 		for _, object := range output.Contents {
 			key := aws.ToString(object.Key)
-			relative := strings.TrimPrefix(key, prefix)
-			name, canonical := canonicalObjectName(relative)
+			name, canonical := canonicalObjectName(key)
+			inside := configuredPrefix == "" || key == configuredPrefix || strings.HasPrefix(key, configuredPrefixWithSlash)
 			objects = append(objects, ListedObject{
-				Name: name, Bytes: aws.ToInt64(object.Size), Path: strings.TrimRight(publisher.baseURL, "/") + "/" + relative, Canonical: canonical,
+				Name: name, Bytes: aws.ToInt64(object.Size), Path: "s3://" + publisher.bucket + "/" + key,
+				Canonical: canonical, InConfiguredLookaside: inside,
 			})
 		}
 		if !aws.ToBool(output.IsTruncated) {

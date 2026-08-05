@@ -45,7 +45,8 @@ func NewFilePublisher(baseURL string) (*FilePublisher, error) {
 	return &FilePublisher{baseURL: normalized, root: root}, nil
 }
 
-func (publisher *FilePublisher) BaseURL() string { return publisher.baseURL }
+func (publisher *FilePublisher) BaseURL() string      { return publisher.baseURL }
+func (publisher *FilePublisher) InventoryURL() string { return publisher.baseURL }
 
 func (publisher *FilePublisher) Publish(ctx context.Context, source, digest string, size int64, progress func(PublishProgress)) (PublishedObject, error) {
 	if err := VerifyFile(source, digest, size); err != nil {
@@ -186,7 +187,7 @@ func (publisher *FilePublisher) List(ctx context.Context) ([]ListedObject, error
 			return err
 		}
 		name, canonical := canonicalObjectName(filepath.ToSlash(relative))
-		objects = append(objects, ListedObject{Name: name, Bytes: info.Size(), Path: objectPath, Canonical: canonical})
+		objects = append(objects, ListedObject{Name: name, Bytes: info.Size(), Path: objectPath, Canonical: canonical, InConfiguredLookaside: true})
 		return nil
 	})
 	if err != nil {

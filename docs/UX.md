@@ -285,16 +285,21 @@ operating-system default:
 waldo config unset lookaside.scratch
 ```
 
-Inventory the configured writable lookaside without downloading object bodies:
+Inventory the S3 bucket containing the configured writable lookaside without
+downloading object bodies. A `file://` lookaside inventories its configured
+root:
 
 ```bash
 waldo lookaside list
 waldo lookaside list /path/to/waldo-index/or/subtree
 ```
 
-The optional index path follows the same recursive positional rules as other
-index commands. Matching hashes are annotated with their corpus manifest paths,
-and references absent from this lookaside are reported. “Not in the selected
+For S3, every bucket key is shown with its full path and a marker indicating
+whether it is beneath the configured write prefix. Canonical objects are
+recognized by a trailing `<sha[0:2]>/<sha[2:4]>/<sha256>` path at any bucket
+prefix. The optional index path follows the same recursive positional rules as
+other index commands. Matching hashes are annotated with their corpus manifest
+paths, and references absent from the bucket are reported. “Not in the selected
 index” is informational, never a claim that an object is safe to remove;
 another index, Git revision, or BOM may still reference it.
 

@@ -52,7 +52,8 @@ Owns content-addressed object transport and lifecycle:
   environment and workload-role chain as the headless fallback
 - Mirrors
 - Availability and integrity checks
-- Object inventory with optional recursive index-reference annotations
+- Whole-bucket S3 object inventory with configured-prefix markers and optional
+  recursive index-reference annotations
 - Explicit removal of fully named objects; no index-free garbage collection
 
 A lookaside object contains bytes. The index contains their meaning. Lookaside

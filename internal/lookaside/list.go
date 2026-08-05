@@ -11,14 +11,16 @@ import (
 )
 
 type ListedObject struct {
-	Name      string `json:"name,omitempty"`
-	Bytes     int64  `json:"bytes"`
-	Path      string `json:"path"`
-	Canonical bool   `json:"canonical"`
+	Name                  string `json:"name,omitempty"`
+	Bytes                 int64  `json:"bytes"`
+	Path                  string `json:"path"`
+	Canonical             bool   `json:"canonical"`
+	InConfiguredLookaside bool   `json:"in_configured_lookaside"`
 }
 
 type ObjectLister interface {
 	BaseURL() string
+	InventoryURL() string
 	List(context.Context) ([]ListedObject, error)
 }
 
@@ -39,9 +41,10 @@ func NewObjectLister(ctx context.Context, publish config.Publish) (ObjectLister,
 
 func canonicalObjectName(relativePath string) (string, bool) {
 	parts := strings.Split(strings.Trim(relativePath, "/"), "/")
-	if len(parts) != 3 {
+	if len(parts) < 3 {
 		return "", false
 	}
+	parts = parts[len(parts)-3:]
 	digest := parts[2]
 	if validateDigest(digest) != nil || parts[0] != digest[:2] || parts[1] != digest[2:4] {
 		return "", false

@@ -254,7 +254,16 @@ func TestS3PublisherListsCanonicalObjectsAcrossPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(objects) != 3 || !objects[0].Canonical || objects[0].Name != first || !objects[1].Canonical || objects[1].Name != second || objects[2].Canonical {
+	canonical, inside := 0, 0
+	for _, object := range objects {
+		if object.Canonical {
+			canonical++
+		}
+		if object.InConfiguredLookaside {
+			inside++
+		}
+	}
+	if len(objects) != 4 || canonical != 2 || inside != 3 || objects[0].Path != "s3://bucket/elsewhere/object" {
 		t.Fatalf("objects = %+v", objects)
 	}
 }

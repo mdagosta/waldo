@@ -131,7 +131,7 @@ func TestFilePublisherListsCanonicalAndNoncanonicalFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(objects) != 2 || !objects[0].Canonical || objects[0].Name != digest || objects[1].Canonical {
+	if len(objects) != 2 || !objects[0].Canonical || objects[0].Name != digest || !objects[0].InConfiguredLookaside || objects[1].Canonical || !objects[1].InConfiguredLookaside {
 		t.Fatalf("objects = %+v", objects)
 	}
 }

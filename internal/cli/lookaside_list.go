@@ -24,12 +24,13 @@ type missingLookasideReference struct {
 }
 
 type lookasideListTotals struct {
-	Objects      int   `json:"objects"`
-	Canonical    int   `json:"canonical"`
-	Bytes        int64 `json:"bytes"`
-	Referenced   int   `json:"referenced,omitempty"`
-	NotInIndex   int   `json:"not_in_selected_index,omitempty"`
-	MissingIndex int   `json:"missing_index_objects,omitempty"`
+	Objects         int   `json:"objects"`
+	Canonical       int   `json:"canonical"`
+	Bytes           int64 `json:"bytes"`
+	Referenced      int   `json:"referenced,omitempty"`
+	NotInIndex      int   `json:"not_in_selected_index,omitempty"`
+	MissingIndex    int   `json:"missing_index_objects,omitempty"`
+	WithinLookaside int   `json:"within_configured_lookaside"`
 }
 
 func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer) error {
@@ -91,6 +92,7 @@ func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer
 	var totalBytes int64
 	canonical := 0
 	referenced := 0
+	withinLookaside := 0
 	for _, object := range objects {
 		item := listedLookasideObject{ListedObject: object}
 		if object.Canonical {
@@ -100,6 +102,9 @@ func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer
 			if len(item.References) > 0 {
 				referenced++
 			}
+		}
+		if object.InConfiguredLookaside {
+			withinLookaside++
 		}
 		totalBytes += object.Bytes
 		listed = append(listed, item)
@@ -113,20 +118,24 @@ func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer
 	sort.Slice(missing, func(i, j int) bool { return missing[i].Name < missing[j].Name })
 	totals := lookasideListTotals{
 		Objects: len(listed), Canonical: canonical, Bytes: totalBytes, Referenced: referenced,
-		NotInIndex: canonical - referenced, MissingIndex: len(missing),
+		NotInIndex: canonical - referenced, MissingIndex: len(missing), WithinLookaside: withinLookaside,
 	}
 
 	if commandContext.JSON {
 		return writeJSON(stdout, struct {
 			Lookaside         string                      `json:"lookaside"`
+			Inventory         string                      `json:"inventory"`
 			Index             string                      `json:"index,omitempty"`
 			Objects           []listedLookasideObject     `json:"objects"`
 			MissingReferences []missingLookasideReference `json:"missing_references,omitempty"`
 			Totals            lookasideListTotals         `json:"totals"`
-		}{Lookaside: lister.BaseURL(), Index: indexPath, Objects: listed, MissingReferences: missing, Totals: totals})
+		}{Lookaside: lister.BaseURL(), Inventory: lister.InventoryURL(), Index: indexPath, Objects: listed, MissingReferences: missing, Totals: totals})
 	}
 
-	fmt.Fprintf(stdout, "lookaside %s\n", lister.BaseURL())
+	fmt.Fprintf(stdout, "inventory %s\n", lister.InventoryURL())
+	if lister.InventoryURL() != lister.BaseURL() {
+		fmt.Fprintf(stdout, "configured lookaside %s\n", lister.BaseURL())
+	}
 	if indexPath != "" {
 		fmt.Fprintf(stdout, "selected index %s\n", displayPath(indexPath))
 	}
@@ -135,30 +144,35 @@ func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer
 	} else {
 		table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		if indexPath == "" {
-			fmt.Fprintln(table, "OBJECT\tSIZE\tPATH")
+			fmt.Fprintln(table, "OBJECT\tSIZE\tCONFIGURED LOOKASIDE\tPATH")
 		} else {
-			fmt.Fprintln(table, "OBJECT\tSIZE\tREFERENCED BY SELECTED INDEX\tPATH")
+			fmt.Fprintln(table, "OBJECT\tSIZE\tCONFIGURED LOOKASIDE\tREFERENCED BY SELECTED INDEX\tPATH")
 		}
 		for _, object := range listed {
 			name := object.Name
 			if !object.Canonical {
 				name = "(noncanonical)"
 			}
+			inside := "no"
+			if object.InConfiguredLookaside {
+				inside = "yes"
+			}
 			if indexPath == "" {
-				fmt.Fprintf(table, "%s\t%s\t%s\n", name, humanBytes(object.Bytes), object.Path)
+				fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", name, humanBytes(object.Bytes), inside, object.Path)
 			} else {
 				reference := "(not in selected index)"
 				if len(object.References) > 0 {
 					reference = strings.Join(object.References, ", ")
 				}
-				fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", name, humanBytes(object.Bytes), reference, object.Path)
+				fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", name, humanBytes(object.Bytes), inside, reference, object.Path)
 			}
 		}
 		if err := table.Flush(); err != nil {
 			return err
 		}
 	}
-	fmt.Fprintf(stdout, "%s objects (%s); %s canonical\n", humanInteger(int64(len(listed))), humanBytes(totalBytes), humanInteger(int64(canonical)))
+	fmt.Fprintf(stdout, "%s objects (%s); %s canonical; %s within configured lookaside\n",
+		humanInteger(int64(len(listed))), humanBytes(totalBytes), humanInteger(int64(canonical)), humanInteger(int64(withinLookaside)))
 	if indexPath != "" {
 		fmt.Fprintf(stdout, "%s referenced, %s not in selected index, %s index references absent from this lookaside\n",
 			humanInteger(int64(referenced)), humanInteger(int64(canonical-referenced)), humanInteger(int64(len(missing))))
