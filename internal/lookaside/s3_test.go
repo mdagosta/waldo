@@ -188,3 +188,22 @@ func TestValidateS3CredentialsCleansUpAfterReadFailure(t *testing.T) {
 		t.Fatalf("deletes=%d objects=%d", api.deletes, len(api.objects))
 	}
 }
+
+func TestS3PublisherContainsAndRemovesExactObject(t *testing.T) {
+	digest := fmt.Sprintf("%064x", 42)
+	key := "prefix/" + digest[:2] + "/" + digest[2:4] + "/" + digest
+	api := &fakeS3{objects: map[string]fakeS3Object{key: {data: []byte("object")}}}
+	publisher, err := newS3PublisherWithAPI(api, "s3://bucket/prefix")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if present, err := publisher.Contains(context.Background(), digest); err != nil || !present {
+		t.Fatalf("Contains() = %v, %v", present, err)
+	}
+	if err := publisher.Remove(context.Background(), digest); err != nil {
+		t.Fatal(err)
+	}
+	if present, err := publisher.Contains(context.Background(), digest); err != nil || present {
+		t.Fatalf("Contains() after removal = %v, %v", present, err)
+	}
+}

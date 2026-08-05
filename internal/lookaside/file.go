@@ -126,6 +126,39 @@ func (publisher *FilePublisher) Verify(_ context.Context, digest string, size in
 	return publisher.published(digest, size, true), nil
 }
 
+func (publisher *FilePublisher) Contains(_ context.Context, digest string) (bool, error) {
+	destination, err := publisher.objectPath(digest)
+	if err != nil {
+		return false, err
+	}
+	info, err := os.Stat(destination)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("lookaside object %s is not a regular file", digest)
+	}
+	return true, nil
+}
+
+func (publisher *FilePublisher) Remove(_ context.Context, digest string) error {
+	destination, err := publisher.objectPath(digest)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(destination); err != nil {
+		return fmt.Errorf("remove lookaside object %s: %w", digest, err)
+	}
+	// Best-effort cleanup of the two digest fan-out directories. The root and
+	// any nonempty directory are deliberately retained.
+	_ = os.Remove(filepath.Dir(destination))
+	_ = os.Remove(filepath.Dir(filepath.Dir(destination)))
+	return nil
+}
+
 func (publisher *FilePublisher) objectPath(digest string) (string, error) {
 	if err := validateDigest(digest); err != nil {
 		return "", err

@@ -47,7 +47,7 @@ func commandTree() Command {
 				{Name: "status", Summary: "Show verified-download scratch and leftovers", Usage: "waldo lookaside status [--json]", Handler: runLookasideStatus},
 				{Name: "verify", Summary: "Scrub leftover objects against their hashes", Usage: "waldo lookaside verify [--json]", Handler: runLookasideVerify},
 				{Name: "mirror", Summary: "Copy verified objects to another lookaside"},
-				{Name: "gc", Summary: "Safely reclaim unreferenced lookaside objects"},
+				{Name: "rm", Summary: "Remove explicitly named lookaside objects", Usage: "waldo lookaside rm <sha256>... [--json]", Details: "Every object name must be a complete 64-character lowercase SHA-256. WALDO preflights the entire list against the configured writable lookaside before deleting anything. URLs, prefixes, globs, and reachability-based garbage collection are intentionally unsupported.", Handler: runLookasideRemove},
 			}},
 			{Name: "model", Summary: "Build and inspect provenance-carrying models", Children: []Command{
 				{Name: "create", Summary: "Create an untrained model"},

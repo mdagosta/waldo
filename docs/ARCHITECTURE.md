@@ -52,7 +52,7 @@ Owns content-addressed object transport and lifecycle:
   environment and workload-role chain as the headless fallback
 - Mirrors
 - Availability and integrity checks
-- Safe garbage collection
+- Explicit removal of fully named objects; no index-free garbage collection
 
 A lookaside object contains bytes. The index contains their meaning. Lookaside
 code must not treat an object's URL or location as provenance.

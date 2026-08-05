@@ -16,3 +16,4 @@ logs.
 - [0010: Canonical text uses record schema 1 Parquet](0010-canonical-text-parquet.md)
 - [0011: Separate immutable model plans, run BOMs, and observed state](0011-model-plan-and-boms.md)
 - [0012: Store interactive S3 credentials in the OS keychain](0012-s3-credentials-in-os-keychain.md)
+- [0013: Remove lookaside objects only by explicit name](0013-explicit-lookaside-removal.md)

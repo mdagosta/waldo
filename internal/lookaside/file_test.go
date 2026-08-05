@@ -81,3 +81,30 @@ func TestFilePublisherRequiresAbsoluteURL(t *testing.T) {
 		t.Fatal("expected relative or hosted file URL rejection")
 	}
 }
+
+func TestFilePublisherContainsAndRemovesObject(t *testing.T) {
+	root := t.TempDir()
+	publisher, err := NewFilePublisher((&url.URL{Scheme: "file", Path: filepath.ToSlash(root)}).String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("remove this object")
+	digestBytes := sha256.Sum256(content)
+	digest := hex.EncodeToString(digestBytes[:])
+	destination := filepath.Join(root, digest[:2], digest[2:4], digest)
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(destination, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if present, err := publisher.Contains(context.Background(), digest); err != nil || !present {
+		t.Fatalf("Contains() = %v, %v", present, err)
+	}
+	if err := publisher.Remove(context.Background(), digest); err != nil {
+		t.Fatal(err)
+	}
+	if present, err := publisher.Contains(context.Background(), digest); err != nil || present {
+		t.Fatalf("Contains() after removal = %v, %v", present, err)
+	}
+}

@@ -29,6 +29,7 @@ import (
 type s3API interface {
 	PutObject(context.Context, *s3.PutObjectInput, ...func(*s3.Options)) (*s3.PutObjectOutput, error)
 	HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error)
+	DeleteObject(context.Context, *s3.DeleteObjectInput, ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
 }
 
 type s3CredentialAPI interface {
@@ -222,6 +223,31 @@ func (publisher *S3Publisher) Verify(ctx context.Context, digest string, size in
 		return PublishedObject{}, fmt.Errorf("remote object %s does not exist", digest)
 	}
 	return remote, nil
+}
+
+func (publisher *S3Publisher) Contains(ctx context.Context, digest string) (bool, error) {
+	if err := validateDigest(digest); err != nil {
+		return false, err
+	}
+	_, err := publisher.api.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(publisher.bucket), Key: aws.String(publisher.key(digest)), ChecksumMode: types.ChecksumModeEnabled})
+	if isS3NotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect lookaside object %s: %w", digest, err)
+	}
+	return true, nil
+}
+
+func (publisher *S3Publisher) Remove(ctx context.Context, digest string) error {
+	if err := validateDigest(digest); err != nil {
+		return err
+	}
+	_, err := publisher.api.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(publisher.bucket), Key: aws.String(publisher.key(digest))})
+	if err != nil {
+		return fmt.Errorf("remove lookaside object %s: %w", digest, err)
+	}
+	return nil
 }
 
 func (publisher *S3Publisher) head(ctx context.Context, digest string, size int64) (PublishedObject, bool, error) {

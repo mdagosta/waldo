@@ -125,7 +125,7 @@ deferred until this smaller lifecycle is reliable.
 
 ## Phase 7: operations and transition
 
-- Lookaside mirroring, scrubbing, and safe garbage collection
+- Lookaside mirroring, scrubbing, and explicit object removal
 - Append-only corpus updates
 - Compatibility aliases where they materially help users
 - Packaging and releases

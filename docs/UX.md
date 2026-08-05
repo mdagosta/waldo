@@ -40,7 +40,7 @@ waldo
 │   ├── status
 │   ├── verify
 │   ├── mirror
-│   └── gc
+│   └── rm
 ├── model
 │   ├── create
 │   ├── build
@@ -283,6 +283,17 @@ operating-system default:
 ```bash
 waldo config unset lookaside.scratch
 ```
+
+Remote or local published objects are removed only by exact content hash:
+
+```bash
+waldo lookaside rm <sha256> [<sha256>...]
+```
+
+Every name must be a complete lowercase SHA-256. WALDO confirms that every
+listed object exists in the configured writable lookaside before deleting any
+of them. It does not infer unused objects from a partial or absent index, and it
+does not accept URLs, prefixes, or globs.
 
 Configuration keys are positional and intentionally limited:
 
