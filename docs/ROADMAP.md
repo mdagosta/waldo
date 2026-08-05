@@ -145,7 +145,7 @@ the same files independently of an index checkout.
 - Guarded S3 write and public-index read/audit entry points
 - Live audit of the real Foodista corpus using the established schema-1 layout
 
-## Phase 5: one real training backend
+## Phase 5: real training backends — complete
 
 - Add `waldo model forecast <compose-or-index-path...>` before any resource allocation.
   **Implemented.**
@@ -173,10 +173,10 @@ the same files independently of an index checkout.
   checkpoint/evaluation cadence, and planned token capacity. **Implemented.**
 - Stream canonical records through a schema-1 NDJSON worker protocol without
   exposing Parquet or index logic to framework adapters. **Implemented through
-  the real MLX and PyTorch workers.**
+  the real MLX, PyTorch, and TorchTitan workers.**
 - Persist and validate typed progress, checkpoint, evaluation, final-loss, and
-  artifact observations. **Implemented and exercised through real MLX and
-  guarded PyTorch lifecycles.**
+  artifact observations. **Implemented and exercised through real MLX plus
+  guarded PyTorch and TorchTitan lifecycles.**
 - Weight checkpoints. **Implemented.** Optimizer-state resume remains.
 - Actual consumption totals. **Implemented.**
 - Training-loss evaluation results and output weight hashes. **Implemented;
@@ -186,7 +186,7 @@ the same files independently of an index checkout.
 Exit: a tiny model can be rebuilt from a compose and its complete observed run
 record can be inspected.
 
-## Phase 6: useful model operations
+## Phase 6: useful model operations — in progress
 
 - Real MLX chat and one-shot generation with verified current artifacts,
   persistent sessions, KV caching, safe streaming, and deterministic test
@@ -194,18 +194,21 @@ record can be inspected.
 - Separate native WALDO, Hugging Face, MLX, GGUF, and Ollama release packages,
   each carrying the OpenWALDO and EU BOMs. **Implemented, including live
   Ollama import/generation parity for the GGUF converter.**
-- Second local backend **implemented with single-process PyTorch on Linux.**
+- Additional execution backends **implemented with single-process PyTorch and
+  single-node distributed TorchTitan on Linux.**
 - Held-out evaluation
 - Fork and lineage
-- Explicit additional training runs
-- Training-content report rendering
+- Explicit additional training runs **implemented through `waldo model train`.**
+- Training-content report rendering **implemented as a versioned JSON EU GPAI
+  mapping; exact official editable-document rendering remains.**
 
 Model import, SFT, preference training, and cluster orchestration remain
 deferred until this smaller lifecycle is reliable.
 
-## Phase 7: operations and transition
+## Phase 7: operations and transition — pending
 
-- Lookaside mirroring; scrubbing and explicit object removal are implemented
+- Lookaside-to-lookaside replication; ordered mirror reads, scrubbing, and
+  explicit object removal are implemented
 - Append-only corpus updates
 - Compatibility aliases where they materially help users
 - Packaging and releases

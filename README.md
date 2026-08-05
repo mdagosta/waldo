@@ -412,35 +412,49 @@ unsigned warning.
 
 Working end to end today:
 
-- schema-1 directory index, corpus manifest, and Parquet record contracts;
-- recursive index inspection, availability verification, object hashing, and
-  full record audit;
-- local and S3 lookaside publication, internal AWS SDK access, keychain-backed
-  credentials, retained cache, scratch cleanup, inventory, and explicit remove;
-- streaming direct and recipe-driven ingestion into canonical schema-1 Parquet;
-- native Parquet and canonical JSONL corpus exports with offline-verifiable BOMs;
-- local shard summary, audit, record listing, and record export;
-- immutable model plans, append-only runs, forecasting, direct training, and
-  model composes;
-- real MLX training and generation on Apple Silicon, plus real single-process
-  PyTorch training on Linux CPU, NVIDIA CUDA, or AMD ROCm installations;
-- real single-node TorchTitan training across all visible Linux GPUs with
-  TorchTitan device meshes and PyTorch FSDP2;
-- native WALDO, Hugging Face, MLX, GGUF, and Ollama model exports;
-- machine-readable EU GPAI disclosure mapping and gap analysis; and
-- optional fail-closed Sigstore signing for model release BOMs.
+- **Data governance:** schema-1 directory indexes, corpus manifests, canonical
+  Parquet records, recursive inspection, lightweight availability checks,
+  object hashing, and full record-level audits;
+- **Storage:** local and S3 lookaside publication through the AWS SDK,
+  keychain-backed credentials, ordered read mirrors, bounded verified caching,
+  scratch cleanup, inventory, scrubbing, and explicit object removal;
+- **Contribution:** streaming direct and recipe-driven ingestion of text,
+  Markdown, JSONL, compressed JSONL, and raw Parquet; parallel publication;
+  post-write audit; local purge; and a small Git review overlay;
+- **Corpus use:** native Parquet and canonical JSONL exports with
+  offline-verifiable BOMs, plus local shard summary, audit, record listing, and
+  individual record export;
+- **Model lifecycle:** immutable architectures, append-only run records,
+  forecasting, direct index-backed training, ordered model composes, model
+  inspection, and complete data-to-weight provenance;
+- **Execution:** real MLX training and generation on Apple Silicon,
+  single-process PyTorch training on Linux CPU, NVIDIA CUDA, or AMD ROCm, and
+  single-node distributed TorchTitan training across all visible Linux GPUs;
+- **Release:** separate native WALDO, Hugging Face, MLX, GGUF, and Ollama
+  packages, each with technical and EU BOMs; and
+- **Disclosure and signing:** machine-readable EU GPAI mapping and gap analysis,
+  plus optional fail-closed Sigstore signing of model release BOMs.
 
 Still deliberately pending:
 
-- TensorFlow execution, PyTorch generation, and multi-node TorchTitan
-  orchestration—the single-node distributed TorchTitan adapter is implemented;
-- model import, quantized GGUF variants, SFT, preference training, pinned chat
-  templates, held-out evaluation, and cluster orchestration;
-- rendering the exact official editable EU template rather than the current
-  versioned JSON mapping;
-- append/update/remove index contribution workflows and lookaside mirroring;
-- automated Git commits or pull requests; and
-- packaging and a supported public release.
+- **Data and index:** non-text/multimodal ingestion, append-only corpus updates,
+  corpus removal contributions, and verified lookaside-to-lookaside
+  replication;
+- **Model lineage and tuning:** importing an external open-weight model as a
+  compose starting point, SFT, preference training, and pinned chat templates;
+- **Training quality and recovery:** held-out evaluation, optimizer-state
+  checkpoints and resume, and empirical forecast calibration;
+- **Additional execution:** PyTorch generation, a TensorFlow adapter, and
+  multi-node TorchTitan rendezvous, scheduler, and cluster orchestration;
+- **Additional release formats:** quantized GGUF variants and rendering the
+  exact official editable EU template instead of only its versioned JSON
+  mapping; and
+- **Distribution:** installable packages, migration guidance, website
+  reconciliation, and a supported public release.
+
+WALDO intentionally does not commit index changes or open pull requests. It
+prepares a deterministic contribution overlay so normal Git review, DCO, and
+repository policy remain visible.
 
 ## Documentation
 
@@ -460,8 +474,10 @@ Still deliberately pending:
 ## Development
 
 The local suite covers unit tests, static analysis, direct and recipe-driven
-ingestion, the fake model lifecycle, and a real disposable MLX lifecycle when
-Metal-capable MLX is installed:
+ingestion, and the fake model lifecycle. It also runs disposable real MLX,
+PyTorch, and TorchTitan lifecycles when their required operating system,
+runtime, and accelerator are available; otherwise each hardware test reports
+an explicit skip:
 
 ```bash
 ./testing/all.sh
