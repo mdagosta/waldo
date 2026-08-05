@@ -32,8 +32,8 @@ type Builder struct {
 	Progress func(Progress)
 }
 
-func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, error) {
-	if err := recipe.Validate(); err != nil {
+func (builder Builder) Build(ctx context.Context, compose Compose) (Inspection, error) {
+	if err := compose.Validate(); err != nil {
 		return Inspection{}, err
 	}
 	if builder.Root == "" {
@@ -47,13 +47,13 @@ func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, er
 	if newID == nil {
 		newID = randomID
 	}
-	modelPath := filepath.Join(builder.Root, recipe.Name)
+	modelPath := filepath.Join(builder.Root, compose.Name)
 	if _, err := os.Stat(modelPath); err == nil {
-		return Inspection{}, fmt.Errorf("model %q already exists; use a future explicit continuation workflow rather than rebuilding it", recipe.Name)
+		return Inspection{}, fmt.Errorf("model %q already exists; use a future explicit continuation workflow rather than rebuilding it", compose.Name)
 	} else if !os.IsNotExist(err) {
 		return Inspection{}, err
 	}
-	plan, stages, err := preflight(recipe, builder.Progress)
+	plan, stages, err := preflight(compose, builder.Progress)
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -83,7 +83,7 @@ func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, er
 		return Inspection{}, err
 	}
 	record := ModelRecord{
-		Kind: "waldo-model", Schema: ModelSchema, ID: planHash, Name: recipe.Name,
+		Kind: "waldo-model", Schema: ModelSchema, ID: planHash, Name: compose.Name,
 		PlanSHA256: planHash, ArchitectureSHA256: plan.ArchitectureSHA256,
 		Architecture: plan.Architecture, Forecast: plan.Forecast,
 		Created: formatTime(now()), Updated: formatTime(now()),
@@ -169,7 +169,7 @@ func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, er
 		}
 		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunComplete, Message: "persisted simulated observations and artifact hashes"})
 	}
-	return Inspect(builder.Root, recipe.Name)
+	return Inspect(builder.Root, compose.Name)
 }
 
 func initializeModel(root, destination string, plan Plan, record ModelRecord) error {

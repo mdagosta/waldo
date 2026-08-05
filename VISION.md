@@ -50,7 +50,7 @@ future capabilities and must never be implied by the baseline BOM.
 - Select corpora and materialize hash-verified shards through a local cache.
 - Export native Parquet or canonical interchange data with a corpus BOM.
 - Add a basic corpus deterministically and prepare its index contribution.
-- Build a small model from a declarative recipe through one real backend.
+- Build a small model from a declarative compose through one real backend.
 - Record durable run state, actual backend results, model lineage, and weight
   hashes.
 - Export a model with its provenance attached.
@@ -70,5 +70,5 @@ future capabilities and must never be implied by the baseline BOM.
 
 The implementation is successful when a new user can understand the normal
 workflow from `waldo --help`, a curator can verify the real index without
-special knowledge, and a small model can be rebuilt from a recipe with a clear
+special knowledge, and a small model can be rebuilt from a compose with a clear
 machine-readable chain from index commit to output weights.

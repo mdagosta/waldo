@@ -8,9 +8,11 @@ import (
 	"strings"
 
 	"github.com/openwaldo/waldo-new/internal/config"
+	waldoindex "github.com/openwaldo/waldo-new/internal/index"
 )
 
 var configKeys = []string{
+	"index",
 	"lookaside",
 	"lookaside.region",
 	"lookaside.workers",
@@ -146,6 +148,15 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		return err
 	}
 	switch key {
+	case "index":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		target, err := waldoindex.Resolve("", values[0])
+		if err != nil {
+			return usageError{message: fmt.Sprintf("index must name an existing WALDO index checkout: %v", err)}
+		}
+		configuration.Index = target.Root
 	case "lookaside":
 		if len(values) != 1 {
 			return oneConfigValue(key)
@@ -242,6 +253,8 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		return err
 	}
 	switch key {
+	case "index":
+		configuration.Index = ""
 	case "lookaside":
 		configuration.Lookaside.Publish = nil
 	case "lookaside.region":
@@ -303,6 +316,11 @@ func reportConfigMutation(context Context, stdout io.Writer, status, key string)
 
 func configValue(configuration config.Config, key string) (any, bool, error) {
 	switch key {
+	case "index":
+		if configuration.Index == "" {
+			return nil, false, nil
+		}
+		return configuration.Index, true, nil
 	case "lookaside":
 		if configuration.Lookaside.Publish == nil {
 			return nil, false, nil

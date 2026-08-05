@@ -51,10 +51,10 @@ var acceleratorCatalog = []acceleratorProfile{
 	{manufacturer: "AMD", accelerator: "Instinct MI350X", memoryBytes: 288 << 30, counts: []int{1, 4, 8}, throughput: 400, scale4: .82, scale8: .75},
 }
 
-// ForecastRecipe verifies every corpus export through the normal model
+// ForecastCompose verifies every corpus export through the normal model
 // preflight and returns a read-only estimate. It creates no model or run state.
-func ForecastRecipe(recipe Recipe) (ResourceForecast, error) {
-	plan, _, err := preflight(recipe, nil)
+func ForecastCompose(compose Compose) (ResourceForecast, error) {
+	plan, _, err := preflight(compose, nil)
 	if err != nil {
 		return ResourceForecast{}, err
 	}

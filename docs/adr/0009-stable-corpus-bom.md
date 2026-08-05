@@ -28,7 +28,7 @@ meaning requires a new schema.
 
 ## Consequences
 
-- Later model recipes can consume the BOM rather than reinterpret an index.
+- Later model composes can consume the BOM rather than reinterpret an index.
 - Native and derived file identity cannot be confused.
 - Redundant totals are useful to readers but are verified, never trusted as
   independent facts.

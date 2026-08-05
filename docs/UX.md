@@ -316,6 +316,7 @@ waldo config set lookaside.cache.max-size 100GiB
 waldo config set lookaside.scratch /fast-disk/waldo-scratch
 waldo config set ingest.staging /fast-disk/waldo-ingest
 waldo config set model.root /fast-disk/waldo-models
+waldo config set index /path/to/waldo-index
 waldo config set lookaside.mirrors https://mirror.example/openwaldo/v1
 waldo config get lookaside
 waldo config show
@@ -387,6 +388,7 @@ Configuration keys are positional and intentionally limited:
 
 | Key | Purpose |
 | --- | --- |
+| `index` | Default local index checkout for logical model and index paths. |
 | `lookaside` | Writable `s3://` production or `file://` test lookaside. |
 | `lookaside.region` | AWS region when it cannot be inferred. |
 | `lookaside.workers` | Concurrent completed-shard uploads, from 1 through 32. |
@@ -407,14 +409,14 @@ returns a key to its default. Backend schemes are values, not separate flags.
 Changing `lookaside` preserves the existing `lookaside.region` and
 `lookaside.workers` values; switching to `file://` clears the S3-only region.
 
-### Build a model from a recipe
+### Build a model from a compose
 
 ```bash
 waldo model build configs/smoke.yaml
 ```
 
-The recipe declares model identity, architecture, and ordered training stages.
-The command validates the complete recipe and corpus selections, forecasts
+The model compose declares model identity, architecture, and ordered training stages.
+The command validates the complete compose and corpus selections, forecasts
 resources, creates the model if absent, and executes stages. Reusing a trained
 model requires an explicit continuation option; replacing it requires a
 separate explicit option.
@@ -422,7 +424,7 @@ separate explicit option.
 The current development backend resolves to `fake@builtin-fake-schema-1`. It
 exercises the complete state and provenance path but emits an artifact that
 explicitly contains no trained weights. Backend selection is not part of the
-portable recipe. The schema-1 recipe and durable layout are documented in
+portable compose. The schema-1 compose and durable layout are documented in
 `docs/MODEL-LIFECYCLE.md`.
 
 ### Inspect provenance

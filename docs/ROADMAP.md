@@ -89,14 +89,14 @@ contribution through one command.
 Implemented foundation:
 
 - Model identity and immutable architecture
-- Strict declarative YAML/JSON build recipes
+- Strict declarative YAML/JSON model composes
 - Ordered curriculum, architectural, and transparent resource validation
 - Complete native corpus-export verification and OpenWALDO BOM attachment
 - Durable planned/running/complete/failed/interrupted run state machine
 - Deterministic fake backend with completion, failure, and interruption tests
 - Immutable build plans plus model and run OpenWALDO BOMs
 - `waldo model build` and `waldo model inspect`
-- Training-stage classification in the recipe, plan, and run BOM
+- Training-stage classification in the compose, plan, and run BOM
 - EU GPAI training-content gap analysis and fail-closed
   `bom export --format eu-gpai`
 
@@ -144,12 +144,15 @@ the same files independently of an index checkout.
 
 ## Phase 5: one real training backend
 
-- Add `waldo model forecast <recipe>` before any resource allocation.
+- Add `waldo model forecast <compose-or-index-path...>` before any resource allocation.
   **Implemented.**
 - Forecast runtime and memory across exact Apple, NVIDIA, and AMD accelerator
   profiles, including viable 1, 4, and 8 accelerator configurations per node.
   **Implemented with a versioned planning catalog; empirical calibration is
   ongoing.**
+- Resolve multiple direct index paths through the current or configured index,
+  deduplicate their corpora, recommend a model rung, and forecast one pass.
+  **Implemented.**
 - Select MLX automatically on Apple Silicon
 - Select PyTorch automatically on single-node Linux
 - Select TorchTitan for explicitly configured multi-node Linux runs
@@ -163,7 +166,7 @@ the same files independently of an index checkout.
 - Evaluation results and output weight hashes
 - Safetensors export with attached provenance
 
-Exit: a tiny model can be rebuilt from a recipe and its complete observed run
+Exit: a tiny model can be rebuilt from a compose and its complete observed run
 record can be inspected.
 
 ## Phase 6: useful model operations

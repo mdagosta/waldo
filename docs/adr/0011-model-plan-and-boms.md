@@ -5,7 +5,7 @@
 
 ## Context
 
-A recipe contains machine-local corpus paths, while model identity must be
+A compose contains corpus selections, while model identity must be
 portable. Training state also changes over time, whereas the inputs authorized
 for a run must remain immutable. Combining these into one mutable document
 would make failures hard to audit and paths accidentally identity-bearing.
@@ -28,4 +28,4 @@ run-BOM, observation, and artifact hashes.
 - A failed or interrupted backend remains part of model history.
 - Planned corpus totals cannot be mistaken for backend-observed consumption.
 - Model inspection can validate the hash chain without an index checkout.
-- A recipe must be completely preflighted before any model directory appears.
+- A compose must be completely preflighted before any model directory appears.

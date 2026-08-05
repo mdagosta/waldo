@@ -98,7 +98,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	}
 
 	recipe := filepath.Join(t.TempDir(), "smoke.yaml")
-	recipeData := fmt.Sprintf(`kind: waldo-model-recipe
+	recipeData := fmt.Sprintf(`kind: waldo-model-compose
 schema: 1
 name: smoke
 architecture:

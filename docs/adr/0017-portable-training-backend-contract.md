@@ -1,4 +1,4 @@
-# ADR 0017: Resolve training backends outside portable model recipes
+# ADR 0017: Resolve training backends outside portable model composes
 
 ## Context
 
@@ -9,7 +9,7 @@ duplicating plans, run state, provenance, or CLI workflows.
 
 ## Decision
 
-Schema-1 model recipes describe the model, verified corpus stages, and portable
+Schema-1 model composes describe the model, verified corpus stages, and portable
 training parameters. They do not contain a backend field.
 
 Before any model state is written, the model domain asks a training resolver to
@@ -41,9 +41,9 @@ needs it.
 
 - One recipe can run on multiple supported environments.
 - Framework selection and machine facts remain auditable without polluting the
-  portable source configuration.
+  portable model compose.
 - Adding TensorFlow or another backend does not change lifecycle persistence or
-  command organization.
+  command organization or compose schema.
 - Backend capability mismatches fail during preflight, before a model directory
   or paid training run exists.
 - Until a real adapter lands, the default development resolver selects the

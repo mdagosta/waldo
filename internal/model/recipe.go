@@ -1,4 +1,4 @@
-// Package model owns model recipes, immutable architecture identity, build
+// Package model owns model compose files, immutable architecture identity, build
 // plans, model/run BOMs, and durable lifecycle state.
 package model
 
@@ -17,11 +17,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const RecipeSchema = 1
+const ComposeSchema = 1
 
 var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-type Recipe struct {
+type Compose struct {
 	Kind         string       `json:"kind" yaml:"kind"`
 	Schema       int          `json:"schema" yaml:"schema"`
 	Name         string       `json:"name" yaml:"name"`
@@ -62,55 +62,79 @@ type ArchitectureForecast struct {
 	Formula               string `json:"formula"`
 }
 
-func LoadRecipe(path string) (Recipe, string, error) {
+func LoadCompose(path string) (Compose, string, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return Recipe{}, "", err
+		return Compose{}, "", err
 	}
 	data, err := os.ReadFile(absolute)
 	if err != nil {
-		return Recipe{}, "", err
+		return Compose{}, "", err
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
-	var recipe Recipe
-	if err := decoder.Decode(&recipe); err != nil {
-		return Recipe{}, "", fmt.Errorf("%s: %w", absolute, err)
+	var compose Compose
+	if err := decoder.Decode(&compose); err != nil {
+		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
 			err = fmt.Errorf("multiple YAML documents are not allowed")
 		}
-		return Recipe{}, "", fmt.Errorf("%s: %w", absolute, err)
+		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
-	if err := recipe.Validate(); err != nil {
-		return Recipe{}, "", fmt.Errorf("%s: %w", absolute, err)
+	if err := compose.Validate(); err != nil {
+		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
-	for i := range recipe.Stages {
-		if !filepath.IsAbs(recipe.Stages[i].Corpus) {
-			recipe.Stages[i].Corpus = filepath.Join(filepath.Dir(absolute), recipe.Stages[i].Corpus)
+	for i := range compose.Stages {
+		if !filepath.IsAbs(compose.Stages[i].Corpus) {
+			compose.Stages[i].Corpus = filepath.Join(filepath.Dir(absolute), compose.Stages[i].Corpus)
 		}
-		recipe.Stages[i].Corpus = filepath.Clean(recipe.Stages[i].Corpus)
+		compose.Stages[i].Corpus = filepath.Clean(compose.Stages[i].Corpus)
 	}
-	return recipe, absolute, nil
+	return compose, absolute, nil
 }
 
-func (recipe Recipe) Validate() error {
-	if recipe.Kind != "waldo-model-recipe" || recipe.Schema != RecipeSchema {
-		return fmt.Errorf("unsupported model recipe identity %q schema %d", recipe.Kind, recipe.Schema)
+func IsComposeFile(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return false, nil
 	}
-	if !validName.MatchString(recipe.Name) {
+	if err != nil {
+		return false, err
+	}
+	if info.IsDir() {
+		return false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	var header struct {
+		Kind string `yaml:"kind"`
+	}
+	if err := yaml.Unmarshal(data, &header); err != nil {
+		return false, nil
+	}
+	return header.Kind == "waldo-model-compose", nil
+}
+
+func (compose Compose) Validate() error {
+	if compose.Kind != "waldo-model-compose" || compose.Schema != ComposeSchema {
+		return fmt.Errorf("unsupported model compose identity %q schema %d", compose.Kind, compose.Schema)
+	}
+	if !validName.MatchString(compose.Name) {
 		return fmt.Errorf("model name must match %s", validName.String())
 	}
-	if err := recipe.Architecture.Validate(); err != nil {
+	if err := compose.Architecture.Validate(); err != nil {
 		return err
 	}
-	if len(recipe.Stages) == 0 {
+	if len(compose.Stages) == 0 {
 		return fmt.Errorf("at least one training stage is required")
 	}
 	seen := map[string]bool{}
-	for i, stage := range recipe.Stages {
+	for i, stage := range compose.Stages {
 		if !validName.MatchString(stage.Name) || seen[stage.Name] {
 			return fmt.Errorf("stage %d has invalid or duplicate name %q", i+1, stage.Name)
 		}
@@ -128,7 +152,7 @@ func (recipe Recipe) Validate() error {
 		if parameters.Steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {
 			return fmt.Errorf("stage %s training parameters must be positive", stage.Name)
 		}
-		if uint64(parameters.SequenceLength) > recipe.Architecture.ContextTokens {
+		if uint64(parameters.SequenceLength) > compose.Architecture.ContextTokens {
 			return fmt.Errorf("stage %s sequence_length exceeds architecture context_tokens", stage.Name)
 		}
 	}

@@ -3,17 +3,19 @@
 ## Context
 
 A model builder needs to know which exact accelerator configurations can run a
-recipe and approximately how long the complete workload will take before
+compose and approximately how long the complete workload will take before
 allocating hardware. Generic workstation and server labels do not answer that
 question. The result also must not imply precision that the estimator does not
 have.
 
 ## Decision
 
-`waldo model forecast <recipe>` performs the normal read-only recipe and corpus
-preflight, computes planned tokens, and compares the workload with a versioned
-catalog of exact Apple, NVIDIA, and AMD accelerators. It creates no model or run
-state.
+`waldo model forecast <compose>` performs the normal read-only compose and corpus
+preflight. `waldo model forecast <index-path...>` resolves and deduplicates one
+or more selections from the same checkout, recommends a model rung at roughly
+20 tokens per parameter, and plans one pass over the selected tokens. Both
+forms compare the workload with a versioned catalog of exact Apple, NVIDIA, and
+AMD accelerators and create no model or run state.
 
 The memory model includes sharded parameters, gradients, FP32 master weights,
 Adam moments, checkpointed activations, a fixed runtime reserve, and ten
@@ -37,7 +39,7 @@ below 100 hours remain in hours; longer durations are rounded to days.
 
 ## Consequences
 
-- A forecast is reproducible for a recipe and catalog revision.
+- A forecast is reproducible for a model compose and catalog revision.
 - Unsupported or non-fitting configurations do not clutter the normal table.
 - Estimates are useful planning numbers, not benchmark guarantees.
 - Hardware measurements can revise the catalog without changing recipes or

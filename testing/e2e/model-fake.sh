@@ -27,7 +27,7 @@ staging="$work/staging"
 models="$work/models"
 export_root="$work/export"
 input="$work/training.txt"
-recipe="$work/model.yaml"
+compose="$work/model.yaml"
 disclosure="$work/eu-gpai.json"
 export WALDO_CONFIG="$work/config.json"
 
@@ -64,8 +64,8 @@ cp -R "$contribution"/. "$index_root"/
 "$binary" index export "$destination" "$export_root" --format native
 "$binary" bom verify "$export_root/EXPORT.json"
 
-cat > "$recipe" <<EOF
-kind: waldo-model-recipe
+cat > "$compose" <<EOF
+kind: waldo-model-compose
 schema: 1
 name: smoke
 architecture:
@@ -95,9 +95,9 @@ stages:
       seed: 7
 EOF
 
-forecast_output=$("$binary" model forecast "$recipe")
+forecast_output=$("$binary" model forecast "$compose")
 printf '%s\n' "$forecast_output"
-printf '%s\n' "$forecast_output" | grep -q 'MFR.*ACCELERATOR.*GPUS.*MEMORY/GPU.*APPROX. TIME'
+printf '%s\n' "$forecast_output" | grep -q 'GPUS.*MFR.*ACCELERATOR.*MEMORY/GPU.*APPROX. TIME'
 printf '%s\n' "$forecast_output" | grep -q 'Apple.*M4 Max 40-core GPU'
 printf '%s\n' "$forecast_output" | grep -q 'NVIDIA.*H100 SXM'
 if printf '%s\n' "$forecast_output" | grep -Eq 'BACKEND|FIT|~|unified'; then
@@ -105,11 +105,11 @@ if printf '%s\n' "$forecast_output" | grep -Eq 'BACKEND|FIT|~|unified'; then
   exit 1
 fi
 [ ! -e "$models/smoke" ] || { echo "forecast created model state" >&2; exit 1; }
-forecast_json=$("$binary" --json model forecast "$recipe")
+forecast_json=$("$binary" --json model forecast "$compose")
 printf '%s\n' "$forecast_json" | grep -Eq '"catalog"[[:space:]]*:[[:space:]]*"openwaldo-training-hardware-'
 printf '%s\n' "$forecast_json" | grep -Eq '"approximate_seconds"[[:space:]]*:'
 
-build_output=$("$binary" model build "$recipe")
+build_output=$("$binary" model build "$compose")
 printf '%s\n' "$build_output"
 printf '%s\n' "$build_output" | grep -q 'built with simulated training'
 
@@ -130,7 +130,7 @@ run_count=$(find "$models/smoke/runs" -type f -name RUN.json -print | wc -l | tr
 artifact_count=$(find "$models/smoke/runs" -type f -name fake-model.json -print | wc -l | tr -d ' ')
 [ "$artifact_count" -eq 1 ] || { echo "found $artifact_count fake artifacts, want 1" >&2; exit 1; }
 
-if "$binary" model build "$recipe" >/dev/null 2>&1; then
+if "$binary" model build "$compose" >/dev/null 2>&1; then
   echo "model build replaced an existing model" >&2
   exit 1
 fi

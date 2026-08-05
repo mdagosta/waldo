@@ -16,6 +16,7 @@ const Schema = 1
 
 type Config struct {
 	Schema    int       `json:"schema"`
+	Index     string    `json:"index,omitempty"`
 	Lookaside Lookaside `json:"lookaside,omitempty"`
 	Ingest    Ingest    `json:"ingest,omitempty"`
 	Model     Model     `json:"model,omitempty"`

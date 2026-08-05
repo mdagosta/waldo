@@ -31,17 +31,9 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return usageError{message: err.Error()}
 	}
-	targets := make([]waldoindex.Target, 0, len(options.Paths))
-	for position, path := range options.Paths {
-		knownRoot := ""
-		if position > 0 {
-			knownRoot = targets[0].Root
-		}
-		target, err := waldoindex.Resolve(knownRoot, path)
-		if err != nil {
-			return err
-		}
-		targets = append(targets, target)
+	targets, err := resolveIndexArguments(options.Paths)
+	if err != nil {
+		return err
 	}
 	cache, err := lookaside.DefaultCache()
 	if err != nil {

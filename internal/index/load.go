@@ -18,10 +18,10 @@ type Target struct {
 	Rel  string
 }
 
-// Resolve locates a target inside an index checkout. A knownRoot is used only
-// by internal callers resolving several logical paths in one already-discovered
-// checkout. User-facing commands discover the checkout from a positional
-// filesystem path or, for logical paths, from the current directory.
+// Resolve locates a target inside an index checkout. A knownRoot confines the
+// target to an already-discovered checkout. With no known root, an explicit
+// filesystem path discovers its checkout and a logical path uses the current
+// checkout.
 func Resolve(knownRoot, target string) (Target, error) {
 	if knownRoot != "" {
 		root, err := findRoot(knownRoot)
@@ -58,6 +58,15 @@ func Resolve(knownRoot, target string) (Target, error) {
 		return Target{Root: root, Abs: root}, nil
 	}
 	return within(root, target)
+}
+
+// ResolveConfigured gives explicit filesystem paths precedence over a machine
+// default while resolving logical or omitted paths against that default.
+func ResolveConfigured(configuredRoot, target string) (Target, error) {
+	if target != "" && isFilesystemPath(target) {
+		return Resolve("", target)
+	}
+	return Resolve(configuredRoot, target)
 }
 
 // ResolveDestination discovers the checkout for a prospective positional

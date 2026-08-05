@@ -3,19 +3,19 @@
 Phase 4 proves model orchestration and provenance without coupling WALDO to an
 ML framework. The enabled backend is deliberately fake: it writes a small
 deterministic document that states it is not trained weights. A successful
-Phase-4 build proves recipe resolution, corpus verification, state transitions,
+Phase-4 build proves compose resolution, corpus verification, state transitions,
 and artifact hashing; it does not prove that training occurred.
 
 All formats in this document use schema 1.
 
-## Recipe
+## Model compose
 
-Recipes are strict YAML or JSON. Unknown fields, additional YAML documents,
+Model compose files are strict YAML or JSON. Unknown fields, additional YAML documents,
 incomplete architecture, unsupported objectives, and ambiguous backend
 revisions are rejected.
 
 ```yaml
-kind: waldo-model-recipe
+kind: waldo-model-compose
 schema: 1
 name: smoke
 
@@ -47,8 +47,8 @@ stages:
       seed: 7
 ```
 
-`corpus` names a native corpus export directory or its `EXPORT.json`. It is
-resolved relative to the recipe. WALDO verifies every exported file against
+`corpus` currently names a native corpus export directory or its `EXPORT.json`. It is
+resolved relative to the compose. WALDO verifies every exported file against
 the export record before it creates the model and requires canonical Parquet
 record schema 1 for the current causal-language-modeling objective.
 `type` is one of `pre-training`, `fine-tuning`, `alignment`, or `other`; WALDO
@@ -57,8 +57,8 @@ training-content disclosure.
 
 The local corpus path is not identity. The resolved corpus OpenWALDO BOM hash,
 architecture, automatically resolved execution backend, parameters, and
-ordered stages form the immutable build plan. Recipes do not select a backend;
-the same recipe remains portable across supported execution environments.
+ordered stages form the immutable build plan. Composes do not select a backend;
+the same compose remains portable across supported execution environments.
 
 ## Commands
 
@@ -67,7 +67,7 @@ different disk is more appropriate:
 
 ```bash
 waldo config set model.root /fast-disk/waldo-models
-waldo model build recipe.yaml
+waldo model build model.yaml
 waldo model inspect smoke
 waldo model inspect /fast-disk/waldo-models/smoke
 ```
@@ -109,20 +109,31 @@ model identity.
 Before allocating hardware, run:
 
 ```bash
-waldo model forecast recipe.yaml
+waldo model forecast model.yaml
+waldo model forecast /path/to/waldo-index/core/books
+waldo model forecast core/books science/papers
 ```
 
-WALDO verifies the recipe and every native corpus export but creates no model
-or run state. It lists only accelerator configurations that have enough memory,
-sorted from slowest to fastest:
+A model compose supplies its architecture and complete training budget. Direct
+index paths instead resolve one deduplicated selection, recommend the largest
+model rung supported by roughly 20 tokens per parameter, and forecast one pass
+over that data. Multiple paths must belong to the same checkout. Logical paths
+use the current checkout or the checkout configured with:
+
+```bash
+waldo config set index /path/to/waldo-index
+```
+
+WALDO creates no model or run state. It lists only accelerator configurations
+that have enough memory, sorted from slowest to fastest:
 
 ```text
-MFR     ACCELERATOR                    GPUS  MEMORY/GPU  APPROX. TIME
-Apple   M4 Max 40-core GPU                1       128 GB       48 days
-NVIDIA  H100 SXM                          8        80 GB       44 hours
+GPUS  MFR     ACCELERATOR                    MEMORY/GPU  APPROX. TIME
+   1  Apple   M4 Max 40-core GPU                 128 GB       48 days
+   8  NVIDIA  H100 SXM                           80 GB       44 hours
 ```
 
-The actual rows and times depend on the recipe. The estimate uses planned
+The actual rows and times depend on the model compose. The estimate uses planned
 tokens, approximate model parameters, optimizer and activation memory, device
 headroom, and conservative effective throughput from a versioned hardware
 catalog. Approximate time covers the complete planned workload, including a

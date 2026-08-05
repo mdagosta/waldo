@@ -103,7 +103,7 @@ identity, status, and outputs.
 
 ### Model
 
-Owns model identity, immutable architecture, recipes, lifecycle, lineage, and
+Owns model identity, immutable architecture, composes, lifecycle, lineage, and
 artifact export. It asks the corpus domain for OpenWALDO BOMs and gives a fully
 resolved execution request to a training backend.
 
@@ -121,7 +121,7 @@ resolver selects an MLX, PyTorch, TensorFlow, or distributed PyTorch/TorchTitan
 adapter before model state is created. Every adapter exposes the same narrow
 capability, request, progress, and observation contracts. Framework-specific
 workers may translate the canonical architecture and training request, but may
-not introduce a second model recipe or provenance lifecycle.
+not introduce a second model compose or provenance lifecycle.
 
 The application writes a `planned` run before launching the backend, advances
 it to `running`, and persists exactly one terminal state: `complete`, `failed`,
@@ -143,7 +143,7 @@ internal/lookaside/ verified object access and lifecycle
 internal/acquire/   bounded source adapters and local acquisition records
 internal/corpus/    ingestion, selection, OpenWALDO BOMs, export
 internal/provenance/BOM types and verification
-internal/model/     model lifecycle and recipes
+internal/model/     model lifecycle and composes
 internal/training/  backend interface and adapters
 internal/platform/  narrow OS, Git, and process adapters when needed
 ```

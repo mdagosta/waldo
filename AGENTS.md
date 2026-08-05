@@ -18,8 +18,9 @@ reason.
   backend domain that holds content-addressed objects.
 - An **OpenWALDO BOM** is the immutable, resolved handoff from the data side;
   materialization then verifies every object named by it.
-- A model **recipe** is consumed by `waldo model build`. Model composition
-  terminology belongs to the model lifecycle, never source acquisition.
+- A model **compose** is consumed by `waldo model build`. Model composition
+  terminology belongs to the model lifecycle; source acquisition uses an
+  **ingestion recipe**.
 - Fetchers are external shell scripts that live in another repository. WALDO
   may execute them only when the user explicitly supplies a strict
   `waldo-ingest-recipe`; scripts populate WALDO-owned temporary input space

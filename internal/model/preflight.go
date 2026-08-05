@@ -19,22 +19,22 @@ type resolvedStage struct {
 	ExportPath string
 }
 
-func preflight(recipe Recipe, progress func(Progress)) (Plan, []resolvedStage, error) {
-	architectureHash, err := canonicalHash(recipe.Architecture)
+func preflight(compose Compose, progress func(Progress)) (Plan, []resolvedStage, error) {
+	architectureHash, err := canonicalHash(compose.Architecture)
 	if err != nil {
 		return Plan{}, nil, err
 	}
-	forecast, err := recipe.Architecture.Forecast()
+	forecast, err := compose.Architecture.Forecast()
 	if err != nil {
 		return Plan{}, nil, err
 	}
 	plan := Plan{
-		Kind: "waldo-model-build-plan", Schema: PlanSchema, Name: recipe.Name,
-		ArchitectureSHA256: architectureHash, Architecture: recipe.Architecture,
+		Kind: "waldo-model-build-plan", Schema: PlanSchema, Name: compose.Name,
+		ArchitectureSHA256: architectureHash, Architecture: compose.Architecture,
 		Forecast: forecast,
 	}
-	resolved := make([]resolvedStage, 0, len(recipe.Stages))
-	for _, stage := range recipe.Stages {
+	resolved := make([]resolvedStage, 0, len(compose.Stages))
+	for _, stage := range compose.Stages {
 		if progress != nil {
 			progress(Progress{Phase: "preflight", Stage: stage.Name, Message: "verifying exported corpus and OpenWALDO BOM"})
 		}

@@ -31,42 +31,42 @@ func (function backendFunc) Run(ctx context.Context, request training.Request) (
 	return function(ctx, request)
 }
 
-func TestLoadRecipeIsStrictAndResolvesCorpusRelativeToRecipe(t *testing.T) {
+func TestLoadComposeIsStrictAndResolvesCorpusRelativeToCompose(t *testing.T) {
 	directory := t.TempDir()
 	path := filepath.Join(directory, "smoke.yaml")
-	if err := os.WriteFile(path, []byte(recipeYAML("exports/corpus", "")), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(composeYAML("exports/corpus", "")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	recipe, loaded, err := LoadRecipe(path)
+	compose, loaded, err := LoadCompose(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded != path || recipe.Stages[0].Corpus != filepath.Join(directory, "exports", "corpus") {
-		t.Fatalf("loaded = %q, corpus = %q", loaded, recipe.Stages[0].Corpus)
+	if loaded != path || compose.Stages[0].Corpus != filepath.Join(directory, "exports", "corpus") {
+		t.Fatalf("loaded = %q, corpus = %q", loaded, compose.Stages[0].Corpus)
 	}
-	if err := os.WriteFile(path, []byte(recipeYAML("exports/corpus", "surprise: true\n")), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(composeYAML("exports/corpus", "surprise: true\n")), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := LoadRecipe(path); err == nil {
-		t.Fatal("LoadRecipe accepted an unknown field")
+	if _, _, err := LoadCompose(path); err == nil {
+		t.Fatal("LoadCompose accepted an unknown field")
 	}
 }
 
-func TestRecipeRejectsBackendSelection(t *testing.T) {
+func TestComposeRejectsBackendSelection(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "smoke.yaml")
-	data := recipeYAML("exports/corpus", "backend:\n  name: fake\n  revision: builtin-fake-schema-1\n")
+	data := composeYAML("exports/corpus", "backend:\n  name: fake\n  revision: builtin-fake-schema-1\n")
 	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := LoadRecipe(path); err == nil || !strings.Contains(err.Error(), "field backend not found") {
-		t.Fatalf("LoadRecipe backend error = %v", err)
+	if _, _, err := LoadCompose(path); err == nil || !strings.Contains(err.Error(), "field backend not found") {
+		t.Fatalf("LoadCompose backend error = %v", err)
 	}
 }
 
 func TestBuildPersistsPlanRunAndModelBOMs(t *testing.T) {
 	root := t.TempDir()
 	export := writeModelExport(t, t.TempDir())
-	recipe := validRecipe(export)
+	recipe := validCompose(export)
 	clock := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
 	builder := Builder{Root: root, Now: func() time.Time { return clock }, NewID: func() (string, error) { return "run0001", nil }}
 	inspection, err := builder.Build(context.Background(), recipe)
@@ -119,7 +119,7 @@ func TestBuildPersistsPlanRunAndModelBOMs(t *testing.T) {
 
 func TestBuildRejectsInconsistentResolvedBackendBeforeCreatingModel(t *testing.T) {
 	root := t.TempDir()
-	recipe := validRecipe(writeModelExport(t, t.TempDir()))
+	recipe := validCompose(writeModelExport(t, t.TempDir()))
 	builder := Builder{
 		Root: root,
 		Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
@@ -138,7 +138,7 @@ func TestBuildRejectsInconsistentResolvedBackendBeforeCreatingModel(t *testing.T
 
 func TestBuildPreflightsAllExportsBeforeCreatingModel(t *testing.T) {
 	root := t.TempDir()
-	recipe := validRecipe(writeModelExport(t, t.TempDir()))
+	recipe := validCompose(writeModelExport(t, t.TempDir()))
 	recipe.Stages = append(recipe.Stages, Stage{Name: "second", Type: "fine-tuning", Objective: "causal-language-modeling", Corpus: filepath.Join(t.TempDir(), "missing"), Parameters: recipe.Stages[0].Parameters})
 	if _, err := (Builder{Root: root}).Build(context.Background(), recipe); err == nil {
 		t.Fatal("Build succeeded")
@@ -158,7 +158,7 @@ func TestBuildRejectsCorruptExportBeforeCreatingModel(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(filepath.Dir(path), filepath.FromSlash(document.Files[0].Path)), []byte("corrupt"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (Builder{Root: root}).Build(context.Background(), validRecipe(export)); err == nil {
+	if _, err := (Builder{Root: root}).Build(context.Background(), validCompose(export)); err == nil {
 		t.Fatal("Build accepted corrupt export")
 	}
 	if _, err := os.Stat(filepath.Join(root, "smoke")); !os.IsNotExist(err) {
@@ -177,7 +177,7 @@ func TestBuildPersistsFailureAndInterruption(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
-			recipe := validRecipe(writeModelExport(t, t.TempDir()))
+			recipe := validCompose(writeModelExport(t, t.TempDir()))
 			builder := Builder{
 				Root: root, NewID: func() (string, error) { return "run0001", nil },
 				Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
@@ -201,9 +201,9 @@ func TestBuildPersistsFailureAndInterruption(t *testing.T) {
 	}
 }
 
-func validRecipe(export string) Recipe {
-	return Recipe{
-		Kind: "waldo-model-recipe", Schema: 1, Name: "smoke",
+func validCompose(export string) Compose {
+	return Compose{
+		Kind: "waldo-model-compose", Schema: 1, Name: "smoke",
 		Architecture: Architecture{
 			Family: "decoder-transformer", ContextTokens: 128, VocabularySize: 256,
 			HiddenSize: 64, IntermediateSize: 192, Layers: 2, AttentionHeads: 4, KeyValueHeads: 2,
@@ -215,8 +215,8 @@ func validRecipe(export string) Recipe {
 	}
 }
 
-func recipeYAML(corpusPath, suffix string) string {
-	return "kind: waldo-model-recipe\n" +
+func composeYAML(corpusPath, suffix string) string {
+	return "kind: waldo-model-compose\n" +
 		"schema: 1\nname: smoke\n" +
 		"architecture:\n  family: decoder-transformer\n  context_tokens: 128\n  vocabulary_size: 256\n  hidden_size: 64\n  intermediate_size: 192\n  layers: 2\n  attention_heads: 4\n  key_value_heads: 2\n  tie_embeddings: true\n  parameter_dtype: float32\n  tokenizer:\n    name: byte\n    revision: sha256:example\n" +
 		"stages:\n  - name: pretrain\n    type: pre-training\n    objective: causal-language-modeling\n    corpus: " + corpusPath + "\n    parameters:\n      steps: 2\n      batch_size: 1\n      sequence_length: 64\n      learning_rate: 0.001\n      seed: 7\n" + suffix

@@ -690,10 +690,35 @@ func TestConfigShowAndGetUseCanonicalKeys(t *testing.T) {
 	if code := Run([]string{"config", "show"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("show code = %d, stderr = %q", code, stderr.String())
 	}
-	for _, want := range []string{"lookaside", "lookaside.workers", "lookaside.scratch", "ingest.staging", "model.root"} {
+	for _, want := range []string{"index", "lookaside", "lookaside.workers", "lookaside.scratch", "ingest.staging", "model.root"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("config show missing %q: %s", want, stdout.String())
 		}
+	}
+}
+
+func TestConfigSetIndexEnablesLogicalIndexPaths(t *testing.T) {
+	root := fixtureCLIIndex(t)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"config", "set", "index", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("set code = %d, stderr = %q", code, stderr.String())
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.Index != root {
+		t.Fatalf("configured index = %q, want %q", configuration.Index, root)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"index", "summary", "books"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("summary code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "tokens   2") {
+		t.Fatalf("summary = %q", stdout.String())
 	}
 }
 

@@ -8,27 +8,86 @@ import (
 	"time"
 
 	"github.com/openwaldo/waldo-new/internal/config"
+	"github.com/openwaldo/waldo-new/internal/corpus"
+	"github.com/openwaldo/waldo-new/internal/lookaside"
 	"github.com/openwaldo/waldo-new/internal/model"
 )
 
 func runModelForecast(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo model forecast <recipe.yaml> [--json]"}
+	if len(args) == 0 {
+		return usageError{message: "usage: waldo model forecast <compose.yaml> | <index-path...> [--json]"}
 	}
-	recipe, recipePath, err := model.LoadRecipe(args[0])
+	if len(args) == 1 {
+		isCompose, err := model.IsComposeFile(args[0])
+		if err != nil {
+			return err
+		}
+		if isCompose {
+			return runModelComposeForecast(context, args[0], stdout)
+		}
+	}
+	return runModelIndexForecast(context, args, stdout)
+}
+
+func runModelComposeForecast(context Context, path string, stdout io.Writer) error {
+	compose, composePath, err := model.LoadCompose(path)
 	if err != nil {
 		return err
 	}
-	report, err := model.ForecastRecipe(recipe)
+	report, err := model.ForecastCompose(compose)
 	if err != nil {
 		return err
 	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
-			Recipe   string                 `json:"recipe"`
+			Compose  string                 `json:"compose"`
 			Forecast model.ResourceForecast `json:"forecast"`
-		}{Recipe: recipePath, Forecast: report})
+		}{Compose: composePath, Forecast: report})
 	}
+	writeModelForecast(stdout, report)
+	return nil
+}
+
+func runModelIndexForecast(context Context, paths []string, stdout io.Writer) error {
+	targets, err := resolveIndexArguments(paths)
+	if err != nil {
+		return err
+	}
+	policy, err := corpus.NewLicensePolicy(nil, nil)
+	if err != nil {
+		return err
+	}
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		return err
+	}
+	bom, err := corpus.BuildBOM(context.Execution, targets, policy, cache)
+	if err != nil {
+		return err
+	}
+	preset, report, err := model.ForecastIndexSelection(bom.Totals.Tokens)
+	if err != nil {
+		return err
+	}
+	parameters, err := preset.Architecture.Forecast()
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Index      any                    `json:"index"`
+			Paths      []string               `json:"paths"`
+			Preset     string                 `json:"preset"`
+			Parameters uint64                 `json:"approximate_parameters"`
+			Tokens     int64                  `json:"tokens"`
+			Budget     string                 `json:"budget"`
+			Forecast   model.ResourceForecast `json:"forecast"`
+		}{Index: bom.Index, Paths: bom.Paths, Preset: preset.Name, Parameters: parameters.ApproximateParameters, Tokens: bom.Totals.Tokens, Budget: "one-pass", Forecast: report})
+	}
+	fmt.Fprintf(stdout, "MODEL:       %s (%s parameters)\n", preset.Name, humanCount(int64(parameters.ApproximateParameters)))
+	fmt.Fprintf(stdout, "TOKENS:      %s\n", humanCount(bom.Totals.Tokens))
+	fmt.Fprintln(stdout, "BUDGET:      one pass")
+	fmt.Fprintln(stdout)
 	writeModelForecast(stdout, report)
 	return nil
 }
@@ -59,9 +118,9 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 		memoryWidth = max(memoryWidth, len(candidate.memory))
 		durationWidth = max(durationWidth, len(candidate.duration))
 	}
-	fmt.Fprintf(stdout, "%-*s  %-*s  %*s  %*s  %*s\n", manufacturerWidth, "MFR", acceleratorWidth, "ACCELERATOR", GPUsWidth, "GPUS", memoryWidth, "MEMORY/GPU", durationWidth, "APPROX. TIME")
+	fmt.Fprintf(stdout, "%*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, "GPUS", manufacturerWidth, "MFR", acceleratorWidth, "ACCELERATOR", memoryWidth, "MEMORY/GPU", durationWidth, "APPROX. TIME")
 	for _, candidate := range rows {
-		fmt.Fprintf(stdout, "%-*s  %-*s  %*s  %*s  %*s\n", manufacturerWidth, candidate.manufacturer, acceleratorWidth, candidate.accelerator, GPUsWidth, candidate.GPUs, memoryWidth, candidate.memory, durationWidth, candidate.duration)
+		fmt.Fprintf(stdout, "%*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, candidate.GPUs, manufacturerWidth, candidate.manufacturer, acceleratorWidth, candidate.accelerator, memoryWidth, candidate.memory, durationWidth, candidate.duration)
 	}
 }
 
@@ -97,9 +156,9 @@ func approximateDuration(seconds int64) string {
 
 func runModelBuild(context Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) != 1 {
-		return usageError{message: "usage: waldo model build <recipe.yaml> [--json]"}
+		return usageError{message: "usage: waldo model build <compose.yaml> [--json]"}
 	}
-	recipe, recipePath, err := model.LoadRecipe(args[0])
+	compose, composePath, err := model.LoadCompose(args[0])
 	if err != nil {
 		return err
 	}
@@ -129,15 +188,15 @@ func runModelBuild(context Context, args []string, stdout, stderr io.Writer) err
 			}
 		},
 	}
-	inspection, err := builder.Build(context.Execution, recipe)
+	inspection, err := builder.Build(context.Execution, compose)
 	if err != nil {
 		return err
 	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
-			Recipe string           `json:"recipe"`
-			Result model.Inspection `json:"result"`
-		}{Recipe: recipePath, Result: inspection})
+			Compose string           `json:"compose"`
+			Result  model.Inspection `json:"result"`
+		}{Compose: composePath, Result: inspection})
 	}
 	fmt.Fprintf(stdout, "model %s built with simulated training\n", inspection.Model.Name)
 	fmt.Fprintf(stdout, "  location      %s\n", inspection.Path)

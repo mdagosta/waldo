@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/openwaldo/waldo-new/internal/config"
 	"github.com/openwaldo/waldo-new/internal/corpus"
 	waldoindex "github.com/openwaldo/waldo-new/internal/index"
 	"github.com/openwaldo/waldo-new/internal/lookaside"
@@ -347,11 +348,42 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 }
 
 func resolveIndexArgument(context Context, args []string) (waldoindex.Target, error) {
-	target := ""
-	if len(args) == 1 {
-		target = args[0]
+	targets, err := resolveIndexArguments(args)
+	if err != nil {
+		return waldoindex.Target{}, err
 	}
-	return waldoindex.Resolve("", target)
+	return targets[0], nil
+}
+
+func resolveIndexArguments(args []string) ([]waldoindex.Target, error) {
+	configuration, err := config.Load()
+	if err != nil {
+		return nil, err
+	}
+	values := args
+	if len(values) == 0 {
+		values = []string{""}
+	}
+	targets := make([]waldoindex.Target, 0, len(values))
+	knownRoot := configuration.Index
+	for _, value := range values {
+		var target waldoindex.Target
+		if len(targets) == 0 {
+			target, err = waldoindex.ResolveConfigured(knownRoot, value)
+		} else {
+			target, err = waldoindex.Resolve(knownRoot, value)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if len(targets) == 0 {
+			knownRoot = target.Root
+		} else if target.Root != targets[0].Root {
+			return nil, fmt.Errorf("index targets span different checkouts: %s and %s", targets[0].Root, target.Root)
+		}
+		targets = append(targets, target)
+	}
+	return targets, nil
 }
 
 func printManifest(w io.Writer, path string, manifest waldoindex.Manifest) {
