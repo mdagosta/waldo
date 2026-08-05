@@ -188,6 +188,9 @@ record can be inspected.
 - Real MLX chat and one-shot generation with verified current artifacts,
   persistent sessions, KV caching, safe streaming, and deterministic test
   controls. **Implemented.** Instruction tuning and chat templates remain.
+- Separate native WALDO, Hugging Face, MLX, GGUF, and Ollama release packages,
+  each carrying the OpenWALDO and EU BOMs. **Implemented, including live
+  Ollama import/generation parity for the GGUF converter.**
 - Second local backend
 - Held-out evaluation
 - Fork and lineage

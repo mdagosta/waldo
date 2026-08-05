@@ -46,6 +46,8 @@ compose="$work/model.yaml"
 provider="$work/provider.json"
 huggingface_export="$work/huggingface-export"
 mlx_export="$work/mlx-export"
+gguf_export="$work/gguf-export"
+ollama_export="$work/ollama-export"
 export WALDO_CONFIG="$work/config.json"
 
 echo "testing: real MLX model lifecycle with $mlx_python"
@@ -151,14 +153,16 @@ printf '%s\n' "$chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|
 
 "$binary" model export mlx-smoke "$huggingface_export" --format huggingface --allow-incomplete >/dev/null
 "$binary" model export mlx-smoke "$mlx_export" --format mlx --allow-incomplete >/dev/null
-"$mlx_python" - "$current_weights" "$huggingface_export" "$mlx_export" <<'PY'
+"$binary" model export mlx-smoke "$gguf_export" --format gguf --allow-incomplete >/dev/null
+"$binary" model export mlx-smoke "$ollama_export" --format ollama --allow-incomplete >/dev/null
+"$mlx_python" - "$current_weights" "$huggingface_export" "$mlx_export" "$gguf_export" "$ollama_export" <<'PY'
 import hashlib
 import json
 import os
 import struct
 import sys
 
-source, huggingface_root, mlx_root = sys.argv[1:]
+source, huggingface_root, mlx_root, gguf_root, ollama_root = sys.argv[1:]
 
 def tensor_payload(path):
     with open(path, "rb") as stream:
@@ -188,6 +192,24 @@ for root, release_format, container_format in (
             data = stream.read()
         assert len(data) == item["bytes"]
         assert hashlib.sha256(data).hexdigest() == item["sha256"]
+
+for root, release_format in ((gguf_root, "gguf"), (ollama_root, "ollama")):
+    with open(os.path.join(root, "model.gguf"), "rb") as stream:
+        assert stream.read(4) == b"GGUF"
+        assert struct.unpack("<I", stream.read(4))[0] == 3
+    with open(os.path.join(root, "BOM.json"), encoding="utf-8") as stream:
+        bom = json.load(stream)
+    assert bom["format"] == release_format
+    for item in bom["artifacts"]:
+        with open(os.path.join(root, item["path"]), "rb") as stream:
+            data = stream.read()
+        assert len(data) == item["bytes"]
+        assert hashlib.sha256(data).hexdigest() == item["sha256"]
+
+with open(os.path.join(ollama_root, "Modelfile"), encoding="utf-8") as stream:
+    modelfile = stream.read()
+assert "FROM ./model.gguf\n" in modelfile
+assert "PARAMETER num_ctx 16\n" in modelfile
 PY
 
-echo "E2E MLX model passed: trained, resumed, generated, and exported byte-identical Hugging Face and MLX tensors"
+echo "E2E MLX model passed: trained, resumed, generated, and exported Hugging Face, MLX, GGUF, and Ollama packages"

@@ -547,6 +547,18 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 			options.Finalize = finalize
 		}
 		output, err = modelexport.ExportMLX(context.Execution, inspection, destination, options)
+	case "gguf":
+		options := modelexport.Options{EUBOM: euBOM}
+		if signed {
+			options.Finalize = finalize
+		}
+		output, err = modelexport.ExportGGUF(context.Execution, inspection, destination, options)
+	case "ollama":
+		options := modelexport.Options{EUBOM: euBOM}
+		if signed {
+			options.Finalize = finalize
+		}
+		output, err = modelexport.ExportOllama(context.Execution, inspection, destination, options)
 	}
 	if err != nil {
 		return err
@@ -590,10 +602,10 @@ func parseModelExport(args []string) (string, string, string, bool, error) {
 		}
 	}
 	if len(positionals) != 2 {
-		return "", "", "", false, usageError{message: "usage: waldo model export <name> <directory> [--format waldo|huggingface|mlx] [--allow-incomplete] [--json]"}
+		return "", "", "", false, usageError{message: "usage: waldo model export <name> <directory> [--format waldo|huggingface|mlx|gguf|ollama] [--allow-incomplete] [--json]"}
 	}
-	if format != "waldo" && format != "huggingface" && format != "mlx" {
-		return "", "", "", false, usageError{message: fmt.Sprintf("model export format %q is not implemented yet; use waldo, huggingface, or mlx", format)}
+	if format != "waldo" && format != "huggingface" && format != "mlx" && format != "gguf" && format != "ollama" {
+		return "", "", "", false, usageError{message: fmt.Sprintf("model export format %q is not implemented; use waldo, huggingface, mlx, gguf, or ollama", format)}
 	}
 	return positionals[0], positionals[1], format, allowIncomplete, nil
 }

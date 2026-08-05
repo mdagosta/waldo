@@ -93,6 +93,21 @@ explicit byte tokenizer. It is a separate package, not a second copy bundled
 into the Hugging Face export. Tensor data is again copied byte-for-byte; only
 the container header and surrounding runtime files differ.
 
+`--format gguf` streams the current weights into one GGUF v3 `model.gguf` for
+llama.cpp-compatible runtimes such as LM Studio. It preserves BF16 or F16
+matrix precision, promotes one-dimensional normalization weights to F32,
+applies the Llama Q/K head layout required by GGUF, and embeds WALDO's byte
+tokenizer. `--format ollama` produces the same GGUF representation plus a
+portable `Modelfile` referencing `./model.gguf` and the architecture context
+length. Both packages contain `BOM.json` and `EU-BOM.json`; they do not include
+a redundant Safetensors copy.
+
+```bash
+waldo model export small ./small-gguf --format gguf
+waldo model export small ./small-ollama --format ollama
+ollama create small -f ./small-ollama/Modelfile
+```
+
 `model chat` opens the newest complete real-weight run identified by
 `current_run_id`, verifies its weights, configuration, and tokenizer against
 the model BOM, and then uses the backend recorded by that run. MLX sessions

@@ -73,3 +73,12 @@ The MLX adapter uses the same verified Llama name map, marks the Safetensors
 container for MLX, and binds `architecture.py` to MLX-LM's Llama
 implementation. It remains a separate release package even though its tensor
 payload can be identical to the Hugging Face package.
+
+The GGUF adapter writes GGUF v3 directly and incrementally from the verified
+Safetensors artifact. It uses standard Llama tensor names, reverses tensor
+dimensions for GGML's ordering, applies the required Q/K per-head permutation,
+preserves BF16 or F16 matrices, and promotes one-dimensional normalization
+weights to F32. WALDO's schema-1 byte tokenizer is encoded as an explicit
+GPT-2-style byte vocabulary with no merges and no implicit BOS or EOS token.
+The Ollama adapter adds only a relative `Modelfile`; it does not create a
+second weight representation.

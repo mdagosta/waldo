@@ -501,6 +501,11 @@ not pretend to be the Commission's official editable Word artifact.
 on any signing failure. With no signing configuration it emits an unsigned
 warning.
 
+Exactly one runtime representation is selected with `--format waldo`,
+`huggingface`, `mlx`, `gguf`, or `ollama`. The GGUF package contains
+`model.gguf`; the Ollama package adds a `Modelfile` that can be passed directly
+to `ollama create`. Neither package duplicates the weights as Safetensors.
+
 ## Common options
 
 The final spelling will be validated while implementing the first commands,

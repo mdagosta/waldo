@@ -29,8 +29,11 @@ tests. Phase 4 now includes strict model composes, direct verified index
 selections, immutable architecture plans, append-only runs, durable model/run
 OpenWALDO BOMs, a framework-neutral worker contract, and a real Apple Silicon
 MLX backend that streams canonical records into decoder training and produces
-hashed Safetensors weights. Deterministic simulation remains available only by
-explicitly configuring the fake backend. A fail-closed EU GPAI export maps the model and
+hashed Safetensors weights. Real MLX chat is available, and verified runs export
+as separate native WALDO, Hugging Face, MLX, GGUF, or Ollama release packages
+without bundling redundant weight formats. Deterministic simulation remains
+available only by explicitly configuring the fake backend. A fail-closed EU
+GPAI export maps the model and
 its training BOMs to the pinned Commission template fields and reports missing
 facts without claiming legal compliance. Other commands remain visible as an
 honest roadmap.
