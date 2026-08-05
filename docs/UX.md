@@ -448,6 +448,13 @@ waldo model summary smoke
 waldo model bom smoke
 ```
 
+The model BOM is a portable inventory rooted at the model directory. Its
+artifact paths include the complete run directory, label simulated output and
+artifact roles explicitly, and identify the newest usable real-weight run.
+Absolute machine paths are intentionally excluded. The same paths therefore
+resolve beneath either `model.root/<name>` or a relocated `model export`
+directory.
+
 Inspection distinguishes declared inputs, verified materialization, backend-
 reported consumption, and output hashes. It must not describe a baseline BOM
 as proof against a dishonest trainer.

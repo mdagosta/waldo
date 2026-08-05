@@ -161,8 +161,20 @@ into the configured model root.
   backend, objective, parameters, and execution environment before launch.
 - `RUN.json` moves atomically through `planned`, `running`, and exactly one of
   `complete`, `failed`, or `interrupted`.
-- `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, observation
-  hashes, and artifact hashes.
+- `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, backend and
+  simulation identity, observation hashes, and artifact hashes. Its
+  `path_base` is `model-root`: every `run_bom` and artifact `path` resolves
+  from the directory containing `MODEL-BOM.json` in a managed model or model
+  export. Paths are portable and never contain a machine-specific model root.
+  `current_run_id` selects the newest complete, non-simulated run containing
+  real weight artifacts; earlier simulated and real runs remain visible as
+  provenance.
+
+Every aggregate artifact has a role such as `weights`, `configuration`,
+`tokenizer`, or `simulation`. `model export` rewrites any accepted legacy
+schema-1 aggregate BOM into this unambiguous form and verifies the bytes,
+sizes, and SHA-256 hashes of terminal and checkpoint artifacts before
+publishing the exported directory.
 
 Machine-local index roots and cache paths never enter identity. Run BOMs retain
 logical index paths, manifest and shard hashes, licenses, source evidence, and

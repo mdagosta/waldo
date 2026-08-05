@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/openwaldo/waldo-new/internal/training"
 )
 
 type Listing struct {
@@ -154,11 +156,43 @@ func Export(root, name, destination string) (string, error) {
 	if err := copyTree(inspection.Path, temporary); err != nil {
 		return "", err
 	}
+	// Export always carries the normalized schema-1 BOM, including when the
+	// managed model was created before model-root-relative paths were added.
+	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL-BOM.json"), inspection.BOM); err != nil {
+		return "", err
+	}
+	exported, err := Inspect("", temporary)
+	if err != nil {
+		return "", fmt.Errorf("verify exported model metadata: %w", err)
+	}
+	if err := verifyModelArtifacts(exported); err != nil {
+		return "", fmt.Errorf("verify exported model artifacts: %w", err)
+	}
 	if err := os.Rename(temporary, absolute); err != nil {
 		return "", err
 	}
 	committed = true
 	return absolute, nil
+}
+
+func verifyModelArtifacts(inspection Inspection) error {
+	for index, run := range inspection.Runs {
+		if run.Observation == nil {
+			continue
+		}
+		pin := inspection.Model.Runs[index]
+		runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
+		artifacts := append([]training.Artifact(nil), run.Observation.Artifacts...)
+		for _, checkpoint := range run.Observation.Checkpoints {
+			artifacts = append(artifacts, checkpoint.Artifacts...)
+		}
+		for _, artifact := range artifacts {
+			if err := verifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
+				return fmt.Errorf("run %s: %w", run.ID, err)
+			}
+		}
+	}
+	return nil
 }
 
 func copyTree(source, destination string) error {

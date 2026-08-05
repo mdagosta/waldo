@@ -75,6 +75,10 @@ func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	if trained.RunBOMs[0].Execution.Backend.Name != "fake" || trained.RunBOMs[0].Execution.Host.OS == "" || trained.Runs[0].Observation == nil || !trained.Runs[0].Observation.Simulated {
 		t.Fatalf("run = %+v, BOM = %+v", trained.Runs[0], trained.RunBOMs[0])
 	}
+	bomRun := trained.BOM.Runs[0]
+	if trained.BOM.PathBase != "model-root" || trained.BOM.CurrentRunID != "" || bomRun.Backend.Name != "fake" || !bomRun.Simulated || bomRun.RunBOM != "runs/0001-pretrain-run0001/RUN-BOM.json" || bomRun.Artifacts[0].Role != "simulation" || bomRun.Artifacts[0].Path != "runs/0001-pretrain-run0001/artifacts/fake-model.json" {
+		t.Fatalf("aggregate BOM = %+v", trained.BOM)
+	}
 	artifact := trained.Model.Runs[0].Artifacts[0]
 	data, err := os.ReadFile(filepath.Join(trained.Path, "runs", runDirectoryName(trained.Model.Runs[0]), filepath.FromSlash(artifact.Path)))
 	if err != nil {
@@ -82,6 +86,74 @@ func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "no trained model weights") {
 		t.Fatalf("artifact = %q", data)
+	}
+}
+
+func TestModelBOMIdentifiesLatestRealWeights(t *testing.T) {
+	record := ModelRecord{
+		ID: "model", Name: "example", PlanSHA256: "plan", ArchitectureSHA256: "architecture", Updated: "now",
+		Runs: []RunPin{
+			{ID: "fake", Stage: "first", Ordinal: 1, State: RunComplete, Backend: training.Identity{Name: "fake", Revision: "fake-v1"}, Simulated: true, Artifacts: []training.Artifact{{Path: "artifacts/fake-model.json", SHA256: "fake", Bytes: 1}}},
+			{ID: "real", Stage: "second", Ordinal: 2, State: RunComplete, Backend: training.Identity{Name: "mlx", Revision: "mlx-v1"}, Artifacts: []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: "weights", Bytes: 2}, {Path: "artifacts/config.json", SHA256: "config", Bytes: 3}}},
+		},
+	}
+	bom := modelBOM(record)
+	if bom.CurrentRunID != "real" || bom.Runs[1].Artifacts[0].Role != "weights" || bom.Runs[1].Artifacts[1].Role != "configuration" || !strings.HasPrefix(bom.Runs[1].Artifacts[0].Path, "runs/0002-second-real/") {
+		t.Fatalf("BOM = %+v", bom)
+	}
+}
+
+func TestInspectNormalizesLegacySchemaOneModelBOM(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root, NewID: func() (string, error) { return "legacy", nil }, Resolver: training.FakeResolver()}
+	trained, err := builder.Initialize("smoke", testArchitecture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	trained, err = builder.Train(context.Background(), "smoke", preparedFixture(t, testStage("pretrain")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := trained.Model
+	record.Runs[0].Backend = training.Identity{}
+	record.Runs[0].Simulated = false
+	if err := writeJSONAtomic(filepath.Join(trained.Path, "MODEL.json"), record); err != nil {
+		t.Fatal(err)
+	}
+	legacyBOM := map[string]any{
+		"kind": "openwaldo-bom", "schema": 1, "subject": "model", "model_id": record.ID,
+		"name": record.Name, "plan_sha256": record.PlanSHA256, "architecture_sha256": record.ArchitectureSHA256,
+		"runs": []RunPin{record.Runs[0]}, "generated": record.Updated,
+	}
+	if err := writeJSONAtomic(filepath.Join(trained.Path, "MODEL-BOM.json"), legacyBOM); err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := Inspect(root, "smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspection.BOM.PathBase != "model-root" || inspection.BOM.Runs[0].Backend.Name != "fake" || !inspection.BOM.Runs[0].Simulated || inspection.BOM.Runs[0].Artifacts[0].Role != "simulation" {
+		t.Fatalf("normalized BOM = %+v", inspection.BOM)
+	}
+}
+
+func TestExportRejectsCorruptModelArtifact(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root, NewID: func() (string, error) { return "run0001", nil }, Resolver: training.FakeResolver()}
+	if _, err := builder.Initialize("smoke", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	trained, err := builder.Train(context.Background(), "smoke", preparedFixture(t, testStage("pretrain")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := trained.Model.Runs[0]
+	artifact := filepath.Join(trained.Path, "runs", runDirectoryName(pin), filepath.FromSlash(pin.Artifacts[0].Path))
+	if err := os.WriteFile(artifact, []byte("corrupt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Export(root, "smoke", filepath.Join(t.TempDir(), "export")); err == nil || !strings.Contains(err.Error(), "verify exported model artifacts") {
+		t.Fatalf("Export error = %v", err)
 	}
 }
 

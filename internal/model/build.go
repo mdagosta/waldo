@@ -141,7 +141,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, err
 	}
 	ordinal := len(inspection.Model.Runs) + 1
-	pin := RunPin{ID: runID, Stage: stage.Name, Ordinal: ordinal, State: RunPlanned}
+	pin := RunPin{ID: runID, Stage: stage.Name, Ordinal: ordinal, State: RunPlanned, Backend: selection.Execution.Backend, Simulated: selection.Execution.Backend.Name == training.BackendFake}
 	runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
 	bomHash, err := hashJSON(prepared.BOM)
 	if err != nil {

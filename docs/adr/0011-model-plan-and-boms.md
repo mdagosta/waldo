@@ -22,7 +22,12 @@ Before launching each backend stage, write an immutable run OpenWALDO BOM that
 embeds the corpus BOM and pins shard identities, architecture, backend revision,
 objective, and parameters. Persist changing run state and backend observations
 in a separate atomic record. Maintain a model OpenWALDO BOM that aggregates
-run-BOM, observation, and artifact hashes.
+run-BOM, observation, and artifact hashes. Aggregate paths are relative to the
+model root and include their run directory; an explicit `path_base` makes that
+resolution rule portable across managed and exported models. The aggregate
+also labels backend and simulation identity, artifact roles, and the newest
+complete non-simulated run with real weights. Historical simulated output is
+retained as provenance rather than presented as a usable model.
 
 ## Consequences
 
@@ -30,6 +35,8 @@ run-BOM, observation, and artifact hashes.
 - A failed or interrupted backend remains part of model history.
 - Planned corpus totals cannot be mistaken for backend-observed consumption.
 - Model inspection can validate the hash chain without an index checkout.
+- An aggregate BOM resolves every artifact without persisting an absolute
+  machine path, and consumers can distinguish history from current weights.
 - A compose is built in a temporary model directory and published only after
   every stage completes; `--replace` therefore preserves the old model on
   failure.

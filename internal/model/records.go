@@ -77,6 +77,8 @@ type RunPin struct {
 	Ordinal           int                 `json:"ordinal"`
 	BOMSHA256         string              `json:"bom_sha256"`
 	State             RunState            `json:"state"`
+	Backend           training.Identity   `json:"backend,omitempty"`
+	Simulated         bool                `json:"simulated"`
 	ObservationSHA256 string              `json:"observation_sha256,omitempty"`
 	Artifacts         []training.Artifact `json:"artifacts,omitempty"`
 }
@@ -113,15 +115,37 @@ type RunRecord struct {
 }
 
 type ModelBOM struct {
-	Kind               string   `json:"kind"`
-	Schema             int      `json:"schema"`
-	Subject            string   `json:"subject"`
-	ModelID            string   `json:"model_id"`
-	Name               string   `json:"name"`
-	PlanSHA256         string   `json:"plan_sha256"`
-	ArchitectureSHA256 string   `json:"architecture_sha256"`
-	Runs               []RunPin `json:"runs"`
-	Generated          string   `json:"generated"`
+	Kind               string        `json:"kind"`
+	Schema             int           `json:"schema"`
+	Subject            string        `json:"subject"`
+	ModelID            string        `json:"model_id"`
+	Name               string        `json:"name"`
+	PlanSHA256         string        `json:"plan_sha256"`
+	ArchitectureSHA256 string        `json:"architecture_sha256"`
+	PathBase           string        `json:"path_base"`
+	CurrentRunID       string        `json:"current_run_id,omitempty"`
+	Runs               []ModelBOMRun `json:"runs"`
+	Generated          string        `json:"generated"`
+}
+
+type ModelBOMRun struct {
+	ID                string             `json:"id"`
+	Stage             string             `json:"stage"`
+	Ordinal           int                `json:"ordinal"`
+	RunBOM            string             `json:"run_bom"`
+	BOMSHA256         string             `json:"bom_sha256"`
+	State             RunState           `json:"state"`
+	Backend           training.Identity  `json:"backend"`
+	Simulated         bool               `json:"simulated"`
+	ObservationSHA256 string             `json:"observation_sha256,omitempty"`
+	Artifacts         []ModelBOMArtifact `json:"artifacts,omitempty"`
+}
+
+type ModelBOMArtifact struct {
+	Role   string `json:"role"`
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Bytes  int64  `json:"bytes"`
 }
 
 type Inspection struct {
@@ -168,10 +192,11 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 	if err := readJSON(filepath.Join(directory, "MODEL-BOM.json"), &bom); err != nil {
 		return Inspection{}, err
 	}
-	if bom.Kind != "openwaldo-bom" || bom.Schema != ModelBOMSchema || bom.Subject != "model" || bom.ModelID != record.ID || bom.Name != record.Name || bom.PlanSHA256 != record.PlanSHA256 || bom.ArchitectureSHA256 != record.ArchitectureSHA256 || bom.Generated != record.Updated || !reflect.DeepEqual(bom.Runs, record.Runs) {
+	if bom.Kind != "openwaldo-bom" || bom.Schema != ModelBOMSchema || bom.Subject != "model" || bom.ModelID != record.ID || bom.Name != record.Name || bom.PlanSHA256 != record.PlanSHA256 || bom.ArchitectureSHA256 != record.ArchitectureSHA256 || bom.Generated != record.Updated {
 		return Inspection{}, fmt.Errorf("%s has an invalid model OpenWALDO BOM", directory)
 	}
-	inspection := Inspection{Path: directory, Plan: plan, Model: record, BOM: bom}
+	originalPins := append([]RunPin(nil), record.Runs...)
+	inspection := Inspection{Path: directory, Plan: plan, Model: record}
 	for _, pin := range record.Runs {
 		position := len(inspection.Runs)
 		if pin.Ordinal != position+1 {
@@ -193,6 +218,17 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 		if run.Kind != "waldo-training-run" || run.Schema != RunSchema || run.ID != pin.ID || run.State != pin.State || run.BOMSHA256 != pin.BOMSHA256 || runBOMHash != pin.BOMSHA256 || runBOM.ID != pin.ID || runBOM.ModelID != record.ID || runBOM.Stage != pin.Stage || runBOM.Ordinal != pin.Ordinal {
 			return Inspection{}, fmt.Errorf("run %s does not match its model pin", pin.ID)
 		}
+		persistedBackend := pin.Backend
+		persistedSimulated := pin.Simulated
+		if persistedBackend != (training.Identity{}) && persistedBackend != runBOM.Execution.Backend {
+			return Inspection{}, fmt.Errorf("run %s backend does not match its model pin", pin.ID)
+		}
+		pin.Backend = runBOM.Execution.Backend
+		if persistedBackend == (training.Identity{}) {
+			pin.Simulated = runBOM.Execution.Backend.Name == training.BackendFake || run.Observation != nil && run.Observation.Simulated
+		} else if run.Observation != nil && persistedSimulated != run.Observation.Simulated {
+			return Inspection{}, fmt.Errorf("run %s simulation state does not match its model pin", pin.ID)
+		}
 		if runBOM.ArchitectureSHA256 != plan.ArchitectureSHA256 || runBOM.ModelID != record.ID || runBOM.Stage == "" || runBOM.StageType == "" || runBOM.Objective == "" {
 			return Inspection{}, fmt.Errorf("run %s does not match its immutable model architecture", pin.ID)
 		}
@@ -208,7 +244,13 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 		}
 		inspection.Runs = append(inspection.Runs, run)
 		inspection.RunBOMs = append(inspection.RunBOMs, runBOM)
+		inspection.Model.Runs[position] = pin
 	}
+	normalized := modelBOM(inspection.Model)
+	if !reflect.DeepEqual(bom, normalized) && !legacyModelBOMMatches(bom, record, originalPins) {
+		return Inspection{}, fmt.Errorf("%s has an invalid model OpenWALDO BOM", directory)
+	}
+	inspection.BOM = normalized
 	return inspection, nil
 }
 
@@ -269,12 +311,76 @@ func runDirectoryName(pin RunPin) string {
 }
 
 func modelBOM(record ModelRecord) ModelBOM {
-	return ModelBOM{
+	bom := ModelBOM{
 		Kind: "openwaldo-bom", Schema: ModelBOMSchema, Subject: "model",
 		ModelID: record.ID, Name: record.Name, PlanSHA256: record.PlanSHA256,
-		ArchitectureSHA256: record.ArchitectureSHA256, Runs: append([]RunPin(nil), record.Runs...),
-		Generated: record.Updated,
+		ArchitectureSHA256: record.ArchitectureSHA256, PathBase: "model-root", Generated: record.Updated,
 	}
+	for _, pin := range record.Runs {
+		directory := filepath.ToSlash(filepath.Join("runs", runDirectoryName(pin)))
+		run := ModelBOMRun{
+			ID: pin.ID, Stage: pin.Stage, Ordinal: pin.Ordinal,
+			RunBOM: directory + "/RUN-BOM.json", BOMSHA256: pin.BOMSHA256,
+			State: pin.State, Backend: pin.Backend, Simulated: pin.Simulated,
+			ObservationSHA256: pin.ObservationSHA256,
+		}
+		for _, artifact := range pin.Artifacts {
+			run.Artifacts = append(run.Artifacts, ModelBOMArtifact{
+				Role: artifactRole(artifact.Path), Path: directory + "/" + artifact.Path,
+				SHA256: artifact.SHA256, Bytes: artifact.Bytes,
+			})
+		}
+		bom.Runs = append(bom.Runs, run)
+		if pin.State == RunComplete && !pin.Simulated && hasWeightArtifact(pin.Artifacts) {
+			bom.CurrentRunID = pin.ID
+		}
+	}
+	return bom
+}
+
+func artifactRole(path string) string {
+	switch {
+	case strings.Contains(path, "/checkpoints/") && strings.HasSuffix(path, ".safetensors"):
+		return "checkpoint"
+	case strings.HasSuffix(path, "/model.safetensors"):
+		return "weights"
+	case strings.HasSuffix(path, "/config.json"):
+		return "configuration"
+	case strings.HasSuffix(path, "/tokenizer.json"):
+		return "tokenizer"
+	case strings.HasSuffix(path, "/fake-model.json"):
+		return "simulation"
+	default:
+		return "artifact"
+	}
+}
+
+func hasWeightArtifact(artifacts []training.Artifact) bool {
+	for _, artifact := range artifacts {
+		if artifactRole(artifact.Path) == "weights" {
+			return true
+		}
+	}
+	return false
+}
+
+func legacyModelBOMMatches(bom ModelBOM, record ModelRecord, pins []RunPin) bool {
+	if bom.PathBase != "" || bom.CurrentRunID != "" || len(bom.Runs) != len(pins) {
+		return false
+	}
+	for index, pin := range pins {
+		run := bom.Runs[index]
+		if run.ID != pin.ID || run.Stage != pin.Stage || run.Ordinal != pin.Ordinal || run.RunBOM != "" || run.BOMSHA256 != pin.BOMSHA256 || run.State != pin.State || run.Backend != (training.Identity{}) || run.Simulated || run.ObservationSHA256 != pin.ObservationSHA256 || len(run.Artifacts) != len(pin.Artifacts) {
+			return false
+		}
+		for artifactIndex, artifact := range pin.Artifacts {
+			candidate := run.Artifacts[artifactIndex]
+			if candidate.Role != "" || candidate.Path != artifact.Path || candidate.SHA256 != artifact.SHA256 || candidate.Bytes != artifact.Bytes {
+				return false
+			}
+		}
+	}
+	return record.ID == bom.ModelID
 }
 
 func writeJSONAtomic(path string, value any) error {
