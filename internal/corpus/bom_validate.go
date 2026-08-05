@@ -32,6 +32,7 @@ func (bom BOM) Validate() error {
 	manifests := make(map[string]ManifestPin, len(bom.Manifests))
 	sourceNames := make(map[string]map[string]bool, len(bom.Manifests))
 	manifestTotals := make(map[string]index.Measures, len(bom.Manifests))
+	manifestModalities := make(map[string]index.Modalities, len(bom.Manifests))
 	manifestLicenses := make(map[string]map[string]index.Measures, len(bom.Manifests))
 	for _, manifest := range bom.Manifests {
 		if manifest.Path == "" || manifests[manifest.Path].Path != "" {
@@ -57,10 +58,22 @@ func (bom BOM) Validate() error {
 					return fmt.Errorf("manifest %s source %s has an invalid source file", manifest.Path, source.Name)
 				}
 			}
+			if err := index.ValidateSourceProvenance(source); err != nil {
+				return fmt.Errorf("manifest %s source %s: %w", manifest.Path, source.Name, err)
+			}
+		}
+		if manifest.Processing != nil {
+			if err := index.ValidateProcessing(*manifest.Processing); err != nil {
+				return fmt.Errorf("manifest %s processing: %w", manifest.Path, err)
+			}
+		}
+		if err := index.ValidateModalities("manifest "+manifest.Path, manifest.Modalities); err != nil {
+			return err
 		}
 		manifests[manifest.Path] = manifest
 		sourceNames[manifest.Path] = names
 		manifestLicenses[manifest.Path] = map[string]index.Measures{}
+		manifestModalities[manifest.Path] = index.Modalities{}
 	}
 	subManifests, err := validateSubManifestPins(bom.SubManifests, manifests)
 	if err != nil {
@@ -68,6 +81,7 @@ func (bom BOM) Validate() error {
 	}
 
 	calculated := index.Measures{}
+	calculatedModalities := index.Modalities{}
 	licenses := map[string]index.Measures{}
 	for position, shard := range bom.Shards {
 		if manifests[shard.Manifest].Path == "" {
@@ -85,8 +99,14 @@ func (bom BOM) Validate() error {
 		if shard.SubManifestSHA256 != "" && !subManifests[shard.Manifest+"\x00"+shard.SubManifestSHA256] {
 			return fmt.Errorf("shard %s refers to an unpinned submanifest", shard.SHA256[:12])
 		}
-		if shard.Docs <= 0 || shard.Tokens <= 0 || shard.Bytes <= 0 {
+		if shard.Docs <= 0 || shard.Tokens < 0 || shard.Bytes <= 0 {
 			return fmt.Errorf("shard %s has non-positive totals", shard.SHA256[:12])
+		}
+		if err := index.ValidateModalities("shard "+shard.SHA256[:12], shard.Modalities); err != nil {
+			return err
+		}
+		if len(shard.Modalities) > 0 && modalityTokens(shard.Modalities) != shard.Tokens {
+			return fmt.Errorf("shard %s modality tokens do not match its token total", shard.SHA256[:12])
 		}
 		seenSources := map[string]bool{}
 		for _, source := range shard.Sources {
@@ -104,13 +124,15 @@ func (bom BOM) Validate() error {
 		manifestMeasure := manifestTotals[shard.Manifest]
 		addMeasure(&manifestMeasure, measure)
 		manifestTotals[shard.Manifest] = manifestMeasure
+		addModalities(manifestModalities[shard.Manifest], shard.Modalities)
+		addModalities(calculatedModalities, shard.Modalities)
 		addMeasureMap(manifestLicenses[shard.Manifest], shard.License, measure)
 	}
-	if calculated != bom.Totals || !maps.Equal(licenses, bom.Licenses) {
+	if calculated != bom.Totals || !maps.Equal(licenses, bom.Licenses) || !maps.Equal(calculatedModalities, bom.Modalities) {
 		return fmt.Errorf("BOM totals or license totals do not match its shards")
 	}
 	for path, manifest := range manifests {
-		if manifest.Totals != manifestTotals[path] || !maps.Equal(manifest.Licenses, manifestLicenses[path]) {
+		if manifest.Totals != manifestTotals[path] || !maps.Equal(manifest.Licenses, manifestLicenses[path]) || !maps.Equal(manifest.Modalities, manifestModalities[path]) {
 			return fmt.Errorf("manifest %s totals do not match its selected shards", path)
 		}
 	}
@@ -129,8 +151,14 @@ func validateSubManifestPins(pins []SubManifestPin, manifests map[string]Manifes
 		if pin.ParentSHA256 != "" && !validSHA256(pin.ParentSHA256) {
 			return nil, fmt.Errorf("submanifest %s has invalid parent hash", pin.SHA256[:12])
 		}
-		if pin.Count <= 0 || pin.Docs <= 0 || pin.Tokens <= 0 || pin.Bytes <= 0 || pin.EncodedBytes <= 0 {
+		if pin.Count <= 0 || pin.Docs <= 0 || pin.Tokens < 0 || pin.Bytes <= 0 || pin.EncodedBytes <= 0 {
 			return nil, fmt.Errorf("submanifest %s has non-positive totals", pin.SHA256[:12])
+		}
+		if err := index.ValidateModalities("submanifest "+pin.SHA256[:12], pin.Modalities); err != nil {
+			return nil, err
+		}
+		if len(pin.Modalities) > 0 && modalityTokens(pin.Modalities) != pin.Tokens {
+			return nil, fmt.Errorf("submanifest %s modality tokens do not match its token total", pin.SHA256[:12])
 		}
 		seen[key] = true
 		if pin.ParentSHA256 == "" {

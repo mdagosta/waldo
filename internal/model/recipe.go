@@ -51,6 +51,7 @@ type Tokenizer struct {
 
 type Stage struct {
 	Name       string              `json:"name" yaml:"name"`
+	Type       string              `json:"type" yaml:"type"`
 	Objective  string              `json:"objective" yaml:"objective"`
 	Corpus     string              `json:"corpus" yaml:"corpus"`
 	Parameters training.Parameters `json:"parameters" yaml:"parameters"`
@@ -118,6 +119,9 @@ func (recipe Recipe) Validate() error {
 			return fmt.Errorf("stage %d has invalid or duplicate name %q", i+1, stage.Name)
 		}
 		seen[stage.Name] = true
+		if stage.Type != "pre-training" && stage.Type != "fine-tuning" && stage.Type != "alignment" && stage.Type != "other" {
+			return fmt.Errorf("stage %s has unsupported type %q; use pre-training, fine-tuning, alignment, or other", stage.Name, stage.Type)
+		}
 		if stage.Objective != "causal-language-modeling" {
 			return fmt.Errorf("stage %s has unsupported objective %q", stage.Name, stage.Objective)
 		}

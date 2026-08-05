@@ -306,8 +306,20 @@ Inspection distinguishes declared inputs, verified materialization, backend-
 reported consumption, and output hashes. It must not describe a baseline BOM
 as proof against a dishonest trainer.
 
-The implemented corpus form accepts an export directory or its `EXPORT.json`
-directly. Model BOM addressing is introduced with the model lifecycle.
+The corpus form accepts an export directory or its `EXPORT.json` directly.
+The model lifecycle also supports a fail-closed EU GPAI mapping:
+
+```bash
+waldo bom export smoke training-content.json \
+  --format eu-gpai \
+  --provider docs/examples/eu-gpai-provider.json
+```
+
+The output path is positional. `--allow-incomplete` is the explicit exception
+that writes a marked draft with all required, review, and optional gaps. A
+normal export writes nothing while required facts are missing. The current
+output is the machine-readable mapping and audit record; it does not pretend
+to be the Commission's official editable Word artifact.
 
 ## Common options
 

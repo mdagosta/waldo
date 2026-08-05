@@ -28,19 +28,21 @@ type BOM struct {
 	SubManifests []SubManifestPin          `json:"sub_manifests,omitempty"`
 	Shards       []ShardPin                `json:"shards"`
 	Totals       index.Measures            `json:"totals"`
+	Modalities   index.Modalities          `json:"modalities,omitempty"`
 	Licenses     map[string]index.Measures `json:"licenses"`
 }
 
 type SubManifestPin struct {
-	Manifest     string `json:"manifest"`
-	ParentSHA256 string `json:"parent_sha256,omitempty"`
-	URL          string `json:"url"`
-	SHA256       string `json:"sha256"`
-	Count        int64  `json:"count"`
-	Docs         int64  `json:"docs"`
-	Tokens       int64  `json:"tokens"`
-	Bytes        int64  `json:"bytes"`
-	EncodedBytes int64  `json:"encoded_bytes"`
+	Manifest     string           `json:"manifest"`
+	ParentSHA256 string           `json:"parent_sha256,omitempty"`
+	URL          string           `json:"url"`
+	SHA256       string           `json:"sha256"`
+	Count        int64            `json:"count"`
+	Docs         int64            `json:"docs"`
+	Tokens       int64            `json:"tokens"`
+	Bytes        int64            `json:"bytes"`
+	EncodedBytes int64            `json:"encoded_bytes"`
+	Modalities   index.Modalities `json:"modalities,omitempty"`
 }
 
 type ManifestPin struct {
@@ -54,7 +56,9 @@ type ManifestPin struct {
 	RecordSchema int                       `json:"record_schema"`
 	ConvertedBy  index.Conversion          `json:"converted_by"`
 	Sources      []index.Source            `json:"sources"`
+	Processing   *index.Processing         `json:"processing,omitempty"`
 	Totals       index.Measures            `json:"totals"`
+	Modalities   index.Modalities          `json:"modalities,omitempty"`
 	Licenses     map[string]index.Measures `json:"licenses"`
 }
 
@@ -72,6 +76,7 @@ type ShardPin struct {
 	Docs              int64            `json:"docs"`
 	Tokens            int64            `json:"tokens"`
 	Bytes             int64            `json:"bytes"`
+	Modalities        index.Modalities `json:"modalities,omitempty"`
 }
 
 // BuildBOM resolves targets from one checkout into immutable manifest and
@@ -138,6 +143,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 		RecordSchema: effectiveRecordSchema(corpus.Manifest.RecordSchema),
 		ConvertedBy:  corpus.Manifest.ConvertedBy,
 		Sources:      append([]index.Source(nil), corpus.Manifest.Sources...),
+		Processing:   corpus.Manifest.Processing,
 		Licenses:     map[string]index.Measures{},
 	}
 	addShard := func(shard index.Shard, subManifestSHA256 string) {
@@ -163,11 +169,14 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 			Docs:              shard.Docs,
 			Tokens:            shard.Tokens,
 			Bytes:             shard.Bytes,
+			Modalities:        cloneModalities(shard.Modalities),
 		}
 		bom.Shards = append(bom.Shards, shardPin)
 		addMeasures(&bom.Totals, shardPin)
+		addModalities(bom.ensureModalities(), shardPin.Modalities)
 		addLicenseMeasures(bom.Licenses, shardPin)
 		addMeasures(&pin.Totals, shardPin)
+		addModalities(ensureManifestModalities(&pin), shardPin.Modalities)
 		addLicenseMeasures(pin.Licenses, shardPin)
 	}
 	if corpus.Manifest.Rollup != nil {
@@ -217,6 +226,7 @@ func (bom *BOM) expandRollup(ctx context.Context, manifestPath string, manifest 
 		Manifest: manifestPath, ParentSHA256: parent, URL: rollup.URL,
 		SHA256: rollup.SHA256, Count: rollup.Count, Docs: rollup.Docs,
 		Tokens: rollup.Tokens, Bytes: rollup.Bytes, EncodedBytes: int64(len(data)),
+		Modalities: cloneModalities(rollup.Modalities),
 	})
 	knownSources := make(map[string]bool, len(manifest.Sources))
 	for _, source := range manifest.Sources {
@@ -254,8 +264,11 @@ func validateRollup(rollup index.Rollup) error {
 	if rollup.URL == "" || !validSHA256(rollup.SHA256) {
 		return fmt.Errorf("sub-manifest reference requires a URL and lowercase 64-character sha256")
 	}
-	if rollup.Count <= 0 || rollup.Docs <= 0 || rollup.Tokens <= 0 || rollup.Bytes <= 0 {
-		return fmt.Errorf("sub-manifest reference count, docs, tokens, and bytes must be positive")
+	if rollup.Count <= 0 || rollup.Docs <= 0 || rollup.Tokens < 0 || rollup.Bytes <= 0 {
+		return fmt.Errorf("sub-manifest reference count, docs, and bytes must be positive and tokens non-negative")
+	}
+	if err := index.ValidateModalities("sub-manifest reference", rollup.Modalities); err != nil {
+		return err
 	}
 	return nil
 }
@@ -264,8 +277,14 @@ func validateSubManifestShard(shard index.Shard, sources map[string]bool) error 
 	if shard.URL == "" || !validSHA256(shard.SHA256) {
 		return fmt.Errorf("requires a URL and lowercase 64-character sha256")
 	}
-	if shard.Docs <= 0 || shard.Tokens <= 0 || shard.Bytes <= 0 {
-		return fmt.Errorf("docs, tokens, and bytes must be positive")
+	if shard.Docs <= 0 || shard.Tokens < 0 || shard.Bytes <= 0 {
+		return fmt.Errorf("docs and bytes must be positive and tokens non-negative")
+	}
+	if err := index.ValidateModalities("sub-manifest shard", shard.Modalities); err != nil {
+		return err
+	}
+	if len(shard.Modalities) > 0 && modalityTokens(shard.Modalities) != shard.Tokens {
+		return fmt.Errorf("modality tokens do not match token total")
 	}
 	seen := map[string]bool{}
 	for _, source := range shard.Sources {
@@ -319,4 +338,49 @@ func effectiveRecordSchema(manifestSchema int) int {
 		return record.Schema
 	}
 	return manifestSchema
+}
+
+func (bom *BOM) ensureModalities() index.Modalities {
+	if bom.Modalities == nil {
+		bom.Modalities = index.Modalities{}
+	}
+	return bom.Modalities
+}
+
+func ensureManifestModalities(manifest *ManifestPin) index.Modalities {
+	if manifest.Modalities == nil {
+		manifest.Modalities = index.Modalities{}
+	}
+	return manifest.Modalities
+}
+
+func cloneModalities(source index.Modalities) index.Modalities {
+	if len(source) == 0 {
+		return nil
+	}
+	result := make(index.Modalities, len(source))
+	for modality, measure := range source {
+		result[modality] = measure
+	}
+	return result
+}
+
+func addModalities(target, source index.Modalities) {
+	for modality, value := range source {
+		current := target[modality]
+		current.Samples += value.Samples
+		current.Items += value.Items
+		current.Tokens += value.Tokens
+		current.DurationMS += value.DurationMS
+		current.ContentBytes += value.ContentBytes
+		target[modality] = current
+	}
+}
+
+func modalityTokens(modalities index.Modalities) int64 {
+	var total int64
+	for _, measure := range modalities {
+		total += measure.Tokens
+	}
+	return total
 }

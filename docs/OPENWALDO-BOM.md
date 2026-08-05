@@ -42,14 +42,17 @@ file hash.
 - `license_policy` records include and exclude globs; excludes take precedence.
 - `manifests` records each selected manifest's hash and resolved corpus-level
   facts, including format, record schema, conversion recipe, upstream sources,
-  and exact totals after policy filtering.
+  structured processing declarations, modality measures, and exact totals
+  after policy filtering.
 - `sub_manifests` records every verified external manifest node, its parent,
   aggregate totals, and encoded object size. It is absent for inline corpora.
 - `shards` is the ordered leaf sequence after inheritance and policy filtering.
   Every entry is self-contained: object identity, format, record schema,
   license, source references, conversion recipe, containing submanifest when
-  applicable, optional record Merkle root, and declared measures.
-- `totals` and `licenses` are exact sums of the selected shards, not estimates.
+  applicable, optional record Merkle root, modality measures, and declared
+  measures.
+- `totals`, `modalities`, and `licenses` are exact sums of the selected shards,
+  not estimates.
 
 ## Exported files
 

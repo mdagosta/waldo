@@ -123,6 +123,12 @@ func validateSourceProvenance(source Source) error {
 	return validateAcquisition(category, *source.Acquisition)
 }
 
+// ValidateSourceProvenance validates disclosure facts preserved in a pinned
+// source without requiring the original manifest.
+func ValidateSourceProvenance(source Source) error {
+	return validateSourceProvenance(source)
+}
+
 func validSourceCategory(category string) bool {
 	_, ok := CanonicalSourceCategory(category)
 	return ok
@@ -156,6 +162,12 @@ func validateModalities(label string, modalities Modalities) error {
 		}
 	}
 	return nil
+}
+
+// ValidateModalities validates exact per-modality measures preserved outside
+// an index manifest, including in OpenWALDO BOMs.
+func ValidateModalities(label string, modalities Modalities) error {
+	return validateModalities(label, modalities)
 }
 
 func addModalities(target Modalities, source Modalities) {
@@ -254,6 +266,12 @@ func validateProcessing(processing Processing) error {
 		return err
 	}
 	return validateStrings("illegal content measures", processing.IllegalContentMeasures, false)
+}
+
+// ValidateProcessing validates processing declarations preserved in an
+// OpenWALDO BOM.
+func ValidateProcessing(processing Processing) error {
+	return validateProcessing(processing)
 }
 
 func validateStrings(label string, values []string, sorted bool) error {

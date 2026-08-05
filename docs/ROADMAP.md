@@ -88,10 +88,14 @@ Implemented foundation:
 - Deterministic fake backend with completion, failure, and interruption tests
 - Immutable build plans plus model and run OpenWALDO BOMs
 - `waldo model build` and `waldo model inspect`
+- Training-stage classification in the recipe, plan, and run BOM
+- EU GPAI training-content gap analysis and fail-closed
+  `bom export --format eu-gpai`
 
-Remaining:
-
-- EU GPAI training-content gap analysis and `bom export --format eu-gpai`
+The current GPAI export is a versioned machine-readable mapping and gap report.
+Filling the Commission's official editable Word file remains a separate
+renderer slice: WALDO must transform the exact pinned official artifact, not
+present a similar-looking document as the official template.
 
 Exit: orchestration and provenance work end to end without Python or a GPU.
 

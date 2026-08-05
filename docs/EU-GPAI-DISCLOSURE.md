@@ -1,6 +1,7 @@
 # EU GPAI training-content disclosure
 
-Status: design contract. This document maps WALDO provenance to the European
+Status: implemented mapping and gap-analysis contract; official Word-template
+rendering remains pending. This document maps WALDO provenance to the European
 Commission's current public-summary template; it is not legal advice and WALDO
 must not claim that generated output alone establishes compliance.
 
@@ -224,35 +225,43 @@ from corpus manifests alone.
 
 ## Export command
 
-The intended UX is:
+The implemented audit UX is:
 
 ```bash
-waldo bom export model-bom.json \
+waldo bom export <model-name-or-path> training-content.json \
   --format eu-gpai \
-  --provider provider.json \
-  --output training-content-summary.docx
+  --provider provider.json
 ```
 
 `bom export` is the right command family, but a complete export consumes a
 model or aggregate model BOM, not only a corpus OpenWALDO BOM.
 
-The exporter:
+The current exporter:
 
 1. pins a supported Commission template version;
-2. aggregates all observed training stages and their OpenWALDO BOMs;
-3. maps sources to the mutually exclusive template categories;
-4. calculates modality ranges and the public-dataset three-percent threshold;
-5. calculates the required web-domain summary from recorded aggregates;
+2. aggregates all observed training stages and de-duplicates corpus BOMs;
+3. preserves sources in the mutually exclusive template categories;
+4. carries exact modality and source-usage measures needed for the size ranges
+   and public-dataset three-percent calculation;
+5. carries retained web-domain aggregates and reports missing crawler/domain
+   evidence;
 6. merges provider/model declarations that cannot belong to corpus metadata;
-7. emits the official editable DOCX shape and a machine-readable generation
-   record containing all inputs and the output hash; and
-8. reports every missing, unknown, inferred, or user-declared field before
-   writing the document.
+7. emits a machine-readable, versioned mapping pinned to the official English
+   template URL and SHA-256; and
+8. reports every required, review, and optional gap before writing the output.
 
-An OpenWALDO corpus BOM may be used to produce a data-only preview, but WALDO
-must label it incomplete. Normal export fails closed if a mandatory field is
-missing. An explicit `--allow-incomplete` may create a marked draft with a
-machine-readable gap report; it must not call the draft compliant.
+The official English editable artifact at Commission resource `118578` was
+verified on 4 August 2026 as SHA-256
+`ec803008a5263a485146b24497a3445e2ea32f8b73f818e67652ad70de40f09b`.
+The later Word renderer must transform that exact pinned artifact (or a newly
+reviewed version), preserve its structure, and emit a separate generation
+record containing the rendered output hash. WALDO will not generate a
+similar-looking substitute and call it the official template.
+
+Normal export fails closed if a required field is missing. An explicit
+`--allow-incomplete` creates a marked machine-readable draft; it does not call
+the draft compliant. Review and optional notes remain visible without being
+misrepresented as mandatory legal requirements.
 
 The exporter must not hard-code one template forever. Its renderer and field
 mapping are versioned because the Commission states that the explanatory notice
@@ -266,18 +275,17 @@ schema 2:
 - add modality measures to shards and rollups;
 - add source category vocabulary, content/acquisition facts and source usage;
 - add structured processing evidence;
-- carry those fields unchanged into a new OpenWALDO BOM schema when they become
-  required invariants; and
+- carry those fields unchanged into the unreleased schema-1 OpenWALDO BOM; and
 - permit zero tokens for non-text shards while continuing to require positive
   logical rows and encoded bytes.
 
 Old manifests remain readable and produce the same existing totals. New writers
 declare `format: "parquet"`, record schema 1, the exact writer recipe, and the additive provenance
-facts. Unknown additive fields continue to be accepted by older readers. The
-OpenWALDO BOM requires a new schema because adding mandatory modality and
-source-usage reconciliation changes its validated identity contract.
+facts. Unknown additive fields continue to be accepted by older readers. Since
+WALDO has not been released, manifest, Parquet record, recipe, and OpenWALDO
+BOM writers remain at schema 1 while these contracts are completed.
 
-Before the fields are accepted, fixtures must cover:
+The remaining disclosure fixtures should cover:
 
 - one current legacy public text manifest unchanged;
 - one new mixed text/image manifest with zero text tokens in an image shard;

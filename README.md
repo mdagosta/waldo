@@ -23,8 +23,10 @@ review overlay. A filesystem-backed publisher exercises the same path locally
 for integration tests. Phase 4 now includes strict model recipes, verified
 corpus inputs, immutable build plans, durable model/run OpenWALDO BOMs, and a
 fake backend that proves complete/failure/interruption orchestration without
-claiming to train real weights. Other commands remain visible as an honest
-roadmap.
+claiming to train real weights. A fail-closed EU GPAI export maps the model and
+its training BOMs to the pinned Commission template fields and reports missing
+facts without claiming legal compliance. Other commands remain visible as an
+honest roadmap.
 
 Recursive `waldo index verify` checks index structure plus the reachability and
 declared size of every canonical object using header-only requests. Use

@@ -62,7 +62,7 @@ func preflight(recipe Recipe, progress func(Progress)) (Plan, []resolvedStage, e
 			return Plan{}, nil, fmt.Errorf("stage %s planned token capacity overflows int64", stage.Name)
 		}
 		planned := PlannedStage{
-			Name: stage.Name, Objective: stage.Objective, CorpusBOMSHA256: bomHash,
+			Name: stage.Name, Type: stage.Type, Objective: stage.Objective, CorpusBOMSHA256: bomHash,
 			Files: int(report.Files), Docs: document.BOM.Totals.Docs, Tokens: document.BOM.Totals.Tokens,
 			Bytes: report.Bytes, Parameters: stage.Parameters, PlannedTokens: capacity,
 		}

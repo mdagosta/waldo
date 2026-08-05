@@ -86,7 +86,7 @@ func (builder Builder) Build(ctx context.Context, recipe Recipe) (Inspection, er
 		runDirectory := filepath.Join(modelPath, "runs", runDirectoryName(pin))
 		runBOM := RunBOM{
 			Kind: "openwaldo-bom", Schema: RunBOMSchema, Subject: "training-run",
-			ID: runID, ModelID: record.ID, Stage: stage.Plan.Name, Ordinal: ordinal + 1,
+			ID: runID, ModelID: record.ID, Stage: stage.Plan.Name, StageType: stage.Plan.Type, Ordinal: ordinal + 1,
 			Objective: stage.Plan.Objective, Backend: plan.Backend,
 			ArchitectureSHA256: plan.ArchitectureSHA256, CorpusBOMSHA256: stage.Plan.CorpusBOMSHA256,
 			CorpusBOM: stage.BOM, Files: stage.Files, Parameters: stage.Plan.Parameters,

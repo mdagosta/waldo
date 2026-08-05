@@ -40,6 +40,7 @@ backend:
 
 stages:
   - name: pretrain
+    type: pre-training
     objective: causal-language-modeling
     corpus: ../exports/core/EXPORT.json
     parameters:
@@ -54,6 +55,9 @@ stages:
 resolved relative to the recipe. WALDO verifies every exported file against
 the export record before it creates the model and requires canonical Parquet
 record schema 1 for the current causal-language-modeling objective.
+`type` is one of `pre-training`, `fine-tuning`, `alignment`, or `other`; WALDO
+carries it into the immutable plan and run OpenWALDO BOM for model-specific
+training-content disclosure.
 
 The local corpus path is not identity. The resolved corpus OpenWALDO BOM hash,
 architecture, backend revision, parameters, and ordered stages form the

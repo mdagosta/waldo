@@ -95,7 +95,7 @@ func TestBuildPersistsPlanRunAndModelBOMs(t *testing.T) {
 func TestBuildPreflightsAllExportsBeforeCreatingModel(t *testing.T) {
 	root := t.TempDir()
 	recipe := validRecipe(writeModelExport(t, t.TempDir()))
-	recipe.Stages = append(recipe.Stages, Stage{Name: "second", Objective: "causal-language-modeling", Corpus: filepath.Join(t.TempDir(), "missing"), Parameters: recipe.Stages[0].Parameters})
+	recipe.Stages = append(recipe.Stages, Stage{Name: "second", Type: "fine-tuning", Objective: "causal-language-modeling", Corpus: filepath.Join(t.TempDir(), "missing"), Parameters: recipe.Stages[0].Parameters})
 	if _, err := (Builder{Root: root}).Build(context.Background(), recipe); err == nil {
 		t.Fatal("Build succeeded")
 	}
@@ -165,7 +165,7 @@ func validRecipe(export string) Recipe {
 			TieEmbeddings: true, ParameterDType: "float32", Tokenizer: Tokenizer{Name: "byte", Revision: "sha256:example"},
 		},
 		Backend: training.Identity{Name: "fake", Revision: training.FakeRevision},
-		Stages: []Stage{{Name: "pretrain", Objective: "causal-language-modeling", Corpus: export, Parameters: training.Parameters{
+		Stages: []Stage{{Name: "pretrain", Type: "pre-training", Objective: "causal-language-modeling", Corpus: export, Parameters: training.Parameters{
 			Steps: 2, BatchSize: 1, SequenceLength: 64, LearningRate: 0.001, Seed: 7,
 		}}},
 	}
@@ -176,7 +176,7 @@ func recipeYAML(corpusPath, suffix string) string {
 		"schema: 1\nname: smoke\n" +
 		"architecture:\n  family: decoder-transformer\n  context_tokens: 128\n  vocabulary_size: 256\n  hidden_size: 64\n  intermediate_size: 192\n  layers: 2\n  attention_heads: 4\n  key_value_heads: 2\n  tie_embeddings: true\n  parameter_dtype: float32\n  tokenizer:\n    name: byte\n    revision: sha256:example\n" +
 		"backend:\n  name: fake\n  revision: " + training.FakeRevision + "\n" +
-		"stages:\n  - name: pretrain\n    objective: causal-language-modeling\n    corpus: " + corpusPath + "\n    parameters:\n      steps: 2\n      batch_size: 1\n      sequence_length: 64\n      learning_rate: 0.001\n      seed: 7\n" + suffix
+		"stages:\n  - name: pretrain\n    type: pre-training\n    objective: causal-language-modeling\n    corpus: " + corpusPath + "\n    parameters:\n      steps: 2\n      batch_size: 1\n      sequence_length: 64\n      learning_rate: 0.001\n      seed: 7\n" + suffix
 }
 
 func writeModelExport(t *testing.T, parent string) string {

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -37,6 +38,7 @@ type Plan struct {
 
 type PlannedStage struct {
 	Name            string              `json:"name"`
+	Type            string              `json:"type"`
 	Objective       string              `json:"objective"`
 	CorpusBOMSHA256 string              `json:"corpus_bom_sha256"`
 	Files           int                 `json:"files"`
@@ -88,6 +90,7 @@ type RunBOM struct {
 	ID                 string                `json:"id"`
 	ModelID            string                `json:"model_id"`
 	Stage              string                `json:"stage"`
+	StageType          string                `json:"stage_type"`
 	Ordinal            int                   `json:"ordinal"`
 	Objective          string                `json:"objective"`
 	Backend            training.Identity     `json:"backend"`
@@ -172,6 +175,14 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 	}
 	inspection := Inspection{Path: directory, Plan: plan, Model: record, BOM: bom}
 	for _, pin := range record.Runs {
+		position := len(inspection.Runs)
+		if position >= len(plan.Stages) {
+			return Inspection{}, fmt.Errorf("model has more runs than its immutable build plan")
+		}
+		if pin.Ordinal != position+1 {
+			return Inspection{}, fmt.Errorf("model run %s has ordinal %d at position %d", pin.ID, pin.Ordinal, position+1)
+		}
+		planned := plan.Stages[position]
 		var run RunRecord
 		runDirectory := filepath.Join(directory, "runs", runDirectoryName(pin))
 		if err := readJSON(filepath.Join(runDirectory, "RUN.json"), &run); err != nil {
@@ -187,6 +198,19 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 		}
 		if run.Kind != "waldo-training-run" || run.Schema != RunSchema || run.ID != pin.ID || run.State != pin.State || run.BOMSHA256 != pin.BOMSHA256 || runBOMHash != pin.BOMSHA256 || runBOM.ID != pin.ID || runBOM.ModelID != record.ID || runBOM.Stage != pin.Stage || runBOM.Ordinal != pin.Ordinal {
 			return Inspection{}, fmt.Errorf("run %s does not match its model pin", pin.ID)
+		}
+		if runBOM.Stage != planned.Name || runBOM.StageType != planned.Type || runBOM.Objective != planned.Objective || runBOM.CorpusBOMSHA256 != planned.CorpusBOMSHA256 || runBOM.ArchitectureSHA256 != plan.ArchitectureSHA256 || !reflect.DeepEqual(runBOM.Backend, plan.Backend) || !reflect.DeepEqual(runBOM.Parameters, planned.Parameters) || len(runBOM.Files) != planned.Files || runBOM.CorpusBOM.Totals.Docs != planned.Docs || runBOM.CorpusBOM.Totals.Tokens != planned.Tokens {
+			return Inspection{}, fmt.Errorf("run %s does not match its immutable build plan", pin.ID)
+		}
+		var exportedBytes int64
+		for _, file := range runBOM.Files {
+			if file.Bytes < 0 || exportedBytes > math.MaxInt64-file.Bytes {
+				return Inspection{}, fmt.Errorf("run %s exported-file bytes are invalid", pin.ID)
+			}
+			exportedBytes += file.Bytes
+		}
+		if exportedBytes != planned.Bytes {
+			return Inspection{}, fmt.Errorf("run %s exported-file bytes do not match its immutable build plan", pin.ID)
 		}
 		corpusHash, err := hashJSON(runBOM.CorpusBOM)
 		if err != nil || corpusHash != runBOM.CorpusBOMSHA256 || runBOM.ArchitectureSHA256 != record.ArchitectureSHA256 {

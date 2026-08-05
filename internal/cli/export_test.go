@@ -120,6 +120,7 @@ backend:
   revision: builtin-fake-schema-1
 stages:
   - name: pretrain
+    type: pre-training
     objective: causal-language-modeling
     corpus: %q
     parameters:
@@ -152,6 +153,31 @@ stages:
 		if _, err := os.Stat(filepath.Join(models, "smoke", name)); err != nil {
 			t.Fatal(err)
 		}
+	}
+
+	disclosureOutput := filepath.Join(t.TempDir(), "eu-gpai.json")
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"bom", "export", "smoke", disclosureOutput, "--format", "eu-gpai"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("complete disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "export blocked") {
+		t.Fatalf("blocked disclosure stderr = %q", stderr.String())
+	}
+	if _, err := os.Stat(disclosureOutput); !os.IsNotExist(err) {
+		t.Fatalf("blocked disclosure wrote output: %v", err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"bom", "export", "smoke", disclosureOutput, "--format=eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("draft disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	disclosureData, err := os.ReadFile(disclosureOutput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(disclosureData), `"status": "incomplete-draft"`) || !strings.Contains(string(disclosureData), `"field": "provider.profile"`) || !strings.Contains(string(disclosureData), `"field": "training.observed-consumption"`) {
+		t.Fatalf("draft disclosure = %s", disclosureData)
 	}
 
 	jsonlDestination := filepath.Join(t.TempDir(), "jsonl-export")
@@ -201,6 +227,19 @@ func TestParseExportOptions(t *testing.T) {
 	}
 	if len(options.Paths) != 2 || len(options.Include) != 2 || len(options.Exclude) != 1 || options.Output != "dest" || options.Format != "jsonl" || !options.Force {
 		t.Fatalf("parseExportOptions() = %+v", options)
+	}
+}
+
+func TestParseBOMExportOptions(t *testing.T) {
+	options, err := parseBOMExportOptions([]string{"smoke", "report.json", "--format=eu-gpai", "--provider", "provider.json", "--allow-incomplete", "--force"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.Model != "smoke" || options.Output != "report.json" || options.Provider != "provider.json" || !options.AllowIncomplete || !options.Force {
+		t.Fatalf("parseBOMExportOptions() = %+v", options)
+	}
+	if _, err := parseBOMExportOptions([]string{"smoke", "report.docx", "--format", "eu-gpai"}); err == nil || !strings.Contains(err.Error(), ".json") {
+		t.Fatalf("document output error = %v", err)
 	}
 }
 
