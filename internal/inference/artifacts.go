@@ -15,6 +15,8 @@ import (
 
 type Artifacts struct {
 	Model         string
+	SourceType    string
+	SourceID      string
 	RunID         string
 	Backend       training.Identity
 	ContextTokens int
@@ -24,8 +26,35 @@ type Artifacts struct {
 }
 
 func ResolveArtifacts(inspection model.Inspection) (Artifacts, error) {
-	if inspection.BOM.CurrentRunID == "" {
+	if inspection.BOM.CurrentRunID == "" && inspection.BOM.CurrentOriginSHA256 == "" {
 		return Artifacts{}, fmt.Errorf("model %q has no complete non-simulated run with usable weights", inspection.Model.Name)
+	}
+	if inspection.BOM.CurrentRunID == "" {
+		if inspection.BOM.Origin == nil || inspection.BOM.Origin.SHA256 != inspection.BOM.CurrentOriginSHA256 {
+			return Artifacts{}, fmt.Errorf("model %q current origin is invalid", inspection.Model.Name)
+		}
+		result := Artifacts{Model: inspection.Model.Name, SourceType: "origin", SourceID: inspection.BOM.CurrentOriginSHA256, Backend: training.Identity{Name: "portable-safetensors", Revision: "huggingface-schema-1"}, ContextTokens: int(inspection.Model.Architecture.ContextTokens)}
+		for _, artifact := range inspection.BOM.Origin.Artifacts {
+			path, err := resolveModelPath(inspection.Path, artifact.Path)
+			if err != nil {
+				return Artifacts{}, err
+			}
+			if err := verifyArtifact(path, artifact); err != nil {
+				return Artifacts{}, err
+			}
+			switch artifact.Role {
+			case "weights":
+				result.Weights = path
+			case "configuration":
+				result.Configuration = path
+			case "tokenizer":
+				result.Tokenizer = path
+			}
+		}
+		if result.Weights == "" || result.Configuration == "" || result.Tokenizer == "" {
+			return Artifacts{}, fmt.Errorf("model %q origin must provide weights, configuration, and tokenizer artifacts", inspection.Model.Name)
+		}
+		return result, nil
 	}
 	var selected *model.ModelBOMRun
 	for index := range inspection.BOM.Runs {
@@ -38,7 +67,7 @@ func ResolveArtifacts(inspection model.Inspection) (Artifacts, error) {
 		return Artifacts{}, fmt.Errorf("model %q current run %q is not a complete real run", inspection.Model.Name, inspection.BOM.CurrentRunID)
 	}
 	result := Artifacts{
-		Model: inspection.Model.Name, RunID: selected.ID, Backend: selected.Backend,
+		Model: inspection.Model.Name, SourceType: "run", SourceID: selected.ID, RunID: selected.ID, Backend: selected.Backend,
 		ContextTokens: int(inspection.Model.Architecture.ContextTokens),
 	}
 	for _, artifact := range selected.Artifacts {

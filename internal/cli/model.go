@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -197,6 +198,32 @@ func runModelInit(context Context, args []string, stdout, stderr io.Writer) erro
 	return nil
 }
 
+func runModelDownload(context Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) != 2 {
+		return usageError{message: "usage: waldo model download <name> <huggingface://organization/repository[@revision]> [--json]"}
+	}
+	root, err := configuredModelRoot()
+	if err != nil {
+		return err
+	}
+	downloader := model.Downloader{Root: root, Client: &http.Client{}, Progress: func(progress model.DownloadProgress) {
+		fmt.Fprintln(stderr, progress.Message)
+	}}
+	inspection, err := downloader.Download(context.Execution, args[0], args[1])
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, inspection)
+	}
+	fmt.Fprintf(stdout, "downloaded model %s\n", inspection.Model.Name)
+	fmt.Fprintf(stdout, "  location      %s\n", inspection.Path)
+	fmt.Fprintf(stdout, "  model id      %s\n", shortModelHash(inspection.Model.ID))
+	fmt.Fprintf(stdout, "  origin        %s@%s\n", inspection.Origin.Source.Repository, shortModelHash(inspection.Origin.Source.Revision))
+	fmt.Fprintf(stdout, "  weights       %s\n", humanBytesUint(inspection.Model.Forecast.ParameterBytes))
+	return nil
+}
+
 func parseModelInit(args []string) (string, string, error) {
 	var positionals []string
 	preset := ""
@@ -271,6 +298,9 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 		return writeJSON(stdout, inspection)
 	}
 	state := "untrained"
+	if inspection.Origin != nil {
+		state = "downloaded"
+	}
 	if len(inspection.Model.Runs) > 0 {
 		state = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
 	}
@@ -293,6 +323,9 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 		humanIntegerUint(inspection.Model.Architecture.Layers), humanIntegerUint(inspection.Model.Architecture.HiddenSize),
 		humanIntegerUint(inspection.Model.Architecture.AttentionHeads), humanIntegerUint(inspection.Model.Architecture.KeyValueHeads))
 	fmt.Fprintf(stdout, "TOKENIZER:     %s@%s\n", inspection.Model.Architecture.Tokenizer.Name, inspection.Model.Architecture.Tokenizer.Revision)
+	if inspection.Origin != nil {
+		fmt.Fprintf(stdout, "ORIGIN:        %s@%s (%s)\n", inspection.Origin.Source.Repository, shortModelHash(inspection.Origin.Source.Revision), inspection.Origin.Source.Provider)
+	}
 	for position, pin := range inspection.Model.Runs {
 		tokens := int64(0)
 		simulated := ""
@@ -650,7 +683,7 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
-	if len(inspection.Model.Runs) == 0 {
+	if len(inspection.Model.Runs) == 0 && inspection.Origin == nil {
 		return fmt.Errorf("model %q is untrained", name)
 	}
 	interactive := prompt == nil && modelChatTerminal()
@@ -746,11 +779,13 @@ func runOneShotChat(context Context, opened inference.Opened, prompt string, opt
 	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
-			Model  string           `json:"model"`
-			RunID  string           `json:"run_id"`
-			Prompt string           `json:"prompt"`
-			Result inference.Result `json:"result"`
-		}{opened.Description.Model, opened.Description.RunID, prompt, result})
+			Model      string           `json:"model"`
+			SourceType string           `json:"source_type"`
+			SourceID   string           `json:"source_id"`
+			RunID      string           `json:"run_id,omitempty"`
+			Prompt     string           `json:"prompt"`
+			Result     inference.Result `json:"result"`
+		}{opened.Description.Model, opened.Description.SourceType, opened.Description.SourceID, opened.Description.RunID, prompt, result})
 	}
 	if err := renderer.Flush(); err != nil {
 		return err

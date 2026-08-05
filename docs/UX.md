@@ -414,16 +414,25 @@ Changing `lookaside` preserves the existing `lookaside.region` and
 
 ```bash
 waldo model init smoke --preset 10m
+waldo model download llama-base huggingface://organization/model@main
 waldo model train smoke core/books
 waldo model train smoke core/books --epochs 3
 waldo model compose smoke configs/smoke.yaml
 ```
 
-The CLI name is the local model handle. A model compose declares architecture
-and ordered training stages using index paths. The command validates every
-selection, creates the model if absent, and executes its stages. Existing names
-are refused unless `--replace` is explicitly supplied; replacement is prepared
-fully before the old model is removed.
+The CLI name is the local model handle. `model download` resolves a Hugging
+Face reference to an immutable revision and publishes a model only after its
+source files, architecture, tokenizer, and Safetensors contract validate. It
+honors `HF_TOKEN` and the standard Hugging Face token file. The initial profile
+supports standard Llama plus OpenWALDO's byte tokenizer and fails closed for
+other tokenizers.
+
+A model compose declares architecture and ordered training stages using index
+paths. It may optionally name a locally managed downloaded base and assert its
+origin hash. The command validates every selection, creates the model if
+absent, and executes its stages. Existing names are refused unless `--replace`
+is explicitly supplied; replacement is prepared fully before the old model is
+removed.
 
 Direct `model train` defaults to one epoch. `--epochs` is the sole direct-run
 training-budget flag and means complete passes over every selected record.
@@ -456,9 +465,10 @@ waldo model summary smoke
 waldo model bom smoke
 ```
 
-The model BOM is a portable inventory rooted at the model directory. Its
-artifact paths include the complete run directory, label simulated output and
-artifact roles explicitly, and identify the newest usable real-weight run.
+The model BOM is a portable inventory rooted at the model directory. A
+downloaded model selects its verified origin until a later real run supersedes
+it. Artifact paths include the complete run directory, label simulated output
+and artifact roles explicitly, and identify the current usable weights.
 Absolute machine paths are intentionally excluded. The same paths therefore
 resolve beneath either `model.root/<name>` or a relocated `model export`
 directory.
@@ -467,8 +477,8 @@ directory.
 An optional positional prompt or piped standard input selects one-shot
 generation. Only generation controls are flags: `--max-tokens`,
 `--temperature`, `--top-p`, and `--seed`. The command verifies the BOM-selected
-real artifacts before opening the recorded backend and never substitutes a
-different framework. Human output streams with terminal controls escaped;
+artifacts before opening MLX for a compatible origin or the backend recorded by
+a run. Human output streams with terminal controls escaped;
 `--json` is one-shot and buffered into one result object. Models without a
 chat template are labeled as raw causal continuation rather than presented as
 instruction-tuned assistants.

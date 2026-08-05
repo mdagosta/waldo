@@ -504,7 +504,9 @@ class Trainer:
                     "architecture": self.architecture,
                     "training_profile": self.parameters,
                     "initialization": None if self.initialization is None else {
-                        "source_run_id": self.initialization["source_run_id"],
+                        "source_type": self.initialization.get("source_type", "run"),
+                        "source_id": self.initialization.get("source_id", self.initialization.get("source_run_id")),
+                        "source_run_id": self.initialization.get("source_run_id"),
                         "artifact": self.initialization["artifact"],
                     },
                     "backend": {"name": backend_name, "revision": backend_revision, "version": torch.__version__, "device": str(self.device), "world_size": self.world_size},

@@ -356,7 +356,9 @@ class Trainer:
                 "architecture": self.architecture,
                 "training_profile": self.parameters,
                 "initialization": None if self.initialization is None else {
-                    "source_run_id": self.initialization["source_run_id"],
+                    "source_type": self.initialization.get("source_type", "run"),
+                    "source_id": self.initialization.get("source_id", self.initialization.get("source_run_id")),
+                    "source_run_id": self.initialization.get("source_run_id"),
                     "artifact": self.initialization["artifact"],
                 },
                 "backend": {"name": "mlx", "revision": WORKER_REVISION, "version": importlib.metadata.version("mlx")},

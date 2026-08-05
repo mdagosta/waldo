@@ -32,6 +32,33 @@ type Plan struct {
 	Architecture       Architecture         `json:"architecture"`
 	Forecast           ArchitectureForecast `json:"forecast"`
 	Stages             []PlannedStage       `json:"stages,omitempty"`
+	OriginBOMSHA256    string               `json:"origin_bom_sha256,omitempty"`
+}
+
+type OriginSource struct {
+	Provider          string `json:"provider"`
+	Repository        string `json:"repository"`
+	RequestedRevision string `json:"requested_revision"`
+	Revision          string `json:"revision"`
+	URL               string `json:"url"`
+	License           string `json:"license,omitempty"`
+}
+
+type OriginArtifact struct {
+	Role   string `json:"role"`
+	Path   string `json:"path"`
+	SHA256 string `json:"sha256"`
+	Bytes  int64  `json:"bytes"`
+}
+
+type OriginBOM struct {
+	Kind               string           `json:"kind"`
+	Schema             int              `json:"schema"`
+	Subject            string           `json:"subject"`
+	Source             OriginSource     `json:"source"`
+	ArchitectureSHA256 string           `json:"architecture_sha256"`
+	SourceArtifacts    []OriginArtifact `json:"source_artifacts"`
+	Artifacts          []OriginArtifact `json:"artifacts"`
 }
 
 type PlannedStage struct {
@@ -59,6 +86,8 @@ type ModelRecord struct {
 	Created            string               `json:"created"`
 	Updated            string               `json:"updated"`
 	Runs               []RunPin             `json:"runs"`
+	OriginBOMSHA256    string               `json:"origin_bom_sha256,omitempty"`
+	OriginArtifacts    []OriginArtifact     `json:"origin_artifacts,omitempty"`
 }
 
 type RunState string
@@ -115,17 +144,25 @@ type RunRecord struct {
 }
 
 type ModelBOM struct {
-	Kind               string        `json:"kind"`
-	Schema             int           `json:"schema"`
-	Subject            string        `json:"subject"`
-	ModelID            string        `json:"model_id"`
-	Name               string        `json:"name"`
-	PlanSHA256         string        `json:"plan_sha256"`
-	ArchitectureSHA256 string        `json:"architecture_sha256"`
-	PathBase           string        `json:"path_base"`
-	CurrentRunID       string        `json:"current_run_id,omitempty"`
-	Runs               []ModelBOMRun `json:"runs"`
-	Generated          string        `json:"generated"`
+	Kind                string          `json:"kind"`
+	Schema              int             `json:"schema"`
+	Subject             string          `json:"subject"`
+	ModelID             string          `json:"model_id"`
+	Name                string          `json:"name"`
+	PlanSHA256          string          `json:"plan_sha256"`
+	ArchitectureSHA256  string          `json:"architecture_sha256"`
+	PathBase            string          `json:"path_base"`
+	CurrentRunID        string          `json:"current_run_id,omitempty"`
+	CurrentOriginSHA256 string          `json:"current_origin_sha256,omitempty"`
+	Origin              *ModelBOMOrigin `json:"origin,omitempty"`
+	Runs                []ModelBOMRun   `json:"runs"`
+	Generated           string          `json:"generated"`
+}
+
+type ModelBOMOrigin struct {
+	BOM       string             `json:"bom"`
+	SHA256    string             `json:"sha256"`
+	Artifacts []ModelBOMArtifact `json:"artifacts"`
 }
 
 type ModelBOMRun struct {
@@ -155,6 +192,7 @@ type Inspection struct {
 	BOM     ModelBOM    `json:"bom"`
 	Runs    []RunRecord `json:"runs"`
 	RunBOMs []RunBOM    `json:"run_boms"`
+	Origin  *OriginBOM  `json:"origin,omitempty"`
 }
 
 func Inspect(root, nameOrPath string) (Inspection, error) {
@@ -185,8 +223,28 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 	if err != nil {
 		return Inspection{}, err
 	}
-	if plan.Kind != "waldo-model-plan" || plan.Schema != PlanSchema || planHash != record.PlanSHA256 || record.ID != planHash || plan.Name != record.Name || plan.ArchitectureSHA256 != record.ArchitectureSHA256 || !reflect.DeepEqual(plan.Architecture, record.Architecture) || !reflect.DeepEqual(plan.Forecast, record.Forecast) {
+	if plan.Kind != "waldo-model-plan" || plan.Schema != PlanSchema || planHash != record.PlanSHA256 || record.ID != planHash || plan.Name != record.Name || plan.ArchitectureSHA256 != record.ArchitectureSHA256 || plan.OriginBOMSHA256 != record.OriginBOMSHA256 || !reflect.DeepEqual(plan.Architecture, record.Architecture) || !reflect.DeepEqual(plan.Forecast, record.Forecast) {
 		return Inspection{}, fmt.Errorf("%s has an invalid immutable model plan", directory)
+	}
+	var origin *OriginBOM
+	if record.OriginBOMSHA256 != "" {
+		var value OriginBOM
+		if err := readJSON(filepath.Join(directory, "ORIGIN-BOM.json"), &value); err != nil {
+			return Inspection{}, err
+		}
+		digest, err := hashJSON(value)
+		if err != nil || digest != record.OriginBOMSHA256 || value.Kind != "openwaldo-bom" || value.Schema != 1 || value.Subject != "model-origin" || value.ArchitectureSHA256 != record.ArchitectureSHA256 {
+			return Inspection{}, fmt.Errorf("%s has an invalid model origin BOM", directory)
+		}
+		for _, artifact := range value.Artifacts {
+			if err := verifyOriginArtifact(directory, artifact); err != nil {
+				return Inspection{}, fmt.Errorf("model origin: %w", err)
+			}
+		}
+		if !reflect.DeepEqual(value.Artifacts, record.OriginArtifacts) {
+			return Inspection{}, fmt.Errorf("%s model origin artifacts do not match their model pin", directory)
+		}
+		origin = &value
 	}
 	var bom ModelBOM
 	bomPath := filepath.Join(directory, "MODEL-BOM.json")
@@ -200,7 +258,7 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 		return Inspection{}, fmt.Errorf("%s has an invalid model OpenWALDO BOM", directory)
 	}
 	originalPins := append([]RunPin(nil), record.Runs...)
-	inspection := Inspection{Path: directory, Plan: plan, Model: record}
+	inspection := Inspection{Path: directory, Plan: plan, Model: record, Origin: origin}
 	for _, pin := range record.Runs {
 		position := len(inspection.Runs)
 		if pin.Ordinal != position+1 {
@@ -320,6 +378,13 @@ func modelBOM(record ModelRecord) ModelBOM {
 		ModelID: record.ID, Name: record.Name, PlanSHA256: record.PlanSHA256,
 		ArchitectureSHA256: record.ArchitectureSHA256, PathBase: "model-root", Generated: record.Updated,
 	}
+	if record.OriginBOMSHA256 != "" {
+		bom.Origin = &ModelBOMOrigin{BOM: "ORIGIN-BOM.json", SHA256: record.OriginBOMSHA256}
+		for _, artifact := range record.OriginArtifacts {
+			bom.Origin.Artifacts = append(bom.Origin.Artifacts, ModelBOMArtifact{Role: artifact.Role, Path: artifact.Path, SHA256: artifact.SHA256, Bytes: artifact.Bytes})
+		}
+		bom.CurrentOriginSHA256 = record.OriginBOMSHA256
+	}
 	for _, pin := range record.Runs {
 		directory := filepath.ToSlash(filepath.Join("runs", runDirectoryName(pin)))
 		run := ModelBOMRun{
@@ -337,9 +402,21 @@ func modelBOM(record ModelRecord) ModelBOM {
 		bom.Runs = append(bom.Runs, run)
 		if pin.State == RunComplete && !pin.Simulated && hasWeightArtifact(pin.Artifacts) {
 			bom.CurrentRunID = pin.ID
+			bom.CurrentOriginSHA256 = ""
 		}
 	}
 	return bom
+}
+
+func verifyOriginArtifact(root string, artifact OriginArtifact) error {
+	if artifact.Path == "" || filepath.IsAbs(filepath.FromSlash(artifact.Path)) {
+		return fmt.Errorf("artifact path %q is not model-root-relative", artifact.Path)
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(artifact.Path)))
+	if clean != artifact.Path || clean == "." || strings.HasPrefix(clean, "../") {
+		return fmt.Errorf("artifact path %q escapes the model root", artifact.Path)
+	}
+	return verifyArtifactFile(filepath.Join(root, filepath.FromSlash(clean)), training.Artifact{Path: artifact.Path, SHA256: artifact.SHA256, Bytes: artifact.Bytes})
 }
 
 func artifactRole(path string) string {

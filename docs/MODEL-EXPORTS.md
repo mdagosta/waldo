@@ -32,10 +32,11 @@ not also copy Safetensors and choosing Hugging Face does not also create GGUF.
 | `gguf` | llama.cpp-compatible consumers, including LM Studio | One GGUF v3 file | No second weight representation |
 | `ollama` | Ollama | The same GGUF v3 representation | A relative `Modelfile` containing the context length |
 
-`waldo` is the default because it is lossless, retains every historical run,
-and preserves the most provenance. A derived runtime package contains only the
-newest complete, non-simulated real-weight run selected by
-`current_run_id` in the managed model BOM.
+`waldo` is the default because it is lossless, retains the downloaded origin
+and every historical run, and preserves the most provenance. A derived runtime
+package contains only the current verified origin selected by
+`current_origin_sha256` or the newest complete, non-simulated real-weight run
+selected by `current_run_id` in the managed model BOM.
 
 ## Where the architecture lives
 
@@ -136,9 +137,10 @@ cannot be rewritten after execution.
 
 The managed model BOM aggregates all runs. It retains each run-BOM hash,
 terminal state, backend and simulation identity, observations, and artifact
-hashes. `current_run_id` selects the newest complete real-weight run. Artifact
-paths are relative to the model root rather than one developer's absolute
-filesystem path.
+hashes. `current_origin_sha256` selects downloaded starting weights until
+`current_run_id` selects a newer complete real-weight run. Artifact paths are
+relative to the model root rather than one developer's absolute filesystem
+path.
 
 ### Exported `BOM.json`
 
@@ -158,7 +160,9 @@ inventory. Its schema-1 shape is:
   "format": "gguf",
   "model_id": "<immutable model identity>",
   "name": "small",
-  "run_id": "<selected real run>",
+  "source_type": "run",
+  "source_id": "<selected run or origin identity>",
+  "run_id": "<selected real run; omitted for an origin>",
   "source_bom_sha256": "<managed model BOM hash>",
   "artifacts": [
     {
@@ -261,9 +265,9 @@ small-waldo/
         └── artifacts/
 ```
 
-This is the authoritative archival and WALDO-to-WALDO representation. A
-dedicated `model download` command has not been implemented yet; export does
-not pretend otherwise.
+This is the authoritative archival and WALDO-to-WALDO representation. For an
+open-weight origin, the package also contains `ORIGIN-BOM.json` and the one
+normalized starting checkpoint referenced by the aggregate BOM.
 
 ## Hugging Face package
 
@@ -416,7 +420,7 @@ should use the JSON result rather than parse the human sentence.
 | Required disclosure facts are missing | Complete the provider/model provenance, or use `--allow-incomplete` only for a clearly marked development draft. |
 | Destination already exists | Choose a new directory; export never overwrites a package implicitly. |
 | Destination is inside the source model | Export beside or outside the managed model so source and release cannot overlap. |
-| No current real run | Train with a real backend and complete the run; simulated artifacts cannot become runtime releases. |
+| No current weights | Download a supported open-weight origin or complete a real training run; simulated artifacts cannot become runtime releases. |
 | Artifact hash, size, or model pin mismatch | Treat the managed model as corrupted or inconsistent and audit it; WALDO will not convert unverified bytes. |
 | Unsupported GGUF tensor, tokenizer, or dtype | Use a supported schema-1 decoder model or add a reviewed format adapter rather than guessing metadata. |
 | Signing is configured but fails | Install/configure `cosign`, fix authentication or the configured key, and rerun. WALDO will not fall back to unsigned output. |

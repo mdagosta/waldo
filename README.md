@@ -73,16 +73,17 @@ flowchart TB
 3. Exported corpus data can be audited independently, consumed by another
    training stack, used to train from scratch, or paired with an open-weight
    base model for continued training or fine-tuning.
-4. A WALDO compose currently starts with a blank architecture. The planned
-   open-weight path will download Hugging Face Safetensors, validate and
-   losslessly normalize them, and pin an immutable model-origin BOM before
-   resolving the same compose lifecycle; model download and fine-tuning remain
-   pending.
+4. A WALDO compose can start with a blank architecture or a locally managed
+   open-weight base. `model download` resolves Hugging Face Safetensors to an
+   immutable revision, validates and losslessly normalizes them, and pins a
+   model-origin BOM before the same compose lifecycle runs. General tokenizer
+   support and supervised fine-tuning objectives remain pending.
 5. WALDO persists the corpus BOM and starting-point identity before execution,
    records observed results afterward, and binds output weights into append-only
    run and model BOMs.
-6. A verified real run can be tested, used for generation, and converted from
-   retained training-quality Safetensors into one chosen runtime format. Every
+6. A verified origin or real run can be tested, used for generation where a
+   compatible runtime exists, and converted from retained training-quality
+   Safetensors into one chosen runtime format. Every
    package contains `BOM.json` and `EU-BOM.json`, and both are automatically
    signed when signing is configured.
 
@@ -113,11 +114,14 @@ limits of what it verified.
   `EXPORT.json` or into a training run.
 - `RUN-BOM.json` records the immutable training plan before the backend starts;
   observations and output hashes are persisted after execution.
-- `MODEL-BOM.json` aggregates the model's complete run history and identifies
-  the newest complete real-weight run as `current_run_id`.
+- `ORIGIN-BOM.json` pins an external starting checkpoint when present.
+  `MODEL-BOM.json` aggregates that origin and the complete run history, using
+  `current_origin_sha256` until a newer complete real run becomes
+  `current_run_id`.
 - A native model export renames that aggregate to `BOM.json`. A derived runtime
-  export writes a compact `BOM.json` inventory that identifies the selected run,
-  hashes every release artifact, and pins the source model BOM by SHA-256.
+  export writes a compact `BOM.json` inventory that identifies the selected
+  origin or run, hashes every release artifact, and pins the source model BOM
+  by SHA-256.
 - `EU-BOM.json` is the model-specific regulatory disclosure projection, not a
   second weight inventory or a replacement for the technical provenance tree.
 
@@ -372,7 +376,7 @@ The current pretrained models perform raw causal continuation and carry no
 invented chat template. Instruction-following behavior requires future,
 explicitly recorded fine-tuning support.
 
-### Continue training an open-weight model (planned)
+### Continue training an open-weight model
 
 The next model-lifecycle slice will download training-quality open weights
 directly into WALDO's managed model root:
@@ -400,7 +404,7 @@ waldo model train llama-base core/books --epochs 1
 waldo model export llama-base ./llama-continued --format huggingface
 ```
 
-`model download` will default to a Hugging Face model directory containing
+`model download` defaults to a Hugging Face model directory containing
 Safetensors, architecture configuration, and tokenizer files. A revision may
 be supplied explicitly; otherwise WALDO will resolve the requested reference
 to an immutable repository revision before accepting any artifacts. Native
@@ -421,6 +425,12 @@ The downloaded origin is not represented as a training run. Subsequent
 origin BOM and initialization-weight hash. Missing upstream provenance remains
 an explicit disclosure gap rather than being inferred. Unsupported
 architectures or tokenizers fail before a managed model is published.
+
+The first compatibility profile is deliberately narrow: standard bias-free
+Llama Safetensors using WALDO's schema-1 byte tokenizer. This is the
+training-quality format emitted by WALDO's Hugging Face export. General
+Hugging Face tokenizer support remains future work; WALDO fails closed instead
+of silently retokenizing a model or changing its tensor values.
 
 GGUF is intentionally not the default download format because it is commonly
 quantized for inference. WALDO will derive GGUF, Ollama, and MLX packages from
@@ -451,8 +461,9 @@ ollama create small -f ./small-ollama/Modelfile
 ```
 
 Every package contains `BOM.json` and `EU-BOM.json`. Derived runtime formats
-select the newest complete, non-simulated real run and verify its model pin,
-configuration, tokenizer, weights, sizes, and hashes before conversion.
+select either the current verified download origin or the newest complete,
+non-simulated real run and verify its model pin, configuration, tokenizer,
+weights, sizes, and hashes before conversion.
 Hugging Face and MLX preserve tensor bytes while translating names and runtime
 metadata. GGUF v3 is streamed directly, embeds the byte tokenizer, and does not
 imply quantization. Ollama adds only a portable relative `Modelfile`; no export
@@ -487,8 +498,9 @@ Working end to end today:
   offline-verifiable BOMs, plus local shard summary, audit, record listing, and
   individual record export;
 - **Model lifecycle:** immutable architectures, append-only run records,
-  forecasting, direct index-backed training, ordered model composes, model
-  inspection, and complete data-to-weight provenance;
+  forecasting, pinned open-weight downloads, direct index-backed training,
+  downloaded-base and blank-architecture model composes, model inspection, and
+  complete data-to-weight provenance;
 - **Execution:** real MLX training and generation on Apple Silicon,
   single-process PyTorch training on Linux CPU, NVIDIA CUDA, or AMD ROCm, and
   single-node distributed TorchTitan training across all visible Linux GPUs;
@@ -502,8 +514,8 @@ Still deliberately pending:
 - **Data and index:** non-text/multimodal ingestion, append-only corpus updates,
   corpus removal contributions, and verified lookaside-to-lookaside
   replication;
-- **Model lineage and tuning:** downloading an external open-weight model as a
-  compose starting point, SFT, preference training, and pinned chat templates;
+- **Model lineage and tuning:** general Hugging Face tokenizer/architecture
+  profiles, SFT, preference training, and pinned chat templates;
 - **Training quality and recovery:** held-out evaluation, optimizer-state
   checkpoints and resume, and empirical forecast calibration;
 - **Additional execution:** PyTorch generation, a TensorFlow adapter, and

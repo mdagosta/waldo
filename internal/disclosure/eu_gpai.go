@@ -88,12 +88,13 @@ type TemplatePin struct {
 }
 
 type ModelSummary struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	PlanSHA256         string `json:"plan_sha256"`
-	ArchitectureSHA256 string `json:"architecture_sha256"`
-	BOMSHA256          string `json:"bom_sha256"`
-	Runs               int    `json:"runs"`
+	ID                 string              `json:"id"`
+	Name               string              `json:"name"`
+	PlanSHA256         string              `json:"plan_sha256"`
+	ArchitectureSHA256 string              `json:"architecture_sha256"`
+	BOMSHA256          string              `json:"bom_sha256"`
+	Runs               int                 `json:"runs"`
+	Origin             *model.OriginSource `json:"origin,omitempty"`
 }
 
 type TrainingSummary struct {
@@ -176,6 +177,10 @@ func BuildEUGPAIReport(inspection model.Inspection, provider *ProviderProfile, r
 		Provider:   provider,
 		Release:    release,
 		Disclaimer: "WALDO maps recorded provenance to disclosure fields. This report is not legal advice and does not by itself establish compliance.",
+	}
+	if inspection.Origin != nil {
+		source := inspection.Origin.Source
+		report.Model.Origin = &source
 	}
 	report.addProviderGaps(provider)
 	report.addReleaseGaps(release)
@@ -295,12 +300,17 @@ func (report *EUGPAIReport) addReleaseGaps(profile ReleaseProfile) {
 }
 
 func ReleaseFromModel(inspection model.Inspection) ReleaseProfile {
-	return ReleaseProfile{
+	release := ReleaseProfile{
 		SummaryVersion: "1",
 		PublicName:     inspection.Model.Name,
 		Version:        inspection.Model.ID,
 		Origin:         "new",
 	}
+	if inspection.Origin != nil {
+		release.Origin = "modified"
+		release.OriginalSummaryURL = inspection.Origin.Source.URL
+	}
+	return release
 }
 
 func (report *EUGPAIReport) addCorpusGaps(item CorpusUse) {

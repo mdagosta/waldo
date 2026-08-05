@@ -83,6 +83,8 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 	}
 	if request.Initialization != nil {
 		begin.Initialization = &WorkerInitialization{
+			SourceType:  request.Initialization.SourceType,
+			SourceID:    request.Initialization.SourceID,
 			SourceRunID: request.Initialization.SourceRunID,
 			Artifact:    request.Initialization.Artifact,
 			Path:        request.Initialization.Path,

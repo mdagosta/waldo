@@ -48,7 +48,9 @@ type Session interface {
 
 type Description struct {
 	Model         string `json:"model"`
-	RunID         string `json:"run_id"`
+	SourceType    string `json:"source_type"`
+	SourceID      string `json:"source_id"`
+	RunID         string `json:"run_id,omitempty"`
 	Backend       string `json:"backend"`
 	ContextTokens int    `json:"context_tokens"`
 }

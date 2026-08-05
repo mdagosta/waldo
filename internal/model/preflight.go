@@ -67,11 +67,15 @@ func composePlan(name string, compose Compose) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	return Plan{
+	plan := Plan{
 		Kind: "waldo-model-plan", Schema: PlanSchema, Name: name,
 		ArchitectureSHA256: architectureHash, Architecture: compose.Architecture,
 		Forecast: forecast,
-	}, nil
+	}
+	if compose.Base != nil {
+		plan.OriginBOMSHA256 = compose.Base.OriginSHA256
+	}
+	return plan, nil
 }
 
 func forecastPlanForCompose(compose Compose) (Plan, error) {

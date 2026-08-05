@@ -13,13 +13,13 @@ import (
 )
 
 type Listing struct {
-	Name       string   `json:"name"`
-	ID         string   `json:"id"`
-	Path       string   `json:"path"`
-	Parameters uint64   `json:"approximate_parameters"`
-	Runs       int      `json:"runs"`
-	State      RunState `json:"state,omitempty"`
-	Updated    string   `json:"updated"`
+	Name       string `json:"name"`
+	ID         string `json:"id"`
+	Path       string `json:"path"`
+	Parameters uint64 `json:"approximate_parameters"`
+	Runs       int    `json:"runs"`
+	State      string `json:"state,omitempty"`
+	Updated    string `json:"updated"`
 }
 
 func List(root string, patterns []string) ([]Listing, error) {
@@ -49,8 +49,11 @@ func List(root string, patterns []string) ([]Listing, error) {
 			Parameters: inspection.Model.Forecast.ApproximateParameters,
 			Runs:       len(inspection.Model.Runs), Updated: inspection.Model.Updated,
 		}
+		if inspection.Origin != nil {
+			listing.State = "downloaded"
+		}
 		if len(inspection.Model.Runs) > 0 {
-			listing.State = inspection.Model.Runs[len(inspection.Model.Runs)-1].State
+			listing.State = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
 		}
 		result = append(result, listing)
 	}

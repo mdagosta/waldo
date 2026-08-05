@@ -24,16 +24,18 @@ type Options struct {
 }
 
 type releaseBOM struct {
-	Kind      string            `json:"kind"`
-	Schema    int               `json:"schema"`
-	Subject   string            `json:"subject"`
-	Format    string            `json:"format"`
-	ModelID   string            `json:"model_id"`
-	Name      string            `json:"name"`
-	RunID     string            `json:"run_id"`
-	SourceBOM string            `json:"source_bom_sha256"`
-	Artifacts []releaseArtifact `json:"artifacts"`
-	Generated string            `json:"generated"`
+	Kind       string            `json:"kind"`
+	Schema     int               `json:"schema"`
+	Subject    string            `json:"subject"`
+	Format     string            `json:"format"`
+	ModelID    string            `json:"model_id"`
+	Name       string            `json:"name"`
+	SourceType string            `json:"source_type"`
+	SourceID   string            `json:"source_id"`
+	RunID      string            `json:"run_id,omitempty"`
+	SourceBOM  string            `json:"source_bom_sha256"`
+	Artifacts  []releaseArtifact `json:"artifacts"`
+	Generated  string            `json:"generated"`
 }
 
 type releaseArtifact struct {
@@ -125,7 +127,7 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err != nil {
 		return "", err
 	}
-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
 	if err := writeJSON(filepath.Join(temporary, "BOM.json"), bom); err != nil {
 		return "", err
 	}

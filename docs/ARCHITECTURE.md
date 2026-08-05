@@ -110,6 +110,11 @@ resolved execution request to a training backend.
 It must not parse index files, normalize licenses, choose lookaside mirrors, or
 accept an unverified shard path from CLI code.
 
+External model acquisition belongs here. It resolves a provider reference to
+an immutable revision, inventories source artifacts in a separate origin BOM,
+and delegates tensor-container name normalization to `modelweights`. Source
+weight bytes are staging input, not a second durable managed checkpoint.
+
 ### Training
 
 Owns the adapter boundary to an execution framework. A backend receives an

@@ -132,7 +132,9 @@ type Input struct {
 }
 
 type Initialization struct {
-	SourceRunID string   `json:"source_run_id"`
+	SourceType  string   `json:"source_type,omitempty"`
+	SourceID    string   `json:"source_id,omitempty"`
+	SourceRunID string   `json:"source_run_id,omitempty"`
 	Artifact    Artifact `json:"artifact"`
 	Path        string   `json:"-"`
 }

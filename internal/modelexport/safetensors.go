@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
-	"strings"
-)
 
-var waldoLayerTensor = regexp.MustCompile(`^layers\.([0-9]+)\.(.+)$`)
+	"github.com/openwaldo/waldo/internal/modelweights"
+)
 
 func rewriteHuggingFaceWeights(source, destination string) error {
 	return rewriteLlamaWeights(source, destination, "pt", "huggingface")
@@ -58,7 +56,7 @@ func rewriteLlamaWeights(source, destination, containerFormat, exportFormat stri
 				return err
 			}
 		} else {
-			target, err = huggingFaceTensorName(name)
+			target, err = modelweights.HuggingFaceName(name)
 			if err != nil {
 				return err
 			}
@@ -107,32 +105,5 @@ func rewriteLlamaWeights(source, destination, containerFormat, exportFormat stri
 }
 
 func huggingFaceTensorName(name string) (string, error) {
-	switch name {
-	case "embedding.weight":
-		return "model.embed_tokens.weight", nil
-	case "norm.weight":
-		return "model.norm.weight", nil
-	case "output.weight":
-		return "lm_head.weight", nil
-	}
-	match := waldoLayerTensor.FindStringSubmatch(name)
-	if match == nil {
-		return "", fmt.Errorf("unsupported WALDO tensor %q", name)
-	}
-	replacements := map[string]string{
-		"attention.q_proj.weight":  "self_attn.q_proj.weight",
-		"attention.k_proj.weight":  "self_attn.k_proj.weight",
-		"attention.v_proj.weight":  "self_attn.v_proj.weight",
-		"attention.o_proj.weight":  "self_attn.o_proj.weight",
-		"attention_norm.weight":    "input_layernorm.weight",
-		"feed_forward.gate.weight": "mlp.gate_proj.weight",
-		"feed_forward.up.weight":   "mlp.up_proj.weight",
-		"feed_forward.down.weight": "mlp.down_proj.weight",
-		"ffn_norm.weight":          "post_attention_layernorm.weight",
-	}
-	tail, ok := replacements[match[2]]
-	if !ok {
-		return "", fmt.Errorf("unsupported WALDO tensor %q", name)
-	}
-	return strings.Join([]string{"model.layers", match[1], tail}, "."), nil
+	return modelweights.HuggingFaceName(name)
 }

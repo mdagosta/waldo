@@ -196,14 +196,19 @@ record can be inspected.
   Ollama import/generation parity for the GGUF converter.**
 - Additional execution backends **implemented with single-process PyTorch and
   single-node distributed TorchTitan on Linux.**
+- Training-quality Hugging Face Safetensors download with immutable repository
+  revision, source inventory, origin BOM, lossless name normalization, direct
+  continued training, and downloaded-base composes. **Implemented for the
+  standard Llama plus OpenWALDO byte-tokenizer compatibility profile.**
 - Held-out evaluation
 - Fork and lineage
 - Explicit additional training runs **implemented through `waldo model train`.**
 - Training-content report rendering **implemented as a versioned JSON EU GPAI
   mapping; exact official editable-document rendering remains.**
 
-Model download, SFT, preference training, and cluster orchestration remain
-deferred until this smaller lifecycle is reliable.
+General Hugging Face tokenizers and architecture profiles, SFT, preference
+training, and cluster orchestration remain deferred until this smaller
+lifecycle is reliable.
 
 ## Phase 7: operations and transition — pending
 

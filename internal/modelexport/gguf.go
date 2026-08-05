@@ -14,6 +14,7 @@ import (
 
 	"github.com/openwaldo/waldo/internal/inference"
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/modelweights"
 )
 
 const ggufAlignment = 32
@@ -105,7 +106,7 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	if err != nil {
 		return "", err
 	}
-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
 	if err := writeJSON(filepath.Join(temporary, "BOM.json"), bom); err != nil {
 		return "", err
 	}
@@ -346,8 +347,8 @@ func ggufTensorName(name string, architecture model.Architecture) (string, uint6
 	case "output.weight":
 		return "output.weight", 0, nil
 	}
-	match := waldoLayerTensor.FindStringSubmatch(name)
-	if match == nil {
+	layer, tensor, found := modelweights.WALDOLayer(name)
+	if !found {
 		return "", 0, fmt.Errorf("unsupported WALDO tensor %q", name)
 	}
 	mapping := map[string]string{
@@ -357,17 +358,17 @@ func ggufTensorName(name string, architecture model.Architecture) (string, uint6
 		"feed_forward.up.weight": "ffn_up.weight", "feed_forward.down.weight": "ffn_down.weight",
 		"ffn_norm.weight": "ffn_norm.weight",
 	}
-	tail, ok := mapping[match[2]]
+	tail, ok := mapping[tensor]
 	if !ok {
 		return "", 0, fmt.Errorf("unsupported WALDO tensor %q", name)
 	}
 	heads := uint64(0)
-	if match[2] == "attention.q_proj.weight" {
+	if tensor == "attention.q_proj.weight" {
 		heads = architecture.AttentionHeads
-	} else if match[2] == "attention.k_proj.weight" {
+	} else if tensor == "attention.k_proj.weight" {
 		heads = architecture.KeyValueHeads
 	}
-	return "blk." + match[1] + "." + tail, heads, nil
+	return "blk." + layer + "." + tail, heads, nil
 }
 
 func writePermutedTensor(output io.Writer, input io.ReaderAt, start uint64, tensor ggufTensor) error {

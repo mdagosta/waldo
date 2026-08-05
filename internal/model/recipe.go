@@ -23,8 +23,14 @@ var validName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 type Compose struct {
 	Kind         string       `json:"kind" yaml:"kind"`
 	Schema       int          `json:"schema" yaml:"schema"`
+	Base         *ComposeBase `json:"base,omitempty" yaml:"base,omitempty"`
 	Architecture Architecture `json:"architecture" yaml:"architecture"`
 	Stages       []Stage      `json:"stages" yaml:"stages"`
+}
+
+type ComposeBase struct {
+	Model        string `json:"model" yaml:"model"`
+	OriginSHA256 string `json:"origin_sha256,omitempty" yaml:"origin_sha256,omitempty"`
 }
 
 type Architecture struct {
@@ -118,6 +124,9 @@ func (compose Compose) Validate() error {
 	}
 	if err := compose.Architecture.Validate(); err != nil {
 		return err
+	}
+	if compose.Base != nil && !validName.MatchString(compose.Base.Model) {
+		return fmt.Errorf("base.model must name a locally managed model")
 	}
 	if len(compose.Stages) == 0 {
 		return fmt.Errorf("at least one training stage is required")

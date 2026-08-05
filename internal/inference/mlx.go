@@ -59,7 +59,7 @@ func Open(ctx context.Context, inspection model.Inspection) (Opened, error) {
 	if err != nil {
 		return Opened{}, err
 	}
-	if artifacts.Backend.Name != training.BackendMLX {
+	if artifacts.Backend.Name != training.BackendMLX && artifacts.Backend.Name != "portable-safetensors" {
 		return Opened{}, fmt.Errorf("model %q current weights require unsupported chat backend %s@%s", artifacts.Model, artifacts.Backend.Name, artifacts.Backend.Revision)
 	}
 	architecture, err := json.Marshal(inspection.Model.Architecture)
@@ -83,7 +83,7 @@ func Open(ctx context.Context, inspection model.Inspection) (Opened, error) {
 		return Opened{}, err
 	}
 	return Opened{Description: Description{
-		Model: artifacts.Model, RunID: artifacts.RunID, Backend: training.BackendMLX,
+		Model: artifacts.Model, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, Backend: training.BackendMLX,
 		ContextTokens: contextTokens,
 	}, Session: session}, nil
 }

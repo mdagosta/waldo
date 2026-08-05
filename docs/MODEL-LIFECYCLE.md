@@ -48,6 +48,32 @@ waldo model chat small
 waldo model rm small
 ```
 
+## Downloaded open-weight origins
+
+`model download` acquires training-quality Hugging Face Safetensors, resolves
+the requested reference to an immutable repository commit, hashes every source
+artifact, validates the architecture, tokenizer, tensor names, shapes, and
+precision, and streams the tensor bytes into WALDO's canonical names:
+
+```bash
+waldo model download llama-base huggingface://organization/model@main
+waldo model train llama-base core/books --epochs 1
+```
+
+Private or gated repositories use `HF_TOKEN` or the standard Hugging Face token
+file. Source downloads live only in private staging and are removed after the
+managed artifact has been verified. `ORIGIN-BOM.json` retains the repository,
+requested reference, resolved commit, license when declared, and hashes of all
+acquired files; it does not retain a redundant copy of the source weights.
+`MODEL-BOM.json` selects the origin until a complete real training run produces
+new current weights.
+
+Schema 1 initially accepts standard bias-free Llama weights with
+`OpenWALDOByteTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors.
+That is the format produced by WALDO's Hugging Face export. Other tokenizers or
+architectural variants fail before publication rather than being numerically
+converted or silently retokenized.
+
 `init` creates an untrained immutable architecture. `train` resolves one or
 more recursive index selections, deduplicates them into an OpenWALDO BOM,
 materializes hash-verified Parquet through the shared cache, audits every
@@ -82,15 +108,15 @@ The complete package layouts, BOM layers, conversion rules, signing behavior,
 failure modes, and consumer examples are in
 [the model export guide](MODEL-EXPORTS.md).
 
-`--format huggingface` exports the current verified, complete, non-simulated
-run as a standalone Transformers package. WALDO rewrites only the Safetensors
+`--format huggingface` exports the current verified origin or complete,
+non-simulated run as a standalone Transformers package. WALDO rewrites only the Safetensors
 header: tensor bytes remain unchanged while names move to the standard Llama
 layout and container metadata identifies PyTorch. The package includes
 `architecture.py`, the schema-1 byte tokenizer implementation and
 configuration, `BOM.json`, and `EU-BOM.json`. The tokenizer is custom code, so
 Transformers callers load it with `trust_remote_code=True`; the model itself
-uses the standard Llama configuration. A model without a usable real run is
-rejected rather than exporting simulated or incomplete artifacts.
+uses the standard Llama configuration. A model without a usable origin or real
+run is rejected rather than exporting simulated or incomplete artifacts.
 
 `--format mlx` emits the same standard Llama tensor names with Safetensors
 metadata for MLX, an executable binding to MLX-LM's Llama model, and the same
@@ -113,9 +139,9 @@ waldo model export small ./small-ollama --format ollama
 ollama create small -f ./small-ollama/Modelfile
 ```
 
-`model chat` opens the newest complete real-weight run identified by
-`current_run_id`, verifies its weights, configuration, and tokenizer against
-the model BOM, and then uses the backend recorded by that run. MLX sessions
+`model chat` opens the BOM-selected current origin or newest complete
+real-weight run, verifies its weights, configuration, and tokenizer, and uses
+the compatible MLX runtime for an origin or the backend recorded by a run. MLX sessions
 load weights once and use incremental key/value caching while generating:
 
 ```bash
@@ -154,6 +180,12 @@ name, so the portable file contains no name and can be reused:
 ```yaml
 kind: waldo-model-compose
 schema: 1
+
+# Optional. Omit this block to initialize a blank architecture.
+base:
+  model: llama-base
+  # Optional assertion; WALDO always pins the resolved value into PLAN.json.
+  origin_sha256: <origin-bom-sha256>
 
 architecture:
   family: decoder-transformer
@@ -206,6 +238,11 @@ parameters are rejected. Corpus values are index paths, never raw directories
 or corpus exports. Explicit paths discover their checkout; logical paths use
 the current or configured checkout.
 
+When `base` is present, it must name a downloaded model whose origin remains
+its current weights. WALDO verifies every origin artifact, checks the optional
+hash assertion and exact architecture equality, then initializes the new model
+from that origin. A compose never mutates the named base model.
+
 An existing name is refused. Explicit replacement uses one flag:
 
 ```bash
@@ -224,6 +261,8 @@ into the configured model root.
 ├── PLAN.json
 ├── MODEL.json
 ├── MODEL-BOM.json
+├── ORIGIN-BOM.json        # downloaded models and derived composes only
+├── origin/artifacts/      # one normalized, verified starting checkpoint
 └── runs/
     └── 0001-<stage>-<run-id>/
         ├── RUN-BOM.json
@@ -232,7 +271,8 @@ into the configured model root.
 ```
 
 - `PLAN.json` content-identifies the immutable architecture and local model
-  name. Adding training does not change model identity.
+  name plus any external origin BOM. Adding training does not change model
+  identity.
 - `RUN-BOM.json` embeds the resolved corpus OpenWALDO BOM and pins architecture,
   backend, objective, parameters, and execution environment before launch.
 - `RUN.json` moves atomically through `planned`, `running`, and exactly one of
@@ -245,7 +285,8 @@ into the configured model root.
   machine-specific model root.
   `current_run_id` selects the newest complete, non-simulated run containing
   real weight artifacts; earlier simulated and real runs remain visible as
-  provenance.
+  provenance. Before such a run exists, `current_origin_sha256` selects the
+  verified downloaded starting checkpoint.
 
 Every aggregate artifact has a role such as `weights`, `configuration`,
 `tokenizer`, or `simulation`. `model export` rewrites any accepted legacy

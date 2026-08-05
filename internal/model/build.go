@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -245,8 +246,22 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 			if err := verifyArtifactFile(path, artifact); err != nil {
 				return nil, fmt.Errorf("initialize from run %s: %w", run.ID, err)
 			}
-			return &training.Initialization{SourceRunID: run.ID, Artifact: artifact, Path: path}, nil
+			return &training.Initialization{SourceType: "run", SourceID: run.ID, SourceRunID: run.ID, Artifact: artifact, Path: path}, nil
 		}
+	}
+	if inspection.Origin != nil {
+		for _, artifact := range inspection.Origin.Artifacts {
+			if artifact.Role != "weights" {
+				continue
+			}
+			path := filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path))
+			trainingArtifact := training.Artifact{Path: artifact.Path, SHA256: artifact.SHA256, Bytes: artifact.Bytes}
+			if err := verifyArtifactFile(path, trainingArtifact); err != nil {
+				return nil, fmt.Errorf("initialize from model origin %s: %w", inspection.Model.OriginBOMSHA256, err)
+			}
+			return &training.Initialization{SourceType: "origin", SourceID: inspection.Model.OriginBOMSHA256, Artifact: trainingArtifact, Path: path}, nil
+		}
+		return nil, fmt.Errorf("model origin %s has no weights artifact", inspection.Model.OriginBOMSHA256)
 	}
 	return nil, nil
 }
@@ -285,8 +300,28 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	defer os.RemoveAll(temporaryRoot)
 	temporaryBuilder := builder
 	temporaryBuilder.Root = temporaryRoot
-	if _, err := temporaryBuilder.Initialize(name, compose.Architecture); err != nil {
-		return Inspection{}, err
+	if compose.Base == nil {
+		if _, err := temporaryBuilder.Initialize(name, compose.Architecture); err != nil {
+			return Inspection{}, err
+		}
+	} else {
+		base, err := Inspect(builder.Root, compose.Base.Model)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("resolve compose base model %q: %w", compose.Base.Model, err)
+		}
+		if base.Origin == nil || base.BOM.CurrentOriginSHA256 == "" {
+			return Inspection{}, fmt.Errorf("compose base model %q must have downloaded origin weights as its current weights", compose.Base.Model)
+		}
+		if compose.Base.OriginSHA256 != "" && compose.Base.OriginSHA256 != base.Model.OriginBOMSHA256 {
+			return Inspection{}, fmt.Errorf("compose base model %q origin is %s, not requested %s", compose.Base.Model, base.Model.OriginBOMSHA256, compose.Base.OriginSHA256)
+		}
+		if !reflect.DeepEqual(compose.Architecture, base.Model.Architecture) {
+			return Inspection{}, fmt.Errorf("compose architecture does not match base model %q", compose.Base.Model)
+		}
+		compose.Base.OriginSHA256 = base.Model.OriginBOMSHA256
+		if _, err := temporaryBuilder.initializeFromOrigin(name, compose, base); err != nil {
+			return Inspection{}, err
+		}
 	}
 	for _, stage := range stages {
 		if _, err := temporaryBuilder.Train(ctx, name, stage); err != nil {
@@ -314,6 +349,59 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 		}
 	}
 	return Inspect(builder.Root, name)
+}
+
+func (builder Builder) initializeFromOrigin(name string, compose Compose, base Inspection) (Inspection, error) {
+	plan, err := composePlan(name, compose)
+	if err != nil {
+		return Inspection{}, err
+	}
+	planHash, err := hashJSON(plan)
+	if err != nil {
+		return Inspection{}, err
+	}
+	now := builder.clock()()
+	record := ModelRecord{
+		Kind: "waldo-model", Schema: ModelSchema, ID: planHash, Name: name,
+		PlanSHA256: planHash, ArchitectureSHA256: plan.ArchitectureSHA256,
+		Architecture: plan.Architecture, Forecast: plan.Forecast,
+		Created: formatTime(now), Updated: formatTime(now),
+		OriginBOMSHA256: base.Model.OriginBOMSHA256,
+		OriginArtifacts: append([]OriginArtifact(nil), base.Model.OriginArtifacts...),
+	}
+	destination := filepath.Join(builder.Root, name)
+	if err := initializeModel(builder.Root, destination, plan, record); err != nil {
+		return Inspection{}, err
+	}
+	for _, artifact := range base.Origin.Artifacts {
+		source := filepath.Join(base.Path, filepath.FromSlash(artifact.Path))
+		target := filepath.Join(destination, filepath.FromSlash(artifact.Path))
+		if err := copyOriginFile(source, target); err != nil {
+			return Inspection{}, err
+		}
+	}
+	if err := writeJSONAtomic(filepath.Join(destination, "ORIGIN-BOM.json"), base.Origin); err != nil {
+		return Inspection{}, err
+	}
+	return Inspect(builder.Root, name)
+}
+
+func copyOriginFile(source, destination string) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
+		return err
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(output, input)
+	closeErr := output.Close()
+	return errors.Join(copyErr, closeErr)
 }
 
 func initializeModel(root, destination string, plan Plan, record ModelRecord) error {
