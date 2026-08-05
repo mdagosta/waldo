@@ -72,11 +72,55 @@ func (function ResolverFunc) Resolve(ctx context.Context, request ResolveRequest
 }
 
 type Parameters struct {
-	Steps          int64   `json:"steps" yaml:"steps"`
-	BatchSize      int64   `json:"batch_size" yaml:"batch_size"`
-	SequenceLength int64   `json:"sequence_length" yaml:"sequence_length"`
-	LearningRate   float64 `json:"learning_rate" yaml:"learning_rate"`
-	Seed           uint64  `json:"seed" yaml:"seed"`
+	Profile              string   `json:"profile,omitempty" yaml:"profile,omitempty"`
+	Steps                int64    `json:"steps" yaml:"steps"`
+	BatchSize            int64    `json:"batch_size" yaml:"batch_size"`
+	SequenceLength       int64    `json:"sequence_length" yaml:"sequence_length"`
+	LearningRate         float64  `json:"learning_rate" yaml:"learning_rate"`
+	Seed                 uint64   `json:"seed" yaml:"seed"`
+	WeightDecay          *float64 `json:"weight_decay,omitempty" yaml:"weight_decay,omitempty"`
+	WarmupSteps          *int64   `json:"warmup_steps,omitempty" yaml:"warmup_steps,omitempty"`
+	CheckpointEvery      *int64   `json:"checkpoint_every,omitempty" yaml:"checkpoint_every,omitempty"`
+	EvaluateEvery        *int64   `json:"evaluate_every,omitempty" yaml:"evaluate_every,omitempty"`
+	ShuffleBufferRecords *int     `json:"shuffle_buffer_records,omitempty" yaml:"shuffle_buffer_records,omitempty"`
+	ShuffleBufferBytes   *int64   `json:"shuffle_buffer_bytes,omitempty" yaml:"shuffle_buffer_bytes,omitempty"`
+}
+
+type ResolvedParameters struct {
+	Profile              string    `json:"profile"`
+	ProfileSchema        int       `json:"profile_schema"`
+	Steps                int64     `json:"steps"`
+	BatchSize            int64     `json:"batch_size"`
+	SequenceLength       int64     `json:"sequence_length"`
+	LearningRate         float64   `json:"learning_rate"`
+	Seed                 uint64    `json:"seed"`
+	Optimizer            Optimizer `json:"optimizer"`
+	Schedule             Schedule  `json:"schedule"`
+	Data                 DataPlan  `json:"data"`
+	CheckpointEvery      int64     `json:"checkpoint_every"`
+	EvaluateEvery        int64     `json:"evaluate_every"`
+	PlannedTokenCapacity int64     `json:"planned_token_capacity"`
+}
+
+type Optimizer struct {
+	Name        string  `json:"name"`
+	WeightDecay float64 `json:"weight_decay"`
+	Beta1       float64 `json:"beta1"`
+	Beta2       float64 `json:"beta2"`
+	Epsilon     float64 `json:"epsilon"`
+}
+
+type Schedule struct {
+	Name             string  `json:"name"`
+	WarmupSteps      int64   `json:"warmup_steps"`
+	MinimumRateRatio float64 `json:"minimum_rate_ratio"`
+}
+
+type DataPlan struct {
+	Order                string `json:"order"`
+	ShuffleBufferRecords int    `json:"shuffle_buffer_records"`
+	ShuffleBufferBytes   int64  `json:"shuffle_buffer_bytes"`
+	Packing              string `json:"packing"`
 }
 
 type Input struct {
@@ -93,17 +137,23 @@ type Request struct {
 	Architecture       json.RawMessage
 	BOM                corpus.BOM
 	Inputs             []Input
-	Parameters         Parameters
+	Parameters         ResolvedParameters
+	Records            RecordSource
 	ArtifactDirectory  string
 	ArtifactPrefix     string
 	Report             func(Event)
 }
 
 type Event struct {
-	Message string  `json:"message"`
-	Step    int64   `json:"step,omitempty"`
-	Tokens  int64   `json:"tokens,omitempty"`
-	Loss    float64 `json:"loss,omitempty"`
+	Kind            string      `json:"kind"`
+	Message         string      `json:"message,omitempty"`
+	Step            int64       `json:"step,omitempty"`
+	Tokens          int64       `json:"tokens,omitempty"`
+	Loss            *float64    `json:"loss,omitempty"`
+	TokensPerSecond float64     `json:"tokens_per_second,omitempty"`
+	ETASeconds      int64       `json:"eta_seconds,omitempty"`
+	Checkpoint      *Checkpoint `json:"checkpoint,omitempty"`
+	Evaluation      *Evaluation `json:"evaluation,omitempty"`
 }
 
 type Artifact struct {
@@ -113,10 +163,25 @@ type Artifact struct {
 }
 
 type Observation struct {
-	Simulated      bool       `json:"simulated"`
-	Steps          int64      `json:"steps"`
-	ConsumedTokens int64      `json:"consumed_tokens"`
-	Artifacts      []Artifact `json:"artifacts"`
+	Simulated      bool         `json:"simulated"`
+	Steps          int64        `json:"steps"`
+	ConsumedTokens int64        `json:"consumed_tokens"`
+	FinalLoss      *float64     `json:"final_loss,omitempty"`
+	Checkpoints    []Checkpoint `json:"checkpoints,omitempty"`
+	Evaluations    []Evaluation `json:"evaluations,omitempty"`
+	Artifacts      []Artifact   `json:"artifacts"`
+}
+
+type Checkpoint struct {
+	Step      int64      `json:"step"`
+	Tokens    int64      `json:"tokens"`
+	Artifacts []Artifact `json:"artifacts"`
+}
+
+type Evaluation struct {
+	Step    int64              `json:"step"`
+	Tokens  int64              `json:"tokens"`
+	Metrics map[string]float64 `json:"metrics"`
 }
 
 type Backend interface {

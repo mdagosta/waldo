@@ -26,15 +26,16 @@ adapter descriptor, required host facts are absent, or the adapter does not
 declare support for every planned objective.
 
 The backend-neutral request contains the architecture's canonical JSON and
-hash, stage and objective, verified corpus BOM and local shard inputs, portable
-training parameters, a private artifact directory, and a progress-event sink.
+hash, stage and objective, verified corpus BOM, resolved training profile,
+deterministic canonical-record stream, private artifact directory, and a
+progress-event sink.
 The adapter returns observations and content-addressed artifact descriptions.
 It never writes model plans, run state, or OpenWALDO BOMs.
 
 MLX, PyTorch, and TensorFlow are peer adapters. TorchTitan is a distributed
 adapter in the PyTorch ecosystem, not a separate model lifecycle. Framework
 specific configuration is resolved inside an adapter from the portable plan;
-it is not added to the shared recipe merely because the first implementation
+it is not added to the shared compose merely because the first implementation
 needs it.
 
 ## Consequences

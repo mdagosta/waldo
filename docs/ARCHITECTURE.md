@@ -123,6 +123,12 @@ capability, request, progress, and observation contracts. Framework-specific
 workers may translate the canonical architecture and training request, but may
 not introduce a second model compose or provenance lifecycle.
 
+Portable parameters resolve through a named schema-1 training profile before a
+run BOM is written. The training domain streams deterministically shuffled
+canonical records through a versioned NDJSON worker protocol; framework workers
+therefore do not parse Parquet, traverse an index, or invent data ordering and
+packing semantics.
+
 The application writes a `planned` run before launching the backend, advances
 it to `running`, and persists exactly one terminal state: `complete`, `failed`,
 or `interrupted`. Backend-reported consumed tokens and output hashes are

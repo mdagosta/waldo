@@ -119,6 +119,10 @@ printf '%s\n' "$inspect_output" | grep -q 'simulated'
 json_inspection=$("$binary" --json model summary smoke)
 printf '%s\n' "$json_inspection" | grep -Eq '"state"[[:space:]]*:[[:space:]]*"complete"'
 printf '%s\n' "$json_inspection" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*true'
+printf '%s\n' "$json_inspection" | grep -Eq '"profile"[[:space:]]*:[[:space:]]*"causal-pretrain-v1"'
+printf '%s\n' "$json_inspection" | grep -Eq '"packing"[[:space:]]*:[[:space:]]*"continuous-eos-v1"'
+printf '%s\n' "$json_inspection" | grep -Eq '"checkpoints"[[:space:]]*:'
+printf '%s\n' "$json_inspection" | grep -Eq '"evaluations"[[:space:]]*:'
 
 for required in PLAN.json MODEL.json MODEL-BOM.json; do
   [ -s "$models/smoke/$required" ] || { echo "missing model record $required" >&2; exit 1; }
@@ -127,6 +131,8 @@ run_count=$(find "$models/smoke/runs" -type f -name RUN.json -print | wc -l | tr
 [ "$run_count" -eq 1 ] || { echo "found $run_count run records, want 1" >&2; exit 1; }
 artifact_count=$(find "$models/smoke/runs" -type f -name fake-model.json -print | wc -l | tr -d ' ')
 [ "$artifact_count" -eq 1 ] || { echo "found $artifact_count fake artifacts, want 1" >&2; exit 1; }
+checkpoint_count=$(find "$models/smoke/runs" -type f -name 'step-*.json' -print | wc -l | tr -d ' ')
+[ "$checkpoint_count" -eq 1 ] || { echo "found $checkpoint_count fake checkpoints, want 1" >&2; exit 1; }
 
 if "$binary" model compose smoke "$compose" >/dev/null 2>&1; then
   echo "model compose replaced an existing model without --replace" >&2

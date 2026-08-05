@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,8 +23,11 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 	if len(observation.Artifacts) == 0 {
 		return fmt.Errorf("reported no output artifacts")
 	}
-	seen := make(map[string]bool, len(observation.Artifacts))
-	for _, artifact := range observation.Artifacts {
+	if observation.FinalLoss != nil && (*observation.FinalLoss < 0 || math.IsNaN(*observation.FinalLoss) || math.IsInf(*observation.FinalLoss, 0)) {
+		return fmt.Errorf("reported final loss is not finite and non-negative")
+	}
+	seen := make(map[string]bool)
+	validateArtifact := func(artifact training.Artifact) error {
 		if artifact.Path == "" || filepath.IsAbs(filepath.FromSlash(artifact.Path)) {
 			return fmt.Errorf("artifact path %q must be relative", artifact.Path)
 		}
@@ -55,6 +59,36 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 		digest := hex.EncodeToString(hasher.Sum(nil))
 		if digest != artifact.SHA256 {
 			return fmt.Errorf("artifact %s SHA-256 is %s, backend reported %s", artifact.Path, digest, artifact.SHA256)
+		}
+		return nil
+	}
+	for _, artifact := range observation.Artifacts {
+		if err := validateArtifact(artifact); err != nil {
+			return err
+		}
+	}
+	previousStep := int64(0)
+	for position, checkpoint := range observation.Checkpoints {
+		if checkpoint.Step <= previousStep || checkpoint.Step > observation.Steps || checkpoint.Tokens < 0 || checkpoint.Tokens > observation.ConsumedTokens || len(checkpoint.Artifacts) == 0 {
+			return fmt.Errorf("checkpoint %d has invalid step, token count, or artifacts", position+1)
+		}
+		previousStep = checkpoint.Step
+		for _, artifact := range checkpoint.Artifacts {
+			if err := validateArtifact(artifact); err != nil {
+				return fmt.Errorf("checkpoint %d: %w", position+1, err)
+			}
+		}
+	}
+	previousStep = 0
+	for position, evaluation := range observation.Evaluations {
+		if evaluation.Step <= previousStep || evaluation.Step > observation.Steps || evaluation.Tokens < 0 || evaluation.Tokens > observation.ConsumedTokens || len(evaluation.Metrics) == 0 {
+			return fmt.Errorf("evaluation %d has invalid step, token count, or metrics", position+1)
+		}
+		previousStep = evaluation.Step
+		for name, value := range evaluation.Metrics {
+			if name == "" || math.IsNaN(value) || math.IsInf(value, 0) {
+				return fmt.Errorf("evaluation %d has invalid metric %q", position+1, name)
+			}
 		}
 	}
 	return nil

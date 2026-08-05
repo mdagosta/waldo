@@ -101,6 +101,14 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if len(prepared.Inputs) == 0 {
 		return Inspection{}, fmt.Errorf("stage %s has no verified shard inputs", stage.Name)
 	}
+	resolvedParameters, err := training.ResolveParameters(stage.Parameters)
+	if err != nil {
+		return Inspection{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
+	}
+	records, err := training.NewCanonicalRecordSource(prepared.Inputs, resolvedParameters)
+	if err != nil {
+		return Inspection{}, fmt.Errorf("stage %s record stream: %w", stage.Name, err)
+	}
 	architectureJSON, err := json.Marshal(inspection.Model.Architecture)
 	if err != nil {
 		return Inspection{}, err
@@ -137,7 +145,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		ID: runID, ModelID: inspection.Model.ID, Stage: stage.Name, StageType: stage.Type,
 		Ordinal: ordinal, Objective: stage.Objective, Execution: selection.Execution,
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
-		CorpusBOMSHA256:    bomHash, CorpusBOM: prepared.BOM, Parameters: stage.Parameters,
+		CorpusBOMSHA256:    bomHash, CorpusBOM: prepared.BOM, Parameters: resolvedParameters,
 	}
 	runBOMHash, err := hashJSON(runBOM)
 	if err != nil {
@@ -170,15 +178,14 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		RunID: runID, Stage: stage.Name, Objective: stage.Objective,
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
 		Architecture:       architectureJSON, BOM: prepared.BOM, Inputs: prepared.Inputs,
-		Parameters: stage.Parameters, ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix),
+		Parameters: resolvedParameters, Records: records, ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix),
 		ArtifactPrefix: artifactPrefix,
 		Report: func(event training.Event) {
 			builder.report(Progress{Phase: "training", Stage: stage.Name, RunID: runID, State: RunRunning, Message: event.Message})
 		},
 	})
 	if backendErr == nil {
-		capacity, _ := multiplyInt64(stage.Parameters.Steps, stage.Parameters.BatchSize, stage.Parameters.SequenceLength)
-		planned := PlannedStage{Name: stage.Name, Parameters: stage.Parameters, PlannedTokens: capacity}
+		planned := PlannedStage{Name: stage.Name, Parameters: stage.Parameters, PlannedTokens: resolvedParameters.PlannedTokenCapacity}
 		if err := validateBackendObservation(runDirectory, planned, observation); err != nil {
 			backendErr = fmt.Errorf("invalid backend observation: %w", err)
 		}

@@ -30,8 +30,8 @@ func TestBuildEUGPAIReportDeduplicatesCorporaAndReportsFacts(t *testing.T) {
 			{State: model.RunComplete, Observation: &training.Observation{Simulated: true, ConsumedTokens: 50}},
 		},
 		RunBOMs: []model.RunBOM{
-			{Ordinal: 1, Stage: "pretrain", StageType: "pre-training", Objective: "causal-language-modeling", CorpusBOMSHA256: strings.Repeat("c", 64), CorpusBOM: bom, Parameters: training.Parameters{Steps: 1, BatchSize: 1, SequenceLength: 100}},
-			{Ordinal: 2, Stage: "review", StageType: "alignment", Objective: "causal-language-modeling", CorpusBOMSHA256: strings.Repeat("c", 64), CorpusBOM: bom, Parameters: training.Parameters{Steps: 1, BatchSize: 1, SequenceLength: 50}},
+			{Ordinal: 1, Stage: "pretrain", StageType: "pre-training", Objective: "causal-language-modeling", CorpusBOMSHA256: strings.Repeat("c", 64), CorpusBOM: bom, Parameters: training.ResolvedParameters{Steps: 1, BatchSize: 1, SequenceLength: 100}},
+			{Ordinal: 2, Stage: "review", StageType: "alignment", Objective: "causal-language-modeling", CorpusBOMSHA256: strings.Repeat("c", 64), CorpusBOM: bom, Parameters: training.ResolvedParameters{Steps: 1, BatchSize: 1, SequenceLength: 50}},
 		},
 	}
 	report, err := BuildEUGPAIReport(inspection, nil, time.Unix(0, 0))

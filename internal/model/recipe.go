@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -144,8 +143,8 @@ func (compose Compose) Validate() error {
 			}
 		}
 		parameters := stage.Parameters
-		if parameters.Steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {
-			return fmt.Errorf("stage %s training parameters must be positive", stage.Name)
+		if _, err := training.ResolveParameters(parameters); err != nil {
+			return fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
 		}
 		if uint64(parameters.SequenceLength) > compose.Architecture.ContextTokens {
 			return fmt.Errorf("stage %s sequence_length exceeds architecture context_tokens", stage.Name)

@@ -163,7 +163,14 @@ the same files independently of an index checkout.
 - Keep the execution adapter portable across MLX, PyTorch, TensorFlow, and
   PyTorch-based distributed engines. **Backend-neutral contract implemented;
   real environment resolvers and adapters remain.**
-- Streaming shard consumption
+- Resolve compact compose parameters into a versioned AdamW/cosine training
+  profile, deterministic bounded shuffle, continuous EOS packing contract,
+  checkpoint/evaluation cadence, and planned token capacity. **Implemented.**
+- Stream canonical records through a schema-1 NDJSON worker protocol without
+  exposing Parquet or index logic to framework adapters. **Implemented; the MLX
+  worker consumer remains.**
+- Persist and validate typed progress, checkpoint, evaluation, final-loss, and
+  artifact observations. **Implemented through the fake backend contract.**
 - Checkpoint and resume
 - Actual consumption totals
 - Evaluation results and output weight hashes

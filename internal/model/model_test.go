@@ -1,6 +1,7 @@
 package model
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,7 +15,10 @@ import (
 
 	"github.com/openwaldo/waldo-new/internal/corpus"
 	"github.com/openwaldo/waldo-new/internal/index"
+	"github.com/openwaldo/waldo-new/internal/record"
+	"github.com/openwaldo/waldo-new/internal/shard"
 	"github.com/openwaldo/waldo-new/internal/training"
+	"github.com/parquet-go/parquet-go"
 )
 
 type backendFunc func(context.Context, training.Request) (training.Observation, error)
@@ -211,7 +215,16 @@ func testStage(name string) Stage {
 
 func preparedFixture(t *testing.T, stage Stage) PreparedStage {
 	t.Helper()
-	data := []byte("canonical parquet fixture")
+	text := "canonical parquet fixture"
+	var encoded bytes.Buffer
+	writer := parquet.NewGenericWriter[shard.Row](&encoded)
+	if _, err := writer.Write([]shard.Row{{SHA256: record.TextHash(text), Kind: record.KindPretrain, Text: text, Source: "fixture", License: "CC0-1.0", Tokens: 128}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data := encoded.Bytes()
 	digestArray := sha256.Sum256(data)
 	digest := hex.EncodeToString(digestArray[:])
 	path := filepath.Join(t.TempDir(), digest)

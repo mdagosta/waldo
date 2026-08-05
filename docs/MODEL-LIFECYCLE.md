@@ -78,11 +78,20 @@ stages:
       - core/books
       - core/common-pile/foodista
     parameters:
+      profile: causal-pretrain-v1
       steps: 10000
       batch_size: 2
       sequence_length: 1024
       learning_rate: 0.0003
       seed: 7
+
+      # Optional overrides; omitted values resolve from the profile.
+      weight_decay: 0.1
+      warmup_steps: 100
+      checkpoint_every: 500
+      evaluate_every: 500
+      shuffle_buffer_records: 1024
+      shuffle_buffer_bytes: 67108864
 ```
 
 Run it with:
@@ -166,8 +175,12 @@ Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records
 its immutable identity, framework, runtime, host, accelerator, node count, and
 world size in the run BOM. Every adapter receives the same architecture,
-verified BOM, local content-addressed shard paths, parameters, artifact
-directory, and progress sink.
+verified BOM, resolved training profile, deterministic canonical-record stream,
+artifact directory, and progress sink. Adapters never parse Parquet or choose
+record order. An embedded worker communicates through schema-1 NDJSON: a begin
+frame, record frames from a shuffle bounded by both record count and retained
+bytes, an end frame, then typed progress,
+checkpoint, evaluation, completion, or error output frames.
 
 The deterministic fake adapter is the only enabled backend today. MLX,
 streaming tokenization and packing, checkpoint/resume, evaluation, real

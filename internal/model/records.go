@@ -82,20 +82,20 @@ type RunPin struct {
 }
 
 type RunBOM struct {
-	Kind               string              `json:"kind"`
-	Schema             int                 `json:"schema"`
-	Subject            string              `json:"subject"`
-	ID                 string              `json:"id"`
-	ModelID            string              `json:"model_id"`
-	Stage              string              `json:"stage"`
-	StageType          string              `json:"stage_type"`
-	Ordinal            int                 `json:"ordinal"`
-	Objective          string              `json:"objective"`
-	Execution          training.Execution  `json:"execution"`
-	ArchitectureSHA256 string              `json:"architecture_sha256"`
-	CorpusBOMSHA256    string              `json:"corpus_bom_sha256"`
-	CorpusBOM          corpus.BOM          `json:"corpus_bom"`
-	Parameters         training.Parameters `json:"parameters"`
+	Kind               string                      `json:"kind"`
+	Schema             int                         `json:"schema"`
+	Subject            string                      `json:"subject"`
+	ID                 string                      `json:"id"`
+	ModelID            string                      `json:"model_id"`
+	Stage              string                      `json:"stage"`
+	StageType          string                      `json:"stage_type"`
+	Ordinal            int                         `json:"ordinal"`
+	Objective          string                      `json:"objective"`
+	Execution          training.Execution          `json:"execution"`
+	ArchitectureSHA256 string                      `json:"architecture_sha256"`
+	CorpusBOMSHA256    string                      `json:"corpus_bom_sha256"`
+	CorpusBOM          corpus.BOM                  `json:"corpus_bom"`
+	Parameters         training.ResolvedParameters `json:"parameters"`
 }
 
 type RunRecord struct {
