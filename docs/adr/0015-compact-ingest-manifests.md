@@ -25,7 +25,13 @@ Generated manifests remain schema 1 and follow the existing compact shape:
   SHA-256;
 - one shard entry containing canonical URL, SHA-256, source name, document
   count, reference-token count, and encoded bytes;
-- compact conversion and, when applicable, compose/script provenance.
+- compact conversion and, when applicable, one compose collector pin.
+
+Generated text manifests omit `format`, `processing`, `composed_by`, source
+`files`, `usage`, and `content`, and shard `modalities`. Those reader fields
+remain supported for existing or richer manifests, but this ingestion path
+does not populate them. `record_schema` remains because it identifies the
+Parquet row contract explicitly.
 
 The acquisition digest is streamed over length-delimited accepted input facts.
 No per-input path, record, hash, or adapter array is serialized into the Git
@@ -50,6 +56,8 @@ and streams decompression without an intermediate expanded file.
 - Manifest size scales with published shard count, not source-file or document
   count.
 - Git diffs remain reviewable and match the established public-index model.
+- Static processing prose and nested composition metadata are not repeated in
+  every corpus manifest.
 - Shard and corpus summaries again report useful, interpretable token totals.
 - Canonical Parquet stays reusable across training tokenizers.
 - Token counting adds CPU work during assembly but no second corpus copy.

@@ -72,7 +72,7 @@ Implemented foundation:
 - DCO-oriented Git handoff
 - Strict YAML/JSON ingest compose detection without a separate command
 - Explicit sequential external fetcher execution into WALDO-owned temporary input
-- Compact aggregate source identity plus compose, Git, and script evidence in manifests and BOMs
+- Compact aggregate source identity plus a compose repository/commit/path collector pin
 - Successful prepared-source purge and verified retry state
 
 The direct and composed end-to-end contribution paths are complete.

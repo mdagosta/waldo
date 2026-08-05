@@ -16,8 +16,8 @@ import (
 	"github.com/openwaldo/waldo-new/internal/tokenizer"
 )
 
-// BuildManifest converts a completed assembly into a public-index-compatible
-// schema-1 manifest using additive provenance fields for record schema 1.
+// BuildManifest converts a completed assembly into the compact schema-1 shape
+// used by the public index: one source identity and one entry per shard.
 func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index.Manifest, error) {
 	if err := plan.Validate(); err != nil {
 		return index.Manifest{}, err
@@ -26,41 +26,23 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		return index.Manifest{}, fmt.Errorf("completed assembly and public object base are required")
 	}
 	name := path.Base(plan.Destination)
-	usage := index.ModalityMeasure{Samples: assembly.RetainedDocs, Items: assembly.RetainedDocs}
-	var tokens int64
-	for _, object := range assembly.Objects {
-		usage.ContentBytes += object.LogicalBytes
-		usage.Tokens += object.Tokens
-		tokens += object.Tokens
-	}
 	sourceHash, err := sourceAcquisitionIdentity(plan)
 	if err != nil {
 		return index.Manifest{}, err
 	}
 	manifest := index.Manifest{
 		Kind: "manifest", Schema: index.ManifestSchema, Name: name, Title: plan.Title,
-		Description: plan.Description, License: plan.License, Format: "parquet",
+		Description: plan.Description, License: plan.License,
 		RecordSchema: shard.TextRecordSchema,
 		Sources: []index.Source{{
 			Name: plan.Source.Name, Source: plan.Source.Name, URL: plan.Source.URL,
 			Category: plan.Source.Category, SHA256: sourceHash,
-			Usage: index.Modalities{"text": usage},
-			Content: &index.Content{
-				Types: []string{"text"}, PersonalData: "unknown",
-				Copyrighted: "unknown", MachineGenerated: "unknown",
-			},
 		}},
 		ConvertedBy: index.Conversion{
 			Tool: "waldo index ingest", Version: "0.1.0-dev",
-			Profile: "canonical-text-schema-1", Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default,
+			Collector: compactCollector(plan.Composition), Profile: "canonical-text-schema-1",
+			Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default,
 		},
-		ComposedBy: plan.Composition,
-		Processing: &index.Processing{Steps: []index.ProcessingStep{
-			{Name: "decode", Description: "Read the accepted text or projected Parquet mapping without an interchange materialization."},
-			{Name: "validate", Description: "Require scalar NUL-free UTF-8 records within the accepted size limit."},
-			{Name: "deduplicate", Description: "Retain the first occurrence of each exact SHA-256 text identity in stable acquisition order."},
-			{Name: "encode", Description: "Write canonical text record schema 1 using the manifest's pinned Parquet recipe."},
-		}},
 	}
 	for _, object := range assembly.Objects {
 		objectURL, err := contentAddressedURL(objectBase, object.SHA256)
@@ -70,19 +52,35 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		manifest.Shards = append(manifest.Shards, index.Shard{
 			URL: objectURL, SHA256: object.SHA256, Sources: []string{plan.Source.Name},
 			Docs: object.Docs, Tokens: object.Tokens, Bytes: object.Bytes,
-			Modalities: index.Modalities{"text": {
-				Samples: object.Docs, Items: object.Docs, Tokens: object.Tokens, ContentBytes: object.LogicalBytes,
-			}},
 		})
-	}
-	if tokens != usage.Tokens {
-		return index.Manifest{}, fmt.Errorf("manifest token totals are inconsistent")
 	}
 	validationPath := filepath.Join(plan.Destination, name+".json")
 	if err := index.ValidateManifest(validationPath, manifest); err != nil {
 		return index.Manifest{}, err
 	}
 	return manifest, nil
+}
+
+func compactCollector(composition *index.Composition) string {
+	if composition == nil {
+		return ""
+	}
+	repository := strings.TrimSuffix(strings.TrimSpace(composition.Repository), ".git")
+	if repository == "" {
+		repository = "local"
+	}
+	commit := strings.TrimSpace(composition.Commit)
+	if commit == "" {
+		commit = "uncommitted"
+	}
+	if composition.Dirty {
+		commit += "+dirty"
+	}
+	collector := repository + "@" + commit + ":" + filepath.ToSlash(composition.Path)
+	if composition.Dirty || composition.Commit == "" {
+		collector += "#sha256=" + composition.SHA256
+	}
+	return collector
 }
 
 func sourceAcquisitionIdentity(plan Plan) (string, error) {

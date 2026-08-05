@@ -108,7 +108,13 @@ exporter to determine which public datasets exceed the template's three-percent
 "large dataset" threshold. A shard's current `sources` list cannot apportion
 measures when several sources share one shard.
 
-Source usage is an aggregate, not a second object:
+The compact schema-1 text manifests produced by the initial ingest path do not
+persist this richer optional evidence. A fail-closed EU GPAI export must report
+the resulting gap unless another pinned input supplies it; it must not infer a
+legal disclosure fact from `docs`, `tokens`, or compressed object bytes.
+
+When present in a richer manifest, source usage is an aggregate, not a second
+object:
 
 ```json
 {

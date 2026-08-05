@@ -84,8 +84,8 @@ func TestIndexIngestComposePublishesAuditableManifestAndPurgesInputs(t *testing.
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ComposedBy == nil || len(manifest.ComposedBy.Steps) != 1 || manifest.ComposedBy.Steps[0].Name != "fetch" || len(manifest.ComposedBy.SHA256) != 64 {
-		t.Fatalf("composed_by = %+v", manifest.ComposedBy)
+	if manifest.ComposedBy != nil || !strings.Contains(manifest.ConvertedBy.Collector, ":composed.yaml#sha256=") {
+		t.Fatalf("collector = %q, composed_by = %+v", manifest.ConvertedBy.Collector, manifest.ComposedBy)
 	}
 	if len(manifest.Sources) != 1 || len(manifest.Sources[0].Files) != 0 {
 		t.Fatalf("sources = %+v", manifest.Sources)

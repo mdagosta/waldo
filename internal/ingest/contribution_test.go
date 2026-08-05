@@ -35,8 +35,11 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Schema != index.ManifestSchema || manifest.RecordSchema != 1 || len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Shards[0].Tokens <= 0 || manifest.Sources[0].Usage["text"].Samples != 1 {
+	if manifest.Schema != index.ManifestSchema || manifest.RecordSchema != 1 || len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Shards[0].Tokens <= 0 {
 		t.Fatalf("manifest = %+v", manifest)
+	}
+	if manifest.Format != "" || manifest.Processing != nil || manifest.ComposedBy != nil || len(manifest.Sources[0].Files) != 0 || len(manifest.Sources[0].Usage) != 0 || manifest.Sources[0].Content != nil || len(manifest.Shards[0].Modalities) != 0 {
+		t.Fatalf("generated manifest contains expanded metadata: %+v", manifest)
 	}
 	if manifest.ConvertedBy.Tokenizer != tokenizer.Default {
 		t.Fatalf("tokenizer = %q", manifest.ConvertedBy.Tokenizer)
@@ -45,8 +48,10 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(data, []byte(`"files"`)) {
-		t.Fatalf("manifest contains a per-input file inventory: %s", data)
+	for _, forbidden := range []string{`"files"`, `"usage"`, `"content"`, `"processing"`, `"composed_by"`, `"modalities"`, `"format"`} {
+		if bytes.Contains(data, []byte(forbidden)) {
+			t.Fatalf("manifest contains expanded field %s: %s", forbidden, data)
+		}
 	}
 	var roundTrip index.Manifest
 	if err := json.Unmarshal(data, &roundTrip); err != nil {
@@ -92,10 +97,25 @@ func TestBuildManifestSizeDoesNotScaleWithInputArtifactCount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(data) > 8<<10 {
-		t.Fatalf("manifest is %d bytes for 25,000 inputs; want at most 8 KiB", len(data))
+	if len(data) > 4<<10 {
+		t.Fatalf("manifest is %d bytes for 25,000 inputs; want at most 4 KiB", len(data))
 	}
 	if bytes.Contains(data, []byte(`"files"`)) {
 		t.Fatal("manifest contains per-input evidence")
+	}
+}
+
+func TestCompactCollectorPinsCleanAndDirtyComposes(t *testing.T) {
+	clean := &index.Composition{
+		Path: "composes/common-pile/foodista.yaml", Repository: "git@github.com:openwaldo/waldo-fetchers.git",
+		Commit: "abc123", SHA256: fmt.Sprintf("%064x", 1),
+	}
+	if got, want := compactCollector(clean), "git@github.com:openwaldo/waldo-fetchers@abc123:composes/common-pile/foodista.yaml"; got != want {
+		t.Fatalf("clean collector = %q, want %q", got, want)
+	}
+	dirty := *clean
+	dirty.Dirty = true
+	if got, want := compactCollector(&dirty), "git@github.com:openwaldo/waldo-fetchers@abc123+dirty:composes/common-pile/foodista.yaml#sha256="+dirty.SHA256; got != want {
+		t.Fatalf("dirty collector = %q, want %q", got, want)
 	}
 }

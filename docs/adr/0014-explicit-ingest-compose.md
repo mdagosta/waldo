@@ -39,12 +39,12 @@ script executability, script hashes, and available Git evidence. It does not
 execute scripts, create staging state, contact sources, publish, or write an
 index contribution.
 
-The generated manifest records compose path and SHA-256; Git repository,
-commit, and dirty status when discoverable; each script path and SHA-256; and
-one aggregate identity for the complete prepared acquisition. Per-artifact
-details remain execution evidence and are not copied into the Git manifest.
-Environment and secret values are never persisted. ADR 0015 fixes this compact
-boundary explicitly.
+The generated manifest uses the existing `converted_by.collector` field to pin
+the compose repository, commit, and path. Dirty or uncommitted compositions
+are marked and add the compose SHA-256. Script and per-artifact details remain
+execution evidence and are not copied into the Git manifest. Environment and
+secret values are never persisted. ADR 0015 fixes this compact boundary
+explicitly.
 
 No other command executes index or fetcher code. Index inspection,
 verification, BOM construction, export, and model workflows remain data-only.

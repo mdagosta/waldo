@@ -270,15 +270,16 @@ Successful runs purge the entire prepared input workspace. Failed runs retain
 verified preparation state beneath `ingest.staging`; an unchanged retry reuses
 it, while a partially executed preparation is cleared and rerun.
 
-Generated manifests retain the compose content hash, repository/commit when
-discoverable, dirty-checkout status, and every executed script path and hash.
-The source record contains one aggregate acquisition digest; it never embeds a
-per-file or per-record inventory. The manifest remains compact Git metadata,
-with one entry per published Parquet shard containing its URL, SHA-256,
-document count, reference-token estimate, and encoded byte size. Input details
-remain in bounded staging state while the run needs them and in the canonical
-Parquet rows where record-level evidence belongs. Secrets and environment
-values are never written to the manifest.
+Generated manifests use the established compact index shape. The source record
+contains one aggregate acquisition digest; it never embeds a per-file or
+per-record inventory. A composed run uses the existing
+`converted_by.collector` string to pin repository, commit, and compose path.
+Dirty or uncommitted composes are marked and include the compose SHA-256. The
+manifest has one entry per published Parquet shard containing its URL,
+SHA-256, document count, reference-token estimate, and encoded byte size.
+Detailed processing prose, script arrays, modality duplication, and input
+inventories stay out of Git. Secrets and environment values are never written
+to the manifest.
 
 Publication is configured once through `waldo config set`; ingestion
 has no second per-run destination or alternate partial execution mode.
