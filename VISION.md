@@ -61,8 +61,6 @@ future capabilities and must never be implied by the baseline BOM.
 - Automated pull-request creation.
 - Fetcher implementations in this repository.
 - SFT, preference optimization, and frontier-scale orchestration.
-- TorchTitan execution and hardware attestation.
-- Model download until its inherited provenance semantics are designed.
 - Multiple competing configuration mechanisms.
 - Compatibility with every old CLI spelling.
 

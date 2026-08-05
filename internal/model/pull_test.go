@@ -24,7 +24,7 @@ func TestDownloadHuggingFaceModelCreatesVerifiedOrigin(t *testing.T) {
 	client := &http.Client{Transport: huggingFaceTransport(t, files, revision)}
 	root := t.TempDir()
 	var phases []string
-	inspection, err := (Downloader{Root: root, Endpoint: "https://hub.test", Client: client, Token: "secret", Now: func() time.Time { return time.Date(2026, 8, 5, 1, 2, 3, 0, time.UTC) }, Progress: func(progress DownloadProgress) { phases = append(phases, progress.Phase) }}).Download(t.Context(), "tiny", "huggingface://org/tiny")
+	inspection, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client, Token: "secret", Now: func() time.Time { return time.Date(2026, 8, 5, 1, 2, 3, 0, time.UTC) }, Progress: func(progress PullProgress) { phases = append(phases, progress.Phase) }}).Pull(t.Context(), "tiny", "huggingface://org/tiny")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestDownloadRejectsUnsupportedTokenizerWithoutPublishing(t *testing.T) {
 	files := huggingFaceFixture(t, architecture, "LlamaTokenizerFast")
 	client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("b", 40))}
 	root := t.TempDir()
-	_, err := (Downloader{Root: root, Endpoint: "https://hub.test", Client: client}).Download(t.Context(), "bad", "huggingface://org/bad@main")
+	_, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "bad", "huggingface://org/bad@main")
 	if err == nil || !strings.Contains(err.Error(), "currently supports OpenWALDOByteTokenizer") {
 		t.Fatalf("error = %v", err)
 	}

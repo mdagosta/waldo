@@ -50,13 +50,13 @@ waldo model rm small
 
 ## Downloaded open-weight origins
 
-`model download` acquires training-quality Hugging Face Safetensors, resolves
+`model pull` acquires training-quality Hugging Face Safetensors, resolves
 the requested reference to an immutable repository commit, hashes every source
 artifact, validates the architecture, tokenizer, tensor names, shapes, and
 precision, and streams the tensor bytes into WALDO's canonical names:
 
 ```bash
-waldo model download llama-base huggingface://organization/model@main
+waldo model pull llama-base huggingface://organization/model@main
 waldo model train llama-base core/books --epochs 1
 ```
 
@@ -238,7 +238,7 @@ parameters are rejected. Corpus values are index paths, never raw directories
 or corpus exports. Explicit paths discover their checkout; logical paths use
 the current or configured checkout.
 
-When `base` is present, it must name a downloaded model whose origin remains
+When `base` is present, it must name a pulled model whose origin remains
 its current weights. WALDO verifies every origin artifact, checks the optional
 hash assertion and exact architecture equality, then initializes the new model
 from that origin. A compose never mutates the named base model.
@@ -261,7 +261,7 @@ into the configured model root.
 ├── PLAN.json
 ├── MODEL.json
 ├── MODEL-BOM.json
-├── ORIGIN-BOM.json        # downloaded models and derived composes only
+├── ORIGIN-BOM.json        # pulled models and derived composes only
 ├── origin/artifacts/      # one normalized, verified starting checkpoint
 └── runs/
     └── 0001-<stage>-<run-id>/

@@ -358,10 +358,13 @@ func TestModelOwnsLifecycleCommands(t *testing.T) {
 	if code := Run([]string{"model", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
-	for _, want := range []string{"init", "list", "summary", "bom", "forecast", "train", "compose", "export", "chat", "rm"} {
+	for _, want := range []string{"init", "pull", "list", "summary", "bom", "forecast", "train", "compose", "export", "chat", "rm"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("model help does not contain %s:\n%s", want, stdout.String())
 		}
+	}
+	if strings.Contains(stdout.String(), "download") {
+		t.Fatalf("model help retains removed download command:\n%s", stdout.String())
 	}
 }
 

@@ -12,8 +12,8 @@ training run would invent observations that WALDO never made.
 
 ## Decision
 
-`waldo model download` defaults to a Hugging Face Safetensors repository. It
-resolves the requested reference to an immutable commit, downloads into private
+`waldo model pull` defaults to a Hugging Face Safetensors repository. It
+resolves the requested reference to an immutable commit, pulls into private
 staging, hashes every selected source artifact, and validates architecture,
 tokenizer, tensor names, shapes, and precision before publishing anything.
 
@@ -25,7 +25,7 @@ normalized artifacts. The immutable model plan pins the origin-BOM hash. The
 aggregate model BOM selects that origin until a later complete, non-simulated
 run produces current weights.
 
-A model compose may name a local downloaded base and optionally assert its
+A model compose may name a local pulled base and optionally assert its
 origin hash. The architecture must match exactly and the origin must still be
 current. The new plan pins the resolved origin; the base is never mutated.
 
@@ -37,7 +37,7 @@ are forbidden.
 
 ## Consequences
 
-- Downloaded weights can be trained, composed, inspected, chatted with where a
+- Pulled weights can be trained, composed, inspected, chatted with where a
   runtime supports them, and exported through the normal lifecycle.
 - The exact upstream bytes remain auditable by hash and immutable repository
   URI without storing redundant source weights locally.

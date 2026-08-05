@@ -414,13 +414,13 @@ Changing `lookaside` preserves the existing `lookaside.region` and
 
 ```bash
 waldo model init smoke --preset 10m
-waldo model download llama-base huggingface://organization/model@main
+waldo model pull llama-base huggingface://organization/model@main
 waldo model train smoke core/books
 waldo model train smoke core/books --epochs 3
 waldo model compose smoke configs/smoke.yaml
 ```
 
-The CLI name is the local model handle. `model download` resolves a Hugging
+The CLI name is the local model handle. `model pull` resolves a Hugging
 Face reference to an immutable revision and publishes a model only after its
 source files, architecture, tokenizer, and Safetensors contract validate. It
 honors `HF_TOKEN` and the standard Hugging Face token file. The initial profile
@@ -466,7 +466,7 @@ waldo model bom smoke
 ```
 
 The model BOM is a portable inventory rooted at the model directory. A
-downloaded model selects its verified origin until a later real run supersedes
+pulled model selects its verified origin until a later real run supersedes
 it. Artifact paths include the complete run directory, label simulated output
 and artifact roles explicitly, and identify the current usable weights.
 Absolute machine paths are intentionally excluded. The same paths therefore

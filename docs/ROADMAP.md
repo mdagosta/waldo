@@ -198,7 +198,7 @@ record can be inspected.
   single-node distributed TorchTitan on Linux.**
 - Training-quality Hugging Face Safetensors download with immutable repository
   revision, source inventory, origin BOM, lossless name normalization, direct
-  continued training, and downloaded-base composes. **Implemented for the
+  continued training, and pulled-base composes. **Implemented for the
   standard Llama plus OpenWALDO byte-tokenizer compatibility profile.**
 - Held-out evaluation
 - Fork and lineage

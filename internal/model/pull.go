@@ -19,19 +19,19 @@ import (
 	"github.com/openwaldo/waldo/internal/modelweights"
 )
 
-type DownloadProgress struct {
+type PullProgress struct {
 	Phase   string `json:"phase"`
 	File    string `json:"file,omitempty"`
 	Message string `json:"message"`
 }
 
-type Downloader struct {
+type Puller struct {
 	Root     string
 	Client   *http.Client
 	Endpoint string
 	Token    string
 	Now      func() time.Time
-	Progress func(DownloadProgress)
+	Progress func(PullProgress)
 }
 
 type hubModel struct {
@@ -50,27 +50,27 @@ var huggingFaceRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Z
 var huggingFaceCommit = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 var huggingFaceShard = regexp.MustCompile(`^model-[0-9]{5}-of-[0-9]{5}\.safetensors$`)
 
-func (downloader Downloader) Download(ctx context.Context, name, source string) (Inspection, error) {
+func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection, error) {
 	if err := ValidateName(name); err != nil {
 		return Inspection{}, err
 	}
-	if downloader.Root == "" {
+	if puller.Root == "" {
 		return Inspection{}, fmt.Errorf("model root is required")
 	}
 	repository, requested, err := parseHuggingFaceSource(source)
 	if err != nil {
 		return Inspection{}, err
 	}
-	destination := filepath.Join(downloader.Root, name)
+	destination := filepath.Join(puller.Root, name)
 	if _, err := os.Stat(destination); err == nil {
 		return Inspection{}, fmt.Errorf("model %q already exists", name)
 	} else if !os.IsNotExist(err) {
 		return Inspection{}, err
 	}
-	if err := os.MkdirAll(downloader.Root, 0o755); err != nil {
+	if err := os.MkdirAll(puller.Root, 0o755); err != nil {
 		return Inspection{}, err
 	}
-	temporary, err := os.MkdirTemp(downloader.Root, ".waldo-download-*")
+	temporary, err := os.MkdirTemp(puller.Root, ".waldo-pull-*")
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -80,22 +80,22 @@ func (downloader Downloader) Download(ctx context.Context, name, source string) 
 			_ = os.RemoveAll(temporary)
 		}
 	}()
-	client := downloader.Client
+	client := puller.Client
 	if client == nil {
 		client = &http.Client{}
 	}
-	endpoint := strings.TrimRight(downloader.Endpoint, "/")
+	endpoint := strings.TrimRight(puller.Endpoint, "/")
 	if endpoint == "" {
 		endpoint = strings.TrimRight(os.Getenv("HF_ENDPOINT"), "/")
 		if endpoint == "" {
 			endpoint = "https://huggingface.co"
 		}
 	}
-	token := downloader.Token
+	token := puller.Token
 	if token == "" {
 		token = huggingFaceToken()
 	}
-	downloader.report(DownloadProgress{Phase: "resolve", Message: fmt.Sprintf("resolving %s@%s", repository, requested)})
+	puller.report(PullProgress{Phase: "resolve", Message: fmt.Sprintf("resolving %s@%s", repository, requested)})
 	metadataURL := endpoint + "/api/models/" + repository + "/revision/" + url.PathEscape(requested)
 	var metadata hubModel
 	if err := getJSON(ctx, client, metadataURL, token, &metadata); err != nil {
@@ -118,7 +118,7 @@ func (downloader Downloader) Download(ctx context.Context, name, source string) 
 		sizes[sibling.Name] = sibling.Size
 	}
 	for _, filename := range names {
-		downloader.report(DownloadProgress{Phase: "download", File: filename, Message: "downloading " + filename})
+		puller.report(PullProgress{Phase: "download", File: filename, Message: "pulling " + filename})
 		target := filepath.Join(sourceDirectory, filepath.FromSlash(filename))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return Inspection{}, err
@@ -155,7 +155,7 @@ func (downloader Downloader) Download(ctx context.Context, name, source string) 
 		}
 	}
 	sort.Strings(weightFiles)
-	downloader.report(DownloadProgress{Phase: "normalize", Message: fmt.Sprintf("normalizing %d Safetensors file(s)", len(weightFiles))})
+	puller.report(PullProgress{Phase: "normalize", Message: fmt.Sprintf("normalizing %d Safetensors file(s)", len(weightFiles))})
 	descriptors, err := modelweights.NormalizeHuggingFace(weightFiles, filepath.Join(artifactDirectory, "model.safetensors"))
 	if err != nil {
 		return Inspection{}, fmt.Errorf("normalize Hugging Face weights: %w", err)
@@ -199,8 +199,8 @@ func (downloader Downloader) Download(ctx context.Context, name, source string) 
 		return Inspection{}, err
 	}
 	now := time.Now
-	if downloader.Now != nil {
-		now = downloader.Now
+	if puller.Now != nil {
+		now = puller.Now
 	}
 	created := formatTime(now())
 	record := ModelRecord{
@@ -224,11 +224,11 @@ func (downloader Downloader) Download(ctx context.Context, name, source string) 
 		return Inspection{}, err
 	}
 	if err := os.Rename(temporary, destination); err != nil {
-		return Inspection{}, fmt.Errorf("publish downloaded model %q: %w", name, err)
+		return Inspection{}, fmt.Errorf("publish pulled model %q: %w", name, err)
 	}
 	committed = true
-	downloader.report(DownloadProgress{Phase: "complete", Message: fmt.Sprintf("downloaded %s at %s", metadata.ID, metadata.SHA)})
-	return Inspect(downloader.Root, name)
+	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s at %s", metadata.ID, metadata.SHA)})
+	return Inspect(puller.Root, name)
 }
 
 func parseHuggingFaceSource(source string) (string, string, error) {
@@ -344,13 +344,13 @@ func validateDownloadedTokenizer(directory string, architecture Architecture) er
 func validateDownloadedTensors(architecture Architecture, actual map[string]modelweights.Descriptor) error {
 	expected := expectedTensorShapes(architecture)
 	if len(actual) != len(expected) {
-		return fmt.Errorf("downloaded model has %d tensors; WALDO architecture requires %d", len(actual), len(expected))
+		return fmt.Errorf("pulled model has %d tensors; WALDO architecture requires %d", len(actual), len(expected))
 	}
 	dtype := map[string]string{"float32": "F32", "float16": "F16", "bfloat16": "BF16"}[architecture.ParameterDType]
 	for name, shape := range expected {
 		descriptor, ok := actual[name]
 		if !ok {
-			return fmt.Errorf("downloaded model is missing tensor %s", name)
+			return fmt.Errorf("pulled model is missing tensor %s", name)
 		}
 		if descriptor.DType != dtype || !equalShape(descriptor.Shape, shape) {
 			return fmt.Errorf("downloaded tensor %s is %s %v; expected %s %v", name, descriptor.DType, descriptor.Shape, dtype, shape)
@@ -533,9 +533,9 @@ func sourceRole(name string) string {
 		return "source-documentation"
 	}
 }
-func (downloader Downloader) report(progress DownloadProgress) {
-	if downloader.Progress != nil {
-		downloader.Progress(progress)
+func (puller Puller) report(progress PullProgress) {
+	if puller.Progress != nil {
+		puller.Progress(progress)
 	}
 }
 

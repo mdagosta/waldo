@@ -53,7 +53,7 @@ flowchart TB
     B --> C["Corpus export"]
     C --> X["Your own tools<br/>audit · validate · train from scratch<br/>or combine with open weights"]
     N["New blank model<br/>architecture declared in compose"] --> MC["Compose configuration"]
-    O["Existing open-weight model<br/>waldo model download + origin BOM"] --> MC
+    O["Existing open-weight model<br/>waldo model pull + origin BOM"] --> MC
     B --> MC
     MC --> T["Forecast and train<br/>or continue training"]
     T --> M["Run and model BOMs<br/>data + starting-point lineage"]
@@ -74,7 +74,7 @@ flowchart TB
    training stack, used to train from scratch, or paired with an open-weight
    base model for continued training or fine-tuning.
 4. A WALDO compose can start with a blank architecture or a locally managed
-   open-weight base. `model download` resolves Hugging Face Safetensors to an
+   open-weight base. `model pull` resolves Hugging Face Safetensors to an
    immutable revision, validates and losslessly normalizes them, and pins a
    model-origin BOM before the same compose lifecycle runs. General tokenizer
    support and supervised fine-tuning objectives remain pending.
@@ -383,7 +383,7 @@ directly into WALDO's managed model root:
 
 ```mermaid
 flowchart TB
-    H["Hugging Face Safetensors"] --> D["waldo model download<br/><br/>• pin repository revision<br/>• hash every source artifact<br/>• read architecture and tokenizer<br/>• validate compatibility<br/>• map tensor names into WALDO's contract<br/>• preserve tensor values and precision<br/>• record an origin BOM"]
+    H["Hugging Face Safetensors"] --> D["waldo model pull<br/><br/>• pin repository revision<br/>• hash every source artifact<br/>• read architecture and tokenizer<br/>• validate compatibility<br/>• map tensor names into WALDO's contract<br/>• preserve tensor values and precision<br/>• record an origin BOM"]
     D --> W["WALDO-managed Safetensors<br/><br/>• train further<br/>• compose<br/>• chat where supported<br/>• export"]
     W --> HF["Hugging Face"]
     W --> MLX["MLX"]
@@ -395,7 +395,7 @@ flowchart TB
 ```
 
 ```bash
-waldo model download llama-base \
+waldo model pull llama-base \
   huggingface://organization/model@<immutable-revision>
 
 waldo model summary llama-base
@@ -404,7 +404,7 @@ waldo model train llama-base core/books --epochs 1
 waldo model export llama-base ./llama-continued --format huggingface
 ```
 
-`model download` defaults to a Hugging Face model directory containing
+`model pull` defaults to a Hugging Face model directory containing
 Safetensors, architecture configuration, and tokenizer files. A revision may
 be supplied explicitly; otherwise WALDO will resolve the requested reference
 to an immutable repository revision before accepting any artifacts. Native
@@ -434,7 +434,7 @@ of silently retokenizing a model or changing its tensor values.
 
 GGUF is intentionally not the default download format because it is commonly
 quantized for inference. WALDO will derive GGUF, Ollama, and MLX packages from
-the retained training-quality weights during export. A later `model upload`
+the retained training-quality weights during export. A later `model push`
 command can publish one deliberately selected representation back to Hugging
 Face without bundling redundant weight formats.
 
@@ -498,8 +498,8 @@ Working end to end today:
   offline-verifiable BOMs, plus local shard summary, audit, record listing, and
   individual record export;
 - **Model lifecycle:** immutable architectures, append-only run records,
-  forecasting, pinned open-weight downloads, direct index-backed training,
-  downloaded-base and blank-architecture model composes, model inspection, and
+  forecasting, pinned open-weight pulls, direct index-backed training,
+  pulled-base and blank-architecture model composes, model inspection, and
   complete data-to-weight provenance;
 - **Execution:** real MLX training and generation on Apple Silicon,
   single-process PyTorch training on Linux CPU, NVIDIA CUDA, or AMD ROCm, and
@@ -523,7 +523,7 @@ Still deliberately pending:
 - **Additional release formats:** quantized GGUF variants and rendering the
   exact official editable EU template instead of only its versioned JSON
   mapping; and
-- **Distribution:** Hugging Face model upload, installable packages, migration
+- **Distribution:** Hugging Face model push, installable packages, migration
   guidance, website reconciliation, and a supported public release.
 
 WALDO intentionally does not commit index changes or open pull requests. It

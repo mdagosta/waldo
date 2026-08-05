@@ -198,25 +198,25 @@ func runModelInit(context Context, args []string, stdout, stderr io.Writer) erro
 	return nil
 }
 
-func runModelDownload(context Context, args []string, stdout, stderr io.Writer) error {
+func runModelPull(context Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) != 2 {
-		return usageError{message: "usage: waldo model download <name> <huggingface://organization/repository[@revision]> [--json]"}
+		return usageError{message: "usage: waldo model pull <name> <huggingface://organization/repository[@revision]> [--json]"}
 	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
 	}
-	downloader := model.Downloader{Root: root, Client: &http.Client{}, Progress: func(progress model.DownloadProgress) {
+	puller := model.Puller{Root: root, Client: &http.Client{}, Progress: func(progress model.PullProgress) {
 		fmt.Fprintln(stderr, progress.Message)
 	}}
-	inspection, err := downloader.Download(context.Execution, args[0], args[1])
+	inspection, err := puller.Pull(context.Execution, args[0], args[1])
 	if err != nil {
 		return err
 	}
 	if context.JSON {
 		return writeJSON(stdout, inspection)
 	}
-	fmt.Fprintf(stdout, "downloaded model %s\n", inspection.Model.Name)
+	fmt.Fprintf(stdout, "pulled model %s\n", inspection.Model.Name)
 	fmt.Fprintf(stdout, "  location      %s\n", inspection.Path)
 	fmt.Fprintf(stdout, "  model id      %s\n", shortModelHash(inspection.Model.ID))
 	fmt.Fprintf(stdout, "  origin        %s@%s\n", inspection.Origin.Source.Repository, shortModelHash(inspection.Origin.Source.Revision))
