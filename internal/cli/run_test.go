@@ -3,8 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -12,11 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/openwaldo/waldo-new/internal/acquire"
 	"github.com/openwaldo/waldo-new/internal/config"
-	"github.com/openwaldo/waldo-new/internal/ingest"
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
@@ -77,59 +72,6 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	}
 	if len(output.Identity) != 64 || output.Plan.Kind != "waldo-ingest-plan" || output.Plan.Destination != "core/example" || output.Plan.Writer.RecordSchema != 1 || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Adapter != "markdown" {
 		t.Fatalf("index ingest output = %+v", output)
-	}
-}
-
-func TestIndexIngestUsesVerifiedAcquisitionFacts(t *testing.T) {
-	directory := t.TempDir()
-	dataPath := filepath.Join(directory, "data", "document.txt")
-	if err := os.MkdirAll(filepath.Dir(dataPath), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	data := []byte("training document")
-	if err := os.WriteFile(dataPath, data, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	digest := sha256.Sum256(data)
-	record := acquire.Record{
-		Kind: "waldo-acquisition", Schema: 1,
-		Adapter:   acquire.Identity{Name: "test", Revision: "test-schema-1"},
-		Started:   time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC).Format(time.RFC3339),
-		Completed: time.Date(2026, 8, 4, 12, 0, 1, 0, time.UTC).Format(time.RFC3339),
-		Source:    acquire.Source{Name: "org/set", Origin: "Test dataset", Version: "commit123", URL: "https://example.test/dataset", Category: "public-dataset", CollectedTo: "2026-08"},
-		Proposal:  acquire.Proposal{Title: "Test Dataset", Description: "Fetched test data."},
-		Artifacts: []acquire.Artifact{{Path: "data/document.txt", URL: "https://example.test/data/document.txt", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data)), Format: "file"}},
-	}
-	if err := acquire.Write(directory, record); err != nil {
-		t.Fatal(err)
-	}
-	root := emptyCLIIndex(t)
-	var stdout, stderr bytes.Buffer
-	code := Run([]string{"index", "ingest", directory, filepath.Join(root, "core", "example"), "--license", "CC0-1.0", "--dry-run", "--json"}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("Run() code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
-	}
-	var output struct {
-		Plan ingest.Plan `json:"plan"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-		t.Fatal(err)
-	}
-	if output.Plan.Title != "Test Dataset" || output.Plan.Source.Name != "org-set" || output.Plan.Source.URL != record.Source.URL || output.Plan.Source.Version != "commit123" || output.Plan.Source.CollectedTo != "2026-08" || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Artifact.SourceURL != record.Artifacts[0].URL {
-		t.Fatalf("acquisition plan = %+v", output.Plan)
-	}
-}
-
-func TestParseFetchHuggingFaceUsesPositionalIdentity(t *testing.T) {
-	request, err := parseFetchHuggingFace([]string{"org/set", "data/train.parquet", "/tmp/deposit", "--revision", "refs/convert/parquet"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if request.Dataset != "org/set" || request.File != "data/train.parquet" || request.Output != "/tmp/deposit" || request.Revision != "refs/convert/parquet" {
-		t.Fatalf("request = %+v", request)
-	}
-	if _, err := parseFetchHuggingFace([]string{"org/set", "data/train.parquet", "/tmp/deposit", "--output", "other"}); err == nil {
-		t.Fatal("removed flag was accepted")
 	}
 }
 
@@ -343,12 +285,12 @@ func TestRootHelpLocksCommandVocabulary(t *testing.T) {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 	help := stdout.String()
-	for _, want := range []string{"fetch", "index", "lookaside", "model", "bom", "config"} {
+	for _, want := range []string{"index", "lookaside", "model", "bom", "config"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("root help does not contain %q:\n%s", want, help)
 		}
 	}
-	for _, unwanted := range []string{"store", "corpus", "compose"} {
+	for _, unwanted := range []string{"store", "corpus", "compose", "fetch"} {
 		if strings.Contains(help, unwanted) {
 			t.Errorf("root help unexpectedly contains %q:\n%s", unwanted, help)
 		}

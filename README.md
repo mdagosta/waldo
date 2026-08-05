@@ -28,11 +28,6 @@ its training BOMs to the pinned Commission template fields and reports missing
 facts without claiming legal compliance. Other commands remain visible as an
 honest roadmap.
 
-Phase 5 begins with a bounded Hugging Face adapter. It streams one explicitly
-named, upstream-SHA-pinned dataset file into a local deposit, writes
-`ACQUISITION.json` last, and stops. Ingestion verifies the record and reuses its
-source facts without treating raw license evidence as a curated corpus license.
-
 Recursive `waldo index verify` checks index structure plus the reachability and
 declared size of every canonical object using header-only requests. Use
 `--offline` for metadata alone or `--objects` to download and hash every byte.

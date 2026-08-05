@@ -37,7 +37,6 @@ type ProbeTotals struct {
 
 type Artifact struct {
 	Path        string       `json:"path"`
-	SourceURL   string       `json:"source_url,omitempty"`
 	SHA256      string       `json:"sha256"`
 	Bytes       int64        `json:"bytes"`
 	Format      string       `json:"format"`

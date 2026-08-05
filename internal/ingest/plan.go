@@ -28,13 +28,9 @@ type Plan struct {
 }
 
 type PlanSource struct {
-	Name          string `json:"name"`
-	Origin        string `json:"origin,omitempty"`
-	Version       string `json:"version,omitempty"`
-	URL           string `json:"url"`
-	Category      string `json:"category"`
-	CollectedFrom string `json:"collected_from,omitempty"`
-	CollectedTo   string `json:"collected_to,omitempty"`
+	Name     string `json:"name"`
+	URL      string `json:"url"`
+	Category string `json:"category"`
 }
 
 type WriterPlan struct {

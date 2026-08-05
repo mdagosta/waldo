@@ -5,10 +5,11 @@ They download upstream material into a user-selected local directory and
 record what they observed. A fetch ends there: it does not ingest, publish to a
 lookaside, mutate an index, or start model training.
 
-The first implemented adapter acquires one explicitly named Hugging Face
-dataset file. The one-file boundary is deliberate: the first command cannot
-accidentally begin downloading an entire large dataset. Multi-file selection
-can be added after its selection UX is reviewed.
+The first fetcher slice will finalize the local acquisition schema after the
+model-lifecycle phase. Until then, this document defines its boundary. The
+already implemented consumer-side counterpart is `waldo index export`, which
+materializes a selected indexed corpus and its OpenWALDO BOM into a local
+directory.
 
 ## A fetcher owns
 
@@ -46,22 +47,16 @@ can be added after its selection UX is reviewed.
 - Manifest generation and index mutation
 - Provenance and compatibility validation
 
-## Schema-1 local output
+## Local output shapes
 
-A deposit contains raw artifacts beneath `data/` and exactly one
-`ACQUISITION.json`. The record is written last and atomically. It pins the
-adapter revision, acquisition times, upstream source and resolved revision,
-raw license evidence, and each artifact's path, URL, SHA-256, size, format, and
-media type.
+The contract may describe:
 
-The first adapter accepts only Hugging Face LFS files for which upstream
-exposes both SHA-256 and size. It streams into `.part`, verifies the completed
-bytes, renames atomically, and only then writes the record. A completed rerun
-hashes the local artifact and becomes a no-op. An interrupted partial is
-discarded rather than byte-resumed without independent proof.
+1. Raw acquired artifacts plus an acquisition record
+2. A normalized, sorted deposit optimized for large columnar upstreams
 
-A deposit carries faithfully copied upstream evidence. It does not carry
-WALDO's conclusions about canonical licenses, languages, or token counts.
+A deposit carries documents and faithfully copied upstream evidence. It does
+not carry WALDO's conclusions about canonical licenses, document hashes,
+languages, or token counts.
 
 The local acquisition must retain enough evidence for the source and corpus
 manifests to support the EU GPAI training-content projection described in
@@ -84,26 +79,3 @@ do not make a legal-compliance determination.
 - A fetcher name is not provenance; the handoff must record concrete upstream
   artifacts and hashes.
 - A fetcher does not define index or shard schemas.
-
-## First command
-
-```bash
-waldo fetch huggingface org/dataset data/train.parquet /tmp/dataset \
-  --revision main
-```
-
-`--revision` is the only adapter option. It selects a branch, tag, or commit;
-when omitted it defaults to `main`. Either way, the record pins the resolved
-commit. `HF_TOKEN` is read from the environment for gated datasets and is
-never persisted.
-
-After review, ingestion consumes the deposit directly:
-
-```bash
-waldo index ingest /tmp/dataset /path/to/index/core/example \
-  --license CC-BY-4.0
-```
-
-The license remains an explicit curator assertion. The verified acquisition
-supplies the source facts and corpus proposal, which normal ingestion flags may
-override.

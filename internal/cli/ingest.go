@@ -5,12 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
-	"github.com/openwaldo/waldo-new/internal/acquire"
 	"github.com/openwaldo/waldo-new/internal/config"
 	waldoindex "github.com/openwaldo/waldo-new/internal/index"
 	"github.com/openwaldo/waldo-new/internal/ingest"
@@ -41,56 +38,10 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			return usageError{message: "index ingest needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`"}
 		}
 	}
-	var acquisition *acquire.Record
-	var artifactEvidence map[string]acquire.Artifact
-	if len(options.Inputs) == 1 {
-		inputInfo, inputErr := os.Stat(options.Inputs[0])
-		if inputErr != nil {
-			return inputErr
-		}
-		recordPath := ""
-		if inputInfo.IsDir() {
-			recordPath = filepath.Join(options.Inputs[0], acquire.RecordName)
-		}
-		if recordPath != "" {
-			_, inputErr = os.Stat(recordPath)
-		}
-		if recordPath != "" && inputErr == nil {
-			record, directory, loadErr := acquire.Load(recordPath)
-			if loadErr != nil {
-				return loadErr
-			}
-			if err := acquire.Verify(record, directory); err != nil {
-				return fmt.Errorf("verify acquisition deposit: %w", err)
-			}
-			acquisition = &record
-			options.Inputs = nil
-			artifactEvidence = map[string]acquire.Artifact{}
-			for _, artifact := range record.Artifacts {
-				absolute := filepath.Join(directory, filepath.FromSlash(artifact.Path))
-				options.Inputs = append(options.Inputs, absolute)
-				artifactEvidence[absolute] = artifact
-			}
-			applyAcquisitionDefaults(&options.Request, record)
-		} else if recordPath != "" && inputErr != nil && !os.IsNotExist(inputErr) {
-			return inputErr
-		}
-	}
-	if options.Request.Source.Name == "" {
-		options.Request.Source.Name = path.Base(strings.TrimSuffix(options.Request.Destination, "/"))
-	}
-	if err := validateIngestFacts(options.Request, acquisition != nil); err != nil {
-		return err
-	}
 	execution := ingest.WithProgress(context.Execution, ingestProgressReporter(stderr, context.JSON))
 	probe, err := ingest.ProbePaths(execution, options.Inputs)
 	if err != nil {
 		return err
-	}
-	for position := range probe.Artifacts {
-		if evidence, ok := artifactEvidence[probe.Artifacts[position].Path]; ok {
-			probe.Artifacts[position].SourceURL = evidence.URL
-		}
 	}
 	plan, err := ingest.NewPlan(probe, options.Request)
 	if err != nil {
@@ -282,37 +233,12 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 	}
 	options.Request.Destination = options.Inputs[1]
 	options.Inputs = options.Inputs[:1]
-	return options, nil
-}
-
-func applyAcquisitionDefaults(request *ingest.PlanRequest, record acquire.Record) {
-	if request.Title == "" {
-		request.Title = record.Proposal.Title
-	}
-	if request.Description == "" {
-		request.Description = record.Proposal.Description
+	request := &options.Request
+	if request.Title == "" || request.License == "" || request.Source.URL == "" || request.Source.Category == "" {
+		return indexIngestOptions{}, usageError{message: "index ingest requires --title, --license, --source, and --source-category"}
 	}
 	if request.Source.Name == "" {
-		request.Source.Name = strings.ReplaceAll(record.Source.Name, "/", "-")
+		request.Source.Name = path.Base(strings.TrimSuffix(request.Destination, "/"))
 	}
-	if request.Source.URL == "" {
-		request.Source.URL = record.Source.URL
-	}
-	if request.Source.Category == "" {
-		request.Source.Category = record.Source.Category
-	}
-	request.Source.Origin = record.Source.Origin
-	request.Source.Version = record.Source.Version
-	request.Source.CollectedFrom = record.Source.CollectedFrom
-	request.Source.CollectedTo = record.Source.CollectedTo
-}
-
-func validateIngestFacts(request ingest.PlanRequest, fromAcquisition bool) error {
-	if request.Title == "" || request.License == "" || request.Source.URL == "" || request.Source.Category == "" {
-		if fromAcquisition {
-			return usageError{message: "the acquisition supplies source facts, but index ingest still requires --license and any missing title"}
-		}
-		return usageError{message: "index ingest requires --title, --license, --source, and --source-category when no ACQUISITION.json is present"}
-	}
-	return nil
+	return options, nil
 }

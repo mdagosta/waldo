@@ -101,20 +101,12 @@ Exit: orchestration and provenance work end to end without Python or a GPU.
 
 ## Phase 5: integrated source fetchers
 
-Implemented foundation:
-
 - Narrow acquisition interface inside the WALDO binary
-- First bounded Hugging Face file adapter
-- Artifact-level resumable streaming into an explicit local directory
-- Atomic schema-1 `ACQUISITION.json` evidence
-- Verified handoff to `waldo index ingest` without repeated source flags
+- First reviewed source adapter
+- Resumable streaming downloads into an explicit local directory
+- Atomic schema-1 acquisition evidence
+- Reviewable handoff to `waldo index ingest`
 - No implicit lookaside publication, index mutation, or model execution
-
-Remaining extensions:
-
-- Reviewed multi-file selection semantics
-- Additional source-specific adapters
-- Acquisition inspection as a standalone command
 
 Exit: one upstream source can be acquired reproducibly into a local directory
 and then ingested through a separate explicit command.
