@@ -29,10 +29,10 @@ simulated.
 
 Backend resolution happens before a run record is created. A missing or
 unusable selected backend writes a warning to standard error, then fails with
-platform-appropriate official installation guidance. The current executable
-adapter is MLX. Linux discovery and selection are implemented, while the
-TorchTitan and PyTorch execution adapters remain roadmap work; detecting an
-installed framework therefore reports that adapter gap explicitly.
+platform-appropriate official installation guidance. MLX and single-process
+PyTorch are executable adapters. PyTorch verifies a real operation on its
+selected Linux CPU, NVIDIA CUDA, or AMD ROCm device before a run is created.
+TorchTitan remains a distinct distributed adapter gap.
 
 ## Basic commands
 
@@ -138,13 +138,12 @@ instruction-following behavior requires later supervised fine-tuning and a
 pinned chat template. Generation is ephemeral and does not mutate lifecycle
 state or claim a new BOM observation.
 
-The first MLX slice supports `decoder-transformer` architectures pinned to the
-built-in `byte@builtin-byte-schema-1` tokenizer with vocabulary size 259. This
-includes the 10m, 35m, and 90m presets. Unsupported tokenizers fail during
-backend resolution before a run record is created. WALDO probes candidate
-Python runtimes, verifies an actual MLX operation on Metal, and records the
-selected Python path, Python version, MLX version, Apple accelerator, and
-memory in the run BOM.
+The MLX and PyTorch adapters support `decoder-transformer` architectures pinned
+to the built-in `byte@builtin-byte-schema-1` tokenizer with vocabulary size
+259. This includes the 10m, 35m, and 90m presets. Unsupported tokenizers fail
+during backend resolution before a run record is created. WALDO records the
+selected Python path, framework version, host, device, accelerator identity,
+and accelerator memory when applicable in the run BOM.
 
 ## Model compose
 
@@ -295,12 +294,14 @@ frame, record frames from a shuffle bounded by both record count and retained
 bytes, an end frame, then typed progress,
 checkpoint, evaluation, completion, or error output frames.
 
-The MLX adapter embeds its worker source in the WALDO binary while using the
-machine's explicit Python and MLX runtime. It implements rotary grouped-query
-attention, RMS normalization, gated feed-forward blocks, byte tokenization,
-continuous-EOS packing, AdamW with warmup and cosine decay, real loss/gradient
-updates, checkpoint and terminal Safetensors, progress, training-loss metrics,
-and observed token totals. A later run verifies and initializes from the most
-recent non-simulated terminal `model.safetensors`; its source run and weight
-hash are pinned in the new run BOM. Optimizer-state checkpoint resume, held-out
+The MLX and PyTorch adapters embed their worker source in the WALDO binary while
+using the machine's explicit Python framework runtime. Both implement rotary
+grouped-query attention, RMS normalization, gated feed-forward blocks, byte
+tokenization, continuous-EOS packing, AdamW with warmup and cosine decay, real
+loss/gradient updates, checkpoint and terminal Safetensors, progress,
+training-loss metrics, and observed token totals. Their internal tensor names
+and shapes are identical, so verified WALDO weights can continue across those
+frameworks. A later run verifies and initializes from the most recent
+non-simulated terminal `model.safetensors`; its source run and weight hash are
+pinned in the new run BOM. Optimizer-state checkpoint resume, held-out
 evaluation, instruction tuning, and chat templates remain separate work.

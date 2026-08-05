@@ -29,10 +29,10 @@ func runIndexInit(context Context, args []string, stdout, _ io.Writer) error {
 		return writeJSON(stdout, struct {
 			Path   string `json:"path"`
 			Schema int    `json:"schema"`
-		}{Path: root, Schema: 2})
+		}{Path: root, Schema: waldoindex.DirectorySchema})
 	}
 	fmt.Fprintf(stdout, "initialized WALDO index %s\n", root)
-	fmt.Fprintln(stdout, "  index schema  2")
+	fmt.Fprintf(stdout, "  index schema  %d\n", waldoindex.DirectorySchema)
 	fmt.Fprintln(stdout, "  corpora       0")
 	fmt.Fprintln(stdout, "Git initialization and the first signed-off commit remain explicit user actions.")
 	return nil

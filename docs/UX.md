@@ -89,7 +89,7 @@ named by that file; they populate private temporary input space and stop.
 waldo index init /path/to/new-waldo-index
 ```
 
-The destination must be new or empty. WALDO writes only the root schema-2
+The destination must be new or empty. WALDO writes only the root schema-1
 `index.json`; it does not initialize Git, configure a lookaside, or create a
 corpus. Those remain separate, visible actions.
 
@@ -434,15 +434,15 @@ before backend launch. A step is one optimizer update, not one corpus pass.
 On macOS, automatic backend resolution always selects MLX and requires Apple
 Silicon; it probes candidate Python runtimes and accepts MLX only after
 executing a real operation on Metal. On Linux, automatic resolution probes for
-TorchTitan first and PyTorch second. The
-first real slice accepts the built-in byte-tokenizer presets and produces
-checkpoint and terminal Safetensors weights. If no compatible real backend is
-available, training warns and fails with installation guidance before creating
-a run; simulation is never an automatic fallback. The current executable
-adapter is MLX; Linux framework discovery fails explicitly at the adapter
-boundary until the TorchTitan and PyTorch workers land. `waldo config set
-model.backend fake` is the explicit development-test exception and permanently
-marks its artifacts simulated.
+TorchTitan first and PyTorch second. PyTorch is an executable single-process
+adapter for usable CPU, NVIDIA CUDA, and AMD ROCm installations; TorchTitan
+still fails explicitly at the missing distributed-adapter boundary. Both real
+workers accept the built-in byte-tokenizer presets and produce checkpoint and
+terminal Safetensors weights with the same internal tensor contract. If no
+compatible real backend is available, training warns and fails with
+installation guidance before creating a run; simulation is never an automatic
+fallback. `waldo config set model.backend fake` is the explicit
+development-test exception and permanently marks its artifacts simulated.
 Backend selection is not part of the portable compose. The schema-1 compose
 and durable layout are documented in `docs/MODEL-LIFECYCLE.md`.
 

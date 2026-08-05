@@ -52,7 +52,7 @@ func verifyDirectory(root, dir string, result *Verification) error {
 	if index.Kind != "index" {
 		return fmt.Errorf("%s: kind is %q, want %q", path, index.Kind, "index")
 	}
-	if index.Schema != 2 {
+	if index.Schema != DirectorySchema {
 		return fmt.Errorf("%s: unsupported index schema %d", path, index.Schema)
 	}
 	rel, err := filepath.Rel(root, dir)

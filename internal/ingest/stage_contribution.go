@@ -61,7 +61,7 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 	}
 	result.Files = append(result.Files, manifestRelative)
 	leaf := index.Directory{
-		Kind: "index", Schema: 2, Path: plan.Destination,
+		Kind: "index", Schema: index.DirectorySchema, Path: plan.Destination,
 		Entries: []index.Entry{{Name: name + ".json", Type: "manifest"}},
 	}
 	leafRelative := filepath.ToSlash(filepath.Join(filepath.FromSlash(plan.Destination), "index.json"))
@@ -97,7 +97,7 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 			return ContributionResult{}, fmt.Errorf("load ancestor index %q: %w", parent, loadErr)
 		}
 		directory = index.Directory{
-			Kind: "index", Schema: 2, Path: parent,
+			Kind: "index", Schema: index.DirectorySchema, Path: parent,
 			Entries: []index.Entry{{Name: child, Type: "dir"}},
 		}
 		relative := filepath.ToSlash(filepath.Join(filepath.FromSlash(parent), "index.json"))

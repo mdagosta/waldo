@@ -1,41 +1,37 @@
 # WALDO
 
 **Open Weights. Open Artifacts. Open Licenses. Open Data. Open Origins.**<br>
-**OpenWALDO.**
 
-WALDO turns training data into reviewable, verifiable inputs—and carries that
-provenance all the way into trained model releases.
+## **OpenWALDO.**
 
-It is one command-line tool connecting three deliberately separate things:
+WALDO turns 100% freely available and auditable training data into reviewable,
+verifiable inputs—and carries that provenance all the way into trained model
+releases. It is one command-line tool connecting three deliberately separate
+things:
 
 - a Git-governed index containing corpus meaning, sources, licenses, counts,
   and object hashes;
 - content-addressed lookaside storage containing only canonical Parquet files;
   and
-- local model runs whose BOMs identify the exact indexed material they used.
+- local model build and validation tools including support for BOMs that
+  identify the exact indexed material they used.
 
 The result is an auditable path from acquired files to a portable WALDO,
-Hugging Face, MLX, GGUF, or Ollama model package—without making Git store large
-training blobs or making an object store define what those blobs mean.
-
-> WALDO is an active, unreleased clean-slate rebuild. The core data lifecycle,
-> real Apple Silicon training, inference, and model exports work end to end;
-> the [current limits](#current-status-and-limits) are explicit below.
+Hugging Face, MLX, GGUF, or Ollama exported model.
 
 ## The complete path
 
+### Contributing data
+
 ```mermaid
-flowchart LR
+flowchart TB
     A["Local source files"] --> I["waldo index ingest"]
     R["Reviewed ingest recipe<br/>and external fetchers"] --> I
-    I --> G["Git index<br/>metadata and shard hashes"]
-    I --> L["Lookaside<br/>canonical Parquet only"]
-    G --> B["Verified OpenWALDO BOM"]
-    L --> B
-    B --> C["Corpus export"]
-    B --> T["Model training"]
-    T --> M["Run and model BOMs"]
-    M --> E["WALDO · Hugging Face · MLX<br/>GGUF · Ollama"]
+    I --> V["Sense · convert · audit"]
+    V --> G["Git review overlay<br/>metadata and shard hashes"]
+    V --> L["Lookaside upload<br/>canonical Parquet only"]
+    G --> P["Reviewed and indexed corpus"]
+    L --> P
 ```
 
 1. Acquire data into a local directory, directly or through an explicit ingest
@@ -44,17 +40,45 @@ flowchart LR
    every new shard, uploads shards in parallel, and purges successful local
    staging objects.
 3. WALDO produces a small Git review overlay containing manifests and index
-   navigation. Large data never enters Git.
-4. Index selections resolve recursively into immutable OpenWALDO BOMs that pin
-   the Git revision, manifests, sources, licenses, shards, counts, and hashes.
-5. Verification checks object availability without downloading bodies;
-   full verification and audit can hash every object and validate every record.
-6. Corpus exports and model training consume that same verified selection.
-7. Training persists the plan before execution, records observed results after
-   execution, and binds output weights into the model BOM.
-8. A verified real run can be exported into one chosen runtime format, always
-   with `BOM.json` and `EU-BOM.json`, and automatically signed when signing is
-   configured.
+   navigation. Review and commit that metadata through the normal Git workflow;
+   large data remains in lookaside storage and never enters Git.
+
+### Using and training the data
+
+```mermaid
+flowchart TB
+    G["Git index selection"] --> V["Verify and audit<br/>training material"]
+    L["Lookaside<br/>canonical Parquet"] --> V
+    V --> B["Immutable OpenWALDO Training Data"]
+    B --> C["Corpus export"]
+    C --> X["Your own tools<br/>audit · validate · train from scratch<br/>or combine with open weights"]
+    N["New blank model<br/>architecture declared in compose"] --> MC["Compose Configuration"]
+    O["Existing open-weight model<br/>planned import + BOM pin"] --> MC
+    B --> MC
+    MC --> T["Model forecast and train"]
+    T --> M["Run and model BOMs<br/>data + starting-point lineage"]
+    M --> Q["Test · validate · chat"]
+    Q --> E["Export model<br/>WALDO · Hugging Face · MLX<br/>GGUF · Ollama"]
+
+```
+
+1. Select any index, subtree, or corpus. WALDO recursively validates its
+   metadata and checks the referenced Parquet objects; a full audit can hash
+   every object and validate every canonical record.
+2. The verified selection becomes an immutable OpenWALDO BOM that pins the Git
+   revision, manifests, sources, licenses, shards, counts, and hashes.
+3. Exported corpus data can be audited independently, consumed by another
+   training stack, used to train from scratch, or paired with an open-weight
+   base model for continued training or fine-tuning.
+4. A WALDO compose currently starts with a blank architecture. The planned
+   open-weight path will pin the inherited model and its BOM before resolving
+   the same compose lifecycle; model import and fine-tuning remain pending.
+5. WALDO persists the corpus BOM and starting-point identity before execution,
+   records observed results afterward, and binds output weights into append-only
+   run and model BOMs.
+6. A verified real run can be tested, used for generation, and exported into
+   one chosen runtime format. Every package contains `BOM.json` and
+   `EU-BOM.json`, and both are automatically signed when signing is configured.
 
 ## Why WALDO is structured this way
 
@@ -186,7 +210,7 @@ and manifest totals.
 
 ## Ingest a corpus
 
-Create a new schema-2 index when needed:
+Create a new schema-1 index when needed:
 
 ```bash
 waldo index init ./waldo-index
@@ -326,9 +350,10 @@ waldo model compose composed-small ./model.yaml
 
 Portable composes name architecture, corpora, objectives, and training
 parameters—not MLX, PyTorch, or a host path. Machine-local `model.backend=auto`
-selects the execution adapter. Today, real training and generation are
-implemented through MLX on Apple Silicon; the fake backend is available only
-when explicitly configured for deterministic testing.
+selects MLX on Apple Silicon and prefers TorchTitan, then PyTorch, on Linux.
+Real training is implemented through MLX and single-process PyTorch; generation
+currently uses MLX. The fake backend is available only when explicitly
+configured for deterministic testing.
 
 After a real run:
 
@@ -387,7 +412,7 @@ unsigned warning.
 
 Working end to end today:
 
-- schema-2 index and schema-1 manifest compatibility with the public index;
+- schema-1 directory index, corpus manifest, and Parquet record contracts;
 - recursive index inspection, availability verification, object hashing, and
   full record audit;
 - local and S3 lookaside publication, internal AWS SDK access, keychain-backed
@@ -397,15 +422,16 @@ Working end to end today:
 - local shard summary, audit, record listing, and record export;
 - immutable model plans, append-only runs, forecasting, direct training, and
   model composes;
-- real MLX training and generation on Apple Silicon;
+- real MLX training and generation on Apple Silicon, plus real single-process
+  PyTorch training on Linux CPU, NVIDIA CUDA, or AMD ROCm installations;
 - native WALDO, Hugging Face, MLX, GGUF, and Ollama model exports;
 - machine-readable EU GPAI disclosure mapping and gap analysis; and
 - optional fail-closed Sigstore signing for model release BOMs.
 
 Still deliberately pending:
 
-- PyTorch, TorchTitan, and TensorFlow execution adapters—the Linux resolver and
-  backend boundary exist, but MLX is the only real trainer today;
+- TorchTitan and TensorFlow execution adapters, plus PyTorch generation and
+  distributed execution—the single-process PyTorch trainer is implemented;
 - model import, quantized GGUF variants, SFT, preference training, pinned chat
   templates, held-out evaluation, and cluster orchestration;
 - rendering the exact official editable EU template rather than the current

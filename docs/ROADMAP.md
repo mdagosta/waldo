@@ -20,7 +20,7 @@ backend.
 Implemented:
 
 - Explicit checkout and in-tree path resolution
-- Schema-2 directory index reader
+- Schema-1 directory index reader
 - Schema-1 manifest reader
 - Indexed-tree traversal
 - Recursive `waldo index list` with per-corpus paths and totals
@@ -59,7 +59,7 @@ hash checked and an independently readable OpenWALDO BOM.
 
 Implemented foundation:
 
-- Empty schema-2 index initialization
+- Empty schema-1 index initialization
 - Ingestion and training-data contract (`docs/INGESTION-DESIGN.md`)
 - Basic text and Markdown ingestion
 - Streaming plain, gzip, and zstd JSONL ingestion
@@ -159,21 +159,24 @@ the same files independently of an index checkout.
 - Select MLX automatically on Apple Silicon. **Implemented for the built-in
   byte tokenizer with verified Metal runtime discovery.**
 - On Linux, prefer an installed TorchTitan and then an installed PyTorch.
-  **Deterministic discovery and fail-closed diagnostics implemented; execution
-  adapters remain.**
+  **Implemented. PyTorch executes locally; an installed preferred TorchTitan
+  still fails closed until its distributed adapter lands.**
 - Persist the resolved backend and immutable environment facts in each run BOM.
-  **Implemented for MLX, including Python/MLX versions and Apple accelerator.**
+  **Implemented for MLX and PyTorch, including Python/framework versions,
+  selected devices, and accelerator facts.**
 - Keep the execution adapter portable across MLX, PyTorch, TensorFlow, and
-  PyTorch-based distributed engines. **Backend-neutral contract and MLX
-  adapter implemented; other frameworks remain.**
+  PyTorch-based distributed engines. **Backend-neutral contract plus real MLX
+  and single-process PyTorch adapters implemented; TensorFlow and distributed
+  TorchTitan remain.**
 - Resolve compact compose parameters into a versioned AdamW/cosine training
   profile, deterministic bounded shuffle, continuous EOS packing contract,
   checkpoint/evaluation cadence, and planned token capacity. **Implemented.**
 - Stream canonical records through a schema-1 NDJSON worker protocol without
   exposing Parquet or index logic to framework adapters. **Implemented through
-  the real MLX worker.**
+  the real MLX and PyTorch workers.**
 - Persist and validate typed progress, checkpoint, evaluation, final-loss, and
-  artifact observations. **Implemented and exercised through real MLX.**
+  artifact observations. **Implemented and exercised through real MLX and
+  guarded PyTorch lifecycles.**
 - Weight checkpoints. **Implemented.** Optimizer-state resume remains.
 - Actual consumption totals. **Implemented.**
 - Training-loss evaluation results and output weight hashes. **Implemented;
@@ -191,7 +194,7 @@ record can be inspected.
 - Separate native WALDO, Hugging Face, MLX, GGUF, and Ollama release packages,
   each carrying the OpenWALDO and EU BOMs. **Implemented, including live
   Ollama import/generation parity for the GGUF converter.**
-- Second local backend
+- Second local backend **implemented with single-process PyTorch on Linux.**
 - Held-out evaluation
 - Fork and lineage
 - Explicit additional training runs

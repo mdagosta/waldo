@@ -17,7 +17,7 @@ func TestInitializeCreatesMinimalValidIndex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if directory.Kind != "index" || directory.Schema != 2 || directory.Path != "" || len(directory.Entries) != 0 {
+	if directory.Kind != "index" || directory.Schema != DirectorySchema || directory.Path != "" || len(directory.Entries) != 0 {
 		t.Fatalf("directory = %+v", directory)
 	}
 	target, err := Resolve("", root)

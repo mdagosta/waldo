@@ -13,10 +13,10 @@ import (
 func TestStageContributionProducesMinimalValidIndexOverlay(t *testing.T) {
 	root := t.TempDir()
 	writeIndexJSON(t, filepath.Join(root, "index.json"), index.Directory{
-		Kind: "index", Schema: 2, Path: "", Entries: []index.Entry{{Name: "core", Type: "dir"}},
+		Kind: "index", Schema: 1, Path: "", Entries: []index.Entry{{Name: "core", Type: "dir"}},
 	})
 	writeIndexJSON(t, filepath.Join(root, "core", "index.json"), index.Directory{
-		Kind: "index", Schema: 2, Path: "core", Entries: []index.Entry{},
+		Kind: "index", Schema: 1, Path: "core", Entries: []index.Entry{},
 	})
 	input := filepath.Join(t.TempDir(), "input.txt")
 	writeFixture(t, input, "document")

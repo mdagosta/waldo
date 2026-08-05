@@ -118,7 +118,7 @@ func writeLookasideListIndex(t *testing.T, baseURL, referenced, missing string) 
 		t.Fatal(err)
 	}
 	directory := waldoindex.Directory{
-		Kind: "index", Schema: 2, Path: "", Entries: []waldoindex.Entry{{Name: "tiny.json", Type: "manifest"}},
+		Kind: "index", Schema: 1, Path: "", Entries: []waldoindex.Entry{{Name: "tiny.json", Type: "manifest"}},
 	}
 	manifest := waldoindex.Manifest{
 		Kind: "manifest", Schema: 1, Name: "tiny", Title: "Tiny", Description: "List relationship fixture", License: "CC0-1.0",

@@ -42,8 +42,8 @@ func TestIndexAuditComparesStreamedShardTotalsWithManifest(t *testing.T) {
 	if err := os.WriteFile(objectPath, encoded.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	writeCLIFile(t, filepath.Join(root, "index.json"), `{"kind":"index","schema":2,"path":"","entries":[{"name":"tiny","type":"dir"}]}`)
-	writeCLIFile(t, filepath.Join(root, "tiny", "index.json"), `{"kind":"index","schema":2,"path":"tiny","entries":[{"name":"tiny.json","type":"manifest"}]}`)
+	writeCLIFile(t, filepath.Join(root, "index.json"), `{"kind":"index","schema": 1,"path":"","entries":[{"name":"tiny","type":"dir"}]}`)
+	writeCLIFile(t, filepath.Join(root, "tiny", "index.json"), `{"kind":"index","schema": 1,"path":"tiny","entries":[{"name":"tiny.json","type":"manifest"}]}`)
 	writeAuditManifest(t, root, objectPath, objectDigest, int64(encoded.Len()), tokens)
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	if err := config.Save(config.Config{Lookaside: config.Lookaside{Scratch: t.TempDir()}}); err != nil {

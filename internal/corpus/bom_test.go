@@ -151,11 +151,11 @@ func bomFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	writeBOMFile(t, filepath.Join(root, "index.json"), `{
-  "kind": "index", "schema": 2, "path": "",
+  "kind": "index", "schema": 1, "path": "",
   "entries": [{"name": "books", "type": "dir"}]
 }`)
 	writeBOMFile(t, filepath.Join(root, "books", "index.json"), `{
-  "kind": "index", "schema": 2, "path": "books",
+  "kind": "index", "schema": 1, "path": "books",
   "entries": [{"name": "books.json", "type": "manifest"}]
 }`)
 	manifest := fmt.Sprintf(`{
@@ -217,11 +217,11 @@ func rollupBOMFixture(t *testing.T, declaredTokens int64) (string, string, strin
 	rootPath := filepath.Join(objects, rootHash+".json")
 	writeBOMFile(t, rootPath, rootSub)
 	writeBOMFile(t, filepath.Join(root, "index.json"), `{
-  "kind": "index", "schema": 2, "path": "",
+  "kind": "index", "schema": 1, "path": "",
   "entries": [{"name": "books", "type": "dir"}]
 }`)
 	writeBOMFile(t, filepath.Join(root, "books", "index.json"), `{
-  "kind": "index", "schema": 2, "path": "books",
+  "kind": "index", "schema": 1, "path": "books",
   "entries": [{"name": "books.json", "type": "manifest"}]
 }`)
 	manifest := fmt.Sprintf(`{

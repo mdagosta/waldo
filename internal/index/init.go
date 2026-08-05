@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 )
 
-// Initialize creates the smallest valid schema-2 index at an empty directory.
+// Initialize creates the smallest valid schema-1 index at an empty directory.
 // Git initialization remains an explicit user action.
 func Initialize(path string) (string, error) {
 	absolute, err := filepath.Abs(path)
@@ -33,7 +33,7 @@ func Initialize(path string) (string, error) {
 		return "", statErr
 	}
 
-	directory := Directory{Kind: "index", Schema: 2, Path: "", Entries: []Entry{}}
+	directory := Directory{Kind: "index", Schema: DirectorySchema, Path: "", Entries: []Entry{}}
 	data, err := json.MarshalIndent(directory, "", "  ")
 	if err != nil {
 		return "", err

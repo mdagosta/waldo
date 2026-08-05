@@ -225,6 +225,9 @@ func LoadDirectory(dir string) (Directory, error) {
 	if err := json.Unmarshal(data, &index); err != nil {
 		return Directory{}, fmt.Errorf("%s: %w", path, err)
 	}
+	if index.Schema != DirectorySchema {
+		return Directory{}, fmt.Errorf("%s: unsupported index schema %d", path, index.Schema)
+	}
 	return index, nil
 }
 
@@ -236,6 +239,9 @@ func LoadManifest(path string) (Manifest, error) {
 	var manifest Manifest
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if manifest.Schema != ManifestSchema {
+		return Manifest{}, fmt.Errorf("%s: unsupported manifest schema %d", path, manifest.Schema)
 	}
 	return manifest, nil
 }

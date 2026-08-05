@@ -28,7 +28,8 @@ what was actually used.
 
 ## Compatibility with the current public index
 
-The current `waldo-index` uses directory index schema 2 and manifest schema 1.
+The current `waldo-index` uses schema 1 for both directory indexes and corpus
+manifests.
 Its 20 manifests and 1,087 shards verify successfully with `waldo`.
 
 The proposed ingestion design fits the existing structural model:
@@ -126,7 +127,7 @@ object:
 }
 ```
 
-Schema-2 canonical records have one primary source identity. Additional parent
+Schema-1 canonical records have one primary source identity. Additional parent
 or transformation evidence may be recorded separately, preventing double
 counting when source aggregates are reconciled with shard totals.
 
@@ -290,8 +291,8 @@ and template may be reviewed.
 
 ## Schema evolution
 
-The required changes are additive to manifest schema 1 and directory index
-schema 2:
+The required changes are additive to schema 1 for both manifests and directory
+indexes:
 
 - add modality measures to shards and rollups;
 - add source category vocabulary, content/acquisition facts and source usage;

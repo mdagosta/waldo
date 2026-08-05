@@ -123,10 +123,12 @@ capability, request, progress, and observation contracts. Framework-specific
 workers may translate the canonical architecture and training request, but may
 not introduce a second model compose or provenance lifecycle.
 
-The first production resolver selects MLX only on Apple Silicon and only after
-a candidate Python runtime successfully executes an MLX operation on Metal.
-Automatic resolution fails closed when no real backend is usable. The fake
-adapter is reachable only through explicit machine-local test configuration.
+The production resolver selects MLX on Apple Silicon and, on Linux, prefers
+TorchTitan before PyTorch. MLX and PyTorch are accepted only after a candidate
+Python runtime successfully executes a real operation on the selected device;
+TorchTitan remains fail-closed until its distributed adapter is implemented.
+Automatic resolution fails when no real backend is usable. The fake adapter is
+reachable only through explicit machine-local test configuration.
 
 Portable parameters resolve through a named schema-1 training profile before a
 run BOM is written. The training domain streams deterministically shuffled

@@ -94,7 +94,7 @@ func TestResolveDestinationNormalizesProspectiveAbsolutePath(t *testing.T) {
 func TestVerifyRejectsUnsortedDirectory(t *testing.T) {
 	root := fixtureIndex(t)
 	writeFile(t, filepath.Join(root, "index.json"), `{
-  "kind": "index", "schema": 2, "path": "",
+  "kind": "index", "schema": 1, "path": "",
   "entries": [
     {"name": "z", "type": "dir"},
     {"name": "alpha", "type": "dir"}
@@ -103,6 +103,18 @@ func TestVerifyRejectsUnsortedDirectory(t *testing.T) {
 	target := Target{Root: root, Abs: root}
 	if _, err := Verify(target); err == nil || !strings.Contains(err.Error(), "not sorted") {
 		t.Fatalf("Verify() error = %v, want sorting error", err)
+	}
+}
+
+func TestVerifyRejectsDirectorySchemaTwo(t *testing.T) {
+	root := fixtureIndex(t)
+	writeFile(t, filepath.Join(root, "index.json"), `{
+  "kind": "index", "schema": 2, "path": "",
+  "entries": [{"name": "alpha", "type": "dir"}]
+}`)
+	target := Target{Root: root, Abs: root}
+	if _, err := Verify(target); err == nil || !strings.Contains(err.Error(), "unsupported index schema 2") {
+		t.Fatalf("Verify() error = %v, want unsupported schema error", err)
 	}
 }
 
@@ -161,7 +173,7 @@ func TestVerifyAcceptsAdditiveMultimodalProvenance(t *testing.T) {
     "rights_reservation_measures": ["Honoured recorded upstream exclusions."],
     "illegal_content_measures": ["Rejected payloads matching the configured blocklist."]
   },
-  "record_schema": 2,
+  "record_schema": 1,
   "format": "parquet",
   "shards": [{
     "url": "https://example.test/a", "sha256": %q, "sources": ["upstream"],
@@ -182,7 +194,7 @@ func TestVerifyAcceptsAdditiveMultimodalProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.RecordSchema != 2 || loaded.Shards[0].Tokens != 0 || loaded.Shards[0].Modalities["image"].Items != 3 {
+	if loaded.RecordSchema != 1 || loaded.Shards[0].Tokens != 0 || loaded.Shards[0].Modalities["image"].Items != 3 {
 		t.Fatalf("multimodal manifest = %+v", loaded)
 	}
 }
@@ -261,11 +273,11 @@ func fixtureIndex(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "index.json"), `{
-  "kind": "index", "schema": 2, "path": "",
+  "kind": "index", "schema": 1, "path": "",
   "entries": [{"name": "alpha", "type": "dir"}]
 }`)
 	writeFile(t, filepath.Join(root, "alpha", "index.json"), `{
-  "kind": "index", "schema": 2, "path": "alpha",
+  "kind": "index", "schema": 1, "path": "alpha",
   "entries": [{"name": "books.json", "type": "manifest"}]
 }`)
 	hashA := strings.Repeat("a", 64)

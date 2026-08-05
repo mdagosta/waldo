@@ -5,9 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -39,96 +37,7 @@ func (backend MLX) Descriptor() Descriptor {
 }
 
 func (backend MLX) Run(ctx context.Context, request Request) (Observation, error) {
-	if backend.Python == "" {
-		return Observation{}, fmt.Errorf("MLX Python runtime is required")
-	}
-	if request.Records == nil {
-		return Observation{}, fmt.Errorf("MLX backend received no canonical record stream")
-	}
-	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
-		return Observation{}, fmt.Errorf("create MLX artifact directory: %w", err)
-	}
-	command := exec.CommandContext(ctx, backend.Python, "-c", mlxruntime.WithModel(mlxWorker), request.ArtifactDirectory, request.ArtifactPrefix)
-	stdin, err := command.StdinPipe()
-	if err != nil {
-		return Observation{}, err
-	}
-	stdout, err := command.StdoutPipe()
-	if err != nil {
-		return Observation{}, err
-	}
-	var stderr cappedBuffer
-	command.Stderr = &stderr
-	if err := command.Start(); err != nil {
-		return Observation{}, fmt.Errorf("start MLX worker with %s: %w", backend.Python, err)
-	}
-
-	type workerResult struct {
-		observation Observation
-		err         error
-	}
-	result := make(chan workerResult, 1)
-	go func() {
-		var observation Observation
-		completed := false
-		err := ReadWorkerOutput(stdout, func(frame WorkerOutputFrame) error {
-			switch frame.Kind {
-			case "event":
-				if request.Report != nil {
-					request.Report(*frame.Event)
-				}
-			case "complete":
-				if completed {
-					return fmt.Errorf("MLX worker returned more than one completion")
-				}
-				completed = true
-				observation = *frame.Observation
-			case "error":
-				return errors.New(frame.Error)
-			}
-			return nil
-		})
-		if err == nil && !completed {
-			err = fmt.Errorf("MLX worker exited without a completion observation")
-		}
-		if err != nil && command.Process != nil {
-			_ = command.Process.Kill()
-		}
-		result <- workerResult{observation: observation, err: err}
-	}()
-
-	begin := WorkerBegin{
-		RunID: request.RunID, Stage: request.Stage, Objective: request.Objective,
-		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
-		Parameters: request.Parameters,
-	}
-	if request.Initialization != nil {
-		begin.Initialization = &WorkerInitialization{
-			SourceRunID: request.Initialization.SourceRunID,
-			Artifact:    request.Initialization.Artifact,
-			Path:        request.Initialization.Path,
-		}
-	}
-	writeErr := WriteWorkerInput(ctx, stdin, begin, request.Records)
-	closeErr := stdin.Close()
-	waitErr := command.Wait()
-	worker := <-result
-	if worker.err != nil {
-		return Observation{}, fmt.Errorf("MLX worker: %w%s", worker.err, workerStderr(stderr.String()))
-	}
-	if writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {
-		return Observation{}, fmt.Errorf("stream records to MLX worker: %w%s", writeErr, workerStderr(stderr.String()))
-	}
-	if closeErr != nil && waitErr == nil {
-		return Observation{}, fmt.Errorf("close MLX worker input: %w", closeErr)
-	}
-	if waitErr != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return Observation{}, ctxErr
-		}
-		return Observation{}, fmt.Errorf("MLX worker exited: %w%s", waitErr, workerStderr(stderr.String()))
-	}
-	return worker.observation, nil
+	return runPythonWorker(ctx, "MLX", backend.Python, mlxruntime.WithModel(mlxWorker), request)
 }
 
 type mlxProbe struct {

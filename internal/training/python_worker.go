@@ -1,0 +1,108 @@
+package training
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+)
+
+// runPythonWorker owns the common schema-1 process and stream lifecycle used
+// by framework adapters. Framework code receives canonical records only; it
+// never reads WALDO indexes, Parquet files, or lifecycle state.
+func runPythonWorker(ctx context.Context, label, python, program string, request Request, extraArguments ...string) (Observation, error) {
+	if python == "" {
+		return Observation{}, fmt.Errorf("%s Python runtime is required", label)
+	}
+	if request.Records == nil {
+		return Observation{}, fmt.Errorf("%s backend received no canonical record stream", label)
+	}
+	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
+		return Observation{}, fmt.Errorf("create %s artifact directory: %w", label, err)
+	}
+	arguments := []string{"-c", program, request.ArtifactDirectory, request.ArtifactPrefix}
+	arguments = append(arguments, extraArguments...)
+	command := exec.CommandContext(ctx, python, arguments...)
+	stdin, err := command.StdinPipe()
+	if err != nil {
+		return Observation{}, err
+	}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return Observation{}, err
+	}
+	var stderr cappedBuffer
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		return Observation{}, fmt.Errorf("start %s worker with %s: %w", label, python, err)
+	}
+
+	type workerResult struct {
+		observation Observation
+		err         error
+	}
+	result := make(chan workerResult, 1)
+	go func() {
+		var observation Observation
+		completed := false
+		err := ReadWorkerOutput(stdout, func(frame WorkerOutputFrame) error {
+			switch frame.Kind {
+			case "event":
+				if request.Report != nil {
+					request.Report(*frame.Event)
+				}
+			case "complete":
+				if completed {
+					return fmt.Errorf("%s worker returned more than one completion", label)
+				}
+				completed = true
+				observation = *frame.Observation
+			case "error":
+				return errors.New(frame.Error)
+			}
+			return nil
+		})
+		if err == nil && !completed {
+			err = fmt.Errorf("%s worker exited without a completion observation", label)
+		}
+		if err != nil && command.Process != nil {
+			_ = command.Process.Kill()
+		}
+		result <- workerResult{observation: observation, err: err}
+	}()
+
+	begin := WorkerBegin{
+		RunID: request.RunID, Stage: request.Stage, Objective: request.Objective,
+		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
+		Parameters: request.Parameters,
+	}
+	if request.Initialization != nil {
+		begin.Initialization = &WorkerInitialization{
+			SourceRunID: request.Initialization.SourceRunID,
+			Artifact:    request.Initialization.Artifact,
+			Path:        request.Initialization.Path,
+		}
+	}
+	writeErr := WriteWorkerInput(ctx, stdin, begin, request.Records)
+	closeErr := stdin.Close()
+	waitErr := command.Wait()
+	worker := <-result
+	if worker.err != nil {
+		return Observation{}, fmt.Errorf("%s worker: %w%s", label, worker.err, workerStderr(stderr.String()))
+	}
+	if writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {
+		return Observation{}, fmt.Errorf("stream records to %s worker: %w%s", label, writeErr, workerStderr(stderr.String()))
+	}
+	if closeErr != nil && waitErr == nil {
+		return Observation{}, fmt.Errorf("close %s worker input: %w", label, closeErr)
+	}
+	if waitErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Observation{}, ctxErr
+		}
+		return Observation{}, fmt.Errorf("%s worker exited: %w%s", label, waitErr, workerStderr(stderr.String()))
+	}
+	return worker.observation, nil
+}

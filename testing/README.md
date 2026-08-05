@@ -16,6 +16,7 @@ Every test category has its own executable script:
 ./testing/e2e/ingest-recipe.sh
 ./testing/e2e/model-fake.sh
 ./testing/e2e/model-mlx.sh
+./testing/e2e/model-pytorch.sh
 ```
 
 Run all of them in that order with:
@@ -80,6 +81,19 @@ platforms report an explicit skip.
 
 ```bash
 ./testing/e2e/model-mlx.sh
+```
+
+## Real PyTorch model end to end
+
+`model-pytorch.sh` runs on Linux when a usable PyTorch installation is
+available. It trains a tiny decoder through the embedded schema-1 worker,
+continues from the first run's verified Safetensors, validates checkpoints and
+observations, and exports independently verified Hugging Face and GGUF release
+packages. Other hosts and Linux machines without PyTorch report an explicit
+skip.
+
+```bash
+./testing/e2e/model-pytorch.sh
 ```
 
 ## Guarded S3 E2E

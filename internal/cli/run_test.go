@@ -170,13 +170,13 @@ func TestIndexIngestPublishesAndBuildsContributionOverlay(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"\",\n  \"entries\": [{\"name\": \"core\", \"type\": \"dir\"}]\n}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 1,\n  \"path\": \"\",\n  \"entries\": [{\"name\": \"core\", \"type\": \"dir\"}]\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "core"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "core", "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"core\",\n  \"entries\": []\n}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "core", "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 1,\n  \"path\": \"core\",\n  \"entries\": []\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	staging := t.TempDir()
@@ -237,13 +237,13 @@ func TestIndexIngestPublishesToConfiguredLocalLookaside(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"\",\n  \"entries\": [{\"name\": \"core\", \"type\": \"dir\"}]\n}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 1,\n  \"path\": \"\",\n  \"entries\": [{\"name\": \"core\", \"type\": \"dir\"}]\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(filepath.Join(root, "core"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "core", "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 2,\n  \"path\": \"core\",\n  \"entries\": []\n}\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "core", "index.json"), []byte("{\n  \"kind\": \"index\",\n  \"schema\": 1,\n  \"path\": \"core\",\n  \"entries\": []\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	configurationPath := filepath.Join(t.TempDir(), "config.json")
@@ -312,7 +312,7 @@ func emptyCLIIndex(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	writeCLIFile(t, filepath.Join(root, "index.json"), `{
-  "kind": "index", "schema": 2, "path": "", "entries": []
+  "kind": "index", "schema": 1, "path": "", "entries": []
 }`)
 	return root
 }
@@ -449,11 +449,11 @@ func fixtureCLIIndex(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	writeCLIFile(t, filepath.Join(root, "index.json"), `{
-  "kind": "index", "schema": 2, "path": "",
+  "kind": "index", "schema": 1, "path": "",
   "entries": [{"name": "books", "type": "dir"}]
 }`)
 	writeCLIFile(t, filepath.Join(root, "books", "index.json"), `{
-  "kind": "index", "schema": 2, "path": "books",
+  "kind": "index", "schema": 1, "path": "books",
   "entries": [{"name": "books.json", "type": "manifest"}]
 }`)
 	writeCLIFile(t, filepath.Join(root, "books", "books.json"), `{

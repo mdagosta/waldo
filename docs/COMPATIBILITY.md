@@ -7,9 +7,9 @@ Compatibility is intentional, tested, and limited to the surfaces below.
 
 ### Existing index checkouts
 
-The new binary must read the current public `waldo-index` without migration:
+The binary and the unreleased `waldo-index` use one clean baseline:
 
-- `index.json` kind `index`, schema 2
+- `index.json` kind `index`, schema 1
 - Manifest kind `manifest`, schema 1
 - Existing source, conversion, shard, rollup, and inheritance fields
 - Current Git checkout path semantics
@@ -17,9 +17,10 @@ The new binary must read the current public `waldo-index` without migration:
   manifest
 - SHA-256 object identity and existing lookaside URLs
 
-Read compatibility lands before write compatibility. The new implementation
-will first prove that it reports the existing tree's corpus, shard, document,
-token, byte, and license totals correctly.
+The pre-release schema-2 directory indexes were migrated in place. WALDO does
+not retain a schema-2 compatibility reader: an unsupported schema fails closed
+and must be migrated explicitly. The acceptance suite proves that the schema-1
+tree's corpus, shard, document, token, byte, and license totals remain intact.
 
 Schema-1 `shards` is deliberately polymorphic: readers accept either the
 inline array or the documented rollup object. Object-enabled operations verify

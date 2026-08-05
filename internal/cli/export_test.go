@@ -39,11 +39,11 @@ func TestIndexExportEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeCLIFile(t, filepath.Join(root, "index.json"), `{
-  "kind": "index", "schema": 2, "path": "",
+  "kind": "index", "schema": 1, "path": "",
   "entries": [{"name": "books", "type": "dir"}]
 }`)
 	writeCLIFile(t, filepath.Join(root, "books", "index.json"), `{
-  "kind": "index", "schema": 2, "path": "books",
+  "kind": "index", "schema": 1, "path": "books",
   "entries": [{"name": "books.json", "type": "manifest"}]
 }`)
 	manifest := fmt.Sprintf(`{
