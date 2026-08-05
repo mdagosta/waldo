@@ -15,7 +15,7 @@ func TestSaveLoadAndEffectiveScratch(t *testing.T) {
 		Scratch: filepath.Join(t.TempDir(), "scratch"),
 		Mirrors: []string{"https://one.example/root/", "https://one.example/root", "s3://bucket/root"},
 		Publish: &Publish{URL: "s3://bucket/write/", Region: "us-west-2", Workers: 3},
-	}, Ingest: Ingest{Staging: filepath.Join(t.TempDir(), "ingest")}, Model: Model{Root: filepath.Join(t.TempDir(), "models")}}
+	}, Ingest: Ingest{Staging: filepath.Join(t.TempDir(), "ingest")}, Model: Model{Root: filepath.Join(t.TempDir(), "models"), Backend: "fake"}}
 	if err := Save(want); err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +80,16 @@ func TestLoadMissingReturnsDefault(t *testing.T) {
 	}
 	if got.Schema != Schema {
 		t.Fatalf("Load() = %+v", got)
+	}
+}
+
+func TestModelBackendDefaultsToRealAutoAndRejectsUnknown(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if got := EffectiveModelBackend(Default()); got != "auto" {
+		t.Fatalf("default model backend = %q", got)
+	}
+	if err := Save(Config{Model: Model{Backend: "made-up"}}); err == nil {
+		t.Fatal("unknown model backend accepted")
 	}
 }
 

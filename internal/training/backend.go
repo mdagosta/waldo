@@ -129,6 +129,12 @@ type Input struct {
 	Bytes  int64
 }
 
+type Initialization struct {
+	SourceRunID string   `json:"source_run_id"`
+	Artifact    Artifact `json:"artifact"`
+	Path        string   `json:"-"`
+}
+
 type Request struct {
 	RunID              string
 	Stage              string
@@ -139,6 +145,7 @@ type Request struct {
 	Inputs             []Input
 	Parameters         ResolvedParameters
 	Records            RecordSource
+	Initialization     *Initialization
 	ArtifactDirectory  string
 	ArtifactPrefix     string
 	Report             func(Event)

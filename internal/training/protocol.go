@@ -12,12 +12,19 @@ import (
 const WorkerProtocolSchema = 1
 
 type WorkerBegin struct {
-	RunID              string             `json:"run_id"`
-	Stage              string             `json:"stage"`
-	Objective          string             `json:"objective"`
-	ArchitectureSHA256 string             `json:"architecture_sha256"`
-	Architecture       json.RawMessage    `json:"architecture"`
-	Parameters         ResolvedParameters `json:"parameters"`
+	RunID              string                `json:"run_id"`
+	Stage              string                `json:"stage"`
+	Objective          string                `json:"objective"`
+	ArchitectureSHA256 string                `json:"architecture_sha256"`
+	Architecture       json.RawMessage       `json:"architecture"`
+	Parameters         ResolvedParameters    `json:"parameters"`
+	Initialization     *WorkerInitialization `json:"initialization,omitempty"`
+}
+
+type WorkerInitialization struct {
+	SourceRunID string   `json:"source_run_id"`
+	Artifact    Artifact `json:"artifact"`
+	Path        string   `json:"path"`
 }
 
 type WorkerInputFrame struct {

@@ -27,7 +27,8 @@ type Ingest struct {
 }
 
 type Model struct {
-	Root string `json:"root,omitempty"`
+	Root    string `json:"root,omitempty"`
+	Backend string `json:"backend,omitempty"`
 }
 
 type Lookaside struct {
@@ -86,6 +87,9 @@ func Load() (Config, error) {
 	if config.Lookaside.CacheMaxBytes < 0 {
 		return Config{}, fmt.Errorf("%s: lookaside cache maximum must not be negative", path)
 	}
+	if err := validateModelBackend(config.Model.Backend); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
 	return config, nil
 }
 
@@ -100,6 +104,9 @@ func Save(config Config) error {
 	}
 	if config.Lookaside.CacheMaxBytes < 0 {
 		return fmt.Errorf("lookaside cache maximum must not be negative")
+	}
+	if err := validateModelBackend(config.Model.Backend); err != nil {
+		return err
 	}
 	path, err := Path()
 	if err != nil {
@@ -218,6 +225,20 @@ func EffectiveModelRoot(config Config) (string, error) {
 		return "", err
 	}
 	return filepath.Join(base, "models"), nil
+}
+
+func EffectiveModelBackend(config Config) string {
+	if config.Model.Backend != "" {
+		return config.Model.Backend
+	}
+	return "auto"
+}
+
+func validateModelBackend(backend string) error {
+	if backend != "" && backend != "auto" && backend != "fake" {
+		return fmt.Errorf("model backend must be auto or fake")
+	}
+	return nil
 }
 
 func durableRoot() (string, error) {

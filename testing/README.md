@@ -15,6 +15,7 @@ Every test category has its own executable script:
 ./testing/e2e/ingest-direct.sh
 ./testing/e2e/ingest-recipe.sh
 ./testing/e2e/model-fake.sh
+./testing/e2e/model-mlx.sh
 ```
 
 Run all of them in that order with:
@@ -61,6 +62,19 @@ draft EU GPAI disclosure output.
 
 ```bash
 ./testing/e2e/model-fake.sh
+```
+
+## Real MLX model end to end
+
+`model-mlx.sh` runs on Apple Silicon when it can find a Python runtime whose
+MLX installation can execute on Metal. It builds a disposable index and tiny
+decoder model, streams canonical records into the embedded worker, performs
+real optimization, and validates the resulting Safetensors weights,
+checkpoints, evaluations, and non-simulated run observation. Other platforms
+report an explicit skip.
+
+```bash
+./testing/e2e/model-mlx.sh
 ```
 
 ## Guarded S3 E2E

@@ -3,6 +3,7 @@ package training
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 
 	"github.com/openwaldo/waldo-new/internal/shard"
@@ -18,6 +19,33 @@ type Record struct {
 
 type RecordSource interface {
 	Stream(context.Context, func(Record) error) error
+}
+
+// CountByteTargets returns the exact number of next-token targets produced by
+// continuous-EOS packing with the built-in byte tokenizer. The first token in
+// the continuous stream is context rather than a prediction target.
+func CountByteTargets(ctx context.Context, inputs []Input) (int64, error) {
+	var tokens int64
+	for _, input := range inputs {
+		err := shard.WalkRecords(input.Path, func(_ int64, view shard.RecordView) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			recordTokens := int64(len(view.Text)) + 1 // UTF-8 bytes plus EOS.
+			if tokens > math.MaxInt64-recordTokens {
+				return fmt.Errorf("byte-token target count overflows int64")
+			}
+			tokens += recordTokens
+			return nil
+		})
+		if err != nil {
+			return 0, fmt.Errorf("count byte tokens in shard %s: %w", input.SHA256, err)
+		}
+	}
+	if tokens < 2 {
+		return 0, fmt.Errorf("canonical stream contains no byte-token prediction targets")
+	}
+	return tokens - 1, nil
 }
 
 type canonicalRecordSource struct {

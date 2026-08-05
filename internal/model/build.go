@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"sort"
 	"time"
 
@@ -18,11 +17,12 @@ import (
 )
 
 type Progress struct {
-	Phase   string   `json:"phase"`
-	Stage   string   `json:"stage,omitempty"`
-	RunID   string   `json:"run_id,omitempty"`
-	State   RunState `json:"state,omitempty"`
-	Message string   `json:"message"`
+	Phase    string          `json:"phase"`
+	Stage    string          `json:"stage,omitempty"`
+	RunID    string          `json:"run_id,omitempty"`
+	State    RunState        `json:"state,omitempty"`
+	Message  string          `json:"message"`
+	Training *training.Event `json:"training,omitempty"`
 }
 
 type Builder struct {
@@ -128,6 +128,13 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err := validateSelection(selection, []string{stage.Objective}); err != nil {
 		return Inspection{}, err
 	}
+	var initialization *training.Initialization
+	if selection.Execution.Backend.Name != "fake" {
+		initialization, err = resolveInitialization(inspection)
+		if err != nil {
+			return Inspection{}, err
+		}
+	}
 
 	runID, err := builder.identifier()()
 	if err != nil {
@@ -146,6 +153,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		Ordinal: ordinal, Objective: stage.Objective, Execution: selection.Execution,
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
 		CorpusBOMSHA256:    bomHash, CorpusBOM: prepared.BOM, Parameters: resolvedParameters,
+		Initialization: initialization,
 	}
 	runBOMHash, err := hashJSON(runBOM)
 	if err != nil {
@@ -178,10 +186,11 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		RunID: runID, Stage: stage.Name, Objective: stage.Objective,
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
 		Architecture:       architectureJSON, BOM: prepared.BOM, Inputs: prepared.Inputs,
-		Parameters: resolvedParameters, Records: records, ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix),
-		ArtifactPrefix: artifactPrefix,
+		Parameters: resolvedParameters, Records: records, Initialization: initialization,
+		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix),
+		ArtifactPrefix:    artifactPrefix,
 		Report: func(event training.Event) {
-			builder.report(Progress{Phase: "training", Stage: stage.Name, RunID: runID, State: RunRunning, Message: event.Message})
+			builder.report(Progress{Phase: "training", Stage: stage.Name, RunID: runID, State: RunRunning, Message: event.Message, Training: &event})
 		},
 	})
 	if backendErr == nil {
@@ -210,6 +219,36 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	}
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunComplete, Message: "persisted training observations and artifact hashes"})
 	return Inspect(builder.Root, name)
+}
+
+func resolveInitialization(inspection Inspection) (*training.Initialization, error) {
+	for index := len(inspection.Runs) - 1; index >= 0; index-- {
+		run := inspection.Runs[index]
+		if run.State != RunComplete || run.Observation == nil || run.Observation.Simulated {
+			continue
+		}
+		for _, artifact := range run.Observation.Artifacts {
+			if artifact.Path != "artifacts/model.safetensors" {
+				continue
+			}
+			var pin RunPin
+			for _, candidate := range inspection.Model.Runs {
+				if candidate.ID == run.ID {
+					pin = candidate
+					break
+				}
+			}
+			if pin.ID == "" {
+				return nil, fmt.Errorf("initialize from run %s: model run pin is missing", run.ID)
+			}
+			path := filepath.Join(inspection.Path, "runs", runDirectoryName(pin), filepath.FromSlash(artifact.Path))
+			if err := verifyArtifactFile(path, artifact); err != nil {
+				return nil, fmt.Errorf("initialize from run %s: %w", run.ID, err)
+			}
+			return &training.Initialization{SourceRunID: run.ID, Artifact: artifact, Path: path}, nil
+		}
+	}
+	return nil, nil
 }
 
 // Compose creates a model and executes every prepared stage. Work is built in
@@ -342,14 +381,7 @@ func persistModel(modelPath string, record *ModelRecord, now time.Time) error {
 }
 
 func builtinResolver() training.Resolver {
-	return training.ResolverFunc(func(_ context.Context, _ training.ResolveRequest) (training.Selection, error) {
-		backend := training.Fake{}
-		descriptor := backend.Descriptor()
-		return training.Selection{Backend: backend, Execution: training.Execution{
-			Backend: descriptor.Identity, Framework: descriptor.Framework, Runtime: "builtin",
-			Host: training.Host{OS: runtime.GOOS, Architecture: runtime.GOARCH}, Nodes: 1, WorldSize: 1,
-		}}, nil
-	})
+	return training.NewMLXResolver()
 }
 
 func validateSelection(selection training.Selection, objectives []string) error {

@@ -22,6 +22,7 @@ var configKeys = []string{
 	"lookaside.scratch",
 	"ingest.staging",
 	"model.root",
+	"model.backend",
 }
 
 func runConfigShow(context Context, args []string, stdout, _ io.Writer) error {
@@ -234,6 +235,14 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		if err != nil {
 			return err
 		}
+	case "model.backend":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		if values[0] != "auto" && values[0] != "fake" {
+			return usageError{message: "model.backend must be auto or fake"}
+		}
+		configuration.Model.Backend = values[0]
 	default:
 		return usageError{message: unknownConfigKey(key)}
 	}
@@ -277,6 +286,8 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.Ingest.Staging = ""
 	case "model.root":
 		configuration.Model.Root = ""
+	case "model.backend":
+		configuration.Model.Backend = ""
 	default:
 		return usageError{message: unknownConfigKey(key)}
 	}
@@ -355,6 +366,8 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 	case "model.root":
 		value, err := config.EffectiveModelRoot(configuration)
 		return value, err == nil, err
+	case "model.backend":
+		return config.EffectiveModelBackend(configuration), true, nil
 	default:
 		return nil, false, fmt.Errorf("%s", unknownConfigKey(key))
 	}

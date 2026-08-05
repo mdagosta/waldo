@@ -156,25 +156,28 @@ the same files independently of an index checkout.
 - Resolve multiple direct index paths through the current or configured index,
   deduplicate their corpora, recommend a model rung, and forecast one pass.
   **Implemented.**
-- Select MLX automatically on Apple Silicon
+- Select MLX automatically on Apple Silicon. **Implemented for the built-in
+  byte tokenizer with verified Metal runtime discovery.**
 - Select PyTorch automatically on single-node Linux
 - Select TorchTitan for explicitly configured multi-node Linux runs
-- Persist the resolved backend and immutable environment facts in each run BOM
+- Persist the resolved backend and immutable environment facts in each run BOM.
+  **Implemented for MLX, including Python/MLX versions and Apple accelerator.**
 - Keep the execution adapter portable across MLX, PyTorch, TensorFlow, and
-  PyTorch-based distributed engines. **Backend-neutral contract implemented;
-  real environment resolvers and adapters remain.**
+  PyTorch-based distributed engines. **Backend-neutral contract and MLX
+  adapter implemented; other frameworks remain.**
 - Resolve compact compose parameters into a versioned AdamW/cosine training
   profile, deterministic bounded shuffle, continuous EOS packing contract,
   checkpoint/evaluation cadence, and planned token capacity. **Implemented.**
 - Stream canonical records through a schema-1 NDJSON worker protocol without
-  exposing Parquet or index logic to framework adapters. **Implemented; the MLX
-  worker consumer remains.**
+  exposing Parquet or index logic to framework adapters. **Implemented through
+  the real MLX worker.**
 - Persist and validate typed progress, checkpoint, evaluation, final-loss, and
-  artifact observations. **Implemented through the fake backend contract.**
-- Checkpoint and resume
-- Actual consumption totals
-- Evaluation results and output weight hashes
-- Safetensors export with attached provenance
+  artifact observations. **Implemented and exercised through real MLX.**
+- Weight checkpoints. **Implemented.** Optimizer-state resume remains.
+- Actual consumption totals. **Implemented.**
+- Training-loss evaluation results and output weight hashes. **Implemented;
+  held-out evaluation remains.**
+- Safetensors export with attached provenance. **Implemented.**
 
 Exit: a tiny model can be rebuilt from a compose and its complete observed run
 record can be inspected.

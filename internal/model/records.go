@@ -96,6 +96,7 @@ type RunBOM struct {
 	CorpusBOMSHA256    string                      `json:"corpus_bom_sha256"`
 	CorpusBOM          corpus.BOM                  `json:"corpus_bom"`
 	Parameters         training.ResolvedParameters `json:"parameters"`
+	Initialization     *training.Initialization    `json:"initialization,omitempty"`
 }
 
 type RunRecord struct {

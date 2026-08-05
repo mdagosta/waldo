@@ -505,7 +505,7 @@ func runModelChat(_ Context, args []string, _, _ io.Writer) error {
 	if len(inspection.Model.Runs) == 0 {
 		return fmt.Errorf("model %q is untrained", args[0])
 	}
-	return fmt.Errorf("model %q has no chat-capable real-weight artifact; the MLX backend is the next training slice", args[0])
+	return fmt.Errorf("model %q cannot be opened for chat yet; generation over WALDO MLX weights is not implemented", args[0])
 }
 
 func configuredModelRoot() (string, error) {
@@ -517,11 +517,15 @@ func configuredModelRoot() (string, error) {
 }
 
 func configuredModelBuilder(context Context, progress io.Writer) (model.Builder, error) {
-	root, err := configuredModelRoot()
+	configuration, err := config.Load()
 	if err != nil {
 		return model.Builder{}, err
 	}
-	return model.Builder{Root: root, Progress: func(event model.Progress) {
+	root, err := config.EffectiveModelRoot(configuration)
+	if err != nil {
+		return model.Builder{}, err
+	}
+	builder := model.Builder{Root: root, Progress: func(event model.Progress) {
 		if context.JSON {
 			_ = json.NewEncoder(progress).Encode(event)
 			return
@@ -535,10 +539,18 @@ func configuredModelBuilder(context Context, progress io.Writer) (model.Builder,
 		} else {
 			fmt.Fprintf(progress, "%-22s %s\n", label, event.Message)
 		}
-	}}, nil
+	}}
+	if config.EffectiveModelBackend(configuration) == "fake" {
+		builder.Resolver = training.FakeResolver()
+	}
+	return builder, nil
 }
 
 func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
+	architecture := inspection.Model.Architecture
+	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
+		return model.PreparedStage{}, fmt.Errorf("automatic one-pass training currently requires byte@builtin-byte-schema-1 with vocabulary_size 259")
+	}
 	targets, err := resolveIndexArguments(paths)
 	if err != nil {
 		return model.PreparedStage{}, err
@@ -553,19 +565,26 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	}
 	batch := int64(8)
 	sequence := int64(inspection.Model.Architecture.ContextTokens)
-	steps := bom.Totals.Tokens / (batch * sequence)
-	if bom.Totals.Tokens%(batch*sequence) != 0 {
-		steps++
-	}
-	if steps < 1 {
-		steps = 1
-	}
 	stage := model.Stage{
 		Name: fmt.Sprintf("train-%04d", len(inspection.Model.Runs)+1), Type: "pre-training",
 		Objective: "causal-language-modeling", Corpora: append([]string(nil), paths...),
-		Parameters: training.Parameters{Steps: steps, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
+		Parameters: training.Parameters{Steps: 1, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
 	}
-	return materializeModelStage(context, stage, bom, cache, progress)
+	prepared, err := materializeModelStage(context, stage, bom, cache, progress)
+	if err != nil {
+		return model.PreparedStage{}, err
+	}
+	tokenTargets, err := training.CountByteTargets(context.Execution, prepared.Inputs)
+	if err != nil {
+		return model.PreparedStage{}, err
+	}
+	capacity := batch * sequence
+	steps := tokenTargets / capacity
+	if tokenTargets%capacity != 0 {
+		steps++
+	}
+	prepared.Stage.Parameters.Steps = steps
+	return model.PrepareStage(prepared.Stage, prepared.BOM, prepared.Inputs)
 }
 
 func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
@@ -623,7 +642,13 @@ func writeModelMutationResult(context Context, stdout io.Writer, inspection mode
 	fmt.Fprintf(stdout, "  location      %s\n", inspection.Path)
 	fmt.Fprintf(stdout, "  model id      %s\n", shortModelHash(inspection.Model.ID))
 	fmt.Fprintf(stdout, "  runs          %s\n", humanInteger(int64(len(inspection.Model.Runs))))
-	fmt.Fprintln(stdout, "  warning       fake backend only; artifacts are not trained model weights")
+	if len(inspection.RunBOMs) > 0 {
+		backend := inspection.RunBOMs[len(inspection.RunBOMs)-1].Execution.Backend
+		fmt.Fprintf(stdout, "  backend       %s@%s\n", backend.Name, backend.Revision)
+		if backend.Name == "fake" {
+			fmt.Fprintln(stdout, "  warning       explicitly simulated; artifacts are not trained model weights")
+		}
+	}
 	return nil
 }
 

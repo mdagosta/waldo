@@ -398,6 +398,7 @@ Configuration keys are positional and intentionally limited:
 | `lookaside.scratch` | Disposable partial-download directory beneath system temporary storage. |
 | `ingest.staging` | Ingestion scratch and recovery directory beneath system temporary storage. |
 | `model.root` | Durable local model, run, BOM, and artifact directory; default `~/.waldo/models`. |
+| `model.backend` | `auto` for a real compatible backend (default), or explicit `fake` simulation for development tests. |
 
 `waldo config get` lists every supported key and its effective or unset value.
 Passing a prefix such as `lookaside` narrows the list to matching keys;
@@ -423,11 +424,15 @@ selection, creates the model if absent, and executes its stages. Existing names
 are refused unless `--replace` is explicitly supplied; replacement is prepared
 fully before the old model is removed.
 
-The current development backend resolves to `fake@builtin-fake-schema-1`. It
-exercises the complete state and provenance path but emits an artifact that
-explicitly contains no trained weights. Backend selection is not part of the
-portable compose. The schema-1 compose and durable layout are documented in
-`docs/MODEL-LIFECYCLE.md`.
+On Apple Silicon, automatic backend resolution probes candidate Python
+runtimes and selects MLX only after executing a real operation on Metal. The
+first real slice accepts the built-in byte-tokenizer presets and produces
+checkpoint and terminal Safetensors weights. If no compatible real backend is
+available, training fails before creating a run; simulation is never an
+automatic fallback. `waldo config set model.backend fake` is the explicit
+development-test exception and permanently marks its artifacts simulated.
+Backend selection is not part of the portable compose. The schema-1 compose
+and durable layout are documented in `docs/MODEL-LIFECYCLE.md`.
 
 ### Inspect provenance
 

@@ -99,6 +99,18 @@ func TestCanonicalRecordSourceHonorsByteBound(t *testing.T) {
 	}
 }
 
+func TestCountByteTargetsUsesUTF8BytesAndEOS(t *testing.T) {
+	inputs := []Input{writeTrainingShard(t, []string{"A", "é"})}
+	// [A, EOS, 0xc3, 0xa9, EOS] has four next-token targets.
+	targets, err := CountByteTargets(context.Background(), inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if targets != 4 {
+		t.Fatalf("byte targets = %d, want 4", targets)
+	}
+}
+
 func TestWorkerProtocolStreamsBeginRecordsEndAndValidatesOutput(t *testing.T) {
 	inputs := []Input{writeTrainingShard(t, []string{"one", "two"})}
 	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 7})

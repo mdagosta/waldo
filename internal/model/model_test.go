@@ -57,7 +57,7 @@ func TestLoadComposeIsStrictAndKeepsIndexPathsLogical(t *testing.T) {
 func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	root := t.TempDir()
 	clock := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)
-	builder := Builder{Root: root, Now: func() time.Time { return clock }, NewID: func() (string, error) { return "run0001", nil }}
+	builder := Builder{Root: root, Now: func() time.Time { return clock }, NewID: func() (string, error) { return "run0001", nil }, Resolver: training.FakeResolver()}
 	initialized, err := builder.Initialize("smoke", testArchitecture())
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestComposeReplacementIsTransactional(t *testing.T) {
 	root := t.TempDir()
 	compose := validCompose()
 	stage := preparedFixture(t, compose.Stages[0])
-	builder := Builder{Root: root, NewID: func() (string, error) { return "run0001", nil }}
+	builder := Builder{Root: root, NewID: func() (string, error) { return "run0001", nil }, Resolver: training.FakeResolver()}
 	first, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false)
 	if err != nil {
 		t.Fatal(err)

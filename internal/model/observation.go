@@ -40,27 +40,7 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 		}
 		seen[clean] = true
 		path := filepath.Join(runDirectory, filepath.FromSlash(clean))
-		file, err := os.Open(path)
-		if err != nil {
-			return fmt.Errorf("artifact %s: %w", artifact.Path, err)
-		}
-		hasher := sha256.New()
-		bytes, copyErr := io.Copy(hasher, file)
-		closeErr := file.Close()
-		if copyErr != nil {
-			return fmt.Errorf("artifact %s: %w", artifact.Path, copyErr)
-		}
-		if closeErr != nil {
-			return fmt.Errorf("artifact %s: %w", artifact.Path, closeErr)
-		}
-		if bytes != artifact.Bytes {
-			return fmt.Errorf("artifact %s size is %d, backend reported %d", artifact.Path, bytes, artifact.Bytes)
-		}
-		digest := hex.EncodeToString(hasher.Sum(nil))
-		if digest != artifact.SHA256 {
-			return fmt.Errorf("artifact %s SHA-256 is %s, backend reported %s", artifact.Path, digest, artifact.SHA256)
-		}
-		return nil
+		return verifyArtifactFile(path, artifact)
 	}
 	for _, artifact := range observation.Artifacts {
 		if err := validateArtifact(artifact); err != nil {
@@ -90,6 +70,30 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 				return fmt.Errorf("evaluation %d has invalid metric %q", position+1, name)
 			}
 		}
+	}
+	return nil
+}
+
+func verifyArtifactFile(path string, artifact training.Artifact) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("artifact %s: %w", artifact.Path, err)
+	}
+	hasher := sha256.New()
+	bytes, copyErr := io.Copy(hasher, file)
+	closeErr := file.Close()
+	if copyErr != nil {
+		return fmt.Errorf("artifact %s: %w", artifact.Path, copyErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("artifact %s: %w", artifact.Path, closeErr)
+	}
+	if bytes != artifact.Bytes {
+		return fmt.Errorf("artifact %s size is %d, backend reported %d", artifact.Path, bytes, artifact.Bytes)
+	}
+	digest := hex.EncodeToString(hasher.Sum(nil))
+	if digest != artifact.SHA256 {
+		return fmt.Errorf("artifact %s SHA-256 is %s, backend reported %s", artifact.Path, digest, artifact.SHA256)
 	}
 	return nil
 }

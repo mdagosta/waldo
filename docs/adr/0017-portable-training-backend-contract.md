@@ -47,5 +47,6 @@ needs it.
   command organization or compose schema.
 - Backend capability mismatches fail during preflight, before a model directory
   or paid training run exists.
-- Until a real adapter lands, the default development resolver selects the
-  deterministic fake backend through the same contract.
+- Automatic resolution never selects the deterministic fake backend. It is
+  available only through explicit machine configuration for development and
+  lifecycle tests.

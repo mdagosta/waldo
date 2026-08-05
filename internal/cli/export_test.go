@@ -58,7 +58,7 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	models := filepath.Join(t.TempDir(), "models")
 	destination := filepath.Join(t.TempDir(), "export")
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
-	if err := config.Save(config.Config{Lookaside: config.Lookaside{Scratch: cache}, Model: config.Model{Root: models}}); err != nil {
+	if err := config.Save(config.Config{Lookaside: config.Lookaside{Scratch: cache}, Model: config.Model{Root: models, Backend: "fake"}}); err != nil {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer

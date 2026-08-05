@@ -26,9 +26,11 @@ on that same backend; recipe-driven fetcher scripts populate temporary source sp
 are pinned in manifest evidence, and are purged after successful contribution.
 A filesystem-backed publisher exercises the same path locally for integration
 tests. Phase 4 now includes strict model composes, direct verified index
-selections, immutable architecture plans, append-only runs, durable model/run OpenWALDO BOMs, and a
-fake backend that proves complete/failure/interruption orchestration without
-claiming to train real weights. A fail-closed EU GPAI export maps the model and
+selections, immutable architecture plans, append-only runs, durable model/run
+OpenWALDO BOMs, a framework-neutral worker contract, and a real Apple Silicon
+MLX backend that streams canonical records into decoder training and produces
+hashed Safetensors weights. Deterministic simulation remains available only by
+explicitly configuring the fake backend. A fail-closed EU GPAI export maps the model and
 its training BOMs to the pinned Commission template fields and reports missing
 facts without claiming legal compliance. Other commands remain visible as an
 honest roadmap.
@@ -49,7 +51,7 @@ The stable corpus contract is documented in
 [the OpenWALDO BOM guide](docs/OPENWALDO-BOM.md). Corpus ingestion and its
 training-data shape are documented in
 [the ingestion design](docs/INGESTION-DESIGN.md).
-The framework-neutral model formats and fake-backend boundary are documented
+The framework-neutral model formats and MLX backend boundary are documented
 in [the model lifecycle guide](docs/MODEL-LIFECYCLE.md).
 The accompanying [EU GPAI disclosure mapping](docs/EU-GPAI-DISCLOSURE.md)
 defines the provenance needed to render the Commission's public training-content

@@ -42,6 +42,7 @@ printf 'Small deterministic training record.\nA second preserved line.\n' > "$in
 "$binary" config set lookaside.scratch "$scratch"
 "$binary" config set ingest.staging "$staging"
 "$binary" config set model.root "$models"
+"$binary" config set model.backend fake
 "$binary" config set index "$index_root"
 
 destination="$index_root/core/e2e/model-corpus"
