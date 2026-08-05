@@ -140,6 +140,8 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 				return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
 			}
 			input.TextColumn = column
+		case "jsonl":
+			input.Adapter = "jsonl"
 		default:
 			return Plan{}, fmt.Errorf("%s: detected format %q has no enabled adapter", artifact.Path, artifact.Format)
 		}
@@ -216,6 +218,10 @@ func (plan Plan) Validate() error {
 		case "parquet":
 			if artifact.Format != "parquet" || input.TextColumn == "" {
 				return fmt.Errorf("Parquet input %s has no valid text column mapping", artifact.Path)
+			}
+		case "jsonl":
+			if artifact.Format != "jsonl" || input.TextColumn != "" || (artifact.Compression != "" && artifact.Compression != "gzip" && artifact.Compression != "zstd") {
+				return fmt.Errorf("input %s has an inconsistent JSONL adapter", artifact.Path)
 			}
 		default:
 			return fmt.Errorf("input %s has unsupported adapter %q", artifact.Path, input.Adapter)

@@ -164,6 +164,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		}
 		fmt.Fprintf(stdout, "ingestion %s complete\n", identity[:12])
 		fmt.Fprintf(stdout, "  records      %s input, %s retained, %s duplicate\n", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
+		var tokens int64
+		for _, object := range assembly.Objects {
+			tokens += object.Tokens
+		}
+		fmt.Fprintf(stdout, "  tokens       %s (%s)\n", humanCount(tokens), manifest.ConvertedBy.Tokenizer)
 		fmt.Fprintf(stdout, "  objects      %s published to %s\n", humanInteger(int64(len(publication.Objects))), publication.BaseURL)
 		fmt.Fprintf(stdout, "  contribution %s (%s changed files)\n", contribution.Root, humanInteger(int64(len(contribution.Files))))
 		for _, file := range contribution.Files {

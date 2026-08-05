@@ -41,8 +41,10 @@ index contribution.
 
 The generated manifest records compose path and SHA-256; Git repository,
 commit, and dirty status when discoverable; each script path and SHA-256; and
-the relative path, hash, size, detected format, adapter, and mapping of every
-prepared artifact. Environment and secret values are never persisted.
+one aggregate identity for the complete prepared acquisition. Per-artifact
+details remain execution evidence and are not copied into the Git manifest.
+Environment and secret values are never persisted. ADR 0015 fixes this compact
+boundary explicitly.
 
 No other command executes index or fetcher code. Index inspection,
 verification, BOM construction, export, and model workflows remain data-only.

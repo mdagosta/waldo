@@ -39,6 +39,11 @@ assertions, conversion recipe, object hash, counts, and aggregate facts. The
 lookaside contains only the corresponding Parquet bytes. There are no canonical
 tar payloads, sidecar catalogs, or loose media objects.
 
+The Git manifest is a compact object map, not an acquisition-file or record
+catalog. It carries one aggregate source digest and one small entry per
+published shard. Per-input paths and hashes may exist in temporary execution
+state, but their count must not determine the size of the committed manifest.
+
 Manifest and ingestion requirements for the EU GPAI public-summary projection
 are specified in `docs/EU-GPAI-DISCLOSURE.md`. The core fields describe general
 provenance; the Commission template is an export mapping, not the manifest
@@ -120,6 +125,15 @@ lowercase hexadecimal.
 `token_count` is a measurement, not universal truth. Its tokenizer/counter and
 version are shard facts. It is useful for corpus accounting but does not replace
 the token IDs in a compiled training view.
+
+During assembly, WALDO counts each retained document with the offline embedded
+`tiktoken/cl100k_base` reference counter. It stores that informational estimate
+in the existing nullable per-row `token_count` column and aggregates it into
+each compact manifest shard entry. The manifest's
+`converted_by.tokenizer` makes those estimates interpretable. Canonical rows
+remain training-tokenizer neutral because they contain text rather than token
+IDs; changing the reference counter does change object identity and therefore
+requires a new recorded writer recipe.
 
 Record schema 1 remains the canonical logical contract. The physical writer
 recipe and footer metadata distinguish this representation from older
@@ -309,6 +323,9 @@ re-encoding are necessary, but still happen in one bounded streaming pass.
 ### Other adapters
 
 - JSONL is scanned one record at a time with an explicit maximum record size.
+  The initial adapter accepts plain, gzip, and zstd streams, requires a
+  top-level string `text` field, ignores unknown fields, and never materializes
+  a decompressed intermediate.
 - CSV uses a streaming parser and an explicit dialect/schema; guessing is part
   of the probe, not silent execution behavior.
 - WARC and archive formats stream entries and bound decompressed bytes.

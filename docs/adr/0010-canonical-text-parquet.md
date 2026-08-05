@@ -37,8 +37,11 @@ covers the exact bytes in `text`. Extraction, normalization, language
 detection, token counting, and interpretation of `meta` are named recipe facts,
 not hidden behavior of the writer.
 
-The initial physical writer identity is
-`parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v2`. It uses parquet-go 0.30.1,
+The current counted physical writer identity is
+`parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v3`. The unreleased v2 implementation
+left `token_count` null; v3 populates the existing column with the manifest's
+named reference counter so record export can reconcile shard totals. It uses
+parquet-go 0.30.1,
 klauspost/compress 1.17.9's mapping of Zstandard level 6, one encoder worker,
 data page v2, 1 MiB target pages, 64 MiB logical row groups, and dictionary
 encoding only for the low-cardinality source-name, license, language, and date

@@ -87,12 +87,11 @@ func TestIndexIngestComposePublishesAuditableManifestAndPurgesInputs(t *testing.
 	if manifest.ComposedBy == nil || len(manifest.ComposedBy.Steps) != 1 || manifest.ComposedBy.Steps[0].Name != "fetch" || len(manifest.ComposedBy.SHA256) != 64 {
 		t.Fatalf("composed_by = %+v", manifest.ComposedBy)
 	}
-	if len(manifest.Sources) != 1 || len(manifest.Sources[0].Files) != 1 {
+	if len(manifest.Sources) != 1 || len(manifest.Sources[0].Files) != 0 {
 		t.Fatalf("sources = %+v", manifest.Sources)
 	}
-	file := manifest.Sources[0].Files[0]
-	if file.Name != "document.txt" || file.Bytes == 0 || file.Format != "text" || file.Adapter != "text" {
-		t.Fatalf("source file evidence = %+v", file)
+	if len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Shards[0].Tokens <= 0 {
+		t.Fatalf("shards = %+v", manifest.Shards)
 	}
 	composeWorkspaces, err := os.ReadDir(filepath.Join(staging, "composes"))
 	if err != nil && !os.IsNotExist(err) {

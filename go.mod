@@ -10,6 +10,8 @@ require (
 	github.com/aws/smithy-go v1.27.3
 	github.com/klauspost/compress v1.17.9
 	github.com/parquet-go/parquet-go v0.30.1
+	github.com/pkoukk/tiktoken-go v0.1.8
+	github.com/pkoukk/tiktoken-go-loader v0.0.2
 	github.com/zalando/go-keyring v0.2.6
 	go.etcd.io/bbolt v1.4.0
 	golang.org/x/term v0.37.0
@@ -33,6 +35,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.38.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.0 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
+	github.com/dlclark/regexp2 v1.10.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/parquet-go/bitpack v1.0.0 // indirect

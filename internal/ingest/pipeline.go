@@ -25,6 +25,8 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 			err = StreamTextBatches(ctx, inputPlan, consume)
 		case "parquet":
 			err = StreamParquetTextBatches(ctx, inputPlan, consume)
+		case "jsonl":
+			err = StreamJSONLTextBatches(ctx, inputPlan, consume)
 		default:
 			err = fmt.Errorf("unsupported accepted adapter %q", input.Adapter)
 		}

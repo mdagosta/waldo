@@ -220,6 +220,14 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 		artifact.Format = "compressed"
 		artifact.Compression = compression
 		artifact.Evidence = []string{compression + "-magic"}
+		format, inspectErr := detectCompressedContent(file, artifact.Path, compression)
+		if inspectErr != nil && compressedJSONLExtension(artifact.Path) {
+			return fmt.Errorf("invalid compressed JSONL: %w", inspectErr)
+		}
+		if format == "jsonl" {
+			artifact.Format = "jsonl"
+			artifact.Evidence = append(artifact.Evidence, "jsonl-structure")
+		}
 		return nil
 	}
 	if format := detectMedia(sample, artifact.MediaType); format != "" {
@@ -239,6 +247,9 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 		return nil
 	}
 	if format := detectJSON(trimmed, artifact.Bytes <= probeBytes); format != "" {
+		if format == "json" && strings.EqualFold(filepath.Ext(artifact.Path), ".jsonl") {
+			format = "jsonl"
+		}
 		artifact.Format = format
 		artifact.Evidence = []string{"json-structure"}
 		return nil
@@ -257,6 +268,46 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 	artifact.Format = "unknown"
 	artifact.Evidence = []string{"no-recognized-signature"}
 	return nil
+}
+
+func detectCompressedContent(file *os.File, artifactPath, compression string) (string, error) {
+	if compression != "gzip" && compression != "zstd" {
+		return "", nil
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	reader, err := openDecompressed(file, compression)
+	if err != nil {
+		return "", err
+	}
+	sample, readErr := io.ReadAll(io.LimitReader(reader, probeBytes+1))
+	closeErr := reader.Close()
+	if readErr != nil {
+		return "", readErr
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
+	complete := len(sample) <= probeBytes
+	if !complete {
+		sample = sample[:probeBytes]
+	}
+	format := detectJSON(bytes.TrimSpace(sample), complete)
+	if format == "jsonl" || (format == "json" && compressedJSONLExtension(artifactPath)) {
+		return "jsonl", nil
+	}
+	return "", nil
+}
+
+func compressedJSONLExtension(path string) bool {
+	lower := strings.ToLower(path)
+	for _, suffix := range []string{".jsonl.gz", ".jsonl.gzip", ".jsonl.zst", ".jsonl.zstd"} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func validUTF8Sample(sample []byte, complete bool) bool {

@@ -2,9 +2,10 @@ package ingest
 
 import (
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
+	"hash"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/openwaldo/waldo-new/internal/index"
 	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo-new/internal/tokenizer"
 )
 
 // BuildManifest converts a completed assembly into a public-index-compatible
@@ -31,7 +33,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		usage.Tokens += object.Tokens
 		tokens += object.Tokens
 	}
-	sourceHash, files, err := sourceAcquisitionIdentity(plan)
+	sourceHash, err := sourceAcquisitionIdentity(plan)
 	if err != nil {
 		return index.Manifest{}, err
 	}
@@ -41,7 +43,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		RecordSchema: shard.TextRecordSchema,
 		Sources: []index.Source{{
 			Name: plan.Source.Name, Source: plan.Source.Name, URL: plan.Source.URL,
-			Category: plan.Source.Category, SHA256: sourceHash, Files: files,
+			Category: plan.Source.Category, SHA256: sourceHash,
 			Usage: index.Modalities{"text": usage},
 			Content: &index.Content{
 				Types: []string{"text"}, PersonalData: "unknown",
@@ -50,7 +52,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		}},
 		ConvertedBy: index.Conversion{
 			Tool: "waldo index ingest", Version: "0.1.0-dev",
-			Profile: "canonical-text-schema-1", Recipe: shard.TextWriterRecipe,
+			Profile: "canonical-text-schema-1", Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default,
 		},
 		ComposedBy: plan.Composition,
 		Processing: &index.Processing{Steps: []index.ProcessingStep{
@@ -83,59 +85,34 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 	return manifest, nil
 }
 
-func sourceAcquisitionIdentity(plan Plan) (string, []index.SourceFile, error) {
-	type artifactIdentity struct {
-		SHA256     string `json:"sha256"`
-		Bytes      int64  `json:"bytes"`
-		Format     string `json:"format"`
-		Adapter    string `json:"adapter"`
-		TextColumn string `json:"text_column,omitempty"`
-		SourcePath string `json:"source_path,omitempty"`
-	}
-	wire := struct {
-		Kind      string             `json:"kind"`
-		Schema    int                `json:"schema"`
-		Artifacts []artifactIdentity `json:"artifacts"`
-	}{Kind: "waldo-acquisition-identity", Schema: 1}
-	files := make([]index.SourceFile, 0, len(plan.Inputs))
-	seenNames := map[string]bool{}
+func sourceAcquisitionIdentity(plan Plan) (string, error) {
+	// This is an aggregate identity, not a Git-resident artifact inventory.
+	// Length-prefix every field so concatenated inputs cannot be ambiguous, and
+	// stream into the digest so source count does not imply equivalent memory.
+	hasher := sha256.New()
+	writeIdentityString(hasher, "waldo-acquisition-identity")
+	writeIdentityString(hasher, "1")
 	for _, input := range plan.Inputs {
-		wire.Artifacts = append(wire.Artifacts, artifactIdentity{
-			SHA256: input.Artifact.SHA256, Bytes: input.Artifact.Bytes,
-			Format: input.Artifact.Format, Adapter: input.Adapter, TextColumn: input.TextColumn, SourcePath: input.SourcePath,
-		})
-		name := input.SourcePath
-		if name == "" {
-			name = filepath.Base(input.Artifact.Path)
-		}
-		if seenNames[name] {
-			name = input.Artifact.SHA256[:12] + "-" + name
-		}
-		seenNames[name] = true
-		files = append(files, index.SourceFile{
-			Name: name, URL: artifactEvidenceURL(plan.Source.URL, input.Artifact.SHA256), SHA256: input.Artifact.SHA256,
-			Bytes: input.Artifact.Bytes, Format: input.Artifact.Format, Adapter: input.Adapter, TextColumn: input.TextColumn,
-		})
+		writeIdentityString(hasher, input.Artifact.SHA256)
+		writeIdentityInt64(hasher, input.Artifact.Bytes)
+		writeIdentityString(hasher, input.Artifact.Format)
+		writeIdentityString(hasher, input.Artifact.Compression)
+		writeIdentityString(hasher, input.Adapter)
+		writeIdentityString(hasher, input.TextColumn)
+		writeIdentityString(hasher, input.SourcePath)
 	}
-	data, err := json.Marshal(wire)
-	if err != nil {
-		return "", nil, err
-	}
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:]), files, nil
+	return hex.EncodeToString(hasher.Sum(nil)), nil
 }
 
-func artifactEvidenceURL(base, digest string) string {
-	parsed, err := url.Parse(base)
-	if err != nil {
-		return base + "#sha256=" + digest
-	}
-	if parsed.Fragment == "" {
-		parsed.Fragment = "sha256=" + digest
-	} else {
-		parsed.Fragment += "&sha256=" + digest
-	}
-	return parsed.String()
+func writeIdentityString(destination hash.Hash, value string) {
+	writeIdentityInt64(destination, int64(len(value)))
+	_, _ = destination.Write([]byte(value))
+}
+
+func writeIdentityInt64(destination hash.Hash, value int64) {
+	var encoded [8]byte
+	binary.BigEndian.PutUint64(encoded[:], uint64(value))
+	_, _ = destination.Write(encoded[:])
 }
 
 func contentAddressedURL(base, digest string) (string, error) {

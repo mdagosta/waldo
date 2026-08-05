@@ -7,9 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"slices"
-	"sort"
 )
 
 type exportedRecord struct {
@@ -27,13 +24,17 @@ type manifestRecord struct {
 	Name    string `json:"name"`
 	License string `json:"license"`
 	Sources []struct {
-		Name  string `json:"name"`
-		URL   string `json:"url"`
-		Files []struct {
-			Name   string `json:"name"`
-			SHA256 string `json:"sha256"`
-		} `json:"files"`
+		Name   string `json:"name"`
+		URL    string `json:"url"`
+		SHA256 string `json:"sha256"`
 	} `json:"sources"`
+	Shards []struct {
+		URL    string `json:"url"`
+		SHA256 string `json:"sha256"`
+		Docs   int64  `json:"docs"`
+		Tokens int64  `json:"tokens"`
+		Bytes  int64  `json:"bytes"`
+	} `json:"shards"`
 }
 
 func main() {
@@ -43,7 +44,7 @@ func main() {
 	jsonl, manifestPath := os.Args[1], os.Args[2]
 	sourceURL, sourceName, license, inputDirectory := os.Args[3], os.Args[4], os.Args[5], os.Args[6]
 	expectedPaths := os.Args[7:]
-	validateManifest(manifestPath, inputDirectory, sourceURL, sourceName, license)
+	validateManifest(manifestPath, inputDirectory, sourceURL, sourceName, license, int64(len(expectedPaths)))
 	input, err := os.Open(jsonl)
 	if err != nil {
 		fatalf("open export: %v", err)
@@ -82,7 +83,7 @@ func main() {
 	fmt.Printf("validated %d exported records byte-for-byte\n", len(expectedPaths))
 }
 
-func validateManifest(path, inputDirectory, sourceURL, sourceName, license string) {
+func validateManifest(path, inputDirectory, sourceURL, sourceName, license string, expectedDocuments int64) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		fatalf("read manifest: %v", err)
@@ -95,32 +96,22 @@ func validateManifest(path, inputDirectory, sourceURL, sourceName, license strin
 		fatalf("manifest identity or license is incorrect")
 	}
 	source := manifest.Sources[0]
-	if source.Name != sourceName || source.URL != sourceURL {
+	if source.Name != sourceName || source.URL != sourceURL || len(source.SHA256) != 64 {
 		fatalf("manifest source is name=%q url=%q", source.Name, source.URL)
 	}
-	entries, err := os.ReadDir(inputDirectory)
+	_, err = os.ReadDir(inputDirectory)
 	if err != nil {
 		fatalf("read input directory: %v", err)
 	}
-	expectedFiles := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.Type().IsRegular() {
-			contents, err := os.ReadFile(filepath.Join(inputDirectory, entry.Name()))
-			if err != nil {
-				fatalf("read input artifact %s: %v", entry.Name(), err)
-			}
-			digest := sha256.Sum256(contents)
-			expectedFiles = append(expectedFiles, entry.Name()+"="+hex.EncodeToString(digest[:]))
-		}
+	if len(manifest.Shards) != 1 {
+		fatalf("manifest contains %d shards, want 1", len(manifest.Shards))
 	}
-	actualFiles := make([]string, 0, len(source.Files))
-	for _, file := range source.Files {
-		actualFiles = append(actualFiles, file.Name+"="+file.SHA256)
+	shard := manifest.Shards[0]
+	if shard.Docs != expectedDocuments || shard.Tokens <= 0 || shard.Bytes <= 0 || len(shard.SHA256) != 64 || shard.URL == "" {
+		fatalf("manifest shard is %+v, want %d documents with positive tokens and bytes", shard, expectedDocuments)
 	}
-	sort.Strings(expectedFiles)
-	sort.Strings(actualFiles)
-	if !slices.Equal(actualFiles, expectedFiles) {
-		fatalf("manifest source files are %v, want %v", actualFiles, expectedFiles)
+	if len(data) > 16<<10 {
+		fatalf("manifest is %d bytes; compact single-shard manifest must be at most 16 KiB", len(data))
 	}
 }
 

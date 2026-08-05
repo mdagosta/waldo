@@ -17,7 +17,8 @@ summarize, and verify the public `waldo-index`; materialize objects through a
 hash-verifying lookaside scratch with ordered fallback mirrors; inspect failed-run leftovers;
 and export selected shards as native objects or canonical JSONL with an
 `EXPORT.json` provenance record. It can also probe text/Markdown/raw Parquet,
-write canonical schema-1 Parquet, publish shards to S3 with bounded concurrency
+stream plain, gzip, and zstd JSONL, write canonical schema-1 Parquet, and
+publish shards to S3 with bounded concurrency
 and remote checksum verification, reclaim staging safely, and create a Git
 review overlay. Direct local inputs and strict external ingest composes converge
 on that same backend; composed fetcher scripts populate temporary source space,

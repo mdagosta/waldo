@@ -17,3 +17,5 @@ logs.
 - [0011: Separate immutable model plans, run BOMs, and observed state](0011-model-plan-and-boms.md)
 - [0012: Store interactive S3 credentials in the OS keychain](0012-s3-credentials-in-os-keychain.md)
 - [0013: Remove lookaside objects only by explicit name](0013-explicit-lookaside-removal.md)
+- [0014: Execute external fetchers only through explicit ingest compose](0014-explicit-ingest-compose.md)
+- [0015: Keep ingest manifests compact and token counts referential](0015-compact-ingest-manifests.md)

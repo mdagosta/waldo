@@ -61,6 +61,7 @@ Implemented foundation:
 - Empty schema-2 index initialization
 - Ingestion and training-data contract (`docs/INGESTION-DESIGN.md`)
 - Basic text and Markdown ingestion
+- Streaming plain, gzip, and zstd JSONL ingestion
 - Canonical records and deterministic Parquet packing
 - License partitioning
 - Bounded progress event stream for probe, conversion, shard, upload, and purge
@@ -71,7 +72,7 @@ Implemented foundation:
 - DCO-oriented Git handoff
 - Strict YAML/JSON ingest compose detection without a separate command
 - Explicit sequential external fetcher execution into WALDO-owned temporary input
-- Compose, Git, script, and resolved-artifact evidence in manifests and BOMs
+- Compact aggregate source identity plus compose, Git, and script evidence in manifests and BOMs
 - Successful prepared-source purge and verified retry state
 
 The direct and composed end-to-end contribution paths are complete.

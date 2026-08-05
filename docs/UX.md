@@ -148,6 +148,12 @@ Parquet writer recipe. Execution re-hashes each file before emitting it. A
 larger file requires an explicit, named splitter recipe; it is never silently
 split, truncated, repaired, or rendered from Markdown.
 
+JSONL ingestion projects one top-level string field named `text` per nonblank
+line. Plain `.jsonl`, gzip, and zstd inputs stream through bounded decoding;
+they are not expanded into an intermediate file. Unknown JSON members are not
+copied into the canonical row. Missing, null, empty, oversized, non-UTF-8, and
+NUL-containing text values fail the ingest.
+
 The command preflights source metadata, projected shard count, output size,
 destination, and lookaside configuration before conversion. On success
 it should explain the exact Git review and DCO commit steps without creating a
@@ -266,9 +272,13 @@ it, while a partially executed preparation is cleared and rerun.
 
 Generated manifests retain the compose content hash, repository/commit when
 discoverable, dirty-checkout status, and every executed script path and hash.
-Each acquired file also records its relative path, bytes, detected format,
-adapter, and mapping. Secrets and environment values are never written to the
-manifest.
+The source record contains one aggregate acquisition digest; it never embeds a
+per-file or per-record inventory. The manifest remains compact Git metadata,
+with one entry per published Parquet shard containing its URL, SHA-256,
+document count, reference-token estimate, and encoded byte size. Input details
+remain in bounded staging state while the run needs them and in the canonical
+Parquet rows where record-level evidence belongs. Secrets and environment
+values are never written to the manifest.
 
 Publication is configured once through `waldo config set`; ingestion
 has no second per-run destination or alternate partial execution mode.

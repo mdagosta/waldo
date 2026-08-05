@@ -12,6 +12,7 @@ import (
 	"slices"
 
 	"github.com/openwaldo/waldo-new/internal/shard"
+	"github.com/openwaldo/waldo-new/internal/tokenizer"
 	"github.com/parquet-go/parquet-go"
 )
 
@@ -68,7 +69,11 @@ func AssembleTextObjectsWithSink(ctx context.Context, plan Plan, stagingDirector
 		return AssemblyResult{}, err
 	}
 	defer dedup.database.Close()
-	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory, sink: sink}
+	counter, err := tokenizer.Get(tokenizer.Default)
+	if err != nil {
+		return AssemblyResult{}, fmt.Errorf("load reference tokenizer: %w", err)
+	}
+	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory, sink: sink, counter: counter}
 	err = StreamCanonicalTextBatches(ctx, plan, func(batch TextBatch) error {
 		unique, err := dedup.filter(batch)
 		if err != nil || len(unique.Rows) == 0 {
@@ -99,6 +104,7 @@ type objectAssembler struct {
 	active    *activeObject
 	results   []ObjectResult
 	sink      func(ObjectResult) error
+	counter   tokenizer.Counter
 }
 
 type activeObject struct {
@@ -145,15 +151,17 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 			continue
 		}
 		rows := batch.Rows[start:position]
+		for index := range rows {
+			count := int64(assembler.counter.Count(rows[index].Text))
+			rows[index].TokenCount = &count
+			active.tokens += count
+		}
 		if _, err := active.writer.Write(rows); err != nil {
 			return err
 		}
 		for _, row := range rows {
 			active.docs++
 			active.logicalBytes += int64(len(row.Text))
-			if row.TokenCount != nil {
-				active.tokens += *row.TokenCount
-			}
 		}
 		if active.rowGroupLogical >= assembler.plan.Writer.RowGroupLogicalBytes {
 			if err := assembler.flushRowGroup(); err != nil {

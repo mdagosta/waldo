@@ -30,7 +30,7 @@ func TestAssembleTextObjectsRotatesVerifiesAndIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Objects) != 2 || first.Objects[0].Docs != 2 || first.Objects[1].Docs != 1 {
+	if len(first.Objects) != 2 || first.Objects[0].Docs != 2 || first.Objects[1].Docs != 1 || first.Objects[0].Tokens <= 0 || first.Objects[1].Tokens <= 0 {
 		t.Fatalf("objects = %+v", first)
 	}
 	second, err := AssembleTextObjects(context.Background(), plan, filepath.Join(t.TempDir(), "second"))
