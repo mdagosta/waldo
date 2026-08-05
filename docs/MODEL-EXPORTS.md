@@ -262,8 +262,8 @@ small-waldo/
 ```
 
 This is the authoritative archival and WALDO-to-WALDO representation. A
-dedicated `model import` command has not been implemented yet; export does not
-pretend otherwise.
+dedicated `model download` command has not been implemented yet; export does
+not pretend otherwise.
 
 ## Hugging Face package
 

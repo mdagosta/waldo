@@ -53,7 +53,7 @@ flowchart TB
     B --> C["Corpus export"]
     C --> X["Your own tools<br/>audit · validate · train from scratch<br/>or combine with open weights"]
     N["New blank model<br/>architecture declared in compose"] --> MC["Compose Configuration"]
-    O["Existing open-weight model<br/>planned import + BOM pin"] --> MC
+    O["Existing open-weight model<br/>planned download + BOM pin"] --> MC
     B --> MC
     MC --> T["Model forecast and train"]
     T --> M["Run and model BOMs<br/>data + starting-point lineage"]
@@ -71,8 +71,9 @@ flowchart TB
    training stack, used to train from scratch, or paired with an open-weight
    base model for continued training or fine-tuning.
 4. A WALDO compose currently starts with a blank architecture. The planned
-   open-weight path will pin the inherited model and its BOM before resolving
-   the same compose lifecycle; model import and fine-tuning remain pending.
+   open-weight path will download and pin the inherited model and its BOM before
+   resolving the same compose lifecycle; model download and fine-tuning remain
+   pending.
 5. WALDO persists the corpus BOM and starting-point identity before execution,
    records observed results afterward, and binds output weights into append-only
    run and model BOMs.
@@ -366,6 +367,49 @@ The current pretrained models perform raw causal continuation and carry no
 invented chat template. Instruction-following behavior requires future,
 explicitly recorded fine-tuning support.
 
+### Continue training an open-weight model (planned)
+
+The next model-lifecycle slice will download training-quality open weights
+directly into WALDO's managed model root:
+
+```bash
+waldo model download llama-base \
+  huggingface://organization/model@<immutable-revision>
+
+waldo model summary llama-base
+waldo model bom llama-base
+waldo model train llama-base core/books --epochs 1
+waldo model export llama-base ./llama-continued --format huggingface
+```
+
+`model download` will default to a Hugging Face model directory containing
+Safetensors, architecture configuration, and tokenizer files. A revision may
+be supplied explicitly; otherwise WALDO will resolve the requested reference
+to an immutable repository revision before accepting any artifacts. Native
+WALDO packages will remain the lossless WALDO-to-WALDO transfer format.
+
+For a supported architecture, WALDO will:
+
+1. inventory and hash every acquired source artifact;
+2. capture the source repository, immutable revision, upstream model card,
+   license, and BOM when available;
+3. validate the architecture, tokenizer, tensor names, shapes, and precision;
+4. stream-map compatible tensor names into WALDO's internal Safetensors
+   contract without quantization or numerical conversion; and
+5. persist a separate immutable model-origin record before allowing training.
+
+The downloaded origin is not represented as a training run. Subsequent
+`model train` and model-compose stages append ordinary runs that pin the exact
+origin BOM and initialization-weight hash. Missing upstream provenance remains
+an explicit disclosure gap rather than being inferred. Unsupported
+architectures or tokenizers fail before a managed model is published.
+
+GGUF is intentionally not the default download format because it is commonly
+quantized for inference. WALDO will derive GGUF, Ollama, and MLX packages from
+the retained training-quality weights during export. A later `model upload`
+command can publish one deliberately selected representation back to Hugging
+Face without bundling redundant weight formats.
+
 ## Export a model release
 
 Configure reusable provider-level disclosure facts once:
@@ -440,7 +484,7 @@ Still deliberately pending:
 - **Data and index:** non-text/multimodal ingestion, append-only corpus updates,
   corpus removal contributions, and verified lookaside-to-lookaside
   replication;
-- **Model lineage and tuning:** importing an external open-weight model as a
+- **Model lineage and tuning:** downloading an external open-weight model as a
   compose starting point, SFT, preference training, and pinned chat templates;
 - **Training quality and recovery:** held-out evaluation, optimizer-state
   checkpoints and resume, and empirical forecast calibration;
@@ -449,8 +493,8 @@ Still deliberately pending:
 - **Additional release formats:** quantized GGUF variants and rendering the
   exact official editable EU template instead of only its versioned JSON
   mapping; and
-- **Distribution:** installable packages, migration guidance, website
-  reconciliation, and a supported public release.
+- **Distribution:** Hugging Face model upload, installable packages, migration
+  guidance, website reconciliation, and a supported public release.
 
 WALDO intentionally does not commit index changes or open pull requests. It
 prepares a deterministic contribution overlay so normal Git review, DCO, and

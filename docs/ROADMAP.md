@@ -202,7 +202,7 @@ record can be inspected.
 - Training-content report rendering **implemented as a versioned JSON EU GPAI
   mapping; exact official editable-document rendering remains.**
 
-Model import, SFT, preference training, and cluster orchestration remain
+Model download, SFT, preference training, and cluster orchestration remain
 deferred until this smaller lifecycle is reliable.
 
 ## Phase 7: operations and transition — pending
