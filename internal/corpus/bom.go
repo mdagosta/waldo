@@ -46,21 +46,21 @@ type SubManifestPin struct {
 }
 
 type ManifestPin struct {
-	Path         string                    `json:"path"`
-	SHA256       string                    `json:"sha256"`
-	Name         string                    `json:"name"`
-	Title        string                    `json:"title"`
-	Description  string                    `json:"description"`
-	License      string                    `json:"license"`
-	Format       string                    `json:"format"`
-	RecordSchema int                       `json:"record_schema"`
-	ConvertedBy  index.Conversion          `json:"converted_by"`
-	Sources      []index.Source            `json:"sources"`
-	Processing   *index.Processing         `json:"processing,omitempty"`
-	ComposedBy   *index.Composition        `json:"composed_by,omitempty"`
-	Totals       index.Measures            `json:"totals"`
-	Modalities   index.Modalities          `json:"modalities,omitempty"`
-	Licenses     map[string]index.Measures `json:"licenses"`
+	Path         string                      `json:"path"`
+	SHA256       string                      `json:"sha256"`
+	Name         string                      `json:"name"`
+	Title        string                      `json:"title"`
+	Description  string                      `json:"description"`
+	License      string                      `json:"license"`
+	Format       string                      `json:"format"`
+	RecordSchema int                         `json:"record_schema"`
+	ConvertedBy  index.Conversion            `json:"converted_by"`
+	Sources      []index.Source              `json:"sources"`
+	Processing   *index.Processing           `json:"processing,omitempty"`
+	ComposedBy   *index.IngestRecipeEvidence `json:"composed_by,omitempty"`
+	Totals       index.Measures              `json:"totals"`
+	Modalities   index.Modalities            `json:"modalities,omitempty"`
+	Licenses     map[string]index.Measures   `json:"licenses"`
 }
 
 type ShardPin struct {

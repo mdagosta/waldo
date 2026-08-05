@@ -40,7 +40,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		}},
 		ConvertedBy: index.Conversion{
 			Tool: "waldo index ingest", Version: "0.1.0-dev",
-			Collector: compactCollector(plan.Composition), Profile: "canonical-text-schema-1",
+			Collector: compactCollector(plan.RecipeEvidence), Profile: "canonical-text-schema-1",
 			Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default,
 		},
 	}
@@ -61,24 +61,24 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 	return manifest, nil
 }
 
-func compactCollector(composition *index.Composition) string {
-	if composition == nil {
+func compactCollector(recipe *index.IngestRecipeEvidence) string {
+	if recipe == nil {
 		return ""
 	}
-	repository := strings.TrimSuffix(strings.TrimSpace(composition.Repository), ".git")
+	repository := strings.TrimSuffix(strings.TrimSpace(recipe.Repository), ".git")
 	if repository == "" {
 		repository = "local"
 	}
-	commit := strings.TrimSpace(composition.Commit)
+	commit := strings.TrimSpace(recipe.Commit)
 	if commit == "" {
 		commit = "uncommitted"
 	}
-	if composition.Dirty {
+	if recipe.Dirty {
 		commit += "+dirty"
 	}
-	collector := repository + "@" + commit + ":" + filepath.ToSlash(composition.Path)
-	if composition.Dirty || composition.Commit == "" {
-		collector += "#sha256=" + composition.SHA256
+	collector := repository + "@" + commit + ":" + filepath.ToSlash(recipe.Path)
+	if recipe.Dirty || recipe.Commit == "" {
+		collector += "#sha256=" + recipe.SHA256
 	}
 	return collector
 }

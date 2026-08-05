@@ -16,17 +16,17 @@ import (
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 )
 
-func TestIndexIngestComposeDryRunDoesNotExecuteCommands(t *testing.T) {
-	composePath := writeCLICompose(t)
+func TestIndexIngestRecipeDryRunDoesNotExecuteCommands(t *testing.T) {
+	recipePath := writeCLIRecipe(t)
 	root := emptyCLIIndex(t)
-	runner := &cliComposeRunner{}
-	originalRunner := ingestComposeRunner
-	ingestComposeRunner = runner
-	t.Cleanup(func() { ingestComposeRunner = originalRunner })
+	runner := &cliRecipeRunner{}
+	originalRunner := ingestRecipeRunner
+	ingestRecipeRunner = runner
+	t.Cleanup(func() { ingestRecipeRunner = originalRunner })
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "absent.json"))
 
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"index", "ingest", composePath, filepath.Join(root, "core", "composed"), "--dry-run"}, &stdout, &stderr)
+	code := Run([]string{"index", "ingest", recipePath, filepath.Join(root, "core", "recipe-corpus"), "--dry-run"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
@@ -36,14 +36,14 @@ func TestIndexIngestComposeDryRunDoesNotExecuteCommands(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	code = Run([]string{"index", "ingest", composePath, filepath.Join(root, "core", "composed"), "--title", "Override", "--dry-run"}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "compose input owns corpus metadata") {
+	code = Run([]string{"index", "ingest", recipePath, filepath.Join(root, "core", "recipe-corpus"), "--title", "Override", "--dry-run"}, &stdout, &stderr)
+	if code != 2 || !strings.Contains(stderr.String(), "recipe input owns corpus metadata") {
 		t.Fatalf("override code=%d stderr=%q", code, stderr.String())
 	}
 }
 
-func TestIndexIngestComposePublishesAuditableManifestAndPurgesInputs(t *testing.T) {
-	composePath := writeCLICompose(t)
+func TestIndexIngestRecipePublishesAuditableManifestAndPurgesInputs(t *testing.T) {
+	recipePath := writeCLIRecipe(t)
 	root := emptyCLIIndex(t)
 	staging := t.TempDir()
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
@@ -53,17 +53,17 @@ func TestIndexIngestComposePublishesAuditableManifestAndPurgesInputs(t *testing.
 	}); err != nil {
 		t.Fatal(err)
 	}
-	runner := &cliComposeRunner{}
-	originalRunner := ingestComposeRunner
-	ingestComposeRunner = runner
-	t.Cleanup(func() { ingestComposeRunner = originalRunner })
+	runner := &cliRecipeRunner{}
+	originalRunner := ingestRecipeRunner
+	ingestRecipeRunner = runner
+	t.Cleanup(func() { ingestRecipeRunner = originalRunner })
 	remote := &cliPublisher{}
 	originalPublisher := newIngestPublisher
 	newIngestPublisher = func(context.Context, config.Publish) (lookaside.Publisher, error) { return remote, nil }
 	t.Cleanup(func() { newIngestPublisher = originalPublisher })
 
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--json", "index", "ingest", composePath, filepath.Join(root, "core", "composed")}, &stdout, &stderr)
+	code := Run([]string{"--json", "index", "ingest", recipePath, filepath.Join(root, "core", "recipe-corpus")}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
@@ -76,7 +76,7 @@ func TestIndexIngestComposePublishesAuditableManifestAndPurgesInputs(t *testing.
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	manifestData, err := os.ReadFile(filepath.Join(output.Contribution.Root, "core", "composed", "composed.json"))
+	manifestData, err := os.ReadFile(filepath.Join(output.Contribution.Root, "core", "recipe-corpus", "recipe-corpus.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestIndexIngestComposePublishesAuditableManifestAndPurgesInputs(t *testing.
 	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	if manifest.ComposedBy != nil || !strings.Contains(manifest.ConvertedBy.Collector, ":composed.yaml#sha256=") {
+	if manifest.ComposedBy != nil || !strings.Contains(manifest.ConvertedBy.Collector, ":recipe.yaml#sha256=") {
 		t.Fatalf("collector = %q, composed_by = %+v", manifest.ConvertedBy.Collector, manifest.ComposedBy)
 	}
 	if len(manifest.Sources) != 1 || len(manifest.Sources[0].Files) != 0 {
@@ -93,48 +93,48 @@ func TestIndexIngestComposePublishesAuditableManifestAndPurgesInputs(t *testing.
 	if len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Shards[0].Tokens <= 0 {
 		t.Fatalf("shards = %+v", manifest.Shards)
 	}
-	composeWorkspaces, err := os.ReadDir(filepath.Join(staging, "composes"))
+	recipeWorkspaces, err := os.ReadDir(filepath.Join(staging, "recipes"))
 	if err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
-	if len(composeWorkspaces) != 0 {
-		t.Fatalf("compose workspaces were not purged: %v", composeWorkspaces)
+	if len(recipeWorkspaces) != 0 {
+		t.Fatalf("recipe workspaces were not purged: %v", recipeWorkspaces)
 	}
 }
 
-type cliComposeRunner struct {
+type cliRecipeRunner struct {
 	calls int
 }
 
-func (runner *cliComposeRunner) Run(_ context.Context, _ string, _ []string, directory string, _ []string, _, _ io.Writer) error {
+func (runner *cliRecipeRunner) Run(_ context.Context, _ string, _ []string, directory string, _ []string, _, _ io.Writer) error {
 	runner.calls++
-	return os.WriteFile(filepath.Join(directory, "document.txt"), []byte("composed corpus document"), 0o644)
+	return os.WriteFile(filepath.Join(directory, "document.txt"), []byte("recipe corpus document"), 0o644)
 }
 
-func writeCLICompose(t *testing.T) string {
+func writeCLIRecipe(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	script := filepath.Join(root, "fetch.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	composePath := filepath.Join(root, "composed.yaml")
-	contents := `kind: waldo-ingest-compose
+	recipePath := filepath.Join(root, "recipe.yaml")
+	contents := `kind: waldo-ingest-recipe
 schema: 1
-title: Composed Corpus
-description: Produced by a reviewed fetch compose.
+title: Recipe Corpus
+description: Produced by a reviewed ingest recipe.
 license: CC0-1.0
 source:
-  name: composed-source
-  url: https://example.test/composed
+  name: recipe-source
+  url: https://example.test/recipe
   category: public-dataset
 steps:
   - name: fetch
     exec: ./fetch.sh
     args: [fixture]
 `
-	if err := os.WriteFile(composePath, []byte(contents), 0o644); err != nil {
+	if err := os.WriteFile(recipePath, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return composePath
+	return recipePath
 }

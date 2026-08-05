@@ -16,19 +16,24 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/openwaldo/waldo-new/internal/config"
 )
 
 type Cache struct {
-	root    string
-	client  *http.Client
-	mirrors []string
-	mu      sync.Mutex
-	used    map[string]bool
+	root     string
+	scratch  string
+	retain   bool
+	maxBytes int64
+	client   *http.Client
+	mirrors  []string
+	mu       sync.Mutex
+	used     map[string]bool
 }
 
 type ProbeResult struct {
@@ -45,6 +50,10 @@ func WithMirrors(mirrors []string) Option {
 	}
 }
 
+func WithPersistentStorage(scratch string, maxBytes int64) Option {
+	return func(cache *Cache) { cache.scratch = scratch; cache.retain = true; cache.maxBytes = maxBytes }
+}
+
 func NewCache(root string, client *http.Client, options ...Option) (*Cache, error) {
 	if root == "" {
 		return nil, fmt.Errorf("lookaside scratch root is required")
@@ -56,9 +65,14 @@ func NewCache(root string, client *http.Client, options ...Option) (*Cache, erro
 	if client == nil {
 		client = http.DefaultClient
 	}
-	cache := &Cache{root: abs, client: client, used: map[string]bool{}}
+	cache := &Cache{root: abs, scratch: abs, client: client, used: map[string]bool{}}
 	for _, option := range options {
 		option(cache)
+	}
+	if cache.retain {
+		if err := cache.prune(); err != nil {
+			return nil, fmt.Errorf("prune lookaside cache: %w", err)
+		}
 	}
 	return cache, nil
 }
@@ -68,14 +82,27 @@ func DefaultCache() (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	root, err := config.EffectiveScratchRoot(configuration)
+	// A pre-cache configuration that names only lookaside.scratch retains its
+	// historical purge-on-success behavior. New/default configurations use the
+	// distinct retained cache and disposable download scratch.
+	if configuration.Lookaside.Cache == "" && configuration.Lookaside.Scratch != "" {
+		return NewCache(configuration.Lookaside.Scratch, nil, WithMirrors(configuration.Lookaside.Mirrors))
+	}
+	root, err := config.EffectiveCacheRoot(configuration)
 	if err != nil {
 		return nil, err
 	}
-	return NewCache(root, nil, WithMirrors(configuration.Lookaside.Mirrors))
+	scratch, err := config.EffectiveScratchRoot(configuration)
+	if err != nil {
+		return nil, err
+	}
+	return NewCache(root, nil, WithMirrors(configuration.Lookaside.Mirrors), WithPersistentStorage(scratch, config.EffectiveCacheMaxBytes(configuration)))
 }
 
-func (cache *Cache) Root() string { return cache.root }
+func (cache *Cache) Root() string    { return cache.root }
+func (cache *Cache) Scratch() string { return cache.scratch }
+func (cache *Cache) MaxBytes() int64 { return cache.maxBytes }
+func (cache *Cache) Retained() bool  { return cache.retain }
 
 func (cache *Cache) Mirrors() []string { return append([]string(nil), cache.mirrors...) }
 
@@ -211,6 +238,7 @@ func (cache *Cache) Fetch(ctx context.Context, objectURL, digest string, expecte
 	}
 	if info, err := os.Stat(destination); err == nil && !info.IsDir() {
 		if err := VerifyFile(destination, digest, expectedBytes); err == nil {
+			_ = os.Chtimes(destination, time.Now(), time.Now())
 			cache.markUsed(destination)
 			return destination, nil
 		}
@@ -238,6 +266,9 @@ func (cache *Cache) Fetch(ctx context.Context, objectURL, digest string, expecte
 		seen[candidate] = true
 		if err := cache.fetchCandidate(ctx, candidate, destination, digest, expectedBytes); err == nil {
 			cache.markUsed(destination)
+			if cache.retain {
+				_ = cache.prune()
+			}
 			return destination, nil
 		} else {
 			failures = append(failures, err)
@@ -250,6 +281,12 @@ func (cache *Cache) Fetch(ctx context.Context, objectURL, digest string, expecte
 // instance. Callers invoke it after the consuming operation commits; failures
 // deliberately leave objects available for diagnosis and retry.
 func (cache *Cache) PurgeUsed() (Stats, error) {
+	if cache.retain {
+		cache.mu.Lock()
+		cache.used = map[string]bool{}
+		cache.mu.Unlock()
+		return Stats{}, nil
+	}
 	cache.mu.Lock()
 	paths := make([]string, 0, len(cache.used))
 	for path := range cache.used {
@@ -301,17 +338,17 @@ func (cache *Cache) fetchCandidate(ctx context.Context, objectURL, destination, 
 		return err
 	}
 	defer reader.Close()
-	temporary, err := os.CreateTemp(filepath.Dir(destination), ".waldo-object-*")
+	if err := os.MkdirAll(cache.scratch, 0o700); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(cache.scratch, ".waldo-download-*")
 	if err != nil {
 		return err
 	}
 	temporaryPath := temporary.Name()
-	committed := false
 	defer func() {
 		_ = temporary.Close()
-		if !committed {
-			_ = os.Remove(temporaryPath)
-		}
+		_ = os.Remove(temporaryPath)
 	}()
 
 	hasher := sha256.New()
@@ -331,10 +368,83 @@ func (cache *Cache) fetchCandidate(ctx context.Context, objectURL, destination, 
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, destination); err != nil {
+	installed, err := os.CreateTemp(filepath.Dir(destination), ".waldo-object-*")
+	if err != nil {
 		return err
 	}
-	committed = true
+	installedPath := installed.Name()
+	installedOK := false
+	defer func() {
+		_ = installed.Close()
+		if !installedOK {
+			_ = os.Remove(installedPath)
+		}
+	}()
+	input, err := os.Open(temporaryPath)
+	if err != nil {
+		return err
+	}
+	_, copyErr = io.Copy(installed, input)
+	closeErr := input.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := installed.Sync(); err != nil {
+		return err
+	}
+	if err := installed.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(installedPath, destination); err != nil {
+		return err
+	}
+	installedOK = true
+	return nil
+}
+
+func (cache *Cache) prune() error {
+	if cache.maxBytes <= 0 {
+		return nil
+	}
+	type entry struct {
+		path string
+		size int64
+		used time.Time
+	}
+	var entries []entry
+	var total int64
+	err := cache.walk(func(path, digest string, info os.FileInfo) error {
+		if digest != "" {
+			entries = append(entries, entry{path, info.Size(), info.ModTime()})
+			total += info.Size()
+		}
+		return nil
+	})
+	if err != nil || total <= cache.maxBytes {
+		return err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].used.Before(entries[j].used) })
+	cache.mu.Lock()
+	inUse := make(map[string]bool, len(cache.used))
+	for path := range cache.used {
+		inUse[path] = true
+	}
+	cache.mu.Unlock()
+	for _, candidate := range entries {
+		if total <= cache.maxBytes {
+			break
+		}
+		if inUse[candidate.path] {
+			continue
+		}
+		if err := os.Remove(candidate.path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		total -= candidate.size
+	}
 	return nil
 }
 

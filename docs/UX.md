@@ -72,13 +72,13 @@ groups that appear to own the same data. The internal corpus domain remains a
 separate boundary for selection, OpenWALDO BOMs, ingestion, and export; package
 architecture does not have to appear as product vocabulary.
 
-There is no `compose` command group. A declarative model recipe is one input to
-`waldo model build`.
+Ingest recipes are inputs to `waldo index ingest`, not a separate command
+group. Model composition terminology remains reserved for the model lifecycle.
 
 Source-specific acquisition implementations remain outside this binary. A
-separate repository contains reviewed shell scripts and strict ingest-compose
+separate repository contains reviewed shell scripts and strict ingest recipe
 files. Normal ingestion consumes a user-prepared local directory. When the user
-explicitly supplies a compose to `index ingest`, WALDO runs only the scripts
+explicitly supplies a recipe to `index ingest`, WALDO runs only the scripts
 named by that file; they populate private temporary input space and stop.
 
 ## Primary journeys
@@ -244,26 +244,26 @@ direct-input arguments are:
 | `--dry-run` | Probe and print the immutable plan without writing or publishing. |
 | `--json` | Global option for structured output and progress events. |
 
-The same command accepts a strict YAML or JSON compose identified by
-`kind: waldo-ingest-compose` and `schema: 1`:
+The same command accepts a strict YAML or JSON recipe identified by
+`kind: waldo-ingest-recipe` and `schema: 1`:
 
 ```bash
-waldo index ingest ../waldo-fetchers/composes/common-pile/foodista.yaml \
+waldo index ingest ../waldo-fetchers/recipes/common-pile/foodista.yaml \
   /path/to/waldo-index/core/common-pile/foodista --dry-run
 ```
 
-A compose supplies title, description, license, source facts, optional Parquet
+An ingest recipe supplies title, description, license, source facts, optional Parquet
 text-column mapping, and an ordered list of `exec` commands and literal
 arguments. Bare command names resolve through `PATH`; commands containing a
-path separator resolve explicitly from the compose file unless absolute. WALDO
-hashes the compose and every resolved executable before execution, runs each
-command directly without an intervening shell, and rechecks those hashes afterward. Commands
-share a private temporary directory as their working directory and receive its
+path separator resolve explicitly from the recipe file unless absolute. WALDO
+hashes the recipe and every resolved executable before execution, runs each
+command directly without an intervening shell, and rechecks those hashes
+afterward. Commands share a private temporary directory as their working directory and receive its
 absolute path in `WALDO_FETCH_DIR`; they must write only acquired artifacts
-there. `WALDO_COMPOSE_FILE` names the absolute compose path.
+there. `WALDO_INGEST_RECIPE` names the absolute recipe path.
 
-Compose input rejects all corpus-metadata flags so the reviewed file completely
-describes the run. `--dry-run` validates the compose, destination, commands, and
+Recipe input rejects all corpus-metadata flags so the reviewed file completely
+describes the run. `--dry-run` validates the recipe, destination, commands, and
 Git evidence but does not execute a command or create temporary files. A real
 run probes the produced directory and enters the same immutable plan, adapter,
 Parquet, upload, journal, and contribution backend as direct ingestion.
@@ -273,9 +273,9 @@ it, while a partially executed preparation is cleared and rerun.
 
 Generated manifests use the established compact index shape. The source record
 contains one aggregate acquisition digest; it never embeds a per-file or
-per-record inventory. A composed run uses the existing
-`converted_by.collector` string to pin repository, commit, and compose path.
-Dirty or uncommitted composes are marked and include the compose SHA-256. The
+per-record inventory. A recipe-driven run uses the existing
+`converted_by.collector` string to pin repository, commit, and recipe path.
+Dirty or uncommitted recipes are marked and include the recipe SHA-256. The
 manifest has one entry per published Parquet shard containing its URL,
 SHA-256, document count, reference-token estimate, and encoded byte size.
 Detailed processing prose, command arrays, modality duplication, and input
@@ -311,7 +311,9 @@ and exported-file hashes in `EXPORT.json`. It does not build or train a model.
 ### Configure machine-local behavior
 
 ```bash
-waldo config set lookaside.scratch /fast-disk/waldo
+waldo config set lookaside.cache /fast-disk/waldo-cache
+waldo config set lookaside.cache.max-size 100GiB
+waldo config set lookaside.scratch /fast-disk/waldo-scratch
 waldo config set ingest.staging /fast-disk/waldo-ingest
 waldo config set model.root /fast-disk/waldo-models
 waldo config set lookaside.mirrors https://mirror.example/openwaldo/v1
@@ -320,13 +322,28 @@ waldo config show
 waldo lookaside status
 ```
 
-`lookaside.scratch` selects space for verified downloads. A materialization tries
-the object's manifest URL first and then each configured mirror, streaming into
-that directory while checking size and SHA-256. Successful `index export` and
-`index verify --objects` runs purge every scratch object they used. Failed runs
-retain verified objects so the retry can reuse them; `lookaside status` and
-`lookaside verify` inspect those leftovers. Unsetting the key restores the
-operating-system default:
+`lookaside.cache` stores complete, hash-verified objects for reuse, bounded by
+`lookaside.cache.max-size` (20 GiB by default). `lookaside.scratch` contains
+only partial downloads and is cleaned after both success and failure. A
+materialization tries the manifest URL and then configured mirrors while
+checking size and SHA-256, then atomically admits the object to the cache.
+`lookaside status` reports both locations and `lookaside verify` scrubs every
+retained object.
+
+Default locations keep durable state and disposable work clearly separated:
+
+```text
+~/.waldo/models       durable model artifacts and their BOMs
+~/.waldo/cache        retained, verified lookaside objects
+<system temp>/waldo-<user>/scratch  partial object downloads
+<system temp>/waldo-<user>/ingest   resumable ingestion working state
+```
+
+On macOS and Linux, `<system temp>` is normally beneath `/tmp` or the
+user-specific temporary directory selected by the operating system. Explicit
+configuration remains useful for large fast disks and shared compute nodes.
+
+Unsetting a key restores its default:
 
 ```bash
 waldo config unset lookaside.scratch
@@ -374,9 +391,11 @@ Configuration keys are positional and intentionally limited:
 | `lookaside.region` | AWS region when it cannot be inferred. |
 | `lookaside.workers` | Concurrent completed-shard uploads, from 1 through 32. |
 | `lookaside.mirrors` | Complete ordered list of read fallbacks. |
-| `lookaside.scratch` | Verified-download scratch directory. |
-| `ingest.staging` | Ingestion scratch and recovery parent directory. |
-| `model.root` | Durable local model, run, BOM, and artifact directory. |
+| `lookaside.cache` | Retained verified-object cache directory; default `~/.waldo/cache`. |
+| `lookaside.cache.max-size` | LRU retention bound; default 20 GiB. |
+| `lookaside.scratch` | Disposable partial-download directory beneath system temporary storage. |
+| `ingest.staging` | Ingestion scratch and recovery directory beneath system temporary storage. |
+| `model.root` | Durable local model, run, BOM, and artifact directory; default `~/.waldo/models`. |
 
 `waldo config get` lists every supported key and its effective or unset value.
 Passing a prefix such as `lookaside` narrows the list to matching keys;

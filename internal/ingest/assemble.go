@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"sort"
 
 	"github.com/openwaldo/waldo-new/internal/shard"
 	"github.com/openwaldo/waldo-new/internal/tokenizer"
@@ -116,6 +118,7 @@ type activeObject struct {
 	tokens          int64
 	logicalBytes    int64
 	rowGroupLogical int64
+	licenses        map[string]struct{}
 }
 
 func (assembler *objectAssembler) addBatch(batch TextBatch) error {
@@ -162,6 +165,7 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 		for _, row := range rows {
 			active.docs++
 			active.logicalBytes += int64(len(row.Text))
+			active.licenses[row.License] = struct{}{}
 		}
 		if active.rowGroupLogical >= assembler.plan.Writer.RowGroupLogicalBytes {
 			if err := assembler.flushRowGroup(); err != nil {
@@ -180,7 +184,8 @@ func (assembler *objectAssembler) start() error {
 	stream := newCountingHashWriter(file)
 	assembler.active = &activeObject{
 		path: file.Name(), file: file, stream: stream,
-		writer: shard.NewTextParquetWriter(stream),
+		writer:   shard.NewTextParquetWriter(stream),
+		licenses: map[string]struct{}{},
 	}
 	return nil
 }
@@ -208,6 +213,7 @@ func (assembler *objectAssembler) finishActive() error {
 		return nil
 	}
 	assembler.active = nil
+	setAggregateMetadata(active)
 	if err := active.writer.Close(); err != nil {
 		_ = active.file.Close()
 		_ = os.Remove(active.path)
@@ -271,6 +277,25 @@ func (assembler *objectAssembler) finishActive() error {
 	return nil
 }
 
+func setAggregateMetadata(active *activeObject) {
+	active.writer.SetKeyValueMetadata("waldo.records", fmt.Sprint(active.docs))
+	active.writer.SetKeyValueMetadata("waldo.tokens", fmt.Sprint(active.tokens))
+	active.writer.SetKeyValueMetadata("waldo.content_bytes", fmt.Sprint(active.logicalBytes))
+	for _, aggregate := range []struct {
+		key    string
+		values map[string]struct{}
+	}{{"waldo.licenses", active.licenses}} {
+		key, values := aggregate.key, aggregate.values
+		list := make([]string, 0, len(values))
+		for value := range values {
+			list = append(list, value)
+		}
+		sort.Strings(list)
+		encoded, _ := json.Marshal(list)
+		active.writer.SetKeyValueMetadata(key, string(encoded))
+	}
+}
+
 func (assembler *objectAssembler) discardActive() {
 	if assembler.active == nil {
 		return
@@ -325,6 +350,13 @@ func verifyAssembledObject(object ObjectResult) (int, error) {
 	}
 	if value, ok := parquetFile.Lookup("waldo.recipe"); !ok || value != shard.TextWriterRecipe {
 		return 0, fmt.Errorf("assembled object has invalid writer recipe metadata")
+	}
+	audited, err := shard.Audit(context.Background(), []string{object.Path})
+	if err != nil {
+		return 0, fmt.Errorf("audit assembled object: %w", err)
+	}
+	if audited.Records != object.Docs || audited.Tokens != object.Tokens || audited.ContentBytes != object.LogicalBytes {
+		return 0, fmt.Errorf("assembled object audit totals do not match assembly totals")
 	}
 	return len(parquetFile.RowGroups()), nil
 }

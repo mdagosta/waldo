@@ -25,7 +25,7 @@ Generated manifests remain schema 1 and follow the existing compact shape:
   SHA-256;
 - one shard entry containing canonical URL, SHA-256, source name, document
   count, reference-token count, and encoded bytes;
-- compact conversion and, when applicable, one compose collector pin.
+- compact conversion and, when applicable, one ingest-recipe collector pin.
 
 Generated text manifests omit `format`, `processing`, `composed_by`, source
 `files`, `usage`, and `content`, and shard `modalities`. Those reader fields

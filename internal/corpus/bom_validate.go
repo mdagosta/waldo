@@ -68,7 +68,7 @@ func (bom BOM) Validate() error {
 			}
 		}
 		if manifest.ComposedBy != nil {
-			if err := index.ValidateComposition(*manifest.ComposedBy); err != nil {
+			if err := index.ValidateIngestRecipeEvidence(*manifest.ComposedBy); err != nil {
 				return fmt.Errorf("manifest %s composed_by: %w", manifest.Path, err)
 			}
 		}

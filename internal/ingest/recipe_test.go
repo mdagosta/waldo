@@ -11,16 +11,16 @@ import (
 	"testing"
 )
 
-func TestLoadComposeStrictlyResolvesAndHashesExecutables(t *testing.T) {
+func TestLoadRecipeStrictlyResolvesAndHashesExecutables(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "fetch.sh")
 	writeExecutable(t, script, "#!/bin/sh\n")
-	composePath := filepath.Join(root, "example.yaml")
-	writeComposeFixture(t, composePath, `
-kind: waldo-ingest-compose
+	recipePath := filepath.Join(root, "example.yaml")
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-recipe
 schema: 1
 title: Example
-description: Example composed corpus.
+description: Example recipe corpus.
 license: CC0-1.0
 source:
   name: example-source
@@ -31,11 +31,11 @@ steps:
     exec: ./fetch.sh
     args: [one, two]
 `)
-	loaded, found, err := LoadCompose(composePath)
+	loaded, found, err := LoadRecipe(recipePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !found || loaded.Compose.Title != "Example" || len(loaded.Executables) != 1 || len(loaded.SHA256) != 64 || len(loaded.Executables[0].SHA256) != 64 {
+	if !found || loaded.Recipe.Title != "Example" || len(loaded.Executables) != 1 || len(loaded.SHA256) != 64 || len(loaded.Executables[0].SHA256) != 64 {
 		t.Fatalf("loaded = %+v, found = %v", loaded, found)
 	}
 	if loaded.Executables[0].Path != script || strings.Join(loaded.Executables[0].Args, ",") != "one,two" {
@@ -46,32 +46,32 @@ steps:
 	if err := os.WriteFile(ordinary, []byte("ordinary training text\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := LoadCompose(ordinary); err != nil || found {
-		t.Fatalf("ordinary LoadCompose() found=%v err=%v", found, err)
+	if _, found, err := LoadRecipe(ordinary); err != nil || found {
+		t.Fatalf("ordinary LoadRecipe() found=%v err=%v", found, err)
 	}
 }
 
-func TestLoadComposeRejectsUnknownFieldsAndNonExecutableCommands(t *testing.T) {
+func TestLoadRecipeRejectsUnknownFieldsAndNonExecutableCommands(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "fetch.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	composePath := filepath.Join(root, "example.yaml")
-	writeComposeFixture(t, composePath, `
-kind: waldo-ingest-compose
+	recipePath := filepath.Join(root, "example.yaml")
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-recipe
 schema: 1
 title: Example
 license: CC0-1.0
 source: {url: https://example.test, category: public-dataset}
 steps: [{name: fetch, exec: ./fetch.sh}]
 `)
-	if _, found, err := LoadCompose(composePath); !found || err == nil || !strings.Contains(err.Error(), "not executable") {
-		t.Fatalf("non-executable LoadCompose() found=%v err=%v", found, err)
+	if _, found, err := LoadRecipe(recipePath); !found || err == nil || !strings.Contains(err.Error(), "not executable") {
+		t.Fatalf("non-executable LoadRecipe() found=%v err=%v", found, err)
 	}
 	writeExecutable(t, script, "#!/bin/sh\n")
-	writeComposeFixture(t, composePath, `
-kind: waldo-ingest-compose
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-recipe
 schema: 1
 title: Example
 license: CC0-1.0
@@ -79,50 +79,50 @@ unknown: true
 source: {url: https://example.test, category: public-dataset}
 steps: [{name: fetch, exec: ./fetch.sh}]
 `)
-	if _, found, err := LoadCompose(composePath); !found || err == nil || !strings.Contains(err.Error(), "field unknown") {
-		t.Fatalf("unknown-field LoadCompose() found=%v err=%v", found, err)
+	if _, found, err := LoadRecipe(recipePath); !found || err == nil || !strings.Contains(err.Error(), "field unknown") {
+		t.Fatalf("unknown-field LoadRecipe() found=%v err=%v", found, err)
 	}
 }
 
-func TestPrepareComposeReusesVerifiedOutputAndPurges(t *testing.T) {
+func TestPrepareRecipeReusesVerifiedOutputAndPurges(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "fetch.sh")
 	writeExecutable(t, script, "#!/bin/sh\n")
-	composePath := filepath.Join(root, "example.yaml")
-	writeComposeFixture(t, composePath, `
-kind: waldo-ingest-compose
+	recipePath := filepath.Join(root, "example.yaml")
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-recipe
 schema: 1
 title: Example
 license: CC0-1.0
 source: {url: https://example.test, category: public-dataset}
 steps: [{name: fetch, exec: ./fetch.sh}]
 `)
-	loaded, _, err := LoadCompose(composePath)
+	loaded, _, err := LoadRecipe(recipePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &fixtureComposeRunner{}
-	prepared, err := PrepareCompose(context.Background(), loaded, "core/example", t.TempDir(), runner, io.Discard, io.Discard)
+	runner := &fixtureRecipeRunner{}
+	prepared, err := PrepareRecipe(context.Background(), loaded, "core/example", t.TempDir(), runner, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if runner.calls != 1 || prepared.Probe.Totals.Artifacts != 1 || prepared.Probe.Artifacts[0].Format != "text" {
 		t.Fatalf("runner=%+v prepared=%+v", runner, prepared)
 	}
-	resumed, err := PrepareCompose(context.Background(), loaded, "core/example", filepath.Dir(filepath.Dir(prepared.Workspace)), runner, io.Discard, io.Discard)
+	resumed, err := PrepareRecipe(context.Background(), loaded, "core/example", filepath.Dir(filepath.Dir(prepared.Workspace)), runner, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if runner.calls != 1 || resumed.Workspace != prepared.Workspace {
-		t.Fatalf("prepared compose was not reused: calls=%d resumed=%+v", runner.calls, resumed)
+		t.Fatalf("prepared recipe was not reused: calls=%d resumed=%+v", runner.calls, resumed)
 	}
 	if err := os.WriteFile(filepath.Join(prepared.Inputs, "document.txt"), []byte("changed"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := PrepareCompose(context.Background(), loaded, "core/example", filepath.Dir(filepath.Dir(prepared.Workspace)), runner, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "changed") {
+	if _, err := PrepareRecipe(context.Background(), loaded, "core/example", filepath.Dir(filepath.Dir(prepared.Workspace)), runner, io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "changed") {
 		t.Fatalf("changed prepared output error = %v", err)
 	}
-	if err := PurgePreparedCompose(prepared); err != nil {
+	if err := PurgePreparedRecipe(prepared); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(prepared.Workspace); !os.IsNotExist(err) {
@@ -130,27 +130,27 @@ steps: [{name: fetch, exec: ./fetch.sh}]
 	}
 }
 
-func TestPrepareComposeExecutesScriptInTemporaryInputDirectory(t *testing.T) {
+func TestPrepareRecipeExecutesCommandInTemporaryInputDirectory(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fetcher contract requires a POSIX execution environment")
 	}
 	root := t.TempDir()
 	script := filepath.Join(root, "fetch.sh")
 	writeExecutable(t, script, "#!/bin/sh\nset -eu\nprintf 'from executable fetcher\\n' > \"$WALDO_FETCH_DIR/fetched.txt\"\n")
-	composePath := filepath.Join(root, "example.yaml")
-	writeComposeFixture(t, composePath, `
-kind: waldo-ingest-compose
+	recipePath := filepath.Join(root, "example.yaml")
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-recipe
 schema: 1
 title: Example
 license: CC0-1.0
 source: {url: https://example.test, category: public-dataset}
 steps: [{name: fetch, exec: ./fetch.sh}]
 `)
-	loaded, _, err := LoadCompose(composePath)
+	loaded, _, err := LoadRecipe(recipePath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	prepared, err := PrepareCompose(context.Background(), loaded, "core/example", t.TempDir(), ExecCommandRunner{}, io.Discard, io.Discard)
+	prepared, err := PrepareRecipe(context.Background(), loaded, "core/example", t.TempDir(), ExecCommandRunner{}, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ steps: [{name: fetch, exec: ./fetch.sh}]
 	}
 }
 
-func TestLoadComposeResolvesBareExecThroughPATH(t *testing.T) {
+func TestLoadRecipeResolvesBareExecThroughPATH(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")
 	if err := os.Mkdir(bin, 0o755); err != nil {
@@ -172,23 +172,23 @@ func TestLoadComposeResolvesBareExecThroughPATH(t *testing.T) {
 	command := filepath.Join(bin, "fixture-fetch")
 	writeExecutable(t, command, "#!/bin/sh\nset -eu\nprintf 'from PATH command\\n' > \"$WALDO_FETCH_DIR/path.txt\"\n")
 	t.Setenv("PATH", bin)
-	composePath := filepath.Join(root, "example.yaml")
-	writeComposeFixture(t, composePath, `
-kind: waldo-ingest-compose
+	recipePath := filepath.Join(root, "example.yaml")
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-recipe
 schema: 1
 title: Example
 license: CC0-1.0
 source: {url: https://example.test, category: public-dataset}
 steps: [{name: fetch, exec: fixture-fetch}]
 `)
-	loaded, found, err := LoadCompose(composePath)
+	loaded, found, err := LoadRecipe(recipePath)
 	if err != nil || !found {
-		t.Fatalf("LoadCompose() found=%v err=%v", found, err)
+		t.Fatalf("LoadRecipe() found=%v err=%v", found, err)
 	}
 	if loaded.Executables[0].Exec != "fixture-fetch" || loaded.Executables[0].Path != command {
 		t.Fatalf("resolved executable = %+v", loaded.Executables[0])
 	}
-	prepared, err := PrepareCompose(context.Background(), loaded, "core/example", t.TempDir(), ExecCommandRunner{}, io.Discard, io.Discard)
+	prepared, err := PrepareRecipe(context.Background(), loaded, "core/example", t.TempDir(), ExecCommandRunner{}, io.Discard, io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,33 +201,49 @@ steps: [{name: fetch, exec: fixture-fetch}]
 	}
 }
 
-func TestLoadComposeRejectsLegacyRunAndMissingPATHCommand(t *testing.T) {
+func TestLoadRecipeRejectsLegacyRunAndMissingPATHCommand(t *testing.T) {
 	root := t.TempDir()
-	composePath := filepath.Join(root, "example.yaml")
+	recipePath := filepath.Join(root, "example.yaml")
 	base := `
-kind: waldo-ingest-compose
+kind: waldo-ingest-recipe
 schema: 1
 title: Example
 license: CC0-1.0
 source: {url: https://example.test, category: public-dataset}
 steps: [{name: fetch, %s}]
 `
-	writeComposeFixture(t, composePath, fmt.Sprintf(base, "run: fetch.sh"))
-	if _, found, err := LoadCompose(composePath); !found || err == nil || !strings.Contains(err.Error(), "field run not found") {
-		t.Fatalf("legacy run LoadCompose() found=%v err=%v", found, err)
+	writeRecipeFixture(t, recipePath, fmt.Sprintf(base, "run: fetch.sh"))
+	if _, found, err := LoadRecipe(recipePath); !found || err == nil || !strings.Contains(err.Error(), "field run not found") {
+		t.Fatalf("legacy run LoadRecipe() found=%v err=%v", found, err)
 	}
 	t.Setenv("PATH", t.TempDir())
-	writeComposeFixture(t, composePath, fmt.Sprintf(base, "exec: missing-fetch-command"))
-	if _, found, err := LoadCompose(composePath); !found || err == nil || !strings.Contains(err.Error(), "not found in PATH") {
-		t.Fatalf("missing PATH command LoadCompose() found=%v err=%v", found, err)
+	writeRecipeFixture(t, recipePath, fmt.Sprintf(base, "exec: missing-fetch-command"))
+	if _, found, err := LoadRecipe(recipePath); !found || err == nil || !strings.Contains(err.Error(), "not found in PATH") {
+		t.Fatalf("missing PATH command LoadRecipe() found=%v err=%v", found, err)
 	}
 }
 
-type fixtureComposeRunner struct {
+func TestLoadRecipeRejectsRetiredComposeIdentity(t *testing.T) {
+	root := t.TempDir()
+	recipePath := filepath.Join(root, "retired.yaml")
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-compose
+schema: 1
+title: Retired
+license: CC0-1.0
+source: {url: https://example.test, category: public-dataset}
+steps: [{name: fetch, exec: ./fetch.sh}]
+`)
+	if _, found, err := LoadRecipe(recipePath); !found || err == nil || !strings.Contains(err.Error(), `use "waldo-ingest-recipe"`) {
+		t.Fatalf("retired identity LoadRecipe() found=%v err=%v", found, err)
+	}
+}
+
+type fixtureRecipeRunner struct {
 	calls int
 }
 
-func (runner *fixtureComposeRunner) Run(_ context.Context, _ string, _ []string, directory string, environment []string, _, _ io.Writer) error {
+func (runner *fixtureRecipeRunner) Run(_ context.Context, _ string, _ []string, directory string, environment []string, _, _ io.Writer) error {
 	runner.calls++
 	foundDirectory := false
 	for _, value := range environment {
@@ -238,7 +254,7 @@ func (runner *fixtureComposeRunner) Run(_ context.Context, _ string, _ []string,
 	if !foundDirectory {
 		return os.ErrInvalid
 	}
-	return os.WriteFile(filepath.Join(directory, "document.txt"), []byte("composed training text"), 0o644)
+	return os.WriteFile(filepath.Join(directory, "document.txt"), []byte("recipe training text"), 0o644)
 }
 
 func writeExecutable(t *testing.T, path, contents string) {
@@ -248,7 +264,7 @@ func writeExecutable(t *testing.T, path, contents string) {
 	}
 }
 
-func writeComposeFixture(t *testing.T, path, contents string) {
+func writeRecipeFixture(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(strings.TrimSpace(contents)+"\n"), 0o644); err != nil {
 		t.Fatal(err)

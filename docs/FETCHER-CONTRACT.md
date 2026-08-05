@@ -7,8 +7,8 @@ directory and stop. They never publish to a lookaside, mutate an index, convert
 canonical Parquet, or start model training.
 
 WALDO normally consumes ordinary local files and directories through
-`waldo index ingest`. It can also consume a strict ingest compose from the
-fetcher repository. That compose names reviewed scripts and corpus metadata;
+`waldo index ingest`. It can also consume a strict ingest recipe from the
+fetcher repository. That recipe names reviewed scripts and corpus metadata;
 WALDO executes the scripts into private staging and then treats their output as
 ordinary local input. Conversely, `waldo index export` materializes an already
 indexed corpus and its OpenWALDO BOM into a local directory.
@@ -69,19 +69,19 @@ do not make a legal-compliance determination.
 
 - Fetchers ship as reviewed shell scripts from their own repository.
 - WALDO does not discover, download, or install fetcher scripts.
-- The user explicitly authorizes execution by passing one compose file as the
+- The user explicitly authorizes execution by passing one recipe file as the
   first positional argument to `waldo index ingest`.
 - Each step uses `exec`. A bare name is resolved through the invoking process's
   `PATH`; a value containing `/` or `\\` is an explicit path, resolved relative
-  to the compose file unless absolute.
+  to the recipe file unless absolute.
 - WALDO resolves each command to a regular executable, pins and hashes that
   resolved file, and runs it in declaration order without an intervening shell.
 - All steps share a WALDO-owned temporary working directory, also exposed as
-  `WALDO_FETCH_DIR`. `WALDO_COMPOSE_FILE` identifies the compose being run.
+  `WALDO_FETCH_DIR`. `WALDO_INGEST_RECIPE` identifies the recipe being run.
 - Network, pagination, authentication, retries, and source-specific behavior
   remain inside the scripts. WALDO inherits the invoking environment but never
   records environment or secret values.
-- Resolved executables and composes are hashed before execution and rechecked
+- Resolved executables and recipes are hashed before execution and rechecked
   afterward.
 - WALDO independently probes and hashes every produced artifact before it can
   enter an immutable ingestion plan.
@@ -92,13 +92,13 @@ reviewed contract requires it to write acquired artifacts only beneath
 `WALDO_FETCH_DIR`; WALDO ensures that only regular non-symlink files found
 there become ingestion inputs.
 
-## Ingest compose schema 1
+## Ingest recipe schema 1
 
-Compose files are strict YAML or JSON. Unknown fields, multiple YAML documents,
+Ingest recipe files are strict YAML or JSON. Unknown fields, multiple YAML documents,
 duplicate step names, missing commands, and non-executable files are rejected.
 
 ```yaml
-kind: waldo-ingest-compose
+kind: waldo-ingest-recipe
 schema: 1
 title: Foodista
 description: Community-contributed cooking and food articles.
@@ -129,7 +129,7 @@ pass its program through `args`.
 The initial schema supports the same source categories as executable direct
 ingestion: `public-dataset`, `private-third-party`, and `other`. Categories
 whose EU GPAI evidence is structurally required will be enabled only when the
-compose can express that evidence without flags or inference.
+recipe can express that evidence without flags or inference.
 
 ## Non-goals
 

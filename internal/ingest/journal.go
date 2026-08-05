@@ -55,7 +55,7 @@ func ExecuteAssembly(ctx context.Context, plan Plan, stagingDirectory string) (A
 	if err != nil {
 		return AssemblyResult{}, err
 	}
-	if err := os.MkdirAll(abs, 0o755); err != nil {
+	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return AssemblyResult{}, err
 	}
 	journalPath := filepath.Join(abs, journalFile)
@@ -120,7 +120,7 @@ func ExecutePublication(ctx context.Context, plan Plan, stagingDirectory string,
 	if err != nil {
 		return AssemblyResult{}, PublicationResult{}, err
 	}
-	if err := os.MkdirAll(abs, 0o755); err != nil {
+	if err := os.MkdirAll(abs, 0o700); err != nil {
 		return AssemblyResult{}, PublicationResult{}, err
 	}
 	journalPath := filepath.Join(abs, journalFile)

@@ -19,28 +19,28 @@ var newIngestPublisher = func(ctx context.Context, publish config.Publish) (look
 	return lookaside.NewPublisher(ctx, publish)
 }
 
-var ingestComposeRunner ingest.CommandRunner = ingest.ExecCommandRunner{}
+var ingestRecipeRunner ingest.CommandRunner = ingest.ExecCommandRunner{}
 
 func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) error {
 	options, err := parseIndexIngest(args)
 	if err != nil {
 		return err
 	}
-	loadedCompose, composed, err := ingest.LoadCompose(options.Inputs[0])
+	loadedRecipe, isRecipe, err := ingest.LoadRecipe(options.Inputs[0])
 	if err != nil {
 		return err
 	}
-	if composed {
+	if isRecipe {
 		if len(options.MetadataOptions) > 0 {
-			return usageError{message: fmt.Sprintf("compose input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))}
+			return usageError{message: fmt.Sprintf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))}
 		}
-		options.Request.Title = loadedCompose.Compose.Title
-		options.Request.Description = loadedCompose.Compose.Description
-		options.Request.License = loadedCompose.Compose.License
+		options.Request.Title = loadedRecipe.Recipe.Title
+		options.Request.Description = loadedRecipe.Recipe.Description
+		options.Request.License = loadedRecipe.Recipe.License
 		options.Request.Source = ingest.PlanSource{
-			Name: loadedCompose.Compose.Source.Name, URL: loadedCompose.Compose.Source.URL, Category: loadedCompose.Compose.Source.Category,
+			Name: loadedRecipe.Recipe.Source.Name, URL: loadedRecipe.Recipe.Source.URL, Category: loadedRecipe.Recipe.Source.Category,
 		}
-		options.Request.TextColumn = loadedCompose.Compose.TextColumn
+		options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
 		return usageError{message: "direct index ingest requires --title, --license, --source, and --source-category"}
 	}
@@ -52,8 +52,8 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if options.Request.Source.Name == "" {
 		options.Request.Source.Name = path.Base(strings.TrimSuffix(target.Rel, "/"))
 	}
-	if composed && options.DryRun {
-		return writeComposePreflight(context, stdout, loadedCompose, target.Rel)
+	if isRecipe && options.DryRun {
+		return writeRecipePreflight(context, stdout, loadedRecipe, target.Rel)
 	}
 	var configuration config.Config
 	if !options.DryRun {
@@ -67,8 +67,8 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	execution := ingest.WithProgress(context.Execution, ingestProgressReporter(stderr, context.JSON))
 	var probe ingest.Probe
-	var prepared *ingest.PreparedCompose
-	if composed {
+	var prepared *ingest.PreparedRecipe
+	if isRecipe {
 		if err := ingest.CheckContributionDestinationPath(target.Root, target.Rel); err != nil {
 			return err
 		}
@@ -83,18 +83,18 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		if err := ingest.ValidateWorkLocations(target.Root, stagingBase, scratchRoot); err != nil {
 			return err
 		}
-		composeOutput := io.Writer(stderr)
+		recipeOutput := io.Writer(stderr)
 		if context.JSON {
-			composeOutput = &composeJSONLogWriter{output: stderr}
+			recipeOutput = &recipeJSONLogWriter{output: stderr}
 		}
-		result, err := ingest.PrepareCompose(execution, loadedCompose, target.Rel, stagingBase, ingestComposeRunner, composeOutput, composeOutput)
+		result, err := ingest.PrepareRecipe(execution, loadedRecipe, target.Rel, stagingBase, ingestRecipeRunner, recipeOutput, recipeOutput)
 		if err != nil {
 			return err
 		}
 		prepared = &result
 		probe = result.Probe
-		composition := result.Loaded.Evidence
-		options.Request.Composition = &composition
+		recipeEvidence := result.Loaded.Evidence
+		options.Request.RecipeEvidence = &recipeEvidence
 		options.Request.InputRoot = result.Inputs
 	} else {
 		probe, err = ingest.ProbePaths(execution, options.Inputs)
@@ -149,7 +149,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			return err
 		}
 		if prepared != nil {
-			if err := ingest.PurgePreparedCompose(*prepared); err != nil {
+			if err := ingest.PurgePreparedRecipe(*prepared); err != nil {
 				return err
 			}
 		}
@@ -213,12 +213,12 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	return nil
 }
 
-type composeJSONLogWriter struct {
+type recipeJSONLogWriter struct {
 	mu     sync.Mutex
 	output io.Writer
 }
 
-func (writer *composeJSONLogWriter) Write(data []byte) (int, error) {
+func (writer *recipeJSONLogWriter) Write(data []byte) (int, error) {
 	writer.mu.Lock()
 	defer writer.mu.Unlock()
 	message := strings.TrimRight(string(data), "\r\n")
@@ -232,20 +232,20 @@ func (writer *composeJSONLogWriter) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 
-func writeComposePreflight(context Context, stdout io.Writer, loaded ingest.LoadedCompose, destination string) error {
+func writeRecipePreflight(context Context, stdout io.Writer, loaded ingest.LoadedRecipe, destination string) error {
 	if context.JSON {
 		return writeJSON(stdout, struct {
-			Kind        string               `json:"kind"`
-			Destination string               `json:"destination"`
-			Compose     ingest.LoadedCompose `json:"compose"`
-		}{Kind: "waldo-ingest-compose-preflight", Destination: destination, Compose: loaded})
+			Kind        string              `json:"kind"`
+			Destination string              `json:"destination"`
+			Recipe      ingest.LoadedRecipe `json:"recipe"`
+		}{Kind: "waldo-ingest-recipe-preflight", Destination: destination, Recipe: loaded})
 	}
-	fmt.Fprintf(stdout, "ingest compose %s\n", loaded.Path)
+	fmt.Fprintf(stdout, "ingest recipe %s\n", loaded.Path)
 	fmt.Fprintf(stdout, "  sha256      %s\n", loaded.SHA256)
 	fmt.Fprintf(stdout, "  destination %s\n", destination)
-	fmt.Fprintf(stdout, "  title       %s\n", loaded.Compose.Title)
-	fmt.Fprintf(stdout, "  license     %s\n", loaded.Compose.License)
-	fmt.Fprintf(stdout, "  source      %s (%s)\n", loaded.Compose.Source.URL, loaded.Compose.Source.Category)
+	fmt.Fprintf(stdout, "  title       %s\n", loaded.Recipe.Title)
+	fmt.Fprintf(stdout, "  license     %s\n", loaded.Recipe.License)
+	fmt.Fprintf(stdout, "  source      %s (%s)\n", loaded.Recipe.Source.URL, loaded.Recipe.Source.Category)
 	for position, executable := range loaded.Executables {
 		fmt.Fprintf(stdout, "  step %d      %s -> %s (%s)\n", position+1, executable.Name, executable.Path, executable.SHA256[:12])
 	}

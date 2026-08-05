@@ -105,6 +105,44 @@ func TestPurgeUsedRemovesSuccessfulFetches(t *testing.T) {
 	}
 }
 
+func TestPersistentCacheRetainsVerifiedObjectAndCleansScratch(t *testing.T) {
+	root, scratch := t.TempDir(), t.TempDir()
+	content := "retained verified object"
+	digest := digestOf(content)
+	transport := &fakeTransport{content: content}
+	cache, err := NewCache(root, &http.Client{Transport: transport}, WithPersistentStorage(scratch, 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := cache.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if purged, err := cache.PurgeUsed(); err != nil || purged.Objects != 0 {
+		t.Fatalf("PurgeUsed() = %+v, %v", purged, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("retained object: %v", err)
+	}
+	entries, err := os.ReadDir(scratch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("scratch entries = %v", entries)
+	}
+	second, err := NewCache(root, &http.Client{Transport: transport}, WithPersistentStorage(scratch, 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+	if transport.requests != 1 {
+		t.Fatalf("persistent cache made %d requests, want 1", transport.requests)
+	}
+}
+
 func TestFetchFallsBackToConfiguredMirror(t *testing.T) {
 	content := "from mirror"
 	digest := digestOf(content)

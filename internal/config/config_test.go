@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -92,4 +93,45 @@ func TestEffectiveStagingRootIsPlanSpecific(t *testing.T) {
 	if got != filepath.Join(base, "plan-identity") {
 		t.Fatalf("EffectiveStagingRoot() = %q", got)
 	}
+}
+
+func TestDefaultLocationsSeparateDurableAndDisposableState(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration := Default()
+	models, err := EffectiveModelRoot(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache, err := EffectiveCacheRoot(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch, err := EffectiveScratchRoot(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staging, err := EffectiveStagingBase(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if models != filepath.Join(home, ".waldo", "models") {
+		t.Fatalf("model root = %q", models)
+	}
+	if cache != filepath.Join(home, ".waldo", "cache") {
+		t.Fatalf("cache root = %q", cache)
+	}
+	if !within(temporaryRoot(), scratch) || !within(temporaryRoot(), staging) {
+		t.Fatalf("temporary defaults are scratch=%q staging=%q, want beneath %q", scratch, staging, temporaryRoot())
+	}
+	if scratch == staging {
+		t.Fatal("scratch and ingestion staging defaults must differ")
+	}
+}
+
+func within(parent, child string) bool {
+	relative, err := filepath.Rel(parent, child)
+	return err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }

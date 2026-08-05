@@ -47,7 +47,7 @@ func WriteJSONL(dst io.Writer, src io.ReaderAt, size int64) (Statistics, error) 
 	if err != nil {
 		return Statistics{}, err
 	}
-	if recipe, ok := file.Lookup("waldo.recipe"); ok && recipe == TextWriterRecipe {
+	if schema, ok := file.Lookup("waldo.record_schema"); ok && schema == fmt.Sprint(TextRecordSchema) {
 		return writeCanonicalTextJSONL(dst, file)
 	}
 	reader := parquet.NewGenericReader[Row](file)

@@ -161,8 +161,8 @@ with the first vertical slice that needs them.
 
 Fetchers live in a separate repository as reviewed shell scripts, as defined in
 `docs/FETCHER-CONTRACT.md`. Direct ingestion consumes an independently prepared
-local directory. Composed ingestion is an explicit alternative: when the user
-passes a strict `waldo-ingest-compose` file, WALDO executes only its named
+local directory. Recipe-driven ingestion is an explicit alternative: when the user
+passes a strict `waldo-ingest-recipe` file, WALDO executes only its named
 commands in sequence with a private temporary directory as their working
 directory. Fetchers stop after populating that directory. WALDO then owns
 probing, conversion, sharding, publication, cleanup, provenance, and the index
@@ -170,4 +170,4 @@ contribution. Dry-run resolves and hashes commands but never executes them.
 
 Source-specific network logic and scripts do not enter this Go module. Merely
 reading or verifying an index never executes code; script execution is
-authorized only by the compose path passed positionally to `index ingest`.
+authorized only by the recipe path passed positionally to `index ingest`.

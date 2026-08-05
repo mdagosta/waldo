@@ -13,15 +13,16 @@ command organization by default.
 The project has completed its contracts, read-only index foundation, and
 **Phase 2: verified OpenWALDO BOMs**, and now has the first end-to-end corpus
 contribution path. The binary can list, show,
-summarize, and verify the public `waldo-index`; materialize objects through a
-hash-verifying lookaside scratch with ordered fallback mirrors; inspect failed-run leftovers;
+summarize, verify, and deeply audit the public `waldo-index`; materialize
+objects through a bounded retained verified cache with separate download
+scratch and ordered fallback mirrors; scrub retained objects;
 and export selected shards as native objects or canonical JSONL with an
 `EXPORT.json` provenance record. It can also probe text/Markdown/raw Parquet,
 stream plain, gzip, and zstd JSONL, write canonical schema-1 Parquet, and
 publish shards to S3 with bounded concurrency
 and remote checksum verification, reclaim staging safely, and create a Git
-review overlay. Direct local inputs and strict external ingest composes converge
-on that same backend; composed fetcher scripts populate temporary source space,
+review overlay. Direct local inputs and strict external ingest recipes converge
+on that same backend; recipe-driven fetcher scripts populate temporary source space,
 are pinned in manifest evidence, and are purged after successful contribution.
 A filesystem-backed publisher exercises the same path locally for integration
 tests. Phase 4 now includes strict model recipes, verified
@@ -32,9 +33,17 @@ its training BOMs to the pinned Commission template fields and reports missing
 facts without claiming legal compliance. Other commands remain visible as an
 honest roadmap.
 
+Durable local state defaults to `~/.waldo`: models use `~/.waldo/models` and
+the bounded verified-object cache uses `~/.waldo/cache`. Partial downloads and
+ingestion recovery state default to a user-scoped WALDO directory beneath the
+operating system's temporary directory. Every location remains configurable.
+
 Recursive `waldo index verify` checks index structure plus the reachability and
 declared size of every canonical object using header-only requests. Use
 `--offline` for metadata alone or `--objects` to download and hash every byte.
+`waldo index audit` additionally streams and validates every canonical record.
+Local `waldo shard summary`, `audit`, `list-records`, and `export-record`
+operate on Parquet files independently of an index.
 
 The stable corpus contract is documented in
 [the OpenWALDO BOM guide](docs/OPENWALDO-BOM.md). Corpus ingestion and its
@@ -57,15 +66,13 @@ template from later model BOMs.
   the way until it is needed.
 - Fetchers are external shell scripts maintained in a separate repository.
   WALDO consumes local input directly or executes only scripts explicitly named
-  by a supplied ingest compose; canonical conversion remains inside WALDO.
+  by a supplied ingest recipe; canonical conversion remains inside WALDO.
 
 ## Development
 
 ```bash
-go test ./...
+./testing/all.sh
 go run ./cmd/waldo --help
-./scripts/e2e/ingest-smoke.sh local
-./scripts/e2e/ingest-smoke.sh local compose
 ```
 
 Start with [VISION.md](VISION.md), then read [the UX contract](docs/UX.md),

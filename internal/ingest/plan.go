@@ -14,18 +14,18 @@ import (
 )
 
 type Plan struct {
-	Kind        string             `json:"kind"`
-	Schema      int                `json:"schema"`
-	Destination string             `json:"destination"`
-	Title       string             `json:"title"`
-	Description string             `json:"description"`
-	License     string             `json:"license"`
-	Source      PlanSource         `json:"source"`
-	Mode        string             `json:"mode"`
-	MemoryBytes int64              `json:"memory_bytes"`
-	Writer      WriterPlan         `json:"writer"`
-	Inputs      []PlanInput        `json:"inputs"`
-	Composition *index.Composition `json:"composition,omitempty"`
+	Kind           string                      `json:"kind"`
+	Schema         int                         `json:"schema"`
+	Destination    string                      `json:"destination"`
+	Title          string                      `json:"title"`
+	Description    string                      `json:"description"`
+	License        string                      `json:"license"`
+	Source         PlanSource                  `json:"source"`
+	Mode           string                      `json:"mode"`
+	MemoryBytes    int64                       `json:"memory_bytes"`
+	Writer         WriterPlan                  `json:"writer"`
+	Inputs         []PlanInput                 `json:"inputs"`
+	RecipeEvidence *index.IngestRecipeEvidence `json:"ingest_recipe,omitempty"`
 }
 
 type PlanSource struct {
@@ -55,16 +55,16 @@ type PlanInput struct {
 }
 
 type PlanRequest struct {
-	Destination string
-	Title       string
-	Description string
-	License     string
-	Source      PlanSource
-	Mode        string
-	MemoryBytes int64
-	TextColumn  string
-	InputRoot   string
-	Composition *index.Composition
+	Destination    string
+	Title          string
+	Description    string
+	License        string
+	Source         PlanSource
+	Mode           string
+	MemoryBytes    int64
+	TextColumn     string
+	InputRoot      string
+	RecipeEvidence *index.IngestRecipeEvidence
 }
 
 func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
@@ -105,7 +105,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		Kind: "waldo-ingest-plan", Schema: 1,
 		Destination: request.Destination, Title: request.Title, Description: request.Description, License: request.License,
 		Source: request.Source, Mode: mode, MemoryBytes: memory,
-		Composition: request.Composition,
+		RecipeEvidence: request.RecipeEvidence,
 		Writer: WriterPlan{
 			Format: "parquet", RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
 			CompressedTarget: 256 << 20, CompressedMaximum: 512 << 20,
@@ -126,7 +126,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			}
 			relative, err := filepath.Rel(root, artifact.Path)
 			if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-				return Plan{}, fmt.Errorf("input %s is outside compose output %s", artifact.Path, root)
+				return Plan{}, fmt.Errorf("input %s is outside recipe output %s", artifact.Path, root)
 			}
 			input.SourcePath = filepath.ToSlash(relative)
 		}

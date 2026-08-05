@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/user"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -30,9 +30,11 @@ type Model struct {
 }
 
 type Lookaside struct {
-	Scratch string   `json:"scratch,omitempty"`
-	Mirrors []string `json:"mirrors,omitempty"`
-	Publish *Publish `json:"publish,omitempty"`
+	Cache         string   `json:"cache,omitempty"`
+	CacheMaxBytes int64    `json:"cache_max_bytes,omitempty"`
+	Scratch       string   `json:"scratch,omitempty"`
+	Mirrors       []string `json:"mirrors,omitempty"`
+	Publish       *Publish `json:"publish,omitempty"`
 }
 
 type Publish struct {
@@ -80,6 +82,9 @@ func Load() (Config, error) {
 	if err := validatePublish(config.Lookaside.Publish); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
+	if config.Lookaside.CacheMaxBytes < 0 {
+		return Config{}, fmt.Errorf("%s: lookaside cache maximum must not be negative", path)
+	}
 	return config, nil
 }
 
@@ -91,6 +96,9 @@ func Save(config Config) error {
 	}
 	if err := validatePublish(config.Lookaside.Publish); err != nil {
 		return err
+	}
+	if config.Lookaside.CacheMaxBytes < 0 {
+		return fmt.Errorf("lookaside cache maximum must not be negative")
 	}
 	path, err := Path()
 	if err != nil {
@@ -172,46 +180,67 @@ func EffectiveScratchRoot(config Config) (string, error) {
 	if config.Lookaside.Scratch != "" {
 		return filepath.Abs(config.Lookaside.Scratch)
 	}
-	base, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("find user cache directory: %w", err)
+	return filepath.Join(temporaryRoot(), "scratch"), nil
+}
+
+func EffectiveCacheRoot(config Config) (string, error) {
+	if config.Lookaside.Cache != "" {
+		return filepath.Abs(config.Lookaside.Cache)
 	}
-	return filepath.Join(base, "waldo", "objects"), nil
+	base, err := durableRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "cache"), nil
+}
+
+func EffectiveCacheMaxBytes(config Config) int64 {
+	if config.Lookaside.CacheMaxBytes > 0 {
+		return config.Lookaside.CacheMaxBytes
+	}
+	return 20 << 30
 }
 
 func EffectiveStagingBase(config Config) (string, error) {
 	if config.Ingest.Staging != "" {
 		return filepath.Abs(config.Ingest.Staging)
 	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return "", fmt.Errorf("find user cache directory: %w", err)
-	}
-	return filepath.Join(cache, "waldo", "ingest"), nil
+	return filepath.Join(temporaryRoot(), "ingest"), nil
 }
 
 func EffectiveModelRoot(config Config) (string, error) {
 	if config.Model.Root != "" {
 		return filepath.Abs(config.Model.Root)
 	}
+	base, err := durableRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "models"), nil
+}
+
+func durableRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("find home directory: %w", err)
 	}
-	if runtime.GOOS == "darwin" {
-		return filepath.Join(home, "Library", "Application Support", "waldo", "models"), nil
-	}
-	if runtime.GOOS == "windows" {
-		data, err := os.UserConfigDir()
-		if err != nil {
-			return "", fmt.Errorf("find user data directory: %w", err)
+	return filepath.Join(home, ".waldo"), nil
+}
+
+func temporaryRoot() string {
+	name := "waldo"
+	if current, err := user.Current(); err == nil && current.Uid != "" {
+		uid := strings.Map(func(character rune) rune {
+			if character >= '0' && character <= '9' || character >= 'A' && character <= 'Z' || character >= 'a' && character <= 'z' || character == '-' || character == '_' {
+				return character
+			}
+			return '-'
+		}, current.Uid)
+		if uid != "" {
+			name += "-" + uid
 		}
-		return filepath.Join(data, "waldo", "models"), nil
 	}
-	if data := os.Getenv("XDG_DATA_HOME"); data != "" {
-		return filepath.Join(data, "waldo", "models"), nil
-	}
-	return filepath.Join(home, ".local", "share", "waldo", "models"), nil
+	return filepath.Join(os.TempDir(), name)
 }
 
 // EffectiveStagingRoot returns a private, plan-specific staging directory.

@@ -18,11 +18,11 @@ reason.
   backend domain that holds content-addressed objects.
 - An **OpenWALDO BOM** is the immutable, resolved handoff from the data side;
   materialization then verifies every object named by it.
-- A model **recipe** is consumed by `waldo model build`; there is no separate
-  `compose` command group.
+- A model **recipe** is consumed by `waldo model build`. Model composition
+  terminology belongs to the model lifecycle, never source acquisition.
 - Fetchers are external shell scripts that live in another repository. WALDO
   may execute them only when the user explicitly supplies a strict
-  `waldo-ingest-compose`; scripts populate WALDO-owned temporary input space
+  `waldo-ingest-recipe`; scripts populate WALDO-owned temporary input space
   and never own conversion, publication, or index mutation.
 
 ## Dependency direction
@@ -56,6 +56,5 @@ Before handing off a change, run:
 
 ```bash
 gofmt -w .
-go test ./...
-go vet ./...
+./testing/all.sh
 ```

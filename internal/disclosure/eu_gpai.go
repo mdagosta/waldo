@@ -125,13 +125,13 @@ type CorpusUse struct {
 }
 
 type ManifestEvidence struct {
-	Path       string             `json:"path"`
-	SHA256     string             `json:"sha256"`
-	Name       string             `json:"name"`
-	Title      string             `json:"title"`
-	Sources    []index.Source     `json:"sources"`
-	Processing *index.Processing  `json:"processing,omitempty"`
-	ComposedBy *index.Composition `json:"composed_by,omitempty"`
+	Path       string                      `json:"path"`
+	SHA256     string                      `json:"sha256"`
+	Name       string                      `json:"name"`
+	Title      string                      `json:"title"`
+	Sources    []index.Source              `json:"sources"`
+	Processing *index.Processing           `json:"processing,omitempty"`
+	ComposedBy *index.IngestRecipeEvidence `json:"composed_by,omitempty"`
 }
 
 type Gap struct {

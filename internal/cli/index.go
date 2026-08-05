@@ -13,6 +13,7 @@ import (
 	"github.com/openwaldo/waldo-new/internal/corpus"
 	waldoindex "github.com/openwaldo/waldo-new/internal/index"
 	"github.com/openwaldo/waldo-new/internal/lookaside"
+	"github.com/openwaldo/waldo-new/internal/shard"
 )
 
 func runIndexInit(context Context, args []string, stdout, _ io.Writer) error {
@@ -158,6 +159,72 @@ func runIndexVerify(context Context, args []string, stdout, stderr io.Writer) er
 	return runIndexVerifyWithProgress(context, args, stdout, stderr)
 }
 
+func runIndexAudit(context Context, args []string, stdout, progress io.Writer) error {
+	if len(args) > 1 {
+		return usageError{message: "usage: waldo index audit [path]"}
+	}
+	target, err := resolveIndexArgument(context, args)
+	if err != nil {
+		return err
+	}
+	verification, err := waldoindex.Verify(target)
+	if err != nil {
+		return err
+	}
+	policy, err := corpus.NewLicensePolicy(nil, nil)
+	if err != nil {
+		return err
+	}
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		return err
+	}
+	bom, err := corpus.BuildBOM(context.Execution, []waldoindex.Target{target}, policy, cache)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(progress, "auditing %s indexed shard references (%s)\n", humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes))
+	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
+		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
+			fmt.Fprintf(progress, "  fetched %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
+		}
+	})
+	if err != nil {
+		return err
+	}
+	unique := make([]string, 0, len(materialized.Objects))
+	seen := map[string]bool{}
+	for _, object := range materialized.Objects {
+		if !seen[object.Shard.SHA256] {
+			seen[object.Shard.SHA256] = true
+			unique = append(unique, object.Path)
+		}
+	}
+	audited, err := shard.Audit(context.Execution, unique)
+	if err != nil {
+		return err
+	}
+	if audited.Records != bom.Totals.Docs || audited.Tokens != bom.Totals.Tokens || audited.EncodedBytes != bom.Totals.Bytes {
+		return fmt.Errorf("audited totals differ from manifests: records %d/%d, tokens %d/%d, bytes %d/%d", audited.Records, bom.Totals.Docs, audited.Tokens, bom.Totals.Tokens, audited.EncodedBytes, bom.Totals.Bytes)
+	}
+	purged, err := cache.PurgeUsed()
+	if err != nil {
+		return fmt.Errorf("purge successful audit scratch: %w", err)
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Status        string                  `json:"status"`
+			Path          string                  `json:"path"`
+			Verification  waldoindex.Verification `json:"verification"`
+			Summary       shard.Summary           `json:"summary"`
+			ScratchPurged lookaside.Stats         `json:"scratch_purged"`
+		}{"verified", target.Rel, verification, audited, purged})
+	}
+	fmt.Fprintln(stdout, "STATUS:         VERIFIED")
+	printShardSummary(stdout, audited)
+	return nil
+}
+
 func runIndexVerifyWithProgress(context Context, args []string, stdout, progress io.Writer) error {
 	var path string
 	objects := false
@@ -246,7 +313,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 			humanInteger(int64(availability.Objects)), humanBytes(availability.Bytes))
 		return nil
 	}
-	fmt.Fprintf(progress, "verifying %s objects (%s) through lookaside scratch %s\n",
+	fmt.Fprintf(progress, "verifying %s objects (%s) through lookaside cache %s\n",
 		humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes), cache.Root())
 	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
 		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
@@ -260,7 +327,9 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	if err != nil {
 		return fmt.Errorf("purge successful verification cache: %w", err)
 	}
-	fmt.Fprintf(progress, "purged %s cached objects (%s)\n", humanInteger(purged.Objects), humanBytes(purged.Bytes))
+	if !cache.Retained() {
+		fmt.Fprintf(progress, "purged %s cached objects (%s)\n", humanInteger(purged.Objects), humanBytes(purged.Bytes))
+	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
 			Path         string                  `json:"path"`

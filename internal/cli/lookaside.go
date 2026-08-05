@@ -26,14 +26,18 @@ func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) err
 	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
-			Root        string                     `json:"root"`
+			Cache       string                     `json:"cache"`
+			Scratch     string                     `json:"scratch"`
+			MaxBytes    int64                      `json:"cache_max_bytes"`
 			Mirrors     []string                   `json:"mirrors"`
 			Publish     *config.Publish            `json:"publish,omitempty"`
 			Credentials *lookasideCredentialStatus `json:"credentials,omitempty"`
 			Stats       lookaside.Stats            `json:"stats"`
-		}{Root: cache.Root(), Mirrors: cache.Mirrors(), Publish: configuration.Lookaside.Publish, Credentials: credentialStatus(configuration.Lookaside.Publish), Stats: stats})
+		}{Cache: cache.Root(), Scratch: cache.Scratch(), MaxBytes: cache.MaxBytes(), Mirrors: cache.Mirrors(), Publish: configuration.Lookaside.Publish, Credentials: credentialStatus(configuration.Lookaside.Publish), Stats: stats})
 	}
-	fmt.Fprintf(stdout, "lookaside scratch  %s\n", cache.Root())
+	fmt.Fprintf(stdout, "lookaside cache    %s\n", cache.Root())
+	fmt.Fprintf(stdout, "  limit          %s\n", humanBytes(cache.MaxBytes()))
+	fmt.Fprintf(stdout, "lookaside scratch  %s\n", cache.Scratch())
 	fmt.Fprintf(stdout, "  objects        %s\n", humanInteger(stats.Objects))
 	fmt.Fprintf(stdout, "  bytes          %s\n", humanBytes(stats.Bytes))
 	if stats.Other > 0 {
@@ -96,7 +100,7 @@ func runLookasideVerify(context Context, args []string, stdout, _ io.Writer) err
 		}
 	}
 	if len(result.Corrupt) > 0 {
-		return fmt.Errorf("lookaside scratch contains %d corrupt object(s)", len(result.Corrupt))
+		return fmt.Errorf("lookaside cache contains %d corrupt object(s)", len(result.Corrupt))
 	}
 	return nil
 }

@@ -70,14 +70,14 @@ Implemented foundation:
 - Manifest and navigation generation
 - Durable staging and recovery
 - DCO-oriented Git handoff
-- Strict YAML/JSON ingest compose detection without a separate command
+- Strict YAML/JSON ingest recipe detection without a separate command
 - Explicit sequential external fetcher execution into WALDO-owned temporary input
-- Compact aggregate source identity plus a compose repository/commit/path collector pin
+- Compact aggregate source identity plus a recipe repository/commit/path collector pin
 - Successful prepared-source purge and verified retry state
 
-The direct and composed end-to-end contribution paths are complete.
+The direct and recipe-driven end-to-end contribution paths are complete.
 Source-specific fetchers remain outside this repository; a separate project
-provides reviewed shell scripts and compose files. Scripts stop after writing
+provides reviewed shell scripts and recipe files. Scripts stop after writing
 to WALDO's supplied temporary directory.
 
 Exit: a directory of source documents becomes a reviewable, reproducible index
@@ -105,6 +105,27 @@ renderer slice: WALDO must transform the exact pinned official artifact, not
 present a similar-looking document as the official template.
 
 Exit: orchestration and provenance work end to end without Python or a GPU.
+
+## Integrity slice before a real training backend
+
+- Stream-read every newly written canonical shard before publication and
+  reject unreadable Parquet, schema drift, invalid record identities, content
+  hash mismatches, and incorrect document or token totals. **Implemented.**
+- Add recursive `waldo index audit <path>` for semantic validation of all
+  referenced canonical records after normal object retrieval and hash checks.
+  **Implemented.**
+- Add local `waldo shard summary`, `waldo shard audit`,
+  `waldo shard list-records`, and `waldo shard export-record` commands for
+  exported or otherwise local canonical Parquet files and directories.
+  **Implemented.**
+- Reuse one canonical record reader and invariant checker across ingestion,
+  index audit, local shard tooling, export, and the future training backend.
+- Separate retained, verified shard caching from disposable partial-download
+  scratch, with bounded retention and explicit machine configuration.
+
+Exit: bytes admitted to an index are not merely reachable and hash-identical;
+they are proven readable as canonical WALDO records, and operators can inspect
+the same files independently of an index checkout.
 
 ## Phase 5: one real training backend
 

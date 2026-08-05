@@ -13,10 +13,12 @@ verified shared state.
 ## Decision
 
 Stream every fetched object through SHA-256 and optional exact-size validation,
-then atomically rename it into a hash-derived lookaside scratch path. Re-hash
-an existing object before materialization. Purge objects used by a successful
-consumer, retain them after failure for retry, and provide an independent scrub
-for those leftovers.
+then atomically install it into a hash-derived retained cache path. Re-hash an
+existing object before materialization. Partial downloads use a separate
+disposable scratch directory and never appear at a cache path until complete.
+Bound the retained cache by least-recently-used file time and provide an
+independent scrub. Configurations created before this distinction that set only
+`lookaside.scratch` retain their historical purge-on-success behavior.
 
 Native export copies and re-verifies bytes into an atomic destination file; it
 does not hard-link exports to the cache. Existing export files are resumed only
@@ -33,6 +35,7 @@ a fresh conversion produces the same bytes.
 
 - A successful materialization has one clear verified-byte guarantee.
 - Cache hits spend sequential I/O to defend against local corruption.
+- Repeated audits and exports reuse verified objects without redownloading.
 - Exports use additional disk rather than sharing cache inodes.
 - Interrupted downloads and copies never appear at their final paths.
 - Mirror and transport implementations can change without changing object

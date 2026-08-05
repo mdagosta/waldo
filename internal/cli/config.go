@@ -15,6 +15,8 @@ var configKeys = []string{
 	"lookaside.region",
 	"lookaside.workers",
 	"lookaside.mirrors",
+	"lookaside.cache",
+	"lookaside.cache.max-size",
 	"lookaside.scratch",
 	"ingest.staging",
 	"model.root",
@@ -55,7 +57,7 @@ func runConfigShow(context Context, args []string, stdout, _ io.Writer) error {
 			return err
 		}
 		if !set {
-			fmt.Fprintf(stdout, "  %-22s (unset)\n", key)
+			fmt.Fprintf(stdout, "  %-27s (unset)\n", key)
 			continue
 		}
 		printConfigValue(stdout, key, value)
@@ -105,7 +107,7 @@ func runConfigGet(context Context, args []string, stdout, _ io.Writer) error {
 	}
 	for _, match := range matches {
 		if !match.Set {
-			fmt.Fprintf(stdout, "  %-22s (unset)\n", match.Key)
+			fmt.Fprintf(stdout, "  %-27s (unset)\n", match.Key)
 			continue
 		}
 		printConfigValue(stdout, match.Key, match.Value)
@@ -181,6 +183,22 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		publish.Workers = workers
 	case "lookaside.mirrors":
 		configuration.Lookaside.Mirrors = append([]string(nil), values...)
+	case "lookaside.cache":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		configuration.Lookaside.Cache, err = filepath.Abs(values[0])
+		if err != nil {
+			return err
+		}
+	case "lookaside.cache.max-size":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		configuration.Lookaside.CacheMaxBytes, err = parseByteSize(values[0])
+		if err != nil {
+			return usageError{message: "lookaside.cache.max-size must be a positive byte size such as 20GiB or 500MiB"}
+		}
 	case "lookaside.scratch":
 		if len(values) != 1 {
 			return oneConfigValue(key)
@@ -236,6 +254,10 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		}
 	case "lookaside.mirrors":
 		configuration.Lookaside.Mirrors = nil
+	case "lookaside.cache":
+		configuration.Lookaside.Cache = ""
+	case "lookaside.cache.max-size":
+		configuration.Lookaside.CacheMaxBytes = 0
 	case "lookaside.scratch":
 		configuration.Lookaside.Scratch = ""
 	case "ingest.staging":
@@ -301,6 +323,11 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 			return nil, false, nil
 		}
 		return append([]string(nil), configuration.Lookaside.Mirrors...), true, nil
+	case "lookaside.cache":
+		value, err := config.EffectiveCacheRoot(configuration)
+		return value, err == nil, err
+	case "lookaside.cache.max-size":
+		return config.EffectiveCacheMaxBytes(configuration), true, nil
 	case "lookaside.scratch":
 		value, err := config.EffectiveScratchRoot(configuration)
 		return value, err == nil, err
@@ -313,6 +340,29 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 	default:
 		return nil, false, fmt.Errorf("%s", unknownConfigKey(key))
 	}
+}
+
+func parseByteSize(value string) (int64, error) {
+	raw := strings.TrimSpace(value)
+	multipliers := []struct {
+		suffix     string
+		multiplier int64
+	}{{"TiB", 1 << 40}, {"GiB", 1 << 30}, {"MiB", 1 << 20}, {"KiB", 1 << 10}, {"TB", 1_000_000_000_000}, {"GB", 1_000_000_000}, {"MB", 1_000_000}, {"KB", 1_000}}
+	for _, item := range multipliers {
+		if strings.HasSuffix(strings.ToUpper(raw), strings.ToUpper(item.suffix)) {
+			number := strings.TrimSpace(raw[:len(raw)-len(item.suffix)])
+			parsed, err := strconv.ParseInt(number, 10, 64)
+			if err != nil || parsed <= 0 || parsed > (1<<63-1)/item.multiplier {
+				return 0, fmt.Errorf("invalid size")
+			}
+			return parsed * item.multiplier, nil
+		}
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("invalid size")
+	}
+	return parsed, nil
 }
 
 func configuredPublisher(configuration *config.Config, key string) (*config.Publish, error) {
@@ -333,7 +383,7 @@ func unknownConfigKey(key string) string {
 func printConfigValue(output io.Writer, key string, value any) {
 	prefix := ""
 	if key != "" {
-		prefix = fmt.Sprintf("  %-22s ", key)
+		prefix = fmt.Sprintf("  %-27s ", key)
 	}
 	switch typed := value.(type) {
 	case []string:
@@ -344,6 +394,8 @@ func printConfigValue(output io.Writer, key string, value any) {
 				fmt.Fprintf(output, "%s%s\n", strings.Repeat(" ", len(prefix)), item)
 			}
 		}
+	case int64:
+		fmt.Fprintf(output, "%s%s\n", prefix, humanBytes(typed))
 	default:
 		fmt.Fprintf(output, "%s%v\n", prefix, typed)
 	}

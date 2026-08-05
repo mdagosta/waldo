@@ -40,7 +40,7 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 		return ContributionResult{}, finalErr
 	}
 	finalExists := finalErr == nil
-	if err := os.MkdirAll(stagingRoot, 0o755); err != nil {
+	if err := os.MkdirAll(stagingRoot, 0o700); err != nil {
 		return ContributionResult{}, err
 	}
 	temporary, err := os.MkdirTemp(stagingRoot, ".waldo-contribution-*")
@@ -168,7 +168,7 @@ func CheckContributionDestination(indexRoot string, plan Plan) error {
 	return CheckContributionDestinationPath(indexRoot, plan.Destination)
 }
 
-// CheckContributionDestinationPath allows composed ingestion to reject an
+// CheckContributionDestinationPath allows recipe-driven ingestion to reject an
 // occupied destination before it executes potentially expensive fetchers.
 func CheckContributionDestinationPath(indexRoot, destinationPath string) error {
 	root, err := filepath.Abs(indexRoot)

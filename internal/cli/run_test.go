@@ -680,7 +680,7 @@ func TestConfigShowAndGetUseCanonicalKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"config", "get", "lookaside"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "lookaside              s3://bucket/root") || !strings.Contains(stdout.String(), "lookaside.region       (unset)") || !strings.Contains(stdout.String(), "lookaside.workers      3") {
+	if code := Run([]string{"config", "get", "lookaside"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "lookaside                   s3://bucket/root") || !strings.Contains(stdout.String(), "lookaside.region            (unset)") || !strings.Contains(stdout.String(), "lookaside.workers           3") {
 		t.Fatalf("get code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	stdout.Reset()
@@ -730,7 +730,7 @@ func TestConfigGetJSONPreservesOrderedMatchesAndUnsetState(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	if len(output.Matches) != 5 || output.Matches[0].Key != "lookaside" || output.Matches[1].Key != "lookaside.region" || output.Matches[1].Set {
+	if len(output.Matches) != 7 || output.Matches[0].Key != "lookaside" || output.Matches[1].Key != "lookaside.region" || output.Matches[1].Set {
 		t.Fatalf("matches = %+v", output.Matches)
 	}
 }

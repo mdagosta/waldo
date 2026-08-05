@@ -65,6 +65,9 @@ immutable build plan.
 
 ## Commands
 
+Models default to `~/.waldo/models`. Override that durable location when a
+different disk is more appropriate:
+
 ```bash
 waldo config set model.root /fast-disk/waldo-models
 waldo model build recipe.yaml
