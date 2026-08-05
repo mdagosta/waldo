@@ -155,7 +155,8 @@ with the first vertical slice that needs them.
 
 ## Fetcher boundary
 
-Fetchers remain in the single WALDO binary, behind the acquisition boundary
-defined in `docs/FETCHER-CONTRACT.md`. They write acquired artifacts and a
-versioned evidence record to a local directory, then stop. Source-specific
-download logic does not enter index, corpus, lookaside, or model packages.
+Fetchers live in a separate repository as reviewed shell scripts, as defined in
+`docs/FETCHER-CONTRACT.md`. They write acquired artifacts and evidence to a
+local directory, then stop. WALDO does not discover or execute them, and
+source-specific download logic does not enter this repository's CLI or Go
+packages.

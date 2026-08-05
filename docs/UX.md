@@ -74,10 +74,9 @@ architecture does not have to appear as product vocabulary.
 There is no `compose` command group. A declarative model recipe is one input to
 `waldo model build`.
 
-Source-specific acquisition will be added after the model-lifecycle phase as
-bounded adapters in this same binary. Its first workflow writes raw artifacts
-and acquisition evidence to a local directory, then stops. It does not hide
-ingestion, publication, or training behind a fetch command.
+Source-specific acquisition is outside this binary. A separate repository will
+contain reviewed shell scripts that write raw artifacts and evidence to a local
+directory, then stop. WALDO does not discover or execute those scripts.
 
 ## Primary journeys
 
@@ -216,8 +215,9 @@ The command deliberately has one execution path. Its arguments are:
 Publication is configured once through `waldo config set`; ingestion
 has no second per-run destination or alternate partial execution mode.
 
-When a WALDO fetcher produced the input, the invocation names its local deposit
-or acquisition record rather than repeating facts by hand.
+When an external fetcher produced the input, the user passes its local files or
+directory and the required source facts explicitly. A structured fetcher
+handoff may be designed later, but is not part of the current CLI contract.
 
 ### Export a corpus selection
 

@@ -1,15 +1,17 @@
 # Fetcher and local acquisition contract
 
-Fetchers are source-specific acquisition adapters in the single WALDO binary.
-They download upstream material into a user-selected local directory and
-record what they observed. A fetch ends there: it does not ingest, publish to a
-lookaside, mutate an index, or start model training.
+Fetchers are source-specific shell scripts maintained in a separate repository.
+They are not WALDO commands, Go packages, runtime plugins, or part of this
+repository's release. They download upstream material into a user-selected
+local directory and record what they observed. A fetch ends there: it does not
+invoke WALDO, publish to a lookaside, mutate an index, or start model training.
 
-The first fetcher slice will finalize the local acquisition schema after the
-model-lifecycle phase. Until then, this document defines its boundary. The
-already implemented consumer-side counterpart is `waldo index export`, which
-materializes a selected indexed corpus and its OpenWALDO BOM into a local
-directory.
+The separate fetcher project will finalize its script conventions and local
+acquisition schema later. Until then, this document records only the ownership
+boundary. WALDO consumes ordinary local files and directories through
+`waldo index ingest`; it does not currently interpret a fetcher-specific
+acquisition record. Conversely, `waldo index export` materializes an already
+indexed corpus and its OpenWALDO BOM into a local directory.
 
 ## A fetcher owns
 
@@ -63,14 +65,15 @@ manifests to support the EU GPAI training-content projection described in
 `docs/EU-GPAI-DISCLOSURE.md`. Fetchers record what they did and observed; they
 do not make a legal-compliance determination.
 
-## Execution boundary
+## Repository and execution boundary
 
-- Fetchers ship as reviewed adapters compiled into the WALDO binary.
-- Fetchers are not runtime plugins and WALDO does not execute downloaded or
-  arbitrary fetcher code.
-- Network, pagination, and source-specific concerns remain behind a narrow
-  acquisition interface; they do not enter index, corpus, or model packages.
+- Fetchers ship as reviewed shell scripts from their own repository.
+- WALDO does not discover, download, install, or execute fetcher scripts.
+- Network, pagination, authentication, retries, and source-specific concerns
+  do not enter this repository's CLI or Go packages.
 - The user explicitly runs ingestion after reviewing a local acquisition.
+- Any future machine-readable handoff must be reviewed as a versioned contract;
+  it is not implied by this document.
 
 ## Non-goals
 

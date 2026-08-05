@@ -51,9 +51,8 @@ template from later model BOMs.
 - Provenance records observed facts and states the limits of its guarantees.
 - The common path should be obvious; advanced maintenance should remain out of
   the way until it is needed.
-- Fetchers are bounded adapters in the same binary. Their first workflow writes
-  acquired bytes and evidence to a local directory; ingestion remains an
-  explicit separate command.
+- Fetchers are external shell scripts maintained in a separate repository.
+  WALDO begins with local input supplied explicitly to `index ingest`.
 
 ## Development
 

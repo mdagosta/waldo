@@ -358,8 +358,8 @@ deduplication, order-independent output shard hashes, and no external storage.
 WALDO exposes that cost instead of hiding a massive JSONL intermediate.
 
 An already sorted canonical deposit can take a k-way merge fast path and avoid
-the external sort. This is the large-columnar optimization that the future
-fetcher contract should support.
+the external sort. This is the large-columnar optimization that a future
+external-fetcher handoff contract should support.
 
 ### Recovery and distributed execution
 
