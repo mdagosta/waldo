@@ -1,23 +1,28 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/openwaldo/waldo-new/internal/config"
 	"github.com/openwaldo/waldo-new/internal/corpus"
+	"github.com/openwaldo/waldo-new/internal/inference"
 	"github.com/openwaldo/waldo-new/internal/lookaside"
 	"github.com/openwaldo/waldo-new/internal/model"
 	"github.com/openwaldo/waldo-new/internal/shard"
 	"github.com/openwaldo/waldo-new/internal/training"
+	"golang.org/x/term"
 )
 
 func runModelForecast(context Context, args []string, stdout, _ io.Writer) error {
@@ -491,22 +496,194 @@ func runModelRemove(context Context, args []string, stdout, _ io.Writer) error {
 	return nil
 }
 
-func runModelChat(_ Context, args []string, _, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo model chat <name>"}
+var openModelChat = inference.Open
+var modelChatInput io.Reader = os.Stdin
+var modelChatTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+
+func runModelChat(context Context, args []string, stdout, stderr io.Writer) error {
+	name, prompt, options, err := parseModelChat(args)
+	if err != nil {
+		return err
 	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
 	}
-	inspection, err := model.Inspect(root, args[0])
+	inspection, err := model.Inspect(root, name)
 	if err != nil {
 		return err
 	}
 	if len(inspection.Model.Runs) == 0 {
-		return fmt.Errorf("model %q is untrained", args[0])
+		return fmt.Errorf("model %q is untrained", name)
 	}
-	return fmt.Errorf("model %q cannot be opened for chat yet; generation over WALDO MLX weights is not implemented", args[0])
+	interactive := prompt == nil && modelChatTerminal()
+	if context.JSON && interactive {
+		return usageError{message: "--json requires a positional prompt or piped standard input"}
+	}
+	if !interactive && prompt == nil {
+		data, err := io.ReadAll(modelChatInput)
+		if err != nil {
+			return fmt.Errorf("read chat prompt from standard input: %w", err)
+		}
+		value := string(data)
+		prompt = &value
+	}
+	if interactive {
+		fmt.Fprintf(stderr, "loading model %s...\n", name)
+	}
+	opened, err := openModelChat(context.Execution, inspection)
+	if err != nil {
+		fmt.Fprintf(stderr, "warning: model chat unavailable: %v\n", err)
+		return err
+	}
+	var chatErr error
+	if interactive {
+		chatErr = runInteractiveChat(context.Execution, opened, options, stdout)
+	} else {
+		chatErr = runOneShotChat(context, opened, *prompt, options, stdout)
+	}
+	return errors.Join(chatErr, opened.Session.Close())
+}
+
+func parseModelChat(args []string) (string, *string, inference.Options, error) {
+	options := inference.Options{MaxTokens: 256, Temperature: 0.8, TopP: 0.95}
+	var positionals []string
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		var value string
+		var err error
+		switch argument {
+		case "--max-tokens", "--temperature", "--top-p", "--seed":
+			value, index, err = optionValue(args, index, argument)
+			if err != nil {
+				return "", nil, options, err
+			}
+		default:
+			if strings.HasPrefix(argument, "-") {
+				return "", nil, options, usageError{message: fmt.Sprintf("unknown model chat option %q", argument)}
+			}
+			positionals = append(positionals, argument)
+			continue
+		}
+		switch argument {
+		case "--max-tokens":
+			options.MaxTokens, err = strconv.Atoi(value)
+		case "--temperature":
+			options.Temperature, err = strconv.ParseFloat(value, 64)
+		case "--top-p":
+			options.TopP, err = strconv.ParseFloat(value, 64)
+		case "--seed":
+			seed, parseErr := strconv.ParseUint(value, 10, 64)
+			err = parseErr
+			options.Seed = &seed
+		}
+		if err != nil {
+			return "", nil, options, usageError{message: fmt.Sprintf("invalid %s value %q", argument, value)}
+		}
+	}
+	if len(positionals) < 1 || len(positionals) > 2 {
+		return "", nil, options, usageError{message: "usage: waldo model chat <name> [prompt] [--max-tokens <n>] [--temperature <n>] [--top-p <n>] [--seed <n>] [--json]"}
+	}
+	if err := options.Validate(); err != nil {
+		return "", nil, options, usageError{message: err.Error()}
+	}
+	if len(positionals) == 2 {
+		return positionals[0], &positionals[1], options, nil
+	}
+	return positionals[0], nil, options, nil
+}
+
+func runOneShotChat(context Context, opened inference.Opened, prompt string, options inference.Options, stdout io.Writer) error {
+	var renderer safeTokenWriter
+	if !context.JSON {
+		renderer.writer = stdout
+	}
+	result, err := opened.Session.Generate(context.Execution, prompt, options, func(token inference.Token) error {
+		if context.JSON {
+			return nil
+		}
+		return renderer.Write(token.Bytes)
+	})
+	if err != nil {
+		return err
+	}
+	if context.JSON {
+		return writeJSON(stdout, struct {
+			Model  string           `json:"model"`
+			RunID  string           `json:"run_id"`
+			Prompt string           `json:"prompt"`
+			Result inference.Result `json:"result"`
+		}{opened.Description.Model, opened.Description.RunID, prompt, result})
+	}
+	if err := renderer.Flush(); err != nil {
+		return err
+	}
+	if !strings.HasSuffix(result.Text, "\n") {
+		_, err = fmt.Fprintln(stdout)
+	}
+	return err
+}
+
+func runInteractiveChat(ctx context.Context, opened inference.Opened, options inference.Options, stdout io.Writer) error {
+	fmt.Fprintf(stdout, "OpenWALDO model %s\n", opened.Description.Model)
+	fmt.Fprintf(stdout, "Backend: %s\n", strings.ToUpper(opened.Description.Backend))
+	fmt.Fprintf(stdout, "Context: %d tokens\n", opened.Description.ContextTokens)
+	fmt.Fprintln(stdout, "Mode: raw causal continuation (this model has no chat template)")
+	fmt.Fprintln(stdout, "Commands: /clear, /help, /exit")
+	reader := bufio.NewReader(modelChatInput)
+	history := ""
+	for {
+		fmt.Fprint(stdout, "\nyou> ")
+		line, err := reader.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" && errors.Is(err, io.EOF) {
+			fmt.Fprintln(stdout)
+			return nil
+		}
+		switch line {
+		case "/exit":
+			return nil
+		case "/clear":
+			history = ""
+			fmt.Fprintln(stdout, "context cleared")
+			continue
+		case "/help":
+			fmt.Fprintln(stdout, "/clear resets context; /exit or Ctrl-D closes the session")
+			continue
+		}
+		prompt := line
+		if history != "" {
+			prompt = history + "\n" + line
+		}
+		fmt.Fprintf(stdout, "%s> ", opened.Description.Model)
+		renderer := safeTokenWriter{writer: stdout}
+		result, generateErr := opened.Session.Generate(ctx, prompt, options, func(token inference.Token) error {
+			return renderer.Write(token.Bytes)
+		})
+		if generateErr != nil {
+			return generateErr
+		}
+		if err := renderer.Flush(); err != nil {
+			return err
+		}
+		if !strings.HasSuffix(result.Text, "\n") {
+			fmt.Fprintln(stdout)
+		}
+		history = boundChatHistory(prompt+result.Text, opened.Description.ContextTokens)
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+	}
+}
+
+func boundChatHistory(history string, contextTokens int) string {
+	if contextTokens < 1 || len(history) <= contextTokens {
+		return history
+	}
+	return strings.ToValidUTF8(history[len(history)-contextTokens:], "�")
 }
 
 func configuredModelRoot() (string, error) {

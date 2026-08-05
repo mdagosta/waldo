@@ -455,6 +455,16 @@ Absolute machine paths are intentionally excluded. The same paths therefore
 resolve beneath either `model.root/<name>` or a relocated `model export`
 directory.
 
+`waldo model chat <name>` is interactive when standard input is a terminal.
+An optional positional prompt or piped standard input selects one-shot
+generation. Only generation controls are flags: `--max-tokens`,
+`--temperature`, `--top-p`, and `--seed`. The command verifies the BOM-selected
+real artifacts before opening the recorded backend and never substitutes a
+different framework. Human output streams with terminal controls escaped;
+`--json` is one-shot and buffered into one result object. Models without a
+chat template are labeled as raw causal continuation rather than presented as
+instruction-tuned assistants.
+
 Inspection distinguishes declared inputs, verified materialization, backend-
 reported consumption, and output hashes. It must not describe a baseline BOM
 as proof against a dishonest trainer.

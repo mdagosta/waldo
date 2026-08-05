@@ -129,4 +129,9 @@ run_count=$(find "$models/mlx-smoke/runs" -type f -name RUN.json -print | wc -l 
 weights_count=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors -print | wc -l | tr -d ' ')
 [ "$weights_count" -eq 2 ] || { echo "found $weights_count terminal MLX weights, want 2" >&2; exit 1; }
 
-echo "E2E MLX model passed: composed and directly trained real weights, checkpointed, evaluated, and persisted Safetensors"
+chat=$("$binary" --json model chat mlx-smoke "OpenWALDO" --max-tokens 2 --temperature 0 --seed 7)
+printf '%s\n' "$chat" | grep -Eq '"run_id"[[:space:]]*:[[:space:]]*"[^"]+"'
+printf '%s\n' "$chat" | grep -Eq '"tokens"[[:space:]]*:[[:space:]]*[0-2]'
+printf '%s\n' "$chat" | grep -Eq '"finish_reason"[[:space:]]*:[[:space:]]*"(eos|max_tokens)"'
+
+echo "E2E MLX model passed: trained, resumed, checkpointed, evaluated, persisted Safetensors, and generated through chat"

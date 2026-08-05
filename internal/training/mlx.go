@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/openwaldo/waldo-new/internal/mlxruntime"
 )
 
 const MLXRevision = "builtin-mlx-worker-schema-1"
@@ -46,7 +48,7 @@ func (backend MLX) Run(ctx context.Context, request Request) (Observation, error
 	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 		return Observation{}, fmt.Errorf("create MLX artifact directory: %w", err)
 	}
-	command := exec.CommandContext(ctx, backend.Python, "-c", string(mlxWorker), request.ArtifactDirectory, request.ArtifactPrefix)
+	command := exec.CommandContext(ctx, backend.Python, "-c", mlxruntime.WithModel(mlxWorker), request.ArtifactDirectory, request.ArtifactPrefix)
 	stdin, err := command.StdinPipe()
 	if err != nil {
 		return Observation{}, err

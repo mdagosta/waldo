@@ -185,8 +185,11 @@ record can be inspected.
 
 ## Phase 6: useful model operations
 
+- Real MLX chat and one-shot generation with verified current artifacts,
+  persistent sessions, KV caching, safe streaming, and deterministic test
+  controls. **Implemented.** Instruction tuning and chat templates remain.
 - Second local backend
-- Evaluation and chat
+- Held-out evaluation
 - Fork and lineage
 - Explicit additional training runs
 - Training-content report rendering

@@ -24,3 +24,4 @@ logs.
 - [0018: Resolve training profiles and stream a versioned worker protocol](0018-training-profile-and-worker-protocol.md)
 - [0019: Fail closed into a real MLX backend on Apple Silicon](0019-real-mlx-backend.md)
 - [0020: Select training backends from host policy](0020-host-backend-policy.md)
+- [0021: Keep inference ephemeral and artifact-bound](0021-ephemeral-inference.md)

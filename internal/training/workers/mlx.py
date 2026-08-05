@@ -429,6 +429,12 @@ def run():
     trainer.finish()
 
 
+Attention = WALDO_SHARED_ATTENTION
+FeedForward = WALDO_SHARED_FEED_FORWARD
+DecoderBlock = WALDO_SHARED_DECODER_BLOCK
+DecoderLM = WALDO_SHARED_DECODER_LM
+ByteTokenizer = WALDO_SHARED_BYTE_TOKENIZER
+
 try:
     run()
 except Exception as error:
