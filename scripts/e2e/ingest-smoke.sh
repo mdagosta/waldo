@@ -53,11 +53,19 @@ index_root="$work/waldo-index"
 staging="$work/staging"
 scratch="$work/scratch"
 export_root="$work/export"
-fixture="$repo_root/testdata/e2e/tiny"
+fixture="$work/generated-input"
+validator="$work/validate-jsonl"
 export WALDO_CONFIG="$work/config.json"
 
-echo "building WALDO"
+echo "building WALDO and the E2E validator"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
+(cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$validator" ./scripts/e2e/validate_jsonl.go)
+
+echo "generating UTF-8, multiline, and duplicate source content"
+mkdir -p "$fixture"
+printf 'Plain UTF-8: café, 東京, and 🚀.\nSecond line preserved exactly.\n' > "$fixture/01-plain.txt"
+printf '# Markdown title\n\nA paragraph with "quotes", a backslash \\, and trailing punctuation!\n\n- one\n- two\n' > "$fixture/02-markdown.md"
+cp "$fixture/01-plain.txt" "$fixture/03-duplicate.txt"
 
 echo "initializing empty index"
 "$binary" index init "$index_root"
@@ -83,6 +91,19 @@ echo "preflighting ingestion"
 echo "running ingestion"
 # shellcheck disable=SC2086
 "$binary" index ingest "$fixture" "$destination" $common_arguments
+
+if [ "$transport" = "local" ]; then
+  published_count=$(find "$work/lookaside" -type f -print | wc -l | tr -d ' ')
+  if [ "$published_count" -ne 1 ]; then
+    echo "local lookaside contains $published_count files, want exactly one Parquet object" >&2
+    exit 1
+  fi
+  published_object=$(find "$work/lookaside" -type f -print)
+  if [ "$(dd if="$published_object" bs=1 count=4 2>/dev/null)" != "PAR1" ] || [ "$(tail -c 4 "$published_object")" != "PAR1" ]; then
+    echo "local lookaside object is not a complete Parquet file" >&2
+    exit 1
+  fi
+fi
 
 contribution=""
 for candidate in "$staging"/*/contribution; do
@@ -125,6 +146,9 @@ if [ "$line_count" -ne 2 ]; then
   echo "JSONL export contains $line_count records, want 2" >&2
   exit 1
 fi
+"$validator" "$jsonl" "$destination/tiny.json" \
+  https://example.invalid/waldo-e2e tiny CC0-1.0 "$fixture" \
+  "$fixture/01-plain.txt" "$fixture/02-markdown.md"
 
 if find "$staging" -path '*/objects/*' -type f -print | grep . >/dev/null 2>&1; then
   echo "successful ingestion left staged object files behind" >&2
@@ -135,7 +159,7 @@ if find "$scratch" -type f -print 2>/dev/null | grep . >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "E2E ingest passed: initialized, published, applied, verified, exported, and purged"
+echo "E2E ingest passed: generated, initialized, published, applied, verified, exported, compared, and purged"
 echo "  index:      $index_root"
 echo "  lookaside:  $lookaside_url"
 echo "  records:    $line_count"

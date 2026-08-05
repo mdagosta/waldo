@@ -2,10 +2,14 @@
 
 The smoke test builds the current WALDO source and works entirely in a fresh
 temporary directory. It initializes an empty index, configures isolated
-machine state, dry-runs and executes a two-document ingestion, applies the
+machine state, generates UTF-8 and multiline Markdown sources plus one exact
+duplicate, dry-runs and executes their ingestion, applies the
 generated contribution overlay to that disposable index, recursively verifies
-the new corpus, exports canonical JSONL, verifies its OpenWALDO BOM, and checks
-that successful staging and scratch objects were purged.
+the new corpus, exports canonical JSONL, verifies its OpenWALDO BOM, compares
+the two retained records byte-for-byte with their original files, validates
+their hashes and provenance fields, confirms that a local lookaside contains
+only the complete Parquet object, and checks that successful staging and
+scratch objects were purged.
 
 Run the filesystem-backed path with no credentials or network access:
 
