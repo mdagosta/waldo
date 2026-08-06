@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	"github.com/openwaldo/waldo/internal/shard"
@@ -13,6 +14,25 @@ type deduplicator struct {
 	database *bbolt.DB
 	input    int64
 	kept     int64
+}
+
+func (dedup *deduplicator) seedIDs(values []string) error {
+	return dedup.database.Update(func(transaction *bbolt.Tx) error {
+		bucket := transaction.Bucket(dedupBucket)
+		if bucket == nil {
+			return fmt.Errorf("deduplication bucket is missing")
+		}
+		for _, value := range values {
+			key, err := hex.DecodeString(value)
+			if err != nil || len(key) != 32 {
+				return fmt.Errorf("invalid seeded content SHA-256 %q", value)
+			}
+			if err := bucket.Put(key, []byte{1}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func openDeduplicator(path string) (*deduplicator, error) {

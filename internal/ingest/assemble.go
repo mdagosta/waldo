@@ -38,6 +38,10 @@ type AssemblyResult struct {
 	DuplicateDocs int64          `json:"duplicate_docs"`
 }
 
+// DedupSeed streams existing canonical content identities into an update's
+// disk-backed exact membership set before any new records are admitted.
+type DedupSeed func(func([]string) error) error
+
 // AssembleTextObjects runs the accepted adapters and packs their canonical
 // rows into verified Parquet files beneath stagingDirectory/objects. Complete
 // objects are content-addressed and safe for a later journaled publication or
@@ -49,6 +53,10 @@ func AssembleTextObjects(ctx context.Context, plan Plan, stagingDirectory string
 // AssembleTextObjectsWithSink delivers each durable object as soon as it is
 // closed. A blocking sink deliberately applies backpressure to the encoder.
 func AssembleTextObjectsWithSink(ctx context.Context, plan Plan, stagingDirectory string, sink func(ObjectResult) error) (AssemblyResult, error) {
+	return AssembleTextObjectsWithSeedAndSink(ctx, plan, stagingDirectory, nil, sink)
+}
+
+func AssembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingDirectory string, seed DedupSeed, sink func(ObjectResult) error) (AssemblyResult, error) {
 	if err := plan.Validate(); err != nil {
 		return AssemblyResult{}, err
 	}
@@ -71,6 +79,11 @@ func AssembleTextObjectsWithSink(ctx context.Context, plan Plan, stagingDirector
 		return AssemblyResult{}, err
 	}
 	defer dedup.database.Close()
+	if seed != nil {
+		if err := seed(dedup.seedIDs); err != nil {
+			return AssemblyResult{}, fmt.Errorf("seed existing corpus identities: %w", err)
+		}
+	}
 	counter, err := tokenizer.Get(tokenizer.Default)
 	if err != nil {
 		return AssemblyResult{}, fmt.Errorf("load reference tokenizer: %w", err)
@@ -91,6 +104,9 @@ func AssembleTextObjectsWithSink(ctx context.Context, plan Plan, stagingDirector
 		return AssemblyResult{}, err
 	}
 	if len(assembler.results) == 0 {
+		if seed != nil && dedup.input > 0 {
+			return AssemblyResult{InputDocs: dedup.input, DuplicateDocs: dedup.input}, nil
+		}
 		return AssemblyResult{}, fmt.Errorf("ingestion produced no canonical records")
 	}
 	return AssemblyResult{

@@ -36,3 +36,4 @@ logs.
 - [0030: Pin a bounded deterministic held-out evaluation set](0030-deterministic-heldout-evaluation.md)
 - [0031: Resume durable model-compose transactions](0031-durable-model-compose-transactions.md)
 - [0032: Calibrate exact forecast topologies from observed runs](0032-observed-run-forecast-calibration.md)
+- [0033: Separate corpus append from authoritative recipe rebuilds](0033-corpus-update-modes.md)

@@ -98,13 +98,93 @@ func TestIndexIngestRecipePublishesAuditableManifestAndPurgesInputs(t *testing.T
 	}
 }
 
-type cliRecipeRunner struct {
-	calls int
+func TestIndexUpdateRecipeRebuildsWithoutReadingOldShardAndMigratesYAML(t *testing.T) {
+	recipePath := writeCLIRecipe(t)
+	root := t.TempDir()
+	writeCLIFile(t, filepath.Join(root, "index.json"), `{"kind":"index","schema":1,"path":"","entries":[{"name":"core","type":"dir"}]}`)
+	writeCLIFile(t, filepath.Join(root, "core", "index.json"), `{"kind":"index","schema":1,"path":"core","entries":[{"name":"example.json","type":"manifest"}]}`)
+	writeCLIFile(t, filepath.Join(root, "core", "example.json"), `{
+  "kind":"manifest","schema":1,"name":"example","title":"Old Example","description":"Old corpus.","license":"CC0-1.0",
+  "sources":[{"name":"old","source":"Old","url":"https://unreachable.example/raw","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}],
+  "converted_by":{"tool":"old","version":"1","profile":"text","recipe":"old/v1","tokenizer":"byte"},
+  "record_schema":1,
+  "shards":[{"url":"https://unreachable.example/object","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sources":["old"],"docs":99,"tokens":999,"bytes":123456}]
+}`)
+	staging := t.TempDir()
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{
+		Index:     root,
+		Lookaside: config.Lookaside{Scratch: t.TempDir(), Publish: &config.Publish{URL: "s3://openwaldo/lookaside/v1", Workers: 2}},
+		Ingest:    config.Ingest{Staging: staging},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runner := &cliRecipeRunner{}
+	originalRunner := ingestRecipeRunner
+	ingestRecipeRunner = runner
+	t.Cleanup(func() { ingestRecipeRunner = originalRunner })
+	remote := &cliPublisher{}
+	originalPublisher := newIngestPublisher
+	newIngestPublisher = func(context.Context, config.Publish) (lookaside.Publisher, error) { return remote, nil }
+	t.Cleanup(func() { newIngestPublisher = originalPublisher })
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "index", "update", recipePath, filepath.Join(root, "core", "example.json"), "--rebuild-shards"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	var output struct {
+		Assembly     ingest.AssemblyResult     `json:"assembly"`
+		Contribution ingest.ContributionResult `json:"contribution"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Assembly.RetainedDocs != 1 || len(output.Contribution.Files) != 2 || !containsString(output.Contribution.Removed, "core/example.json") || !containsString(output.Contribution.Removed, "core/index.json") {
+		t.Fatalf("output = %+v", output)
+	}
+	manifest, err := waldoindex.LoadManifest(filepath.Join(output.Contribution.Root, "core", "example.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Name != "example" || manifest.Title != "Recipe Corpus" || len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Shards[0].SHA256 == strings.Repeat("b", 64) {
+		t.Fatalf("rebuilt manifest = %+v", manifest)
+	}
+	var state ingest.RecipeUpdateState
+	if err := json.Unmarshal(runner.updateState, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.Mode != "rebuild-shards" || state.Manifest != "core/example.json" || state.Shards != 1 || state.Docs != 99 || len(state.Sources) != 1 {
+		t.Fatalf("update state = %+v", state)
+	}
 }
 
-func (runner *cliRecipeRunner) Run(_ context.Context, _ string, _ []string, directory string, _ []string, _, _ io.Writer) error {
+type cliRecipeRunner struct {
+	calls       int
+	updateState []byte
+}
+
+func (runner *cliRecipeRunner) Run(_ context.Context, _ string, _ []string, directory string, environment []string, _, _ io.Writer) error {
 	runner.calls++
+	for _, value := range environment {
+		if strings.HasPrefix(value, "WALDO_UPDATE_STATE=") {
+			data, err := os.ReadFile(strings.TrimPrefix(value, "WALDO_UPDATE_STATE="))
+			if err != nil {
+				return err
+			}
+			runner.updateState = data
+		}
+	}
 	return os.WriteFile(filepath.Join(directory, "document.txt"), []byte("recipe corpus document"), 0o644)
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func writeCLIRecipe(t *testing.T) string {

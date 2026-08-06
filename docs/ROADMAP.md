@@ -222,7 +222,9 @@ lifecycle is reliable.
 
 - Lookaside-to-lookaside replication; ordered mirror reads, scrubbing, and
   explicit object removal are implemented
-- Append-only corpus updates
+- Append-only corpus updates with exact existing-record deduplication, plus
+  complete recipe-driven shard rebuilding and automatic YAML migration.
+  **Implemented.**
 - Compatibility aliases where they materially help users
 - Packaging and releases
 - Migration guidance and website reconciliation

@@ -30,7 +30,7 @@ waldo
 │   ├── show
 │   ├── summary
 │   ├── verify
-│   ├── add
+│   ├── ingest
 │   ├── update
 │   ├── export
 │   └── remove
@@ -40,7 +40,6 @@ waldo
 │   ├── list
 │   ├── status
 │   ├── verify
-│   ├── mirror
 │   └── rm
 ├── model
 │   ├── create
@@ -62,9 +61,8 @@ waldo
     └── set
 ```
 
-`index update`, advanced lookaside maintenance, and several model commands are
-post-MVP capabilities. Their placement is decided now so the initial commands
-do not grow into the wrong namespace.
+Several model commands remain post-MVP capabilities. Their placement is
+decided now so the initial commands do not grow into the wrong namespace.
 
 The CLI intentionally groups corpus workflows under `index`. Users encounter a
 corpus as an indexed path, and should not have to choose between two command
@@ -281,6 +279,45 @@ SHA-256, document count, reference-token estimate, and encoded byte size.
 Detailed processing prose, command arrays, modality duplication, and input
 inventories stay out of Git. Secrets and environment values are never written
 to the manifest.
+
+### Update an existing corpus
+
+An update target must resolve exactly one indexed manifest:
+
+```bash
+waldo index update ../waldo-fetchers/recipes/common-pile/foodista.yaml \
+  /path/to/waldo-index/core/common-pile/foodista/foodista.json
+```
+
+Normal update materializes and audits the existing shards, streams their exact
+content identities into the disk-backed deduplication set, and publishes only
+records absent from the current corpus. A recipe receives a private
+`UPDATE-STATE.json` through `WALDO_UPDATE_STATE`; it contains the pinned
+manifest hash, existing source version and collection facts, and aggregate
+shard totals. Source-specific fetchers may use those facts to request only a
+new release, time range, commit, or cursor. WALDO's record-level check remains
+authoritative even when a fetcher retrieves overlapping material. An entirely
+duplicate update is a successful no-op.
+
+For a complete authoritative rebuild from a fresh recipe acquisition:
+
+```bash
+waldo index update ../waldo-fetchers/recipes/common-pile/foodista.yaml \
+  /path/to/waldo-index/core/common-pile/foodista/foodista.json \
+  --rebuild-shards
+```
+
+Rebuild mode does not download or combine the old shards. It deduplicates the
+recipe's complete output, writes new shards using the current 256 MiB target,
+and replaces the manifest's shard and source set. Existing lookaside objects
+remain untouched. Both modes pin the original manifest bytes before fetching,
+recheck them before producing the contribution, and rewrite the touched
+manifest and navigation document as schema-1 YAML. Superseded `.json` or
+`.yml` paths are listed explicitly for removal.
+
+Recipe `source` may include optional `version`, `collected_from`, and
+`collected_to` fields. These become compact manifest source facts and are
+returned to the next update through `WALDO_UPDATE_STATE`.
 
 Index metadata is YAML-primary: new manifests use `<name>.yaml` and generated
 navigation uses `index.yaml`. Readers retain schema-1 compatibility with

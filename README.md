@@ -504,7 +504,9 @@ Working end to end today:
   scratch cleanup, inventory, scrubbing, and explicit object removal;
 - **Contribution:** streaming direct and recipe-driven ingestion of text,
   Markdown, JSONL, compressed JSONL, and raw Parquet; parallel publication;
-  post-write audit; local purge; and a small Git review overlay;
+  post-write audit; local purge; a small Git review overlay; and source-aware
+  append or complete recipe-driven rebuilding of existing corpora with
+  automatic YAML migration;
 - **Corpus use:** native Parquet and canonical JSONL exports with
   offline-verifiable BOMs, plus local shard summary, audit, record listing, and
   individual record export;
@@ -527,9 +529,8 @@ Working end to end today:
 
 Still deliberately pending:
 
-- **Data and index:** non-text/multimodal ingestion, append-only corpus updates,
-  corpus removal contributions, and verified lookaside-to-lookaside
-  replication;
+- **Data and index:** non-text/multimodal ingestion and corpus removal
+  contributions with guarded optional object deletion;
 - **Model lineage and tuning:** general Hugging Face tokenizer/architecture
   profiles, SFT, preference training, and pinned chat templates;
 - **Additional execution:** PyTorch generation, a TensorFlow adapter, and

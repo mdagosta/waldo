@@ -44,9 +44,12 @@ type IngestRecipe struct {
 }
 
 type RecipeSource struct {
-	Name     string `json:"name,omitempty" yaml:"name,omitempty"`
-	URL      string `json:"url" yaml:"url"`
-	Category string `json:"category" yaml:"category"`
+	Name          string `json:"name,omitempty" yaml:"name,omitempty"`
+	Version       string `json:"version,omitempty" yaml:"version,omitempty"`
+	URL           string `json:"url" yaml:"url"`
+	Category      string `json:"category" yaml:"category"`
+	CollectedFrom string `json:"collected_from,omitempty" yaml:"collected_from,omitempty"`
+	CollectedTo   string `json:"collected_to,omitempty" yaml:"collected_to,omitempty"`
 }
 
 type RecipeStep struct {
@@ -280,6 +283,19 @@ type PreparedRecipe struct {
 	Probe     Probe        `json:"probe"`
 }
 
+type RecipeUpdateState struct {
+	Kind           string         `json:"kind"`
+	Schema         int            `json:"schema"`
+	Mode           string         `json:"mode"`
+	Manifest       string         `json:"manifest"`
+	ManifestSHA256 string         `json:"manifest_sha256"`
+	Sources        []index.Source `json:"sources"`
+	Shards         int            `json:"shards"`
+	Docs           int64          `json:"docs"`
+	Tokens         int64          `json:"tokens"`
+	Bytes          int64          `json:"bytes"`
+}
+
 type recipeState struct {
 	Kind     string `json:"kind"`
 	Schema   int    `json:"schema"`
@@ -304,6 +320,14 @@ func RecipeIdentity(loaded LoadedRecipe, destination string) string {
 // share one WALDO-owned working directory and contractually stop after
 // populating it; the resulting regular files are independently probed.
 func PrepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagingBase string, runner CommandRunner, stdout, stderr io.Writer) (PreparedRecipe, error) {
+	return prepareRecipe(ctx, loaded, destination, stagingBase, nil, runner, stdout, stderr)
+}
+
+func PrepareRecipeUpdate(ctx context.Context, loaded LoadedRecipe, destination, stagingBase string, update RecipeUpdateState, runner CommandRunner, stdout, stderr io.Writer) (PreparedRecipe, error) {
+	return prepareRecipe(ctx, loaded, destination+"@"+update.ManifestSHA256, stagingBase, &update, runner, stdout, stderr)
+}
+
+func prepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagingBase string, update *RecipeUpdateState, runner CommandRunner, stdout, stderr io.Writer) (PreparedRecipe, error) {
 	if runner == nil {
 		return PreparedRecipe{}, fmt.Errorf("recipe command runner is required")
 	}
@@ -351,7 +375,18 @@ func PrepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagin
 	if err := writeRecipeState(statePath, state); err != nil {
 		return PreparedRecipe{}, err
 	}
-	environment := recipeEnvironment(inputs, loaded.Path)
+	updatePath := ""
+	if update != nil {
+		updatePath = filepath.Join(workspace, "UPDATE-STATE.json")
+		data, err := json.MarshalIndent(update, "", "  ")
+		if err != nil {
+			return PreparedRecipe{}, err
+		}
+		if err := os.WriteFile(updatePath, append(data, '\n'), 0o600); err != nil {
+			return PreparedRecipe{}, err
+		}
+	}
+	environment := recipeEnvironment(inputs, loaded.Path, updatePath)
 	for position, executable := range loaded.Executables {
 		if err := verifyRecipeExecutable(executable); err != nil {
 			return PreparedRecipe{}, err
@@ -403,11 +438,15 @@ func verifyRecipeExecutable(executable ResolvedExecutable) error {
 	return nil
 }
 
-func recipeEnvironment(inputs, recipePath string) []string {
+func recipeEnvironment(inputs, recipePath, updatePath string) []string {
 	environment := slices.DeleteFunc(append([]string(nil), os.Environ()...), func(value string) bool {
-		return strings.HasPrefix(value, "WALDO_FETCH_DIR=") || strings.HasPrefix(value, "WALDO_INGEST_RECIPE=")
+		return strings.HasPrefix(value, "WALDO_FETCH_DIR=") || strings.HasPrefix(value, "WALDO_INGEST_RECIPE=") || strings.HasPrefix(value, "WALDO_UPDATE_STATE=")
 	})
-	return append(environment, "WALDO_FETCH_DIR="+inputs, "WALDO_INGEST_RECIPE="+recipePath)
+	environment = append(environment, "WALDO_FETCH_DIR="+inputs, "WALDO_INGEST_RECIPE="+recipePath)
+	if updatePath != "" {
+		environment = append(environment, "WALDO_UPDATE_STATE="+updatePath)
+	}
+	return environment
 }
 
 func sameProbe(expected, observed Probe) bool {

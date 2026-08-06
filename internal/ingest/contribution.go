@@ -36,7 +36,9 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		RecordSchema: shard.TextRecordSchema,
 		Sources: []index.Source{{
 			Name: plan.Source.Name, Source: plan.Source.Name, URL: plan.Source.URL,
-			Category: plan.Source.Category, SHA256: sourceHash,
+			Version: plan.Source.Version, Category: plan.Source.Category,
+			CollectedFrom: plan.Source.CollectedFrom, CollectedTo: plan.Source.CollectedTo,
+			SHA256: sourceHash,
 		}},
 		ConvertedBy: index.Conversion{
 			Tool: "waldo index ingest", Version: "0.1.0-dev",

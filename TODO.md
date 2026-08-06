@@ -5,7 +5,13 @@ training, model-export, and calibrated-quantization slices. Detailed completed
 history remains in [the roadmap](docs/ROADMAP.md); this file is intentionally
 about unfinished work.
 
-## 1. Distribution
+## 1. Index maintenance
+
+- Add explicit corpus-removal contribution overlays with optional guarded
+  lookaside object deletion.
+- Design non-text and multimodal ingestion as a separate bounded phase.
+
+## 2. Distribution
 
 - Add `waldo model push <name> <huggingface-target>`.
 - Reuse the verified export pipeline and support an explicitly selected
@@ -14,7 +20,7 @@ about unfinished work.
 - Authenticate through standard Hugging Face credentials and publish one
   reviewable commit without silently overwriting unrelated remote files.
 
-## 2. Model lineage and tuning
+## 3. Model lineage and tuning
 
 - Add explicit model fork and parent-lineage operations.
 - Broaden Hugging Face tokenizer and architecture compatibility beyond the
@@ -24,13 +30,6 @@ about unfinished work.
 - Pin chat templates rather than inferring instruction behavior.
 - Add preference training only after the SFT and evaluation contracts are
   stable.
-
-## 3. Index and lookaside maintenance
-
-- Add append-only corpus updates.
-- Add explicit corpus-removal contribution overlays.
-- Add verified lookaside-to-lookaside replication.
-- Design non-text and multimodal ingestion as a separate bounded phase.
 
 ## 4. Release readiness
 

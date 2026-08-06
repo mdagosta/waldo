@@ -106,6 +106,10 @@ func ExecuteAssembly(ctx context.Context, plan Plan, stagingDirectory string) (A
 // verified remote object is journaled before its staging file is removed, so
 // interruption is recoverable without trusting either side implicitly.
 func ExecutePublication(ctx context.Context, plan Plan, stagingDirectory string, publisher lookaside.Publisher, workers int) (AssemblyResult, PublicationResult, error) {
+	return ExecutePublicationWithSeed(ctx, plan, stagingDirectory, publisher, workers, nil)
+}
+
+func ExecutePublicationWithSeed(ctx context.Context, plan Plan, stagingDirectory string, publisher lookaside.Publisher, workers int, seed DedupSeed) (AssemblyResult, PublicationResult, error) {
 	if publisher == nil {
 		return AssemblyResult{}, PublicationResult{}, fmt.Errorf("lookaside publisher is required")
 	}
@@ -225,7 +229,7 @@ func ExecutePublication(ctx context.Context, plan Plan, stagingDirectory string,
 	}()
 
 	sequence := 0
-	assembly, assemblyErr := AssembleTextObjectsWithSink(runCtx, plan, abs, func(object ObjectResult) error {
+	assembly, assemblyErr := AssembleTextObjectsWithSeedAndSink(runCtx, plan, abs, seed, func(object ObjectResult) error {
 		sequence++
 		emitProgress(ctx, ProgressEvent{Phase: "upload", Status: "queued", Shard: object.SHA256, Sequence: sequence, TotalBytes: object.Bytes})
 		select {

@@ -26,12 +26,22 @@ type Plan struct {
 	Writer         WriterPlan                  `json:"writer"`
 	Inputs         []PlanInput                 `json:"inputs"`
 	RecipeEvidence *index.IngestRecipeEvidence `json:"ingest_recipe,omitempty"`
+	Update         *UpdatePlan                 `json:"update,omitempty"`
+}
+
+type UpdatePlan struct {
+	Manifest       string `json:"manifest"`
+	ManifestSHA256 string `json:"manifest_sha256"`
+	Mode           string `json:"mode"`
 }
 
 type PlanSource struct {
-	Name     string `json:"name"`
-	URL      string `json:"url"`
-	Category string `json:"category"`
+	Name          string `json:"name"`
+	Version       string `json:"version,omitempty"`
+	URL           string `json:"url"`
+	Category      string `json:"category"`
+	CollectedFrom string `json:"collected_from,omitempty"`
+	CollectedTo   string `json:"collected_to,omitempty"`
 }
 
 type WriterPlan struct {
@@ -65,6 +75,7 @@ type PlanRequest struct {
 	TextColumn     string
 	InputRoot      string
 	RecipeEvidence *index.IngestRecipeEvidence
+	Update         *UpdatePlan
 }
 
 func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
@@ -106,6 +117,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		Destination: request.Destination, Title: request.Title, Description: request.Description, License: request.License,
 		Source: request.Source, Mode: mode, MemoryBytes: memory,
 		RecipeEvidence: request.RecipeEvidence,
+		Update:         request.Update,
 		Writer: WriterPlan{
 			Format: "parquet", RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
 			CompressedTarget: 256 << 20, CompressedMaximum: 512 << 20,
@@ -194,6 +206,12 @@ func (plan Plan) Validate() error {
 	}
 	if plan.Mode != "streaming" && plan.Mode != "canonical" {
 		return fmt.Errorf("unsupported ingestion mode %q", plan.Mode)
+	}
+	if plan.Update != nil {
+		cleanManifest := filepath.ToSlash(filepath.Clean(filepath.FromSlash(plan.Update.Manifest)))
+		if cleanManifest == "." || cleanManifest != plan.Update.Manifest || filepath.IsAbs(filepath.FromSlash(plan.Update.Manifest)) || strings.HasPrefix(cleanManifest, "../") || !validSHA256(plan.Update.ManifestSHA256) || (plan.Update.Mode != "append" && plan.Update.Mode != "rebuild-shards") {
+			return fmt.Errorf("ingestion update has invalid manifest identity or mode")
+		}
 	}
 	if plan.MemoryBytes < 256<<20 || plan.Writer.CompressedTarget <= 0 || plan.Writer.CompressedMaximum < plan.Writer.CompressedTarget || plan.Writer.RowGroupLogicalBytes <= 0 || plan.Writer.PageBytes <= 0 || plan.Writer.AdapterBatchBytes <= 0 || plan.Writer.RecordMaximumBytes < plan.Writer.AdapterBatchBytes || plan.Writer.RecordMaximumBytes > plan.MemoryBytes/2 {
 		return fmt.Errorf("ingestion plan has invalid resource or writer limits")
