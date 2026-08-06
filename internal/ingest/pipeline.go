@@ -28,6 +28,14 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 			emitProgress(ctx, ProgressEvent{Phase: "convert", Status: "completed", Input: input.Artifact.Path, Adapter: input.Adapter, Bytes: input.Artifact.Bytes, TotalBytes: input.Artifact.Bytes})
 			continue
 		}
+		if input.Adapter == ProfileGutenbergText || input.Adapter == ProfileJATSXML {
+			err = StreamProfiledFileBatches(ctx, inputPlan, consume)
+			if err != nil {
+				return err
+			}
+			emitProgress(ctx, ProgressEvent{Phase: "convert", Status: "completed", Input: input.Artifact.Path, Adapter: input.Adapter, Bytes: input.Artifact.Bytes, TotalBytes: input.Artifact.Bytes})
+			continue
+		}
 		switch input.Adapter {
 		case "text", "markdown":
 			err = StreamTextBatches(ctx, inputPlan, consume)
