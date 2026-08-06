@@ -77,7 +77,11 @@ converted or silently retokenized.
 `init` creates an untrained immutable architecture. `train` resolves one or
 more recursive index selections, deduplicates them into an OpenWALDO BOM,
 materializes hash-verified Parquet through the shared cache, audits every
-canonical record, and appends one run. Its current compact default is one pass,
+canonical record, and appends one run. Before training, WALDO deterministically
+holds out one percent of records, capped at 256 records and 1 MiB of text, and
+pins that exact selection in the run BOM. Held-out records never enter a
+training epoch. A one-record corpus records no holdout because a real split is
+impossible. The current compact default is one pass,
 batch size 8, the architecture context length, learning rate 0.0003, and seed
 42. `--epochs <n>` controls complete passes over the selected records and
 defaults to 1. For the built-in byte tokenizer, WALDO counts exact packed
@@ -87,6 +91,20 @@ token estimate. It then reports and persists the derived optimizer-step count:
 ```text
 steps = ceil(byte targets / (batch size × sequence length))
 ```
+
+The byte-target count excludes the held-out set. Backends evaluate its
+per-record EOS-packed sequences without gradients and report `heldout_loss`
+and `heldout_perplexity`; the old current-training-batch loss is not presented
+as evaluation.
+
+Real backends commit checkpoint directories containing model weights,
+optimizer state, runtime random state, and state metadata before reporting the
+checkpoint to WALDO. Repeating the exact `model train` command after Ctrl-C
+resumes the same run ID and immutable run BOM. WALDO verifies every checkpoint
+member, restores the pinned backend revision, replays the deterministic input
+stream without optimization to the saved step, and continues. `RUN.json`
+records each attempt. A changed corpus, epoch count, profile, backend, or
+execution environment is a new run rather than an unsafe resume.
 
 Epoch boundaries remain part of one continuous-EOS token stream, while each
 epoch gets a deterministic seed-derived shuffle. Exact low-level or multi-stage
@@ -222,6 +240,9 @@ stages:
       warmup_steps: 100
       checkpoint_every: 500
       evaluate_every: 500
+      evaluation_fraction: 0.01
+      evaluation_max_records: 256
+      evaluation_max_bytes: 1048576
       shuffle_buffer_records: 1024
       shuffle_buffer_bytes: 67108864
 ```
@@ -268,6 +289,12 @@ into the configured model root.
         ├── RUN-BOM.json
         ├── RUN.json
         └── artifacts/
+            └── checkpoints/
+                └── step-00000500/
+                    ├── model.safetensors
+                    ├── optimizer.safetensors  # MLX
+                    ├── runtime.pt              # PyTorch/TorchTitan
+                    └── state.json
 ```
 
 - `PLAN.json` content-identifies the immutable architecture and local model
@@ -276,7 +303,8 @@ into the configured model root.
 - `RUN-BOM.json` embeds the resolved corpus OpenWALDO BOM and pins architecture,
   backend, objective, parameters, and execution environment before launch.
 - `RUN.json` moves atomically through `planned`, `running`, and exactly one of
-  `complete`, `failed`, or `interrupted`.
+  `complete`, `failed`, or `interrupted`. It separates verified partial
+  progress from a complete observation and records every resume attempt.
 - `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, backend and
   simulation identity, observation hashes, and artifact hashes. Its
   `path_base` is `model-root`: every `run_bom` and artifact `path` resolves
@@ -342,18 +370,19 @@ implement rotary
 grouped-query attention, RMS normalization, gated feed-forward blocks, byte
 tokenization, continuous-EOS packing, AdamW with warmup and cosine decay, real
 loss/gradient updates, checkpoint and terminal Safetensors, progress,
-training-loss metrics, and observed token totals. Their internal tensor names
+training-loss metrics, deterministic held-out loss/perplexity, complete
+optimizer/runtime checkpoint bundles, exact resume, and observed token totals. Their internal tensor names
 and shapes are identical, so verified WALDO weights can continue across those
 frameworks. A later run verifies and initializes from the most recent
 non-simulated terminal `model.safetensors`; its source run and weight hash are
-pinned in the new run BOM. Optimizer-state checkpoint resume, held-out
-evaluation, instruction tuning, and chat templates remain separate work.
+pinned in the new run BOM. Instruction tuning and chat templates remain
+separate work.
 
 TorchTitan uses WALDO's same PyTorch model and optimizer implementation but
 launches it through `torch.distributed.run`. Rank zero broadcasts the canonical
 schema-1 frames to every rank. TorchTitan constructs the single-node device
 mesh and PyTorch FSDP2 shards model parameters across all visible GPUs. All
-ranks participate when gathering checkpoints and terminal state; only rank
-zero writes and reports the portable full Safetensors. Multi-node rendezvous,
-scheduler integration, tensor/pipeline parallelism, and distributed optimizer
-resume remain explicit later orchestration work.
+ranks participate when gathering checkpoints, optimizer state, runtime random
+state, and terminal weights; only rank zero writes and reports the portable
+full artifacts. Multi-node rendezvous, scheduler integration, and
+tensor/pipeline parallelism remain explicit later orchestration work.

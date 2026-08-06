@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/openwaldo/waldo/internal/training"
@@ -106,10 +108,15 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
 	}
-	records, err := training.NewCanonicalRecordSource(prepared.Inputs, resolvedParameters)
+	partition, err := training.NewRecordPartition(prepared.Inputs, resolvedParameters)
 	if err != nil {
-		return Inspection{}, fmt.Errorf("stage %s record stream: %w", stage.Name, err)
+		return Inspection{}, fmt.Errorf("stage %s held-out evaluation partition: %w", stage.Name, err)
 	}
+	records, err := partition.TrainingRecords()
+	if err != nil {
+		return Inspection{}, fmt.Errorf("stage %s training record stream: %w", stage.Name, err)
+	}
+	evaluationRecords := partition.EvaluationRecords()
 	architectureJSON, err := json.Marshal(inspection.Model.Architecture)
 	if err != nil {
 		return Inspection{}, err
@@ -137,6 +144,14 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		}
 	}
 
+	bomHash, err := hashJSON(prepared.BOM)
+	if err != nil {
+		return Inspection{}, err
+	}
+	if candidate, ok := resumableRun(inspection, stage, resolvedParameters, partition.Evaluation, bomHash, selection.Execution); ok {
+		return builder.resumeTraining(ctx, name, inspection, candidate, stage, prepared, records, evaluationRecords, architectureJSON, selection)
+	}
+
 	runID, err := builder.identifier()()
 	if err != nil {
 		return Inspection{}, err
@@ -144,17 +159,13 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	ordinal := len(inspection.Model.Runs) + 1
 	pin := RunPin{ID: runID, Stage: stage.Name, Ordinal: ordinal, State: RunPlanned, Backend: selection.Execution.Backend, Simulated: selection.Execution.Backend.Name == training.BackendFake}
 	runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
-	bomHash, err := hashJSON(prepared.BOM)
-	if err != nil {
-		return Inspection{}, err
-	}
 	runBOM := RunBOM{
 		Kind: "openwaldo-bom", Schema: RunBOMSchema, Subject: "training-run",
 		ID: runID, ModelID: inspection.Model.ID, Stage: stage.Name, StageType: stage.Type,
 		Ordinal: ordinal, Objective: stage.Objective, Execution: selection.Execution,
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
 		CorpusBOMSHA256:    bomHash, CorpusBOM: prepared.BOM, Parameters: resolvedParameters,
-		Initialization: initialization,
+		EvaluationSet: &partition.Evaluation, Initialization: initialization,
 	}
 	runBOMHash, err := hashJSON(runBOM)
 	if err != nil {
@@ -175,51 +186,267 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, err
 	}
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunPlanned, Message: "persisted run OpenWALDO BOM"})
+	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, architectureJSON, selection, nil)
+}
 
+func resumableRun(inspection Inspection, stage Stage, parameters training.ResolvedParameters, evaluation training.EvaluationSet, corpusHash string, execution training.Execution) (int, bool) {
+	if len(inspection.Runs) == 0 {
+		return 0, false
+	}
+	index := len(inspection.Runs) - 1
+	run := inspection.Runs[index]
+	bom := inspection.RunBOMs[index]
+	if run.State != RunInterrupted || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !reflect.DeepEqual(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
+		return 0, false
+	}
+	return index, true
+}
+
+func (builder Builder) resumeTraining(ctx context.Context, name string, inspection Inspection, index int, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, architectureJSON json.RawMessage, selection training.Selection) (Inspection, error) {
+	pin := inspection.Model.Runs[index]
+	run := inspection.Runs[index]
+	runBOM := inspection.RunBOMs[index]
+	if run.Progress != nil && len(run.Progress.Checkpoints) > 0 && !selection.Backend.Descriptor().Capabilities.CheckpointResume {
+		return Inspection{}, fmt.Errorf("stage %s has a resumable checkpoint, but backend %s@%s cannot restore optimizer state", stage.Name, pin.Backend.Name, pin.Backend.Revision)
+	}
+	var resume *training.ResumePoint
+	if pin.Resume != nil {
+		resume = cloneResumePoint(pin.Resume)
+	} else if run.Progress != nil && len(run.Progress.Checkpoints) > 0 {
+		checkpoint := run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1]
+		resume = &training.ResumePoint{Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint}
+	}
+	if resume != nil {
+		runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
+		for _, artifact := range resume.Checkpoint.Artifacts {
+			path := filepath.Join(runDirectory, filepath.FromSlash(artifact.Path))
+			if err := verifyArtifactFile(path, artifact); err != nil {
+				return Inspection{}, fmt.Errorf("resume run %s: %w", pin.ID, err)
+			}
+			resume.Paths = append(resume.Paths, path)
+		}
+	}
+	if resume == nil && runBOM.Initialization != nil {
+		resolved, err := resolveInitialization(inspection)
+		if err != nil {
+			return Inspection{}, err
+		}
+		if resolved == nil || resolved.SourceType != runBOM.Initialization.SourceType || resolved.SourceID != runBOM.Initialization.SourceID || resolved.SourceRunID != runBOM.Initialization.SourceRunID || !reflect.DeepEqual(resolved.Artifact, runBOM.Initialization.Artifact) {
+			return Inspection{}, fmt.Errorf("resume run %s: pinned initialization is no longer the current verified source", pin.ID)
+		}
+		runBOM.Initialization = resolved
+	}
+	record := inspection.Model
+	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunInterrupted, Message: fmt.Sprintf("resuming existing run from step %d", resumeStep(resume))})
+	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, architectureJSON, selection, resume)
+}
+
+func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPath string, record *ModelRecord, pin RunPin, run RunRecord, runBOM RunBOM, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, architectureJSON json.RawMessage, selection training.Selection, resume *training.ResumePoint) (Inspection, error) {
+	now := builder.clock()
+	runDirectory := filepath.Join(modelPath, "runs", runDirectoryName(pin))
 	run.State = RunRunning
-	run.Started = formatTime(now())
-	if err := persistRunAndPin(inspection.Path, runDirectory, &record, pin, run, now()); err != nil {
+	run.Finished = ""
+	run.Error = ""
+	if run.Started == "" {
+		run.Started = formatTime(now())
+	}
+	run.Attempts = append(run.Attempts, RunAttempt{Ordinal: len(run.Attempts) + 1, Started: formatTime(now()), State: RunRunning, ResumeStep: resumeStep(resume)})
+	if err := persistRunAndPin(modelPath, runDirectory, record, pin, run, now()); err != nil {
 		return Inspection{}, err
 	}
-	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunRunning, Message: "training backend started"})
+	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunRunning, Message: "training backend started"})
+
+	var progressMutex sync.Mutex
+	var progressErr error
+	report := func(event training.Event) {
+		progressMutex.Lock()
+		defer progressMutex.Unlock()
+		if progressErr == nil {
+			progressErr = persistTrainingEvent(modelPath, runDirectory, record, pin, &run, event, now())
+		}
+		builder.report(Progress{Phase: "training", Stage: stage.Name, RunID: pin.ID, State: RunRunning, Message: event.Message, Training: &event})
+	}
 	artifactPrefix := "artifacts"
 	observation, backendErr := selection.Backend.Run(ctx, training.Request{
-		RunID: runID, Stage: stage.Name, Objective: stage.Objective,
-		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
+		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
+		ArchitectureSHA256: record.ArchitectureSHA256,
 		Architecture:       architectureJSON, BOM: prepared.BOM, Inputs: prepared.Inputs,
-		Parameters: resolvedParameters, Records: records, Initialization: initialization,
-		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix),
-		ArtifactPrefix:    artifactPrefix,
-		Report: func(event training.Event) {
-			builder.report(Progress{Phase: "training", Stage: stage.Name, RunID: runID, State: RunRunning, Message: event.Message, Training: &event})
-		},
+		Parameters: runBOM.Parameters, Records: records, EvaluationRecords: evaluationRecords, EvaluationSet: evaluationSetValue(runBOM.EvaluationSet), Initialization: initializationForAttempt(runBOM.Initialization, resume), Resume: resume,
+		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix, Report: report,
 	})
+	progressMutex.Lock()
+	if progressErr != nil {
+		backendErr = errors.Join(backendErr, fmt.Errorf("persist training progress: %w", progressErr))
+	}
+	progressMutex.Unlock()
 	if backendErr == nil {
-		planned := PlannedStage{Name: stage.Name, Parameters: stage.Parameters, PlannedTokens: resolvedParameters.PlannedTokenCapacity}
+		observation = mergeProgress(run.Progress, observation)
+		planned := PlannedStage{Name: stage.Name, Parameters: stage.Parameters, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity}
 		if err := validateBackendObservation(runDirectory, planned, observation); err != nil {
 			backendErr = fmt.Errorf("invalid backend observation: %w", err)
+		} else if set := runBOM.EvaluationSet; set != nil && set.Records > 0 && runBOM.Parameters.EvaluateEvery > 0 {
+			if len(observation.Evaluations) == 0 {
+				backendErr = fmt.Errorf("invalid backend observation: held-out evaluation was configured but no metrics were reported")
+			} else {
+				for index, evaluation := range observation.Evaluations {
+					if _, ok := evaluation.Metrics["heldout_loss"]; !ok {
+						backendErr = fmt.Errorf("invalid backend observation: evaluation %d does not report heldout_loss", index+1)
+						break
+					}
+				}
+			}
 		}
 	}
 	run.Finished = formatTime(now())
+	attempt := &run.Attempts[len(run.Attempts)-1]
+	attempt.Finished = run.Finished
 	if backendErr != nil {
 		run.State = RunFailed
 		if errors.Is(backendErr, context.Canceled) || errors.Is(backendErr, context.DeadlineExceeded) {
 			run.State = RunInterrupted
 		}
 		run.Error = backendErr.Error()
-		if err := persistRunAndPin(inspection.Path, runDirectory, &record, pin, run, now()); err != nil {
+		attempt.State = run.State
+		attempt.Error = run.Error
+		if err := persistRunAndPin(modelPath, runDirectory, record, pin, run, now()); err != nil {
 			return Inspection{}, errors.Join(backendErr, err)
 		}
-		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: run.State, Message: run.Error})
+		builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: run.State, Message: run.Error})
 		return Inspection{}, fmt.Errorf("stage %s: %w", pin.Stage, backendErr)
 	}
 	run.State = RunComplete
+	attempt.State = RunComplete
 	run.Observation = &observation
-	if err := persistRunAndPin(inspection.Path, runDirectory, &record, pin, run, now()); err != nil {
+	run.Progress = nil
+	clearResumePin(record, pin.ID)
+	if err := persistRunAndPin(modelPath, runDirectory, record, pin, run, now()); err != nil {
 		return Inspection{}, err
 	}
-	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunComplete, Message: "persisted training observations and artifact hashes"})
+	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunComplete, Message: "persisted training observations and artifact hashes"})
 	return Inspect(builder.Root, name)
+}
+
+func resumeStep(resume *training.ResumePoint) int64 {
+	if resume == nil {
+		return 0
+	}
+	return resume.Step
+}
+
+func evaluationSetValue(value *training.EvaluationSet) training.EvaluationSet {
+	if value == nil {
+		return training.EvaluationSet{}
+	}
+	return *value
+}
+
+func initializationForAttempt(initialization *training.Initialization, resume *training.ResumePoint) *training.Initialization {
+	if resume != nil {
+		return nil
+	}
+	return initialization
+}
+
+func cloneResumePoint(value *training.ResumePoint) *training.ResumePoint {
+	if value == nil {
+		return nil
+	}
+	clone := *value
+	clone.Checkpoint.Artifacts = append([]training.Artifact(nil), value.Checkpoint.Artifacts...)
+	clone.Paths = append([]string(nil), value.Paths...)
+	return &clone
+}
+
+func clearResumePin(record *ModelRecord, runID string) {
+	for index := range record.Runs {
+		if record.Runs[index].ID == runID {
+			record.Runs[index].Resume = nil
+			return
+		}
+	}
+}
+
+func persistTrainingEvent(modelPath, runDirectory string, record *ModelRecord, pin RunPin, run *RunRecord, event training.Event, now time.Time) error {
+	if event.Kind != "checkpoint" && event.Kind != "evaluation" {
+		return nil
+	}
+	if run.Progress == nil {
+		run.Progress = &training.Progress{}
+	}
+	run.Progress.Steps = max(run.Progress.Steps, event.Step)
+	run.Progress.ConsumedTokens = max(run.Progress.ConsumedTokens, event.Tokens)
+	if event.Loss != nil {
+		loss := *event.Loss
+		run.Progress.LastLoss = &loss
+	}
+	if event.Checkpoint != nil {
+		checkpoint := *event.Checkpoint
+		checkpoint.Artifacts = append([]training.Artifact(nil), event.Checkpoint.Artifacts...)
+		if len(run.Progress.Checkpoints) > 0 && checkpoint.Step <= run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1].Step {
+			if reflect.DeepEqual(checkpoint, run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1]) {
+				return nil
+			}
+			return fmt.Errorf("checkpoint step %d does not advance durable progress", checkpoint.Step)
+		}
+		for _, artifact := range checkpoint.Artifacts {
+			clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(artifact.Path)))
+			if artifact.Path == "" || filepath.IsAbs(filepath.FromSlash(artifact.Path)) || clean != artifact.Path || !strings.HasPrefix(clean, "artifacts/checkpoints/") {
+				return fmt.Errorf("checkpoint step %d artifact path %q is not canonical beneath artifacts/checkpoints/", checkpoint.Step, artifact.Path)
+			}
+			if err := verifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
+				return fmt.Errorf("checkpoint step %d: %w", checkpoint.Step, err)
+			}
+		}
+		run.Progress.Checkpoints = append(run.Progress.Checkpoints, checkpoint)
+		resume := &training.ResumePoint{Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint}
+		for index := range record.Runs {
+			if record.Runs[index].ID == pin.ID {
+				record.Runs[index].Resume = resume
+				break
+			}
+		}
+	}
+	if event.Evaluation != nil {
+		evaluation := *event.Evaluation
+		evaluation.Metrics = cloneMetrics(event.Evaluation.Metrics)
+		if len(run.Progress.Evaluations) > 0 && evaluation.Step <= run.Progress.Evaluations[len(run.Progress.Evaluations)-1].Step {
+			if reflect.DeepEqual(evaluation, run.Progress.Evaluations[len(run.Progress.Evaluations)-1]) {
+				return nil
+			}
+			return fmt.Errorf("evaluation step %d does not advance durable progress", evaluation.Step)
+		}
+		run.Progress.Evaluations = append(run.Progress.Evaluations, evaluation)
+	}
+	return persistRunAndPin(modelPath, runDirectory, record, pin, *run, now)
+}
+
+func mergeProgress(progress *training.Progress, observation training.Observation) training.Observation {
+	if progress == nil {
+		return observation
+	}
+	checkpoints := append([]training.Checkpoint(nil), progress.Checkpoints...)
+	for _, checkpoint := range observation.Checkpoints {
+		if len(checkpoints) == 0 || checkpoint.Step > checkpoints[len(checkpoints)-1].Step {
+			checkpoints = append(checkpoints, checkpoint)
+		}
+	}
+	evaluations := append([]training.Evaluation(nil), progress.Evaluations...)
+	for _, evaluation := range observation.Evaluations {
+		if len(evaluations) == 0 || evaluation.Step > evaluations[len(evaluations)-1].Step {
+			evaluations = append(evaluations, evaluation)
+		}
+	}
+	observation.Checkpoints = checkpoints
+	observation.Evaluations = evaluations
+	return observation
+}
+
+func cloneMetrics(metrics map[string]float64) map[string]float64 {
+	result := make(map[string]float64, len(metrics))
+	for name, value := range metrics {
+		result[name] = value
+	}
+	return result
 }
 
 func resolveInitialization(inspection Inspection) (*training.Initialization, error) {

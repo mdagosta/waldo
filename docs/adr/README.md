@@ -32,3 +32,5 @@ logs.
 - [0026: Normalize pinned open weights behind an origin BOM](0026-pinned-model-origin.md)
 - [0027: Quantize with upstream tools and bounded index calibration](0027-bounded-index-calibration.md)
 - [0028: Make index metadata YAML-primary with JSON compatibility](0028-yaml-primary-index-metadata.md)
+- [0029: Resume interrupted runs from complete checkpoint bundles](0029-resumable-training-checkpoints.md)
+- [0030: Pin a bounded deterministic held-out evaluation set](0030-deterministic-heldout-evaluation.md)

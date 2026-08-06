@@ -26,7 +26,7 @@ scratch="$work/scratch"
 staging="$work/staging"
 models="$work/models"
 model_export="$work/model-export"
-input="$work/training.txt"
+input="$work/training.jsonl"
 compose="$work/model.yaml"
 disclosure="$work/eu-gpai.json"
 provider="$work/provider.json"
@@ -34,7 +34,10 @@ export WALDO_CONFIG="$work/config.json"
 
 echo "testing: complete fake-model lifecycle"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
-printf 'Small deterministic training record.\nA second preserved line.\n' > "$input"
+printf '%s\n' \
+  '{"text":"Small deterministic training record."}' \
+  '{"text":"A second preserved training record."}' \
+  '{"text":"A third record reserved for deterministic evaluation."}' > "$input"
 
 "$binary" index init "$index_root"
 "$binary" config set lookaside "file://$lookaside"

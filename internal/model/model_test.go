@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,7 +27,7 @@ type backendFunc func(context.Context, training.Request) (training.Observation, 
 func (backendFunc) Descriptor() training.Descriptor {
 	return training.Descriptor{
 		Identity: training.Identity{Name: "test", Revision: "test-schema-1"}, Framework: "test",
-		Capabilities: training.Capabilities{Objectives: []string{"causal-language-modeling"}},
+		Capabilities: training.Capabilities{Objectives: []string{"causal-language-modeling"}, CheckpointResume: true},
 	}
 }
 
@@ -74,6 +75,9 @@ func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	}
 	if trained.RunBOMs[0].Execution.Backend.Name != "fake" || trained.RunBOMs[0].Execution.Host.OS == "" || trained.Runs[0].Observation == nil || !trained.Runs[0].Observation.Simulated {
 		t.Fatalf("run = %+v, BOM = %+v", trained.Runs[0], trained.RunBOMs[0])
+	}
+	if trained.RunBOMs[0].EvaluationSet == nil || trained.RunBOMs[0].EvaluationSet.Records != 1 || len(trained.Runs[0].Observation.Evaluations) != 1 || trained.Runs[0].Observation.Evaluations[0].Metrics["heldout_loss"] <= 0 {
+		t.Fatalf("held-out evidence = %+v / %+v", trained.RunBOMs[0].EvaluationSet, trained.Runs[0].Observation.Evaluations)
 	}
 	bomRun := trained.BOM.Runs[0]
 	if trained.BOM.PathBase != "model-root" || trained.BOM.CurrentRunID != "" || bomRun.Backend.Name != "fake" || !bomRun.Simulated || bomRun.RunBOM != "runs/0001-pretrain-run0001/RUN-BOM.json" || bomRun.Artifacts[0].Role != "simulation" || bomRun.Artifacts[0].Path != "runs/0001-pretrain-run0001/artifacts/fake-model.json" {
@@ -261,6 +265,67 @@ func TestTrainPersistsFailureAndInterruption(t *testing.T) {
 	}
 }
 
+func TestTrainResumesInterruptedRunFromVerifiedCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	attempts := 0
+	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
+		attempts++
+		if attempts == 1 {
+			path := filepath.Join(request.ArtifactDirectory, "checkpoints", "step-00000001", "state.json")
+			data := []byte("{\"kind\":\"waldo-test-checkpoint\",\"schema\":1,\"step\":1}\n")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				return training.Observation{}, err
+			}
+			if err := os.WriteFile(path, data, 0o644); err != nil {
+				return training.Observation{}, err
+			}
+			digest := sha256.Sum256(data)
+			checkpoint := training.Checkpoint{Step: 1, Tokens: 64, Artifacts: []training.Artifact{{Path: "artifacts/checkpoints/step-00000001/state.json", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}}}
+			request.Report(training.Event{Kind: "checkpoint", Message: "test checkpoint", Step: 1, Tokens: 64, Checkpoint: &checkpoint})
+			return training.Observation{}, context.Canceled
+		}
+		if request.Resume == nil || request.Resume.Step != 1 || request.Resume.Tokens != 64 || len(request.Resume.Paths) != 1 {
+			return training.Observation{}, fmt.Errorf("missing resume point: %+v", request.Resume)
+		}
+		data := []byte("resumed model weights")
+		path := filepath.Join(request.ArtifactDirectory, "model.safetensors")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return training.Observation{}, err
+		}
+		digest := sha256.Sum256(data)
+		loss := 0.5
+		return training.Observation{Steps: 2, ConsumedTokens: 128, FinalLoss: &loss, Evaluations: []training.Evaluation{{Step: 2, Tokens: 128, Metrics: map[string]float64{"heldout_loss": 0.75, "heldout_perplexity": 2.117}}}, Artifacts: []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}}}, nil
+	})
+	ids := 0
+	builder := Builder{Root: root, NewID: func() (string, error) { ids++; return "resume0001", nil }, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})}
+	if _, err := builder.Initialize("smoke", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := preparedFixture(t, testStage("train-0001"))
+	if _, err := builder.Train(context.Background(), "smoke", stage); !errors.Is(err, context.Canceled) {
+		t.Fatalf("first Train error = %v", err)
+	}
+	interrupted, err := Inspect(root, "smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(interrupted.Model.Runs) != 1 || interrupted.Runs[0].State != RunInterrupted || interrupted.Model.Runs[0].Resume == nil || len(interrupted.Runs[0].Attempts) != 1 {
+		t.Fatalf("interrupted run = %+v / %+v", interrupted.Model.Runs, interrupted.Runs)
+	}
+	completed, err := builder.Train(context.Background(), "smoke", stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids != 1 || attempts != 2 || len(completed.Model.Runs) != 1 || completed.Runs[0].State != RunComplete || len(completed.Runs[0].Attempts) != 2 || completed.Model.Runs[0].Resume != nil {
+		t.Fatalf("completed run = ids %d, attempts %d, model %+v, run %+v", ids, attempts, completed.Model.Runs, completed.Runs[0])
+	}
+	if len(completed.Runs[0].Observation.Checkpoints) != 1 || completed.Runs[0].Observation.Checkpoints[0].Step != 1 {
+		t.Fatalf("completed observation = %+v", completed.Runs[0].Observation)
+	}
+}
+
 func TestComposeReplacementIsTransactional(t *testing.T) {
 	root := t.TempDir()
 	compose := validCompose()
@@ -346,7 +411,11 @@ func preparedFixture(t *testing.T, stage Stage) PreparedStage {
 	text := "canonical parquet fixture"
 	var encoded bytes.Buffer
 	writer := parquet.NewGenericWriter[shard.Row](&encoded)
-	if _, err := writer.Write([]shard.Row{{SHA256: record.TextHash(text), Kind: record.KindPretrain, Text: text, Source: "fixture", License: "CC0-1.0", Tokens: 128}}); err != nil {
+	secondText := text + " second"
+	if _, err := writer.Write([]shard.Row{
+		{SHA256: record.TextHash(text), Kind: record.KindPretrain, Text: text, Source: "fixture", License: "CC0-1.0", Tokens: 128},
+		{SHA256: record.TextHash(secondText), Kind: record.KindPretrain, Text: secondText, Source: "fixture", License: "CC0-1.0", Tokens: 128},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writer.Close(); err != nil {
@@ -360,11 +429,11 @@ func preparedFixture(t *testing.T, stage Stage) PreparedStage {
 		t.Fatal(err)
 	}
 	conversion := index.Conversion{Tool: "test", Version: "1", Profile: "text", Recipe: "test/v1", Tokenizer: "byte"}
-	measures := index.Measures{Shards: 1, Docs: 1, Tokens: 128, Bytes: int64(len(data))}
+	measures := index.Measures{Shards: 1, Docs: 2, Tokens: 256, Bytes: int64(len(data))}
 	bom := corpus.BOM{
 		Kind: "openwaldo-bom", Schema: 1, Subject: "corpus", Paths: []string{"example"}, Licenses: map[string]index.Measures{"CC0-1.0": measures}, Totals: measures,
 		Manifests: []corpus.ManifestPin{{Path: "example/example.json", SHA256: strings.Repeat("a", 64), Name: "example", Title: "Example", Description: "Model fixture.", License: "CC0-1.0", Format: "parquet", RecordSchema: 1, ConvertedBy: conversion, Sources: []index.Source{{Name: "fixture", Source: "Fixture", URL: "https://example.test", SHA256: strings.Repeat("b", 64)}}, Totals: measures, Licenses: map[string]index.Measures{"CC0-1.0": measures}}},
-		Shards:    []corpus.ShardPin{{Manifest: "example/example.json", URL: "https://objects.example/" + digest, SHA256: digest, Format: "parquet", RecordSchema: 1, License: "CC0-1.0", ConvertedBy: conversion, Docs: 1, Tokens: 128, Bytes: int64(len(data))}},
+		Shards:    []corpus.ShardPin{{Manifest: "example/example.json", URL: "https://objects.example/" + digest, SHA256: digest, Format: "parquet", RecordSchema: 1, License: "CC0-1.0", ConvertedBy: conversion, Docs: 2, Tokens: 256, Bytes: int64(len(data))}},
 	}
 	prepared, err := PrepareStage(stage, bom, []training.Input{{Path: path, SHA256: digest, Bytes: int64(len(data))}})
 	if err != nil {

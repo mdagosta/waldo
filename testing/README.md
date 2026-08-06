@@ -72,8 +72,9 @@ and explicit draft disclosure output.
 `model-mlx.sh` runs on Apple Silicon when it can find a Python runtime whose
 MLX installation can execute on Metal. It builds a disposable index and tiny
 decoder model, streams canonical records into the embedded worker, performs
-real optimization, and validates the resulting Safetensors weights,
-checkpoints, evaluations, and non-simulated run observation. It also exports
+real optimization, and validates the resulting Safetensors weights, atomic
+weight/optimizer/state checkpoint bundles, held-out evaluations, and
+non-simulated run observation. It also exports
 the current real run as separate Hugging Face, MLX, GGUF, and Ollama packages.
 It proves the Safetensors payloads are byte-identical after header-name
 conversion, checks Python syntax, verifies all release inventories, validates
@@ -91,8 +92,8 @@ cleanup. Other platforms and unavailable optional tools report explicit skips.
 
 `model-pytorch.sh` runs on Linux when a usable PyTorch installation is
 available. It trains a tiny decoder through the embedded schema-1 worker,
-continues from the first run's verified Safetensors, validates checkpoints and
-observations, and exports independently verified Hugging Face and GGUF release
+continues from the first run's verified Safetensors, validates complete
+optimizer/runtime checkpoint bundles and held-out observations, and exports independently verified Hugging Face and GGUF release
 packages. Other hosts and Linux machines without PyTorch report an explicit
 skip.
 
@@ -105,8 +106,8 @@ skip.
 `model-torchtitan.sh` runs on Linux when TorchTitan and at least one compatible
 NVIDIA CUDA or AMD ROCm GPU are available. It launches one worker rank per
 visible GPU, exercises TorchTitan's device mesh with PyTorch FSDP2, consumes
-WALDO's canonical stream, and verifies portable full Safetensors, checkpoints,
-observations, and distributed execution facts. Other environments report an
+WALDO's canonical stream, and verifies portable full Safetensors, distributed
+optimizer/runtime checkpoint bundles, held-out observations, and execution facts. Other environments report an
 explicit skip.
 
 ```bash

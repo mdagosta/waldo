@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const TorchTitanRevision = "builtin-torchtitan-worker-schema-1"
+const TorchTitanRevision = "builtin-torchtitan-worker-schema-1-r2"
 
 type TorchTitan struct {
 	Python    string
@@ -26,7 +26,7 @@ func (backend TorchTitan) Descriptor() Descriptor {
 		Identity:  Identity{Name: BackendTorchTitan, Revision: TorchTitanRevision},
 		Framework: BackendTorchTitan,
 		Capabilities: Capabilities{
-			Objectives: []string{"causal-language-modeling"}, Distributed: true, Safetensors: true,
+			Objectives: []string{"causal-language-modeling"}, CheckpointResume: true, Distributed: true, Safetensors: true,
 		},
 	}
 }

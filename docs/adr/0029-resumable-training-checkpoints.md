@@ -1,0 +1,42 @@
+# ADR 0029: Resume interrupted runs from complete checkpoint bundles
+
+- Status: accepted
+- Date: 2026-08-05
+
+## Context
+
+Weight-only checkpoints cannot continue AdamW correctly. Restarting from those
+weights resets momentum, variance, schedule position, random state, and the
+exact data position. Creating a new completed run after an interruption also
+misstates what actually happened.
+
+## Decision
+
+Every resumable checkpoint is committed as one directory. It contains model
+weights, backend optimizer state, runtime random state, and strict schema-1
+state metadata pinning the run, architecture, backend revision, world size,
+step, and consumed tokens. Files are synchronized before the directory is
+atomically renamed. WALDO hashes and durably records every member only after
+that commit and verifies all members again before backend handoff.
+
+Repeating an exact `model train` invocation resumes the newest interrupted run
+when its stage, corpus BOM, resolved parameters, evaluation set, backend, and
+execution environment still match. The run ID and immutable `RUN-BOM.json`
+do not change. `RUN.json` records each execution attempt and keeps verified
+partial progress distinct from a terminal observation. The deterministic
+record stream is replayed without optimization through the checkpoint step,
+then training continues with restored state.
+
+Checkpoint runtime state is backend-specific and can resume only under the
+same pinned backend revision. Terminal model weights remain portable through
+WALDO's shared Safetensors contract.
+
+## Consequences
+
+- Ctrl-C and other context interruptions retain useful, auditable work.
+- Resume cannot silently reset optimizer or scheduler behavior.
+- Corrupt, incomplete, mismatched, or path-escaping checkpoint bundles fail
+  before a trainer starts.
+- Transactional model-compose staging still needs its own durable discovery
+  contract before an interrupted compose can be resumed.
+

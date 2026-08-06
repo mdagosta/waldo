@@ -18,7 +18,9 @@ type WorkerBegin struct {
 	ArchitectureSHA256 string                `json:"architecture_sha256"`
 	Architecture       json.RawMessage       `json:"architecture"`
 	Parameters         ResolvedParameters    `json:"parameters"`
+	EvaluationSet      EvaluationSet         `json:"evaluation_set"`
 	Initialization     *WorkerInitialization `json:"initialization,omitempty"`
+	Resume             *WorkerResume         `json:"resume,omitempty"`
 }
 
 type WorkerInitialization struct {
@@ -27,6 +29,13 @@ type WorkerInitialization struct {
 	SourceRunID string   `json:"source_run_id,omitempty"`
 	Artifact    Artifact `json:"artifact"`
 	Path        string   `json:"path"`
+}
+
+type WorkerResume struct {
+	Step       int64      `json:"step"`
+	Tokens     int64      `json:"tokens"`
+	Checkpoint Checkpoint `json:"checkpoint"`
+	Paths      []string   `json:"paths"`
 }
 
 type WorkerInputFrame struct {
@@ -44,13 +53,20 @@ type WorkerOutputFrame struct {
 	Error       string       `json:"error,omitempty"`
 }
 
-func WriteWorkerInput(ctx context.Context, output io.Writer, begin WorkerBegin, records RecordSource) error {
+func WriteWorkerInput(ctx context.Context, output io.Writer, begin WorkerBegin, records, evaluationRecords RecordSource) error {
 	if records == nil {
 		return fmt.Errorf("worker input requires a record source")
 	}
 	encoder := json.NewEncoder(output)
 	if err := encoder.Encode(WorkerInputFrame{Kind: "begin", Schema: WorkerProtocolSchema, Begin: &begin}); err != nil {
 		return err
+	}
+	if evaluationRecords != nil {
+		if err := evaluationRecords.Stream(ctx, func(record Record) error {
+			return encoder.Encode(WorkerInputFrame{Kind: "evaluation_record", Schema: WorkerProtocolSchema, Record: &record})
+		}); err != nil {
+			return err
+		}
 	}
 	if err := records.Stream(ctx, func(record Record) error {
 		return encoder.Encode(WorkerInputFrame{Kind: "record", Schema: WorkerProtocolSchema, Record: &record})

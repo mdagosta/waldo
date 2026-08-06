@@ -16,9 +16,9 @@ about unfinished work.
 
 ## 2. Training reliability
 
-- Add held-out evaluation with immutable evaluation-set and metric evidence.
-- Persist optimizer state in checkpoints.
-- Resume interrupted training without inventing a new completed history.
+- Make transactional model-compose staging discoverable and resumable after
+  interruption; direct `model train` already resumes the same run from a
+  complete weight/optimizer/runtime checkpoint bundle.
 - Calibrate forecasts from observed WALDO runs while retaining the versioned
   hardware assumptions used for every estimate.
 

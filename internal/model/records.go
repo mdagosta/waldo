@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -101,15 +102,16 @@ const (
 )
 
 type RunPin struct {
-	ID                string              `json:"id"`
-	Stage             string              `json:"stage"`
-	Ordinal           int                 `json:"ordinal"`
-	BOMSHA256         string              `json:"bom_sha256"`
-	State             RunState            `json:"state"`
-	Backend           training.Identity   `json:"backend,omitempty"`
-	Simulated         bool                `json:"simulated"`
-	ObservationSHA256 string              `json:"observation_sha256,omitempty"`
-	Artifacts         []training.Artifact `json:"artifacts,omitempty"`
+	ID                string                `json:"id"`
+	Stage             string                `json:"stage"`
+	Ordinal           int                   `json:"ordinal"`
+	BOMSHA256         string                `json:"bom_sha256"`
+	State             RunState              `json:"state"`
+	Backend           training.Identity     `json:"backend,omitempty"`
+	Simulated         bool                  `json:"simulated"`
+	ObservationSHA256 string                `json:"observation_sha256,omitempty"`
+	Artifacts         []training.Artifact   `json:"artifacts,omitempty"`
+	Resume            *training.ResumePoint `json:"resume,omitempty"`
 }
 
 type RunBOM struct {
@@ -127,6 +129,7 @@ type RunBOM struct {
 	CorpusBOMSHA256    string                      `json:"corpus_bom_sha256"`
 	CorpusBOM          corpus.BOM                  `json:"corpus_bom"`
 	Parameters         training.ResolvedParameters `json:"parameters"`
+	EvaluationSet      *training.EvaluationSet     `json:"evaluation_set,omitempty"`
 	Initialization     *training.Initialization    `json:"initialization,omitempty"`
 }
 
@@ -140,7 +143,18 @@ type RunRecord struct {
 	Started     string                `json:"started,omitempty"`
 	Finished    string                `json:"finished,omitempty"`
 	Observation *training.Observation `json:"observation,omitempty"`
+	Progress    *training.Progress    `json:"progress,omitempty"`
+	Attempts    []RunAttempt          `json:"attempts,omitempty"`
 	Error       string                `json:"error,omitempty"`
+}
+
+type RunAttempt struct {
+	Ordinal    int      `json:"ordinal"`
+	Started    string   `json:"started"`
+	Finished   string   `json:"finished,omitempty"`
+	State      RunState `json:"state"`
+	Error      string   `json:"error,omitempty"`
+	ResumeStep int64    `json:"resume_step,omitempty"`
 }
 
 type ModelBOM struct {
@@ -301,6 +315,22 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 		if err := runBOM.CorpusBOM.Validate(); err != nil {
 			return Inspection{}, fmt.Errorf("run %s corpus OpenWALDO BOM: %w", pin.ID, err)
 		}
+		if err := validateEvaluationSet(runBOM); err != nil {
+			return Inspection{}, fmt.Errorf("run %s evaluation set: %w", pin.ID, err)
+		}
+		if run.Progress != nil {
+			for _, checkpoint := range run.Progress.Checkpoints {
+				for _, artifact := range checkpoint.Artifacts {
+					clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(artifact.Path)))
+					if artifact.Path == "" || filepath.IsAbs(filepath.FromSlash(artifact.Path)) || clean != artifact.Path || !strings.HasPrefix(clean, "artifacts/checkpoints/") {
+						return Inspection{}, fmt.Errorf("run %s checkpoint artifact path %q is invalid", pin.ID, artifact.Path)
+					}
+					if err := verifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
+						return Inspection{}, fmt.Errorf("run %s checkpoint: %w", pin.ID, err)
+					}
+				}
+			}
+		}
 		if err := validateRunState(run, pin); err != nil {
 			return Inspection{}, err
 		}
@@ -316,10 +346,49 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 	return inspection, nil
 }
 
+func validateEvaluationSet(runBOM RunBOM) error {
+	policy := runBOM.Parameters.Evaluation
+	if policy == nil {
+		if runBOM.EvaluationSet != nil {
+			return fmt.Errorf("legacy profile has unexpected held-out evidence")
+		}
+		return nil
+	}
+	set := runBOM.EvaluationSet
+	if set == nil || set.Selection != policy.Selection || set.Seed != runBOM.Parameters.Seed || set.Records < 0 || set.Records > runBOM.CorpusBOM.Totals.Docs || set.TokenTargets < 0 || set.TextBytes < 0 {
+		return fmt.Errorf("evidence does not match the resolved evaluation policy or corpus")
+	}
+	decoded, err := hex.DecodeString(set.SHA256)
+	if err != nil || len(decoded) != sha256.Size || set.SHA256 != strings.ToLower(set.SHA256) {
+		return fmt.Errorf("evidence SHA-256 is invalid")
+	}
+	if policy.Fraction == 0 || policy.MaxRecords == 0 || policy.MaxBytes == 0 {
+		if set.Records != 0 || set.TokenTargets != 0 || set.TextBytes != 0 {
+			return fmt.Errorf("disabled evaluation policy selected records")
+		}
+	} else if runBOM.CorpusBOM.Totals.Docs > 1 && set.Records == 0 {
+		return fmt.Errorf("enabled evaluation policy selected no records")
+	}
+	return nil
+}
+
 func validateRunState(run RunRecord, pin RunPin) error {
+	if err := validateAttempts(run); err != nil {
+		return err
+	}
+	if run.Progress != nil {
+		if run.Observation != nil {
+			return fmt.Errorf("run %s contains both progress and a complete observation", run.ID)
+		}
+		if err := validateProgress(*run.Progress, pin.Resume); err != nil {
+			return fmt.Errorf("run %s progress: %w", run.ID, err)
+		}
+	} else if pin.Resume != nil {
+		return fmt.Errorf("run %s has a resume pin without durable progress", run.ID)
+	}
 	switch run.State {
 	case RunPlanned:
-		if run.Started != "" || run.Finished != "" || run.Observation != nil || run.Error != "" {
+		if run.Started != "" || run.Finished != "" || run.Observation != nil || run.Progress != nil || run.Error != "" {
 			return fmt.Errorf("planned run %s contains observations or terminal state", run.ID)
 		}
 	case RunRunning:
@@ -327,7 +396,7 @@ func validateRunState(run RunRecord, pin RunPin) error {
 			return fmt.Errorf("running run %s has inconsistent state", run.ID)
 		}
 	case RunComplete:
-		if run.Started == "" || run.Finished == "" || run.Observation == nil || run.Error != "" || len(run.Observation.Artifacts) == 0 {
+		if run.Started == "" || run.Finished == "" || run.Observation == nil || run.Progress != nil || run.Error != "" || len(run.Observation.Artifacts) == 0 || pin.Resume != nil {
 			return fmt.Errorf("complete run %s has incomplete observations", run.ID)
 		}
 		observationHash, err := hashJSON(run.Observation)
@@ -343,6 +412,67 @@ func validateRunState(run RunRecord, pin RunPin) error {
 		}
 	default:
 		return fmt.Errorf("run %s has unsupported state %q", run.ID, run.State)
+	}
+	return nil
+}
+
+func validateAttempts(run RunRecord) error {
+	for index, attempt := range run.Attempts {
+		if attempt.Ordinal != index+1 || attempt.Started == "" {
+			return fmt.Errorf("run %s attempt %d has invalid identity", run.ID, index+1)
+		}
+		switch attempt.State {
+		case RunRunning:
+			if index != len(run.Attempts)-1 || run.State != RunRunning || attempt.Finished != "" || attempt.Error != "" {
+				return fmt.Errorf("run %s attempt %d has inconsistent running state", run.ID, index+1)
+			}
+		case RunComplete:
+			if index != len(run.Attempts)-1 || run.State != RunComplete || attempt.Finished == "" || attempt.Error != "" {
+				return fmt.Errorf("run %s attempt %d has inconsistent completion", run.ID, index+1)
+			}
+		case RunFailed, RunInterrupted:
+			if attempt.Finished == "" || attempt.Error == "" {
+				return fmt.Errorf("run %s attempt %d has incomplete terminal state", run.ID, index+1)
+			}
+		default:
+			return fmt.Errorf("run %s attempt %d has unsupported state %q", run.ID, index+1, attempt.State)
+		}
+	}
+	return nil
+}
+
+func validateProgress(progress training.Progress, resume *training.ResumePoint) error {
+	if progress.Steps < 0 || progress.ConsumedTokens < 0 {
+		return fmt.Errorf("negative step or token count")
+	}
+	if progress.LastLoss != nil && (*progress.LastLoss < 0 || math.IsNaN(*progress.LastLoss) || math.IsInf(*progress.LastLoss, 0)) {
+		return fmt.Errorf("invalid last loss")
+	}
+	previous := int64(0)
+	for _, checkpoint := range progress.Checkpoints {
+		if checkpoint.Step <= previous || checkpoint.Tokens < 0 || len(checkpoint.Artifacts) == 0 {
+			return fmt.Errorf("invalid checkpoint at step %d", checkpoint.Step)
+		}
+		previous = checkpoint.Step
+	}
+	if resume == nil {
+		// RUN.json is committed before the aggregate model pin. A process may
+		// stop between those two atomic writes; the verified newest checkpoint
+		// remains recoverable directly from this run-local evidence.
+	} else if len(progress.Checkpoints) == 0 || !reflect.DeepEqual(resume.Checkpoint, progress.Checkpoints[len(progress.Checkpoints)-1]) || resume.Step != resume.Checkpoint.Step || resume.Tokens != resume.Checkpoint.Tokens {
+		return fmt.Errorf("resume pin is not the newest checkpoint")
+	}
+	previous = 0
+	for _, evaluation := range progress.Evaluations {
+		if evaluation.Step <= previous || evaluation.Tokens < 0 || len(evaluation.Metrics) == 0 {
+			return fmt.Errorf("invalid evaluation at step %d", evaluation.Step)
+		}
+		for name, value := range evaluation.Metrics {
+			if name == "" || math.IsNaN(value) || math.IsInf(value, 0) {
+				return fmt.Errorf("invalid evaluation metric %q", name)
+			}
+		}
+		previous = evaluation.Step
 	}
 	return nil
 }

@@ -6,13 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 
 	"github.com/openwaldo/waldo/internal/corpus"
 )
 
-const FakeRevision = "builtin-fake-schema-1"
+const FakeRevision = "builtin-fake-schema-1-r2"
 
 // Fake proves orchestration and provenance. Its artifact explicitly states
 // that it is not trained weights and must never be accepted by a real backend.
@@ -23,7 +24,7 @@ func (Fake) Descriptor() Descriptor {
 		Identity:  Identity{Name: "fake", Revision: FakeRevision},
 		Framework: "fake",
 		Capabilities: Capabilities{
-			Objectives: []string{"causal-language-modeling"},
+			Objectives: []string{"causal-language-modeling"}, CheckpointResume: true,
 		},
 	}
 }
@@ -31,6 +32,9 @@ func (Fake) Descriptor() Descriptor {
 func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return Observation{}, err
+	}
+	if request.Resume != nil && request.Resume.Step > request.Parameters.Steps {
+		return Observation{}, fmt.Errorf("fake resume step %d is beyond target step %d", request.Resume.Step, request.Parameters.Steps)
 	}
 	payload, err := json.MarshalIndent(struct {
 		Kind         string             `json:"kind"`
@@ -57,8 +61,18 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 	}); err != nil {
 		return Observation{}, err
 	}
-	if records != request.BOM.Totals.Docs {
-		return Observation{}, fmt.Errorf("canonical record stream contains %d records, BOM declares %d", records, request.BOM.Totals.Docs)
+	expectedTrainingRecords := (request.BOM.Totals.Docs - request.EvaluationSet.Records) * request.Parameters.Epochs
+	if records != expectedTrainingRecords {
+		return Observation{}, fmt.Errorf("canonical training stream contains %d records, expected %d after held-out selection", records, expectedTrainingRecords)
+	}
+	var evaluationRecords int64
+	if request.EvaluationRecords != nil {
+		if err := request.EvaluationRecords.Stream(ctx, func(Record) error { evaluationRecords++; return nil }); err != nil {
+			return Observation{}, err
+		}
+	}
+	if evaluationRecords != request.EvaluationSet.Records {
+		return Observation{}, fmt.Errorf("canonical evaluation stream contains %d records, run BOM pins %d", evaluationRecords, request.EvaluationSet.Records)
 	}
 	payload = append(payload, '\n')
 	artifactName := "fake-model.json"
@@ -91,8 +105,8 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 		}
 	}
 	var evaluations []Evaluation
-	if request.Parameters.EvaluateEvery > 0 {
-		evaluation := Evaluation{Step: request.Parameters.Steps, Tokens: capacity, Metrics: map[string]float64{"loss": loss}}
+	if request.Parameters.EvaluateEvery > 0 && request.EvaluationSet.Records > 0 {
+		evaluation := Evaluation{Step: request.Parameters.Steps, Tokens: capacity, Metrics: map[string]float64{"heldout_loss": loss, "heldout_perplexity": math.Exp(loss)}}
 		evaluations = append(evaluations, evaluation)
 		if request.Report != nil {
 			request.Report(Event{Kind: "evaluation", Message: "simulated evaluation completed", Step: evaluation.Step, Tokens: evaluation.Tokens, Evaluation: &evaluation})

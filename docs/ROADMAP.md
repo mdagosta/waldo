@@ -178,10 +178,12 @@ the same files independently of an index checkout.
 - Persist and validate typed progress, checkpoint, evaluation, final-loss, and
   artifact observations. **Implemented and exercised through real MLX plus
   guarded PyTorch and TorchTitan lifecycles.**
-- Weight checkpoints. **Implemented.** Optimizer-state resume remains.
+- Atomic weight, optimizer, runtime-random-state checkpoints and exact
+  same-run resume after direct-training interruption. **Implemented for MLX,
+  PyTorch, and single-node TorchTitan.** Transactional compose staging remains.
 - Actual consumption totals. **Implemented.**
-- Training-loss evaluation results and output weight hashes. **Implemented;
-  held-out evaluation remains.**
+- Deterministic bounded held-out selection, immutable evaluation-set evidence,
+  no-gradient loss/perplexity, and output weight hashes. **Implemented.**
 - Safetensors export with attached provenance. **Implemented.**
 
 Exit: a tiny model can be rebuilt from a compose and its complete observed run
@@ -204,7 +206,7 @@ record can be inspected.
 - Quantized GGUF and Ollama releases with simple bit-level profiles, exact
   upstream tool identity, and optional deterministic bounded calibration from
   a verified WALDO index selection. **Implemented.**
-- Held-out evaluation
+- Empirical forecast calibration from observed runs
 - Fork and lineage
 - Explicit additional training runs **implemented through `waldo model train`.**
 - Training-content report rendering **implemented as a versioned JSON EU GPAI

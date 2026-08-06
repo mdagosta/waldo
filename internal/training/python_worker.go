@@ -79,7 +79,7 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 	begin := WorkerBegin{
 		RunID: request.RunID, Stage: request.Stage, Objective: request.Objective,
 		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
-		Parameters: request.Parameters,
+		Parameters: request.Parameters, EvaluationSet: request.EvaluationSet,
 	}
 	if request.Initialization != nil {
 		begin.Initialization = &WorkerInitialization{
@@ -90,7 +90,14 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 			Path:        request.Initialization.Path,
 		}
 	}
-	writeErr := WriteWorkerInput(ctx, stdin, begin, request.Records)
+	if request.Resume != nil {
+		begin.Resume = &WorkerResume{
+			Step: request.Resume.Step, Tokens: request.Resume.Tokens,
+			Checkpoint: request.Resume.Checkpoint,
+			Paths:      append([]string(nil), request.Resume.Paths...),
+		}
+	}
+	writeErr := WriteWorkerInput(ctx, stdin, begin, request.Records, request.EvaluationRecords)
 	closeErr := stdin.Close()
 	waitErr := command.Wait()
 	worker := <-result

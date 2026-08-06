@@ -310,6 +310,8 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 	for _, run := range inspection.Runs {
 		if run.Observation != nil {
 			consumed += run.Observation.ConsumedTokens
+		} else if run.Progress != nil {
+			consumed += run.Progress.ConsumedTokens
 		}
 	}
 	fmt.Fprintf(stdout, "NAME:          %s\n", inspection.Model.Name)
@@ -331,13 +333,23 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 	for position, pin := range inspection.Model.Runs {
 		tokens := int64(0)
 		simulated := ""
+		detail := ""
 		if position < len(inspection.Runs) && inspection.Runs[position].Observation != nil {
 			tokens = inspection.Runs[position].Observation.ConsumedTokens
 			if inspection.Runs[position].Observation.Simulated {
 				simulated = ", simulated"
 			}
+		} else if position < len(inspection.Runs) && inspection.Runs[position].Progress != nil {
+			run := inspection.Runs[position]
+			tokens = run.Progress.ConsumedTokens
+			if len(run.Progress.Checkpoints) > 0 {
+				detail = fmt.Sprintf(", checkpoint step %s", humanInteger(run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1].Step))
+			}
+			if len(run.Attempts) > 1 {
+				detail += fmt.Sprintf(", %s attempts", humanInteger(int64(len(run.Attempts))))
+			}
 		}
-		fmt.Fprintf(stdout, "RUN %04d:      %-16s %-11s %s tokens%s\n", pin.Ordinal, pin.Stage, pin.State, humanCount(tokens), simulated)
+		fmt.Fprintf(stdout, "RUN %04d:      %-16s %-11s %s tokens%s%s\n", pin.Ordinal, pin.Stage, pin.State, humanCount(tokens), simulated, detail)
 	}
 	return nil
 }
@@ -1009,8 +1021,15 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	}
 	batch := int64(8)
 	sequence := int64(inspection.Model.Architecture.ContextTokens)
+	stageName := fmt.Sprintf("train-%04d", len(inspection.Model.Runs)+1)
+	if len(inspection.Model.Runs) > 0 {
+		last := inspection.Model.Runs[len(inspection.Model.Runs)-1]
+		if last.State == model.RunInterrupted && strings.HasPrefix(last.Stage, "train-") {
+			stageName = last.Stage
+		}
+	}
 	stage := model.Stage{
-		Name: fmt.Sprintf("train-%04d", len(inspection.Model.Runs)+1), Type: "pre-training",
+		Name: stageName, Type: "pre-training",
 		Objective: "causal-language-modeling", Corpora: append([]string(nil), paths...),
 		Parameters: training.Parameters{Epochs: epochs, Steps: 1, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
 	}
@@ -1018,11 +1037,15 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
-	oneEpochTargets, err := training.CountByteTargets(context.Execution, prepared.Inputs)
+	resolved, err := training.ResolveParameters(prepared.Stage.Parameters)
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
-	tokenTargets, err := training.ByteTargetsForEpochs(oneEpochTargets, epochs)
+	partition, err := training.NewRecordPartition(prepared.Inputs, resolved)
+	if err != nil {
+		return model.PreparedStage{}, err
+	}
+	tokenTargets, err := partition.TrainingByteTargets(context.Execution)
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
@@ -1036,7 +1059,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	if epochs == 1 {
 		epochLabel = "epoch"
 	}
-	fmt.Fprintf(progress, "preflight/%s          training %s %s, %s byte targets, %s optimizer steps (%s × %s tokens)\n", stage.Name, humanInteger(epochs), epochLabel, humanCount(tokenTargets), humanInteger(steps), humanInteger(batch), humanInteger(sequence))
+	fmt.Fprintf(progress, "preflight/%s          training %s %s, %s byte targets, %s optimizer steps (%s × %s tokens); held out %s records\n", stage.Name, humanInteger(epochs), epochLabel, humanCount(tokenTargets), humanInteger(steps), humanInteger(batch), humanInteger(sequence), humanInteger(partition.Evaluation.Records))
 	return model.PrepareStage(prepared.Stage, prepared.BOM, prepared.Inputs)
 }
 

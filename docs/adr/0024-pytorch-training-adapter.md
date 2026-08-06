@@ -35,3 +35,6 @@ changing this single-process PyTorch contract.
 - PyTorch does not parse Parquet, traverse an index, or own lifecycle files.
 - PyTorch generation, distributed execution, optimizer-state resume, and
   held-out evaluation remain independent features.
+
+ADR 0029 subsequently adds optimizer-state resume, and ADR 0030 adds held-out
+evaluation without changing the PyTorch adapter boundary.

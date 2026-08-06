@@ -35,6 +35,10 @@ Unsupported tokenizers and architectures fail during resolution. This slice
 does not describe training-loss samples as held-out validation, does not claim
 checkpoint resume, and does not implement chat generation.
 
+ADR 0029 later adds complete resume bundles, and ADR 0030 later replaces the
+training-loss observation with pinned held-out evaluation. ADR 0021 adds chat
+generation. Those additions preserve this adapter boundary.
+
 ## Consequences
 
 - A successful default training run on supported Apple hardware means real

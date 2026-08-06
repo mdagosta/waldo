@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import struct
 import sys
 import time
@@ -13,8 +14,8 @@ import torch.nn.functional as functional
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r2"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r2"
 IS_PRIMARY = True
 
 
@@ -47,6 +48,27 @@ def write_json(path, value):
         stream.flush()
         os.fsync(stream.fileno())
     os.replace(temporary, path)
+
+
+def commit_directory(temporary, destination):
+    for root, _, files in os.walk(temporary):
+        for name in files:
+            descriptor = os.open(os.path.join(root, name), os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+    descriptor = os.open(temporary, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+    os.replace(temporary, destination)
+    descriptor = os.open(os.path.dirname(destination), os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 SAFE_DTYPES = {
@@ -261,11 +283,15 @@ class Trainer:
         self.batch_size = self.parameters["batch_size"]
         self.target_steps = self.parameters["steps"]
         self.step_number = 0
+        self.replay_steps = 0
         self.consumed_tokens = 0
         self.token_buffer = []
         self.batch = []
         self.checkpoints = []
         self.evaluations = []
+        self.evaluation_sequences = []
+        self.evaluation_record_count = 0
+        self.evaluation_token_targets = 0
         self.final_loss = None
         self.started = time.perf_counter()
 
@@ -288,6 +314,16 @@ class Trainer:
             missing, unexpected = self.model.load_state_dict(load_safetensors(self.initialization["path"]), strict=False)
             if missing or unexpected:
                 raise ValueError(f"initialization weights do not match architecture: missing={missing}, unexpected={unexpected}")
+        self.resume = begin.get("resume")
+        self.resume_paths = None
+        if self.resume is not None:
+            self.resume_paths = {os.path.basename(path): path for path in self.resume["paths"]}
+            required = {"model.safetensors", "runtime.pt", "state.json"}
+            if set(self.resume_paths) != required:
+                raise ValueError(f"PyTorch checkpoint requires {sorted(required)}, found {sorted(self.resume_paths)}")
+            missing, unexpected = self.model.load_state_dict(load_safetensors(self.resume_paths["model.safetensors"]), strict=False)
+            if missing or unexpected:
+                raise ValueError(f"resume weights do not match architecture: missing={missing}, unexpected={unexpected}")
         dtype_name = self.architecture["parameter_dtype"]
         dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[dtype_name]
         if self.device.type == "cpu" and dtype == torch.float16:
@@ -308,6 +344,8 @@ class Trainer:
             eps=optimizer_parameters["epsilon"],
             weight_decay=optimizer_parameters["weight_decay"],
         )
+        if self.resume is not None:
+            self.restore_checkpoint()
 
     def logical(self, name):
         return "/".join(part for part in (self.artifact_prefix, name) if part)
@@ -336,6 +374,19 @@ class Trainer:
             self.add_sequence(self.token_buffer[:window], self.sequence_length)
             del self.token_buffer[: self.sequence_length]
 
+    def add_evaluation_record(self, record):
+        self.evaluation_record_count += 1
+        tokens = self.tokenizer.encode(record["text"])
+        window = self.sequence_length + 1
+        while len(tokens) > 1:
+            piece = tokens[:window]
+            valid_targets = len(piece) - 1
+            padded = piece + [self.tokenizer.pad_id] * (window - len(piece))
+            mask = [1.0] * valid_targets + [0.0] * (self.sequence_length - valid_targets)
+            self.evaluation_sequences.append((padded, mask))
+            self.evaluation_token_targets += valid_targets
+            del tokens[: self.sequence_length]
+
     def add_sequence(self, tokens, valid_targets):
         if valid_targets <= 0 or self.step_number >= self.target_steps:
             return
@@ -348,6 +399,10 @@ class Trainer:
 
     def train_batch(self):
         if not self.batch or self.step_number >= self.target_steps:
+            self.batch = []
+            return
+        if self.replay_steps > 0:
+            self.replay_steps -= 1
             self.batch = []
             return
         tokens = torch.tensor([item[0] for item in self.batch], dtype=torch.long, device=self.device)
@@ -428,15 +483,70 @@ class Trainer:
             torch.distributed.barrier()
 
     def save_checkpoint(self):
-        name = f"checkpoints/step-{self.step_number:08d}.safetensors"
+        name = f"checkpoints/step-{self.step_number:08d}"
         path = os.path.join(self.artifact_directory, *name.split("/"))
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+        temporary = None
+        if IS_PRIMARY:
+            temporary = path + f".tmp-{os.getpid()}"
+            if os.path.exists(temporary):
+                shutil.rmtree(temporary)
+            os.makedirs(temporary)
+        if self.distributed:
+            values = [temporary]
+            torch.distributed.broadcast_object_list(values, src=0)
+            temporary = values[0]
+        weights_path = os.path.join(temporary, "model.safetensors")
+        runtime_path = os.path.join(temporary, "runtime.pt")
+        state_path = os.path.join(temporary, "state.json")
         backend_name = "torchtitan" if self.distributed else "pytorch"
-        self.save_weights(path, f"waldo-{backend_name}-checkpoint", self.step_number)
+        self.save_weights(weights_path, f"waldo-{backend_name}-checkpoint", self.step_number)
+        random_state = {
+            "cpu": torch.get_rng_state().cpu(),
+            "cuda": torch.cuda.get_rng_state(self.device).cpu() if self.device.type == "cuda" else None,
+        }
+        if self.distributed:
+            random_states = [None for _ in range(self.world_size)]
+            torch.distributed.all_gather_object(random_states, random_state)
+            from torch.distributed.checkpoint.state_dict import get_optimizer_state_dict, StateDictOptions
+
+            optimizer_state = get_optimizer_state_dict(
+                self.model,
+                self.optimizer,
+                options=StateDictOptions(full_state_dict=True, cpu_offload=True),
+            )
+        else:
+            random_states = [random_state]
+            optimizer_state = self.optimizer.state_dict()
+        if IS_PRIMARY:
+            torch.save({"optimizer": optimizer_state, "random_states": random_states}, runtime_path)
+            write_json(
+                state_path,
+                {
+                    "kind": "waldo-training-checkpoint",
+                    "schema": 1,
+                    "backend": backend_name,
+                    "backend_revision": TORCHTITAN_REVISION if self.distributed else WORKER_REVISION,
+                    "run_id": self.begin["run_id"],
+                    "architecture_sha256": self.begin["architecture_sha256"],
+                    "step": self.step_number,
+                    "consumed_tokens": self.consumed_tokens,
+                    "world_size": self.world_size,
+                },
+            )
+            commit_directory(temporary, path)
+        if self.distributed:
+            torch.distributed.barrier()
+        weights_path = os.path.join(path, "model.safetensors")
+        runtime_path = os.path.join(path, "runtime.pt")
+        state_path = os.path.join(path, "state.json")
         item = {
             "step": self.step_number,
             "tokens": self.consumed_tokens,
-            "artifacts": [artifact(path, self.logical(name))] if IS_PRIMARY else [],
+            "artifacts": [
+                artifact(weights_path, self.logical(name + "/model.safetensors")),
+                artifact(runtime_path, self.logical(name + "/runtime.pt")),
+                artifact(state_path, self.logical(name + "/state.json")),
+            ] if IS_PRIMARY else [],
         }
         self.checkpoints.append(item)
         emit(
@@ -450,18 +560,74 @@ class Trainer:
             },
         )
 
-    def record_evaluation(self, loss_value):
+    def restore_checkpoint(self):
+        if self.resume["step"] <= 0 or self.resume["step"] > self.target_steps:
+            raise ValueError(f"resume step {self.resume['step']} must be in 1..{self.target_steps}")
+        with open(self.resume_paths["state.json"], "r", encoding="utf-8") as stream:
+            state = json.load(stream)
+        backend_name = "torchtitan" if self.distributed else "pytorch"
+        revision = TORCHTITAN_REVISION if self.distributed else WORKER_REVISION
+        if (
+            state.get("kind") != "waldo-training-checkpoint"
+            or state.get("schema") != 1
+            or state.get("backend") != backend_name
+            or state.get("backend_revision") != revision
+            or state.get("run_id") != self.begin["run_id"]
+            or state.get("architecture_sha256") != self.begin["architecture_sha256"]
+            or state.get("step") != self.resume["step"]
+            or state.get("consumed_tokens") != self.resume["tokens"]
+            or state.get("world_size") != self.world_size
+        ):
+            raise ValueError("PyTorch checkpoint state does not match the requested run, backend, and resume point")
+        runtime = torch.load(self.resume_paths["runtime.pt"], map_location="cpu", weights_only=True)
+        if self.distributed:
+            from torch.distributed.checkpoint.state_dict import set_optimizer_state_dict, StateDictOptions
+
+            set_optimizer_state_dict(
+                self.model,
+                self.optimizer,
+                optim_state_dict=runtime["optimizer"],
+                options=StateDictOptions(full_state_dict=True, cpu_offload=True),
+            )
+        else:
+            self.optimizer.load_state_dict(runtime["optimizer"])
+        random_state = runtime["random_states"][self.rank]
+        torch.set_rng_state(random_state["cpu"])
+        if self.device.type == "cuda" and random_state["cuda"] is not None:
+            torch.cuda.set_rng_state(random_state["cuda"], self.device)
+        self.step_number = self.resume["step"]
+        self.consumed_tokens = self.resume["tokens"]
+        self.replay_steps = self.resume["step"]
+        self.checkpoints = [self.resume["checkpoint"]]
+
+    def record_evaluation(self, _training_loss):
+        if not self.evaluation_sequences:
+            return
+        self.model.eval()
+        total_loss = 0.0
+        total_tokens = 0.0
+        with torch.no_grad():
+            for offset in range(0, len(self.evaluation_sequences), self.batch_size):
+                batch = self.evaluation_sequences[offset : offset + self.batch_size]
+                tokens = torch.tensor([item[0] for item in batch], dtype=torch.long, device=self.device)
+                mask = torch.tensor([item[1] for item in batch], dtype=torch.float32, device=self.device)
+                logits = self.model(tokens[:, :-1])
+                losses = functional.cross_entropy(logits.float().reshape(-1, logits.shape[-1]), tokens[:, 1:].reshape(-1), reduction="none")
+                total_loss += float((losses.reshape_as(mask) * mask).sum().detach().cpu().item())
+                total_tokens += float(mask.sum().detach().cpu().item())
+        self.model.train()
+        loss_value = total_loss / total_tokens
         item = {
             "step": self.step_number,
             "tokens": self.consumed_tokens,
-            "metrics": {"training_loss": loss_value, "training_perplexity": math.exp(min(loss_value, 80.0))},
+            "metrics": {"heldout_loss": loss_value, "heldout_perplexity": math.exp(min(loss_value, 80.0))},
         }
         self.evaluations.append(item)
         emit(
             "event",
             event={
                 "kind": "evaluation",
-                "message": f"step {self.step_number} training loss {loss_value:.4f}",
+                "message": f"step {self.step_number} held-out loss {loss_value:.4f}",
                 "step": self.step_number,
                 "tokens": self.consumed_tokens,
                 "evaluation": item,
@@ -469,6 +635,12 @@ class Trainer:
         )
 
     def finish(self):
+        evaluation_set = self.begin["evaluation_set"]
+        if self.evaluation_record_count != evaluation_set["records"] or self.evaluation_token_targets != evaluation_set["token_targets"]:
+            raise ValueError(
+                f"evaluation stream has {self.evaluation_record_count} records and {self.evaluation_token_targets} targets; "
+                f"run BOM pins {evaluation_set['records']} records and {evaluation_set['token_targets']} targets"
+            )
         if self.step_number < self.target_steps and len(self.token_buffer) > 1:
             valid_targets = min(self.sequence_length, len(self.token_buffer) - 1)
             self.add_sequence(self.token_buffer[: self.sequence_length + 1], valid_targets)
@@ -586,6 +758,10 @@ def run():
             if trainer is None or ended:
                 raise ValueError("worker received record outside stream")
             trainer.add_record(frame["record"])
+        elif kind == "evaluation_record":
+            if trainer is None or ended:
+                raise ValueError("worker received evaluation record outside stream")
+            trainer.add_evaluation_record(frame["record"])
         elif kind == "end":
             if trainer is None or ended:
                 raise ValueError("worker received invalid end frame")

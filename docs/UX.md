@@ -442,10 +442,20 @@ is explicitly supplied; replacement is prepared fully before the old model is
 removed.
 
 Direct `model train` defaults to one epoch. `--epochs` is the sole direct-run
-training-budget flag and means complete passes over every selected record.
-Preflight distinguishes index reference tokens from exact model-token targets,
-then shows epochs, derived optimizer updates, batch size, and sequence length
-before backend launch. A step is one optimizer update, not one corpus pass.
+training-budget flag and means complete passes over the training partition.
+WALDO deterministically holds out a bounded one-percent sample, pins its
+selection evidence in the run BOM, and excludes it from every epoch. Preflight
+distinguishes index reference tokens from exact post-holdout model-token
+targets, then shows epochs, holdout records, derived optimizer updates, batch
+size, and sequence length before backend launch. A step is one optimizer
+update, not one corpus pass.
+
+Checkpoint events become durable only after WALDO verifies a complete atomic
+bundle containing weights, optimizer/runtime state, and exact progress.
+Repeating the same `model train` command after an interruption resumes the
+same run and adds an attempt to `RUN.json`; it does not invent a new completed
+history. Changed inputs, parameters, backend revision, or execution environment
+do not qualify for resume.
 
 On macOS, automatic backend resolution always selects MLX and requires Apple
 Silicon; it probes candidate Python runtimes and accepts MLX only after
@@ -454,7 +464,8 @@ TorchTitan first and PyTorch second. PyTorch is an executable single-process
 adapter for usable CPU, NVIDIA CUDA, and AMD ROCm installations. TorchTitan
 launches one rank per visible GPU on a single Linux node and uses its device
 mesh with PyTorch FSDP2. The real workers accept the built-in byte-tokenizer
-presets and produce checkpoint and terminal Safetensors weights with the same
+presets, compute no-gradient held-out loss and perplexity, and produce
+resumable checkpoint bundles plus terminal Safetensors weights with the same
 internal tensor contract. If no
 compatible real backend is available, training warns and fails with
 installation guidance before creating a run; simulation is never an automatic

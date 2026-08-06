@@ -16,7 +16,7 @@ import (
 	"github.com/openwaldo/waldo/internal/mlxruntime"
 )
 
-const MLXRevision = "builtin-mlx-worker-schema-1"
+const MLXRevision = "builtin-mlx-worker-schema-1-r2"
 
 //go:embed workers/mlx.py
 var mlxWorker []byte
@@ -31,7 +31,7 @@ func (backend MLX) Descriptor() Descriptor {
 		Identity:  Identity{Name: "mlx", Revision: MLXRevision},
 		Framework: "mlx",
 		Capabilities: Capabilities{
-			Objectives: []string{"causal-language-modeling"}, Safetensors: true,
+			Objectives: []string{"causal-language-modeling"}, CheckpointResume: true, Safetensors: true,
 		},
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -25,7 +26,7 @@ func TestResolveParametersPinsVersionedDefaultsAndOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.Profile != DefaultProfile || resolved.ProfileSchema != 1 || resolved.Epochs != 1 || resolved.Optimizer.Name != "adamw" || resolved.Optimizer.WeightDecay != 0.1 || resolved.Schedule.Name != "cosine" || resolved.Schedule.WarmupSteps != 100 || resolved.Data.Order != "bounded-shuffle-v1" || resolved.Data.Packing != "continuous-eos-v1" || resolved.CheckpointEvery != 500 || resolved.EvaluateEvery != 500 || resolved.PlannedTokenCapacity != 4_096_000 {
+	if resolved.Profile != DefaultProfile || resolved.ProfileSchema != 1 || resolved.Epochs != 1 || resolved.Optimizer.Name != "adamw" || resolved.Optimizer.WeightDecay != 0.1 || resolved.Schedule.Name != "cosine" || resolved.Schedule.WarmupSteps != 100 || resolved.Data.Order != "bounded-shuffle-v1" || resolved.Data.Packing != "continuous-eos-v1" || resolved.Evaluation == nil || resolved.Evaluation.Selection != "lowest-sha256-v1" || resolved.Evaluation.Fraction != 0.01 || resolved.Evaluation.MaxRecords != 256 || resolved.Evaluation.MaxBytes != 1024*1024 || resolved.CheckpointEvery != 500 || resolved.EvaluateEvery != 500 || resolved.PlannedTokenCapacity != 4_096_000 {
 		t.Fatalf("resolved = %+v", resolved)
 	}
 	encoded, err := json.Marshal(resolved)
@@ -61,6 +62,52 @@ func TestResolveParametersPinsVersionedDefaultsAndOverrides(t *testing.T) {
 	bad.Epochs = -1
 	if _, err := ResolveParameters(bad); err == nil {
 		t.Fatal("negative epochs accepted")
+	}
+}
+
+func TestRecordPartitionPinsAndExcludesHeldOutRecords(t *testing.T) {
+	var texts []string
+	for index := 0; index < 100; index++ {
+		texts = append(texts, fmt.Sprintf("record-%03d", index))
+	}
+	inputs := []Input{writeTrainingShard(t, texts)}
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 16, LearningRate: 0.001, Seed: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := NewRecordPartition(inputs, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewRecordPartition(inputs, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first.Evaluation, second.Evaluation) || first.Evaluation.Records != 1 || first.Evaluation.TokenTargets == 0 || len(first.Evaluation.SHA256) != 64 {
+		t.Fatalf("evaluation evidence = %+v / %+v", first.Evaluation, second.Evaluation)
+	}
+	trainingSource, err := first.TrainingRecords()
+	if err != nil {
+		t.Fatal(err)
+	}
+	trainingIDs := map[string]bool{}
+	if err := trainingSource.Stream(context.Background(), func(value Record) error { trainingIDs[value.SelectionID] = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	evaluationIDs := map[string]bool{}
+	if err := first.EvaluationRecords().Stream(context.Background(), func(value Record) error { evaluationIDs[value.SelectionID] = true; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(trainingIDs) != 99 || len(evaluationIDs) != 1 {
+		t.Fatalf("partition sizes = training %d, evaluation %d", len(trainingIDs), len(evaluationIDs))
+	}
+	for key := range evaluationIDs {
+		if trainingIDs[key] {
+			t.Fatalf("held-out record %s appears in training", key)
+		}
+	}
+	if targets, err := first.TrainingByteTargets(context.Background()); err != nil || targets <= 0 {
+		t.Fatalf("training targets = %d, err = %v", targets, err)
 	}
 }
 
@@ -154,13 +201,17 @@ func TestWorkerProtocolStreamsBeginRecordsEndAndValidatesOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := NewCanonicalRecordSource(inputs, parameters)
+	var encoded bytes.Buffer
+	begin := WorkerBegin{RunID: "run", Stage: "pretrain", Objective: "causal-language-modeling", ArchitectureSHA256: strings.Repeat("a", 64), Architecture: json.RawMessage(`{"family":"decoder-transformer"}`), Parameters: parameters}
+	partition, err := NewRecordPartition(inputs, parameters)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var encoded bytes.Buffer
-	begin := WorkerBegin{RunID: "run", Stage: "pretrain", Objective: "causal-language-modeling", ArchitectureSHA256: strings.Repeat("a", 64), Architecture: json.RawMessage(`{"family":"decoder-transformer"}`), Parameters: parameters}
-	if err := WriteWorkerInput(context.Background(), &encoded, begin, source); err != nil {
+	trainingSource, err := partition.TrainingRecords()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteWorkerInput(context.Background(), &encoded, begin, trainingSource, partition.EvaluationRecords()); err != nil {
 		t.Fatal(err)
 	}
 	var kinds []string
@@ -172,7 +223,7 @@ func TestWorkerProtocolStreamsBeginRecordsEndAndValidatesOutput(t *testing.T) {
 		}
 		kinds = append(kinds, frame.Kind)
 	}
-	if !reflect.DeepEqual(kinds, []string{"begin", "record", "record", "end"}) {
+	if !reflect.DeepEqual(kinds, []string{"begin", "evaluation_record", "record", "end"}) {
 		t.Fatalf("frame kinds = %v", kinds)
 	}
 

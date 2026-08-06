@@ -108,14 +108,15 @@ EOF
 
 output=$("$binary" model compose torchtitan-smoke "$compose")
 printf '%s\n' "$output"
-printf '%s\n' "$output" | grep -q 'backend       torchtitan@builtin-torchtitan-worker-schema-1'
+printf '%s\n' "$output" | grep -q 'backend       torchtitan@builtin-torchtitan-worker-schema-1-r2'
 summary=$("$binary" --json model summary torchtitan-smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"torchtitan"'
-weights=$(find "$models/torchtitan-smoke/runs" -type f -name model.safetensors -print)
+weights=$(find "$models/torchtitan-smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print)
 [ -n "$weights" ] && [ -s "$weights" ] || { echo "real TorchTitan weights were not produced" >&2; exit 1; }
-checkpoint_count=$(find "$models/torchtitan-smoke/runs" -type f -name 'step-*.safetensors' -print | wc -l | tr -d ' ')
+checkpoint_count=$(find "$models/torchtitan-smoke/runs" -type d -name 'step-*' -print | wc -l | tr -d ' ')
 [ "$checkpoint_count" -eq 2 ] || { echo "found $checkpoint_count TorchTitan checkpoints, want 2" >&2; exit 1; }
+find "$models/torchtitan-smoke/runs" -type d -name 'step-*' -exec test -f '{}/model.safetensors' \; -exec test -f '{}/runtime.pt' \; -exec test -f '{}/state.json' \;
 grep -ERq '"world_size"[[:space:]]*:[[:space:]]*[1-9]' "$models/torchtitan-smoke/runs" || { echo "TorchTitan run did not persist world size" >&2; exit 1; }
 
 echo "E2E TorchTitan model passed: distributed mesh, optimization, checkpoints, and portable weights verified"

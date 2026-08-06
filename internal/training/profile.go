@@ -78,6 +78,30 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if shuffleBufferBytes < 1 || shuffleBufferBytes > 16*1024*1024*1024 {
 		return ResolvedParameters{}, fmt.Errorf("shuffle_buffer_bytes must be in 1..17179869184")
 	}
+	evaluationFraction := 0.01
+	if parameters.EvaluationFraction != nil {
+		evaluationFraction = *parameters.EvaluationFraction
+	}
+	if evaluationFraction < 0 || evaluationFraction >= 1 || math.IsNaN(evaluationFraction) || math.IsInf(evaluationFraction, 0) {
+		return ResolvedParameters{}, fmt.Errorf("evaluation_fraction must be finite and in 0..<1")
+	}
+	evaluationMaxRecords := 256
+	if parameters.EvaluationMaxRecords != nil {
+		evaluationMaxRecords = *parameters.EvaluationMaxRecords
+	}
+	if evaluationMaxRecords < 0 || evaluationMaxRecords > 1_000_000 {
+		return ResolvedParameters{}, fmt.Errorf("evaluation_max_records must be in 0..1000000")
+	}
+	evaluationMaxBytes := int64(1 * 1024 * 1024)
+	if parameters.EvaluationMaxBytes != nil {
+		evaluationMaxBytes = *parameters.EvaluationMaxBytes
+	}
+	if evaluationMaxBytes < 0 || evaluationMaxBytes > 16*1024*1024*1024 {
+		return ResolvedParameters{}, fmt.Errorf("evaluation_max_bytes must be in 0..17179869184")
+	}
+	if evaluationFraction == 0 || evaluationMaxRecords == 0 || evaluationMaxBytes == 0 {
+		evaluationFraction, evaluationMaxRecords, evaluationMaxBytes = 0, 0, 0
+	}
 	return ResolvedParameters{
 		Profile: profile, ProfileSchema: ProfileSchema,
 		Epochs: epochs, Steps: parameters.Steps, BatchSize: parameters.BatchSize,
@@ -86,6 +110,7 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 		Optimizer:       Optimizer{Name: "adamw", WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},
 		Schedule:        Schedule{Name: "cosine", WarmupSteps: warmup, MinimumRateRatio: 0.1},
 		Data:            DataPlan{Order: "bounded-shuffle-v1", ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1"},
+		Evaluation:      &EvaluationPolicy{Selection: "lowest-sha256-v1", Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
 	}, nil
 }

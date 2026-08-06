@@ -40,3 +40,6 @@ terminal Safetensors and emits the shared observation protocol.
 - The first scope is one node and all visible GPUs. Multi-node rendezvous,
   scheduler integration, tensor/pipeline parallelism, and distributed
   optimizer-state resume remain later orchestration features.
+
+ADR 0029 subsequently adds same-world-size optimizer-state resume on one node.
+Distributed resume across a changed or multi-node world remains deferred.

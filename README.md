@@ -515,6 +515,9 @@ Working end to end today:
 - **Execution:** real MLX training and generation on Apple Silicon,
   single-process PyTorch training on Linux CPU, NVIDIA CUDA, or AMD ROCm, and
   single-node distributed TorchTitan training across all visible Linux GPUs;
+- **Training reliability:** deterministic bounded held-out evaluation with
+  immutable selection evidence, atomic weight/optimizer/runtime checkpoints,
+  and exact same-run resume after interrupted direct training;
 - **Release:** separate native WALDO, Hugging Face, MLX, GGUF, and Ollama
   packages, each with technical and EU BOMs, plus quantized GGUF/Ollama with
   optional index-backed calibration evidence; and
@@ -528,8 +531,8 @@ Still deliberately pending:
   replication;
 - **Model lineage and tuning:** general Hugging Face tokenizer/architecture
   profiles, SFT, preference training, and pinned chat templates;
-- **Training quality and recovery:** held-out evaluation, optimizer-state
-  checkpoints and resume, and empirical forecast calibration;
+- **Training quality and recovery:** resumable transactional model-compose
+  staging and empirical forecast calibration from observed runs;
 - **Additional execution:** PyTorch generation, a TensorFlow adapter, and
   multi-node TorchTitan rendezvous, scheduler, and cluster orchestration;
 - **Additional release formats:** rendering the exact official editable EU

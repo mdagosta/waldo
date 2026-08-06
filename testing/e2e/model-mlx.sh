@@ -125,27 +125,28 @@ EOF
 
 output=$("$binary" model compose mlx-smoke "$compose")
 printf '%s\n' "$output"
-printf '%s\n' "$output" | grep -q 'backend       mlx@builtin-mlx-worker-schema-1'
+printf '%s\n' "$output" | grep -q 'backend       mlx@builtin-mlx-worker-schema-1-r2'
 summary=$("$binary" --json model summary mlx-smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"mlx"'
-weights=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors -print)
+weights=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print)
 [ -n "$weights" ] && [ -s "$weights" ] || { echo "real MLX weights were not produced" >&2; exit 1; }
-checkpoint_count=$(find "$models/mlx-smoke/runs" -type f -name 'step-*.safetensors' -print | wc -l | tr -d ' ')
+checkpoint_count=$(find "$models/mlx-smoke/runs" -type d -name 'step-*' -print | wc -l | tr -d ' ')
 [ "$checkpoint_count" -eq 2 ] || { echo "found $checkpoint_count MLX checkpoints, want 2" >&2; exit 1; }
+find "$models/mlx-smoke/runs" -type d -name 'step-*' -exec test -f '{}/model.safetensors' \; -exec test -f '{}/optimizer.safetensors' \; -exec test -f '{}/state.json' \;
 
 train_output=$("$binary" model train mlx-smoke core/e2e/mlx --epochs 2)
 printf '%s\n' "$train_output"
-printf '%s\n' "$train_output" | grep -q 'backend       mlx@builtin-mlx-worker-schema-1'
+printf '%s\n' "$train_output" | grep -q 'backend       mlx@builtin-mlx-worker-schema-1-r2'
 summary=$("$binary" --json model summary mlx-smoke)
 printf '%s\n' "$summary" | grep -Eq '"runs"[[:space:]]*:[[:space:]]*\['
 printf '%s\n' "$summary" | grep -Eq '"initialization"[[:space:]]*:'
 run_count=$(find "$models/mlx-smoke/runs" -type f -name RUN.json -print | wc -l | tr -d ' ')
 [ "$run_count" -eq 2 ] || { echo "found $run_count MLX runs, want 2" >&2; exit 1; }
 grep -ERq '"epochs"[[:space:]]*:[[:space:]]*2' "$models/mlx-smoke/runs" || { echo "training run BOM did not persist two epochs" >&2; exit 1; }
-weights_count=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors -print | wc -l | tr -d ' ')
+weights_count=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print | wc -l | tr -d ' ')
 [ "$weights_count" -eq 2 ] || { echo "found $weights_count terminal MLX weights, want 2" >&2; exit 1; }
-current_weights=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors -print | sort | tail -1)
+current_weights=$(find "$models/mlx-smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print | sort | tail -1)
 
 chat=$("$binary" --json model chat mlx-smoke "OpenWALDO" --max-tokens 2 --temperature 0 --seed 7)
 printf '%s\n' "$chat" | grep -Eq '"run_id"[[:space:]]*:[[:space:]]*"[^"]+"'
