@@ -15,7 +15,7 @@ logs.
 - [0009: Stabilize the corpus export BOM](0009-stable-corpus-bom.md)
 - [0010: Canonical text uses record schema 1 Parquet](0010-canonical-text-parquet.md)
 - [0011: Separate immutable model plans, run BOMs, and observed state](0011-model-plan-and-boms.md)
-- [0012: Store interactive S3 credentials in the OS keychain](0012-s3-credentials-in-os-keychain.md)
+- [0012: Store interactive S3 credentials in the OS keychain (superseded)](0012-s3-credentials-in-os-keychain.md)
 - [0013: Remove lookaside objects only by explicit name](0013-explicit-lookaside-removal.md)
 - [0014: Execute external fetchers only through explicit ingest recipe](0014-explicit-ingest-recipe.md)
 - [0015: Keep ingest manifests compact and token counts referential](0015-compact-ingest-manifests.md)
@@ -38,3 +38,4 @@ logs.
 - [0032: Calibrate exact forecast topologies from observed runs](0032-observed-run-forecast-calibration.md)
 - [0033: Separate corpus append from authoritative recipe rebuilds](0033-corpus-update-modes.md)
 - [0034: Keep ingest profiles corpus-neutral](0034-declarative-ingest-profiles.md)
+- [0035: Store interactive S3 credentials under the WALDO home](0035-local-s3-credentials.md)

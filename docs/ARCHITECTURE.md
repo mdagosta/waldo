@@ -48,8 +48,9 @@ Owns content-addressed object transport and lifecycle:
 - Header-only canonical-object reachability and size probes
 - Anonymous HTTP and S3 reads
 - Authenticated S3 reads and writes through the internal AWS SDK
-- Bucket-scoped interactive credentials in the OS keychain, with the AWS
-  environment and workload-role chain as the headless fallback
+- Bucket-scoped interactive credentials in protected
+  `~/.waldo/credentials`, with the AWS environment, shared-file, and
+  workload-role chain as the fallback
 - Mirrors
 - Availability and integrity checks
 - Whole-bucket S3 object inventory with configured-prefix markers and optional

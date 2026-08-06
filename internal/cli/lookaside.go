@@ -64,7 +64,11 @@ func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) err
 			case status.Error != "":
 				fmt.Fprintf(stdout, "  credentials    unavailable: %s\n", status.Error)
 			case status.Present:
-				fmt.Fprintf(stdout, "  credentials    OS keychain %s (%s)\n", status.Scope, status.AccessKey)
+				credentialPath, err := lookaside.CredentialPath()
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(stdout, "  credentials    %s %s (%s)\n", credentialPath, status.Scope, status.AccessKey)
 			default:
 				fmt.Fprintln(stdout, "  credentials    no WALDO login; AWS default chain fallback")
 			}

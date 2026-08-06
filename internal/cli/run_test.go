@@ -384,8 +384,8 @@ func TestFlagRichHelpExplainsRetainedOptions(t *testing.T) {
 		want []string
 	}{
 		{[]string{"index", "ingest", "--help"}, []string{"Required:", "--text-column", "waldo config set", "no transport or scratch flags"}},
-		{[]string{"config", "set", "--help"}, []string{"lookaside.scratch", "file:///tmp", "waldo lookaside login", "OS credential vault"}},
-		{[]string{"lookaside", "login", "--help"}, []string{"S3 access key", "hidden secret key", "operating system credential vault"}},
+		{[]string{"config", "set", "--help"}, []string{"lookaside.scratch", "file:///tmp", "waldo lookaside login", "~/.waldo/credentials"}},
+		{[]string{"lookaside", "login", "--help"}, []string{"S3 access key", "hidden secret key", "~/.waldo/credentials", "0600"}},
 		{[]string{"index", "export", "--help"}, []string{"--force", "purged only after", "OpenWALDO BOM"}},
 	} {
 		var stdout, stderr bytes.Buffer
@@ -557,6 +557,8 @@ func TestConfigSetLookasidePreservesRegionAndWorkers(t *testing.T) {
 }
 
 func TestLookasideLoginStatusAndLogoutUseCredentialStore(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	if err := config.Save(config.Config{Lookaside: config.Lookaside{Publish: &config.Publish{URL: "s3://openwaldo/waldo-index", Region: "us-east-2", Workers: 2}}}); err != nil {
 		t.Fatal(err)
@@ -595,7 +597,7 @@ func TestLookasideLoginStatusAndLogoutUseCredentialStore(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"lookaside", "status"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "OS keychain s3://openwaldo (…1234)") {
+	if code := Run([]string{"lookaside", "status"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), filepath.Join(home, ".waldo", "credentials")+" s3://openwaldo (…1234)") {
 		t.Fatalf("status code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	if strings.Contains(stdout.String(), "never-print-this-secret") || strings.Contains(stdout.String(), "AKIAEXAMPLE1234") {

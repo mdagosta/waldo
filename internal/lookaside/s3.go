@@ -52,7 +52,7 @@ type S3Publisher struct {
 }
 
 func NewS3Publisher(ctx context.Context, publish config.Publish) (*S3Publisher, error) {
-	return newS3Publisher(ctx, publish, KeyringCredentialStore{})
+	return newS3Publisher(ctx, publish, FileCredentialStore{})
 }
 
 func newS3Publisher(ctx context.Context, publish config.Publish, store CredentialStore) (*S3Publisher, error) {
@@ -64,10 +64,14 @@ func newS3Publisher(ctx context.Context, publish config.Publish, store Credentia
 	if publish.Region != "" {
 		options = append(options, awsconfig.WithRegion(publish.Region))
 	}
-	// A WALDO keychain login takes precedence. If the platform keychain cannot
-	// be queried, preserve the AWS SDK's environment, workload-role, and shared
-	// configuration chain for headless systems; login itself still fails closed.
-	if credentials, found, credentialErr := store.Get(publish.URL); credentialErr == nil && found {
+	// A WALDO login takes precedence. When no bucket-scoped WALDO credential
+	// exists, preserve the AWS SDK's environment, shared configuration, and
+	// workload-identity chain.
+	credentials, found, credentialErr := store.Get(publish.URL)
+	if credentialErr != nil {
+		return nil, credentialErr
+	}
+	if found {
 		options = append(options, awsconfig.WithCredentialsProvider(
 			awscredentials.NewStaticCredentialsProvider(credentials.AccessKey, credentials.SecretKey, ""),
 		))

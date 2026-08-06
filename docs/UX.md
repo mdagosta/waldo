@@ -168,8 +168,8 @@ it should explain the exact Git review and DCO commit steps without creating a
 pull request itself.
 
 Configure the writable lookaside once, then store the bucket's access and
-secret keys in the operating system credential vault. The secret prompt does
-not echo and neither key is written to WALDO configuration:
+secret keys in `~/.waldo/credentials`. The secret prompt does not echo and
+neither key is written to WALDO configuration:
 
 ```bash
 waldo config set lookaside s3://openwaldo/lookaside/v1
@@ -184,9 +184,10 @@ keys. Before saving a new login, WALDO writes, inspects, reads, and deletes a
 tiny unique probe object beneath the configured prefix. A login therefore
 proves the credentials have `PutObject`, `GetObject` (including metadata), and
 `DeleteObject` access without leaving test data behind. A failed validation
-does not replace previously saved credentials. Environment and workload-role
-credentials remain supported for headless execution when no WALDO keychain
-login exists.
+does not replace previously saved credentials. The credential directory is
+mode `0700`, the credential file is mode `0600`, and WALDO refuses a file
+readable by group or others. Environment, shared-file, and workload-role
+credentials remain supported when no WALDO login exists.
 
 For a complete local integration test, configure a filesystem-backed writable
 lookaside instead:

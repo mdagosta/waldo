@@ -12,7 +12,7 @@ import (
 	"golang.org/x/term"
 )
 
-var lookasideCredentialStore lookaside.CredentialStore = lookaside.KeyringCredentialStore{}
+var lookasideCredentialStore lookaside.CredentialStore = lookaside.FileCredentialStore{}
 var validateS3Credentials = lookaside.ValidateS3Credentials
 
 var promptS3Credentials = func(output io.Writer) (lookaside.Credentials, error) {
@@ -57,16 +57,21 @@ func runLookasideLogin(context Context, args []string, stdout, stderr io.Writer)
 	if err := lookasideCredentialStore.Set(publish.URL, credentials); err != nil {
 		return err
 	}
+	credentialPath, err := lookaside.CredentialPath()
+	if err != nil {
+		return err
+	}
 	redacted := lookaside.RedactAccessKey(credentials.AccessKey)
 	if context.JSON {
 		return writeJSON(stdout, struct {
 			Scope     string `json:"scope"`
 			AccessKey string `json:"access_key"`
 			Store     string `json:"store"`
+			Path      string `json:"path"`
 			Status    string `json:"status"`
-		}{Scope: scope, AccessKey: redacted, Store: "os-keychain", Status: "verified-and-stored"})
+		}{Scope: scope, AccessKey: redacted, Store: "waldo-credential-file", Path: credentialPath, Status: "verified-and-stored"})
 	}
-	fmt.Fprintf(stdout, "verified S3 access and stored credentials for %s in the OS keychain (%s)\n", scope, redacted)
+	fmt.Fprintf(stdout, "verified S3 access and stored credentials for %s in %s (%s)\n", scope, credentialPath, redacted)
 	return nil
 }
 
@@ -87,7 +92,11 @@ func runLookasideLogout(context Context, args []string, stdout, _ io.Writer) err
 			Status string `json:"status"`
 		}{Scope: scope, Status: "logged-out"})
 	}
-	fmt.Fprintf(stdout, "removed S3 credentials for %s from the OS keychain\n", scope)
+	credentialPath, err := lookaside.CredentialPath()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "removed S3 credentials for %s from %s\n", scope, credentialPath)
 	return nil
 }
 
@@ -129,14 +138,14 @@ func credentialStatus(publish *config.Publish) *lookasideCredentialStatus {
 	}
 	scope, err := lookaside.CredentialScope(publish.URL)
 	if err != nil {
-		return &lookasideCredentialStatus{Source: "os-keychain", Error: err.Error()}
+		return &lookasideCredentialStatus{Source: "waldo-credential-file", Error: err.Error()}
 	}
 	credentials, found, err := lookasideCredentialStore.Get(publish.URL)
 	if err != nil {
-		return &lookasideCredentialStatus{Scope: scope, Source: "os-keychain", Error: err.Error()}
+		return &lookasideCredentialStatus{Scope: scope, Source: "waldo-credential-file", Error: err.Error()}
 	}
 	if !found {
 		return &lookasideCredentialStatus{Scope: scope, Source: "aws-default-chain"}
 	}
-	return &lookasideCredentialStatus{Scope: scope, Source: "os-keychain", Present: true, AccessKey: lookaside.RedactAccessKey(credentials.AccessKey)}
+	return &lookasideCredentialStatus{Scope: scope, Source: "waldo-credential-file", Present: true, AccessKey: lookaside.RedactAccessKey(credentials.AccessKey)}
 }

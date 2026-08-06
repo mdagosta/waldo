@@ -176,9 +176,10 @@ waldo lookaside login
 
 `lookaside login` prompts for the S3 access key and secret, verifies real
 write/list/read/delete access with a tiny probe object, and stores working
-credentials in the operating-system keychain—not in WALDO configuration,
-manifests, output, or shell history. AWS environment and workload-role
-credentials remain available for headless use.
+bucket-scoped credentials in `~/.waldo/credentials` with mode `0600`—not in
+WALDO configuration, manifests, output, or shell history. AWS environment,
+shared-file, and workload-role credentials remain available when no WALDO
+login exists.
 
 Durable defaults are intentionally conservative:
 
@@ -500,7 +501,7 @@ Working end to end today:
   inspection, lightweight availability checks, object hashing, and full
   record-level audits;
 - **Storage:** local and S3 lookaside publication through the AWS SDK,
-  keychain-backed credentials, ordered read mirrors, bounded verified caching,
+  protected `~/.waldo/credentials`, ordered read mirrors, bounded verified caching,
   scratch cleanup, inventory, scrubbing, and explicit object removal;
 - **Contribution:** streaming direct and recipe-driven ingestion of text,
   Markdown, JSONL, compressed JSONL, and raw Parquet; parallel publication;

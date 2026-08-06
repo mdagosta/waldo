@@ -1,6 +1,6 @@
 # ADR 0012: Store interactive S3 credentials in the OS keychain
 
-Status: Accepted
+Status: Superseded by ADR 0035
 
 Date: 2026-08-04
 
