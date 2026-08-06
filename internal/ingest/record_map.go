@@ -19,6 +19,8 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
+var errEmptyMappedRecord = errors.New("required mapped content is empty")
+
 type recordAccessor interface {
 	Values(string) ([]string, error)
 }
@@ -29,7 +31,7 @@ func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(Text
 	}
 	batch := TextBatch{}
 	flush := func() error {
-		if len(batch.Rows) == 0 {
+		if len(batch.Rows) == 0 && batch.RejectedDocs == 0 {
 			return nil
 		}
 		if err := consume(batch); err != nil {
@@ -52,6 +54,10 @@ func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(Text
 		}
 		return nil
 	}
+	reject := func() error {
+		batch.RejectedDocs++
+		return nil
+	}
 	for _, input := range plan.Inputs {
 		if !input.Profile.recordProfile() {
 			return fmt.Errorf("input %s has no record profile", input.Artifact.Path)
@@ -59,11 +65,11 @@ func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(Text
 		var err error
 		switch input.Adapter {
 		case "json":
-			err = streamJSONObject(ctx, plan, input, emit)
+			err = streamJSONObject(ctx, plan, input, emit, reject)
 		case "jsonl":
-			err = streamMappedJSONL(ctx, plan, input, emit)
+			err = streamMappedJSONL(ctx, plan, input, emit, reject)
 		case "parquet":
-			err = streamMappedParquet(ctx, plan, input, emit)
+			err = streamMappedParquet(ctx, plan, input, emit, reject)
 		default:
 			err = fmt.Errorf("unsupported record container %q", input.Adapter)
 		}
@@ -74,7 +80,7 @@ func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(Text
 	return flush()
 }
 
-func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error) error {
+func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func() error) error {
 	file, verified, err := openVerifiedInput(ctx, input.Artifact)
 	if err != nil {
 		return err
@@ -102,6 +108,12 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 	}
 	row, err := mapJSONCanonicalRecord(object, plan, input, "sha256:"+input.Artifact.SHA256)
 	if err != nil {
+		if errors.Is(err, errEmptyMappedRecord) && input.Profile.OnEmpty == "skip" {
+			if err := reject(); err != nil {
+				return err
+			}
+			return unchangedInput(file, verified)
+		}
 		return err
 	}
 	if err := emit(row); err != nil {
@@ -110,7 +122,7 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 	return unchangedInput(file, verified)
 }
 
-func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error) error {
+func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func() error) error {
 	file, verified, err := openVerifiedInput(ctx, input.Artifact)
 	if err != nil {
 		return err
@@ -144,6 +156,13 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 		}
 		row, err := mapJSONCanonicalRecord(object, plan, input, fmt.Sprintf("sha256:%s#line=%d", input.Artifact.SHA256, line))
 		if err != nil {
+			if errors.Is(err, errEmptyMappedRecord) && input.Profile.OnEmpty == "skip" {
+				if err := reject(); err != nil {
+					_ = reader.Close()
+					return err
+				}
+				continue
+			}
 			_ = reader.Close()
 			return fmt.Errorf("line %d: %w", line, err)
 		}
@@ -167,7 +186,7 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 	return unchangedInput(file, verified)
 }
 
-func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error) error {
+func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func() error) error {
 	file, verified, err := openVerifiedInput(ctx, input.Artifact)
 	if err != nil {
 		return err
@@ -202,6 +221,12 @@ func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit f
 			position++
 			row, err := mapCanonicalRecord(compiled.accessor(buffer[0]), plan, input, fmt.Sprintf("sha256:%s#row=%d", input.Artifact.SHA256, position))
 			if err != nil {
+				if errors.Is(err, errEmptyMappedRecord) && input.Profile.OnEmpty == "skip" {
+					if err := reject(); err != nil {
+						return err
+					}
+					continue
+				}
 				return fmt.Errorf("row %d: %w", position, err)
 			}
 			if err := emit(row); err != nil {
@@ -236,7 +261,7 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 	}
 	text := strings.Join(parts, "\n\n")
 	if text == "" {
-		return shard.TextRow{}, fmt.Errorf("mapped text fields are empty or absent")
+		return shard.TextRow{}, fmt.Errorf("%w: mapped text fields are empty or absent", errEmptyMappedRecord)
 	}
 	var meta *string
 	if input.Profile.Type == ProfileDialoguePair {
@@ -251,8 +276,8 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		if err != nil {
 			return shard.TextRow{}, err
 		}
-		if response == "" {
-			return shard.TextRow{}, fmt.Errorf("mapped response field is empty or absent")
+		if strings.TrimSpace(response) == "" {
+			return shard.TextRow{}, fmt.Errorf("%w: mapped response field is empty or absent", errEmptyMappedRecord)
 		}
 		text = renderDialogue(text, response)
 		meta = dialogueMeta(2)

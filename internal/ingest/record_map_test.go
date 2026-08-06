@@ -131,6 +131,27 @@ func TestDialoguePairRendersPromptContextAndResponse(t *testing.T) {
 	}
 }
 
+func TestDialoguePairExplicitlySkipsAndCountsEmptyRequiredFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dialogue.jsonl")
+	contents := "{\"prompt\":\"Question\",\"reply\":\"Answer\"}\n" +
+		"{\"prompt\":\"\",\"reply\":\"Orphan reply\"}\n" +
+		"{\"prompt\":\"Orphan prompt\",\"reply\":\"  \"}\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := mappedFixturePlan(t, path, InputProfile{
+		Type: ProfileDialoguePair, OnEmpty: "skip",
+		Fields: ProfileFields{Text: []string{"prompt"}, Response: "reply"},
+	})
+	result, err := AssembleTextObjects(context.Background(), plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.InputDocs != 3 || result.RetainedDocs != 1 || result.DuplicateDocs != 0 || result.RejectedDocs != 2 {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
 func TestRankedConversationTreeChoosesLowestRankAtEveryLevel(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "conversation-tree.json")
 	contents := `{

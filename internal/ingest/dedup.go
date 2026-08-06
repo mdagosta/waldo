@@ -19,6 +19,7 @@ type deduplicator struct {
 	database *bbolt.DB
 	input    int64
 	kept     int64
+	rejected int64
 }
 
 func (dedup *deduplicator) seedIDs(values []DedupIdentity) error {
@@ -56,7 +57,8 @@ func openDeduplicator(path string) (*deduplicator, error) {
 }
 
 func (dedup *deduplicator) filter(batch TextBatch) (TextBatch, error) {
-	result := TextBatch{Rows: make([]shard.TextRow, 0, len(batch.Rows))}
+	result := TextBatch{Rows: make([]shard.TextRow, 0, len(batch.Rows)), RejectedDocs: batch.RejectedDocs}
+	dedup.rejected += batch.RejectedDocs
 	err := dedup.database.Update(func(transaction *bbolt.Tx) error {
 		bucket := transaction.Bucket(dedupBucket)
 		if bucket == nil {

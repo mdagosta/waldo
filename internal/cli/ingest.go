@@ -173,7 +173,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			}{identity, plan, assembly, publication, contribution})
 		}
 		fmt.Fprintf(stdout, "ingestion %s complete\n", identity[:12])
-		fmt.Fprintf(stdout, "  records      %s input, %s retained, %s duplicate\n", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
+		fmt.Fprintf(stdout, "  records      %s input, %s retained, %s duplicate", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
+		if assembly.RejectedDocs > 0 {
+			fmt.Fprintf(stdout, ", %s rejected empty", humanInteger(assembly.RejectedDocs))
+		}
+		fmt.Fprintln(stdout)
 		var tokens int64
 		for _, object := range assembly.Objects {
 			tokens += object.Tokens

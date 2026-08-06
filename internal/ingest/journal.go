@@ -350,7 +350,7 @@ func writeJournal(path string, journal Journal) error {
 }
 
 func verifyJournalAssembly(stagingDirectory string, result AssemblyResult) error {
-	if result.InputDocs <= 0 || result.RetainedDocs <= 0 || result.DuplicateDocs != result.InputDocs-result.RetainedDocs || len(result.Objects) == 0 {
+	if result.InputDocs <= 0 || result.RetainedDocs <= 0 || result.RejectedDocs < 0 || result.DuplicateDocs != result.InputDocs-result.RejectedDocs-result.RetainedDocs || len(result.Objects) == 0 {
 		return fmt.Errorf("journal assembly totals are inconsistent")
 	}
 	objectDirectory := filepath.Join(stagingDirectory, "objects")

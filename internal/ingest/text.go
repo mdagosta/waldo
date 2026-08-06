@@ -19,6 +19,7 @@ import (
 type TextBatch struct {
 	Rows         []shard.TextRow
 	LogicalBytes int64
+	RejectedDocs int64
 }
 
 // StreamTextBatches preserves one text or Markdown file as one logical row.

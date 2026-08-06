@@ -37,6 +37,7 @@ type AssemblyResult struct {
 	InputDocs     int64          `json:"input_docs"`
 	RetainedDocs  int64          `json:"retained_docs"`
 	DuplicateDocs int64          `json:"duplicate_docs"`
+	RejectedDocs  int64          `json:"rejected_docs,omitempty"`
 }
 
 // DedupSeed streams existing canonical content identities into an update's
@@ -106,13 +107,13 @@ func AssembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 	}
 	if len(assembler.results) == 0 {
 		if seed != nil && dedup.input > 0 {
-			return AssemblyResult{InputDocs: dedup.input, DuplicateDocs: dedup.input}, nil
+			return AssemblyResult{InputDocs: dedup.input + dedup.rejected, DuplicateDocs: dedup.input, RejectedDocs: dedup.rejected}, nil
 		}
 		return AssemblyResult{}, fmt.Errorf("ingestion produced no canonical records")
 	}
 	return AssemblyResult{
-		Objects: assembler.results, InputDocs: dedup.input, RetainedDocs: dedup.kept,
-		DuplicateDocs: dedup.input - dedup.kept,
+		Objects: assembler.results, InputDocs: dedup.input + dedup.rejected, RetainedDocs: dedup.kept,
+		DuplicateDocs: dedup.input - dedup.kept, RejectedDocs: dedup.rejected,
 	}, nil
 }
 

@@ -38,12 +38,14 @@ func TestRecordProfilePlansDetectedContainers(t *testing.T) {
 
 func TestInputProfileValidation(t *testing.T) {
 	for name, profile := range map[string]InputProfile{
-		"missing text":    {Type: ProfileRecordMap},
-		"bad path":        {Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"body[0]"}}},
-		"missing reply":   {Type: ProfileDialoguePair, Fields: ProfileFields{Text: []string{"prompt"}}},
-		"incomplete tree": {Type: ProfileRankedConversationTree, Tree: ConversationTree{Text: "text"}},
-		"bad boundary":    {Type: ProfileBoundedText, Bounds: TextBounds{StartPattern: "[", EndPattern: "end"}},
-		"relative XPath":  {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"doc/body"}}},
+		"missing text":         {Type: ProfileRecordMap},
+		"bad path":             {Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"body[0]"}}},
+		"missing reply":        {Type: ProfileDialoguePair, Fields: ProfileFields{Text: []string{"prompt"}}},
+		"incomplete tree":      {Type: ProfileRankedConversationTree, Tree: ConversationTree{Text: "text"}},
+		"bad boundary":         {Type: ProfileBoundedText, Bounds: TextBounds{StartPattern: "[", EndPattern: "end"}},
+		"relative XPath":       {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"doc/body"}}},
+		"bad empty policy":     {Type: ProfileRecordMap, OnEmpty: "discard", Fields: ProfileFields{Text: []string{"body"}}},
+		"empty policy on file": {Type: ProfileBoundedText, OnEmpty: "skip", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := profile.Validate(); err == nil {

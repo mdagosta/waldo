@@ -204,7 +204,11 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 		verb = "unchanged"
 	}
 	fmt.Fprintf(stdout, "updated %s (%s)\n", corpusTarget.Path, verb)
-	fmt.Fprintf(stdout, "  records       %s input, %s retained, %s duplicate\n", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
+	fmt.Fprintf(stdout, "  records       %s input, %s retained, %s duplicate", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
+	if assembly.RejectedDocs > 0 {
+		fmt.Fprintf(stdout, ", %s rejected empty", humanInteger(assembly.RejectedDocs))
+	}
+	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "  shards        %s new at %s\n", humanInteger(int64(len(assembly.Objects))), publication.BaseURL)
 	fmt.Fprintf(stdout, "  contribution  %s\n", contribution.Root)
 	for _, file := range contribution.Files {

@@ -25,11 +25,12 @@ const (
 // text. The container remains a separately detected fact: JSON is one object,
 // JSONL is one object per line, and Parquet is one row per record.
 type InputProfile struct {
-	Type   string           `json:"type" yaml:"type"`
-	Fields ProfileFields    `json:"fields,omitempty" yaml:"fields,omitempty"`
-	Tree   ConversationTree `json:"tree,omitempty" yaml:"tree,omitempty"`
-	Bounds TextBounds       `json:"bounds,omitempty" yaml:"bounds,omitempty"`
-	XML    XMLMapping       `json:"xml,omitempty" yaml:"xml,omitempty"`
+	Type    string           `json:"type" yaml:"type"`
+	OnEmpty string           `json:"on_empty,omitempty" yaml:"on_empty,omitempty"`
+	Fields  ProfileFields    `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Tree    ConversationTree `json:"tree,omitempty" yaml:"tree,omitempty"`
+	Bounds  TextBounds       `json:"bounds,omitempty" yaml:"bounds,omitempty"`
+	XML     XMLMapping       `json:"xml,omitempty" yaml:"xml,omitempty"`
 }
 
 type ProfileFields struct {
@@ -100,9 +101,15 @@ type ConversationTree struct {
 }
 
 func (profile InputProfile) Validate() error {
+	if profile.OnEmpty != "" && profile.OnEmpty != "error" && profile.OnEmpty != "skip" {
+		return fmt.Errorf("on_empty must be error or skip")
+	}
+	if profile.OnEmpty != "" && profile.Type != ProfileRecordMap && profile.Type != ProfileDialoguePair {
+		return fmt.Errorf("on_empty is supported only for record-map and dialogue-pair")
+	}
 	switch profile.Type {
 	case "":
-		if !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if profile.OnEmpty != "" || !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("input profile fields require a type")
 		}
 		return nil

@@ -143,6 +143,11 @@ optional `fields.context`, and `fields.response`. `ranked-conversation-tree`
 uses configurable `tree.root`, `tree.replies`, `tree.text`, `tree.rank`, and
 optional role fields, selecting the lowest numeric rank at each level.
 
+Mapped records fail closed when a required text or response field is empty.
+`record-map` and `dialogue-pair` recipes may explicitly set `on_empty: skip` to
+reject those physical records instead. WALDO reports rejected-empty records
+separately from content duplicates, and the policy is pinned in the plan.
+
 Two whole-file primitives are also available. `bounded-text` excludes the
 first matching start boundary and the first end boundary after it:
 
