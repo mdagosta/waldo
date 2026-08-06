@@ -207,7 +207,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 	fmt.Fprintf(stdout, "updated %s (%s)\n", corpusTarget.Path, verb)
 	fmt.Fprintf(stdout, "  records       %s input, %s retained, %s duplicate", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
 	if assembly.RejectedDocs > 0 {
-		fmt.Fprintf(stdout, ", %s rejected empty", humanInteger(assembly.RejectedDocs))
+		fmt.Fprintf(stdout, ", %s rejected %s", humanInteger(assembly.RejectedDocs), rejectionLabel(plan))
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "  shards        %s new at %s\n", humanInteger(int64(len(assembly.Objects))), publication.BaseURL)

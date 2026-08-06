@@ -49,6 +49,8 @@ func TestInputProfileValidation(t *testing.T) {
 		"empty policy on file": {Type: ProfileBoundedText, OnEmpty: "skip", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}},
 		"bad NUL policy":       {Type: ProfileRecordMap, NUL: "drop", Fields: ProfileFields{Text: []string{"body"}}},
 		"NUL policy on file":   {Type: ProfileBoundedText, NUL: "space", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}},
+		"bad malformed policy": {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"/doc/body"}}, XML: XMLMapping{OnMalformed: "discard"}},
+		"XML policy on text":   {Type: ProfileBoundedText, Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}, XML: XMLMapping{OnMalformed: "skip"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := profile.Validate(); err == nil {

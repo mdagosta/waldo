@@ -88,3 +88,28 @@ func TestXMLRecordConcatenatesRepeatedNodesInDocumentOrder(t *testing.T) {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
+
+func TestXMLRecordExplicitlySkipsMalformedInput(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "truncated.xml")
+	if err := os.WriteFile(path, []byte(`<doc><body><p>truncated`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"/doc/body"}},
+		XML: XMLMapping{OnMalformed: "skip"},
+	}
+	var rejected int64
+	if err := StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, profile), func(batch TextBatch) error {
+		rejected += batch.RejectedDocs
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rejected != 1 {
+		t.Fatalf("rejected = %d, want 1", rejected)
+	}
+	profile.XML.OnMalformed = "error"
+	if err := StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, profile), func(TextBatch) error { return nil }); err == nil {
+		t.Fatal("malformed XML was accepted without skip policy")
+	}
+}

@@ -176,7 +176,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		fmt.Fprintf(stdout, "ingestion %s complete\n", identity[:12])
 		fmt.Fprintf(stdout, "  records      %s input, %s retained, %s duplicate", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
 		if assembly.RejectedDocs > 0 {
-			fmt.Fprintf(stdout, ", %s rejected empty", humanInteger(assembly.RejectedDocs))
+			fmt.Fprintf(stdout, ", %s rejected %s", humanInteger(assembly.RejectedDocs), rejectionLabel(plan))
 		}
 		fmt.Fprintln(stdout)
 		var tokens int64
@@ -239,6 +239,15 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		humanBytes(plan.Writer.RowGroupLogicalBytes), plan.Writer.Compression)
 	fmt.Fprintln(stdout, "dry run complete; no files were written")
 	return nil
+}
+
+func rejectionLabel(plan ingest.Plan) string {
+	for _, input := range plan.Inputs {
+		if input.Profile.Type == ingest.ProfileXMLRecord && input.Profile.XML.OnMalformed == "skip" {
+			return "malformed XML"
+		}
+	}
+	return "empty"
 }
 
 type recipeJSONLogWriter struct {

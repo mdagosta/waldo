@@ -54,6 +54,7 @@ type TextBounds struct {
 type XMLMapping struct {
 	Exclude      []string `json:"exclude,omitempty" yaml:"exclude,omitempty"`
 	SourcePrefix string   `json:"source_prefix,omitempty" yaml:"source_prefix,omitempty"`
+	OnMalformed  string   `json:"on_malformed,omitempty" yaml:"on_malformed,omitempty"`
 }
 
 // LoadInputProfile reads one strict standalone YAML or JSON profile for direct
@@ -165,6 +166,9 @@ func (profile InputProfile) Validate() error {
 		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) {
 			return fmt.Errorf("xml-record accepts text, id, date, language, license, source, and meta fields only")
 		}
+		if profile.XML.OnMalformed != "" && profile.XML.OnMalformed != "error" && profile.XML.OnMalformed != "skip" {
+			return fmt.Errorf("xml-record xml.on_malformed must be error or skip")
+		}
 		for _, selector := range profile.xmlSelectors() {
 			if err := validateXMLSelector(selector); err != nil {
 				return err
@@ -189,7 +193,7 @@ func (fields ProfileFields) empty() bool {
 }
 
 func (mapping XMLMapping) empty() bool {
-	return len(mapping.Exclude) == 0 && mapping.SourcePrefix == ""
+	return len(mapping.Exclude) == 0 && mapping.SourcePrefix == "" && mapping.OnMalformed == ""
 }
 
 func (profile InputProfile) paths() []string {

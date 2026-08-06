@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -46,6 +47,13 @@ func StreamProfiledFileBatches(ctx context.Context, plan Plan, consume func(Text
 			err = fmt.Errorf("unsupported whole-file profile %q", input.Profile.Type)
 		}
 		if err != nil {
+			var syntaxError *xml.SyntaxError
+			if input.Profile.Type == ProfileXMLRecord && input.Profile.XML.OnMalformed == "skip" && errors.As(err, &syntaxError) {
+				if err := consume(TextBatch{RejectedDocs: 1}); err != nil {
+					return err
+				}
+				continue
+			}
 			return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
 		}
 		if err := consume(TextBatch{Rows: []shard.TextRow{row}, LogicalBytes: int64(len(row.Text))}); err != nil {
