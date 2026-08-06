@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"net/url"
@@ -42,7 +43,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		}},
 		ConvertedBy: index.Conversion{
 			Tool: "waldo index ingest", Version: "0.1.0-dev",
-			Collector: compactCollector(plan.RecipeEvidence), Profile: "canonical-text-schema-1",
+			Collector: compactCollector(plan.RecipeEvidence), Profile: conversionProfile(plan),
 			Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default,
 		},
 	}
@@ -106,8 +107,28 @@ func sourceAcquisitionIdentity(plan Plan) (string, error) {
 		writeIdentityString(hasher, input.Adapter)
 		writeIdentityString(hasher, input.TextColumn)
 		writeIdentityString(hasher, input.SourcePath)
+		profile, err := json.Marshal(input.Profile)
+		if err != nil {
+			return "", err
+		}
+		writeIdentityString(hasher, string(profile))
 	}
 	return hex.EncodeToString(hasher.Sum(nil)), nil
+}
+
+func conversionProfile(plan Plan) string {
+	profiles := make([]InputProfile, len(plan.Inputs))
+	configured := false
+	for position, input := range plan.Inputs {
+		profiles[position] = input.Profile
+		configured = configured || input.Profile.Type != ""
+	}
+	if !configured {
+		return "canonical-text-schema-1"
+	}
+	encoded, _ := json.Marshal(profiles)
+	digest := sha256.Sum256(encoded)
+	return "canonical-text-schema-1@sha256:" + hex.EncodeToString(digest[:])
 }
 
 func writeIdentityString(destination hash.Hash, value string) {

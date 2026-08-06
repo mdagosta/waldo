@@ -11,6 +11,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 )
 
@@ -316,7 +317,7 @@ func profiledFileRow(plan Plan, input PlanInput, text, source, date, language, r
 	license := plan.License
 	var licenseRaw *string
 	if rawLicense != "" {
-		license = rawLicense
+		license = record.NormalizeLicense(rawLicense)
 		licenseRaw = &rawLicense
 	}
 	sourceName := plan.Source.Name

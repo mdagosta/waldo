@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 )
 
@@ -116,7 +117,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 	}
 	plan := Plan{
 		Kind: "waldo-ingest-plan", Schema: 1,
-		Destination: request.Destination, Title: request.Title, Description: request.Description, License: request.License,
+		Destination: request.Destination, Title: request.Title, Description: request.Description, License: record.NormalizeLicense(request.License),
 		Source: request.Source, Mode: mode, MemoryBytes: memory,
 		RecipeEvidence: request.RecipeEvidence,
 		Update:         request.Update,

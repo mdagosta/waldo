@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	waldorecord "github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/parquet-go/parquet-go"
 )
@@ -298,7 +299,7 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 	effective := plan.License
 	var rawLicense *string
 	if license != "" {
-		effective = license
+		effective = waldorecord.NormalizeLicense(license)
 		rawLicense = &license
 	}
 	sourceName := plan.Source.Name
