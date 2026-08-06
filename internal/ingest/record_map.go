@@ -355,7 +355,10 @@ func renderRankedTree(object map[string]any, tree ConversationTree) (string, int
 		}
 		fmt.Fprintf(&output, "%s: %s\n\n", label, strings.TrimSpace(bodyValues[0]))
 		turns++
-		repliesValue, exists := node[tree.Replies]
+		repliesValue, exists, err := optionalJSONPathValue(node, tree.Replies)
+		if err != nil {
+			return "", 0, err
+		}
 		if !exists || repliesValue == nil {
 			break
 		}
@@ -394,19 +397,30 @@ func renderRankedTree(object map[string]any, tree ConversationTree) (string, int
 }
 
 func jsonPathValue(object map[string]any, path string) (any, error) {
+	value, exists, err := optionalJSONPathValue(object, path)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, fmt.Errorf("field %q is absent", path)
+	}
+	return value, nil
+}
+
+func optionalJSONPathValue(object map[string]any, path string) (any, bool, error) {
 	var current any = object
 	for _, segment := range strings.Split(path, ".") {
 		next, ok := current.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("field %q traverses a non-object", path)
+			return nil, false, fmt.Errorf("field %q traverses a non-object", path)
 		}
 		value, exists := next[segment]
 		if !exists {
-			return nil, fmt.Errorf("field %q is absent", path)
+			return nil, false, nil
 		}
 		current = value
 	}
-	return current, nil
+	return current, true, nil
 }
 
 func optionalScalar(record recordAccessor, path string) (string, error) {

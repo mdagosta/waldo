@@ -73,8 +73,13 @@ func mapBoundedText(plan Plan, input PlanInput, data []byte) (shard.TextRow, err
 type xmlNode struct {
 	Name     xml.Name
 	Attrs    map[xml.Name]string
-	Text     strings.Builder
 	Children []*xmlNode
+	Content  []xmlContent
+}
+
+type xmlContent struct {
+	Text  string
+	Child *xmlNode
 }
 
 func mapXMLRecord(plan Plan, input PlanInput, data []byte) (shard.TextRow, error) {
@@ -170,6 +175,7 @@ func parseXMLTree(reader io.Reader) (*xmlNode, error) {
 			}
 			parent := stack[len(stack)-1]
 			parent.Children = append(parent.Children, node)
+			parent.Content = append(parent.Content, xmlContent{Child: node})
 			stack = append(stack, node)
 		case xml.EndElement:
 			if len(stack) <= 1 {
@@ -177,7 +183,7 @@ func parseXMLTree(reader io.Reader) (*xmlNode, error) {
 			}
 			stack = stack[:len(stack)-1]
 		case xml.CharData:
-			stack[len(stack)-1].Text.Write([]byte(token))
+			stack[len(stack)-1].Content = append(stack[len(stack)-1].Content, xmlContent{Text: string(token)})
 		}
 	}
 	if len(container.Children) != 1 {
@@ -236,11 +242,15 @@ func xmlNodeText(node *xmlNode, path []*xmlNode, excludes []string) string {
 	if xmlExcluded(path, excludes) {
 		return ""
 	}
-	parts := []string{node.Text.String()}
-	for _, child := range node.Children {
-		parts = append(parts, xmlNodeText(child, append(path, child), excludes))
+	parts := make([]string, 0, len(node.Content))
+	for _, content := range node.Content {
+		if content.Child == nil {
+			parts = append(parts, content.Text)
+		} else {
+			parts = append(parts, xmlNodeText(content.Child, append(path, content.Child), excludes))
+		}
 	}
-	return strings.Join(parts, " ")
+	return strings.Join(parts, "")
 }
 
 func xmlExcluded(path []*xmlNode, excludes []string) bool {
@@ -254,7 +264,7 @@ func xmlExcluded(path []*xmlNode, excludes []string) bool {
 }
 
 func parseXPath(selector string) ([]xpathStep, string) {
-	parts := strings.Split(strings.TrimPrefix(selector, "/"), "/")
+	parts, _ := splitXPath(selector)
 	steps := make([]xpathStep, 0, len(parts))
 	descendant := false
 	attribute := ""

@@ -201,22 +201,67 @@ func validateXMLSelector(selector string) error {
 	if !strings.HasPrefix(selector, "/") || selector == "/" || strings.HasSuffix(selector, "/") {
 		return fmt.Errorf("XML selector %q must be an absolute XPath", selector)
 	}
-	parts := strings.Split(strings.TrimPrefix(selector, "/"), "/")
+	parts, err := splitXPath(selector)
+	if err != nil {
+		return err
+	}
 	for position, part := range parts {
 		if part == "" { // The empty segment in // is the descendant axis.
-			continue
-		}
-		if strings.HasPrefix(part, "@") {
-			if position != len(parts)-1 || len(part) == 1 {
+			if position == len(parts)-1 || (position > 0 && parts[position-1] == "") {
 				return fmt.Errorf("invalid XML selector %q", selector)
 			}
 			continue
 		}
-		if strings.ContainsAny(part, "[]@") {
+		if strings.HasPrefix(part, "@") {
+			if position != len(parts)-1 || !validXMLName(strings.TrimPrefix(part, "@")) {
+				return fmt.Errorf("invalid XML selector %q", selector)
+			}
+			continue
+		}
+		if !validXMLName(part) {
 			return fmt.Errorf("invalid XML selector %q", selector)
 		}
 	}
 	return nil
+}
+
+var xmlQName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.-]*(?::[A-Za-z_][A-Za-z0-9_.-]*)?$`)
+
+func validXMLName(value string) bool {
+	if value == "*" {
+		return true
+	}
+	if strings.HasPrefix(value, "{") {
+		end := strings.LastIndexByte(value, '}')
+		return end > 1 && end < len(value)-1 && xmlQName.MatchString(value[end+1:])
+	}
+	return xmlQName.MatchString(value)
+}
+
+func splitXPath(selector string) ([]string, error) {
+	var parts []string
+	start := 1
+	braces := 0
+	for position := 1; position < len(selector); position++ {
+		switch selector[position] {
+		case '{':
+			braces++
+		case '}':
+			braces--
+			if braces < 0 {
+				return nil, fmt.Errorf("invalid XML selector %q", selector)
+			}
+		case '/':
+			if braces == 0 {
+				parts = append(parts, selector[start:position])
+				start = position + 1
+			}
+		}
+	}
+	if braces != 0 {
+		return nil, fmt.Errorf("invalid XML selector %q", selector)
+	}
+	return append(parts, selector[start:]), nil
 }
 
 func validateFieldPath(path string) error {

@@ -36,14 +36,14 @@ func TestBoundedTextRequiresBothConfiguredBoundaries(t *testing.T) {
 }
 
 const xmlRecordFixture = `<?xml version="1.0"?>
-<doc xmlns:x="urn:example">
+<doc xmlns:x="https://example.test/ns/metadata">
   <header>
     <identifier>record-7</identifier>
     <date>2019-03-07</date>
     <license x:href="CC-BY-4.0"/>
     <journal>Example Journal</journal>
   </header>
-  <title>Article title</title>
+  <title>Article <em>title</em>.</title>
   <abstract><p>Abstract prose.</p></abstract>
   <body><section><p>Body prose.</p><figure><caption>Excluded figure.</caption></figure></section></body>
 </doc>`
@@ -57,7 +57,7 @@ func TestXMLRecordMapsXPathSubsetAndExclusions(t *testing.T) {
 		Type: ProfileXMLRecord,
 		Fields: ProfileFields{
 			Text: []string{"/doc/title", "/doc/abstract", "/doc/body"}, Source: "/doc/header/identifier",
-			Date: "/doc/header/date", License: "/doc/header/license/@{urn:example}href",
+			Date: "/doc/header/date", License: "/doc/header/license/@{https://example.test/ns/metadata}href",
 			Meta: map[string]string{"publication": "/doc/header/journal"},
 		},
 		XML: XMLMapping{Exclude: []string{"//figure"}, SourcePrefix: "urn:record:"},
@@ -67,7 +67,7 @@ func TestXMLRecordMapsXPathSubsetAndExclusions(t *testing.T) {
 		t.Fatalf("rows = %+v", rows)
 	}
 	row := rows[0]
-	for _, wanted := range []string{"Article title", "Abstract prose.", "Body prose."} {
+	for _, wanted := range []string{"Article title.", "Abstract prose.", "Body prose."} {
 		if !strings.Contains(row.Text, wanted) {
 			t.Fatalf("text misses %q: %q", wanted, row.Text)
 		}

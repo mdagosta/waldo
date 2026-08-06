@@ -116,7 +116,7 @@ func TestPerRecordLicensesPartitionObjectsAndManifest(t *testing.T) {
 }
 
 func TestDialoguePairRendersPromptContextAndResponse(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "dolly.jsonl")
+	path := filepath.Join(t.TempDir(), "dialogue.jsonl")
 	contents := "{\"instruction\":\"Summarize\",\"context\":\"A long passage\",\"response\":\"Short summary\"}\n"
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
@@ -132,17 +132,17 @@ func TestDialoguePairRendersPromptContextAndResponse(t *testing.T) {
 }
 
 func TestRankedConversationTreeChoosesLowestRankAtEveryLevel(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "oasst.json")
+	path := filepath.Join(t.TempDir(), "conversation-tree.json")
 	contents := `{
   "message_tree_id":"tree-1",
-  "prompt":{"text":"Question","role":"prompter","replies":[
-    {"text":"Worse","role":"assistant","rank":2,"replies":[]},
-    {"text":"Better","role":"assistant","rank":0,"replies":[
-      {"text":"Follow up","role":"prompter","rank":1,"replies":[
-        {"text":"Final answer","role":"assistant","rank":0,"replies":[]}
-      ]}
-    ]}
-  ]}
+  "prompt":{"text":"Question","role":"prompter","children":{"replies":[
+    {"text":"Worse","role":"assistant","rank":2,"children":{"replies":[]}},
+    {"text":"Better","role":"assistant","rank":0,"children":{"replies":[
+      {"text":"Follow up","role":"prompter","rank":1,"children":{"replies":[
+        {"text":"Final answer","role":"assistant","rank":0,"children":{"replies":[]}}
+      ]}}
+    ]}}
+  ]}}
 }`
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
@@ -150,7 +150,7 @@ func TestRankedConversationTreeChoosesLowestRankAtEveryLevel(t *testing.T) {
 	plan := mappedFixturePlan(t, path, InputProfile{
 		Type:   ProfileRankedConversationTree,
 		Fields: ProfileFields{ID: "message_tree_id"},
-		Tree:   ConversationTree{Root: "prompt", Replies: "replies", Text: "text", Rank: "rank", Role: "role", AssistantRole: "assistant"},
+		Tree:   ConversationTree{Root: "prompt", Replies: "children.replies", Text: "text", Rank: "rank", Role: "role", AssistantRole: "assistant"},
 	})
 	rows := collectMappedRows(t, plan)
 	want := "User: Question\n\nAssistant: Better\n\nUser: Follow up\n\nAssistant: Final answer\n"
