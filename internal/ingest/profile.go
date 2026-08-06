@@ -27,6 +27,7 @@ const (
 type InputProfile struct {
 	Type    string           `json:"type" yaml:"type"`
 	OnEmpty string           `json:"on_empty,omitempty" yaml:"on_empty,omitempty"`
+	NUL     string           `json:"nul,omitempty" yaml:"nul,omitempty"`
 	Fields  ProfileFields    `json:"fields,omitempty" yaml:"fields,omitempty"`
 	Tree    ConversationTree `json:"tree,omitempty" yaml:"tree,omitempty"`
 	Bounds  TextBounds       `json:"bounds,omitempty" yaml:"bounds,omitempty"`
@@ -108,9 +109,15 @@ func (profile InputProfile) Validate() error {
 	if profile.OnEmpty != "" && profile.Type != ProfileRecordMap && profile.Type != ProfileDialoguePair {
 		return fmt.Errorf("on_empty is supported only for record-map and dialogue-pair")
 	}
+	if profile.NUL != "" && profile.NUL != "error" && profile.NUL != "space" {
+		return fmt.Errorf("nul must be error or space")
+	}
+	if profile.NUL != "" && !profile.recordProfile() {
+		return fmt.Errorf("nul is supported only for record profiles")
+	}
 	switch profile.Type {
 	case "":
-		if profile.OnEmpty != "" || !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if profile.OnEmpty != "" || profile.NUL != "" || !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("input profile fields require a type")
 		}
 		return nil

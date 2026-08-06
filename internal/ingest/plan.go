@@ -67,18 +67,19 @@ type PlanInput struct {
 }
 
 type PlanRequest struct {
-	Destination    string
-	Title          string
-	Description    string
-	License        string
-	Source         PlanSource
-	Mode           string
-	MemoryBytes    int64
-	TextColumn     string
-	Profile        InputProfile
-	InputRoot      string
-	RecipeEvidence *index.IngestRecipeEvidence
-	Update         *UpdatePlan
+	Destination        string
+	Title              string
+	Description        string
+	License            string
+	Source             PlanSource
+	Mode               string
+	MemoryBytes        int64
+	TextColumn         string
+	RecordMaximumBytes int64
+	Profile            InputProfile
+	InputRoot          string
+	RecipeEvidence     *index.IngestRecipeEvidence
+	Update             *UpdatePlan
 }
 
 func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
@@ -131,6 +132,9 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			AdapterBatchBytes: 16 << 20, RecordMaximumBytes: 64 << 20,
 			Compression: "zstd-level-6",
 		},
+	}
+	if request.RecordMaximumBytes != 0 {
+		plan.Writer.RecordMaximumBytes = request.RecordMaximumBytes
 	}
 	if plan.Description == "" {
 		plan.Description = "Training corpus acquired from " + request.Source.Name + "."

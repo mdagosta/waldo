@@ -44,6 +44,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			CollectedFrom: loadedRecipe.Recipe.Source.CollectedFrom, CollectedTo: loadedRecipe.Recipe.Source.CollectedTo,
 		}
 		options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
+		options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
 		options.Request.Profile = loadedRecipe.Recipe.Input
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
 		return usageError{message: "direct index ingest requires --title, --license, --source, and --source-category"}

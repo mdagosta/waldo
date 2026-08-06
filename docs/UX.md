@@ -144,10 +144,11 @@ bytes and container structure take precedence.
 
 For the basic text and Markdown adapter, one file is one logical document and
 its exact NUL-free UTF-8 bytes are preserved. The accepted plan pins a 16 MiB
-adapter batch target, a 64 MiB maximum indivisible record, and the exact
-Parquet writer recipe. Execution re-hashes each file before emitting it. A
-larger file requires an explicit, named splitter recipe; it is never silently
-split, truncated, repaired, or rendered from Markdown.
+adapter batch target, a 64 MiB default maximum indivisible record, and the
+exact Parquet writer recipe. A reviewed ingest recipe may raise the record
+maximum as high as 256 MiB, still bounded by half the plan memory budget.
+Execution re-hashes each file before emitting it. A larger file is never
+silently split, truncated, repaired, or rendered from Markdown.
 
 JSONL ingestion projects one top-level string field named `text` per nonblank
 line. Plain `.jsonl`, gzip, and zstd inputs stream through bounded decoding;
@@ -161,6 +162,9 @@ line (including streamed gzip and zstd), and Parquet is one row per record.
 Supported mappings are `record-map`, `dialogue-pair`,
 `ranked-conversation-tree`, `bounded-text`, and `xml-record`; source-specific
 knowledge remains in the recipe or fetcher.
+Mapped record profiles fail on embedded NULs unless they explicitly declare
+`nul: space`; that deterministic replacement and any record-limit override
+participate in the immutable plan identity.
 
 The command preflights source metadata, projected shard count, output size,
 destination, and lookaside configuration before conversion. On success

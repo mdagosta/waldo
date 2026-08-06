@@ -299,6 +299,9 @@ func mapJSONCanonicalRecord(object map[string]any, plan Plan, input PlanInput, f
 }
 
 func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallbackSource, text string, meta *string) (shard.TextRow, error) {
+	if input.Profile.NUL == "space" {
+		text = strings.ReplaceAll(text, "\x00", " ")
+	}
 	if int64(len(text)) > plan.Writer.RecordMaximumBytes || !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
 		return shard.TextRow{}, fmt.Errorf("mapped text is not bounded NUL-free UTF-8")
 	}

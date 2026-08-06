@@ -47,12 +47,35 @@ func TestInputProfileValidation(t *testing.T) {
 		"relative XPath":       {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"doc/body"}}},
 		"bad empty policy":     {Type: ProfileRecordMap, OnEmpty: "discard", Fields: ProfileFields{Text: []string{"body"}}},
 		"empty policy on file": {Type: ProfileBoundedText, OnEmpty: "skip", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}},
+		"bad NUL policy":       {Type: ProfileRecordMap, NUL: "drop", Fields: ProfileFields{Text: []string{"body"}}},
+		"NUL policy on file":   {Type: ProfileBoundedText, NUL: "space", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := profile.Validate(); err == nil {
 				t.Fatalf("profile was accepted: %+v", profile)
 			}
 		})
+	}
+}
+
+func TestNewPlanPinsRequestedRecordMaximum(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.txt")
+	if err := os.WriteFile(path, []byte("text"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "core/large", Title: "Large", License: "CC0-1.0", RecordMaximumBytes: 128 << 20,
+		Source: PlanSource{Name: "large", URL: "https://example.test", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Writer.RecordMaximumBytes != 128<<20 {
+		t.Fatalf("record maximum = %d", plan.Writer.RecordMaximumBytes)
 	}
 }
 

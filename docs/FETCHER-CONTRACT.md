@@ -151,6 +151,10 @@ Mapped records fail closed when a required text or response field is empty.
 `record-map` and `dialogue-pair` recipes may explicitly set `on_empty: skip` to
 reject those physical records instead. WALDO reports rejected-empty records
 separately from content duplicates, and the policy is pinned in the plan.
+Record profiles also fail closed on embedded NUL characters unless the recipe
+declares `nul: space`. Recipes may set `record_maximum_bytes` between 16 MiB
+and 256 MiB when one indivisible mapped record legitimately exceeds the 64 MiB
+default; the accepted value remains bounded by the plan memory budget.
 
 Two whole-file primitives are also available. `bounded-text` excludes the
 first matching start boundary and the first end boundary after it:

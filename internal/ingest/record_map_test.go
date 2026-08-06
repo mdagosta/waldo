@@ -57,6 +57,18 @@ func TestRecordMapUsesExistingCompressedJSONLReader(t *testing.T) {
 	}
 }
 
+func TestRecordMapExplicitlyReplacesNULWithSpace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.jsonl")
+	if err := os.WriteFile(path, []byte("{\"text\":\"before\\u0000after\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := mappedFixturePlan(t, path, InputProfile{Type: ProfileRecordMap, NUL: "space", Fields: ProfileFields{Text: []string{"text"}}})
+	rows := collectMappedRows(t, plan)
+	if len(rows) != 1 || rows[0].Text != "before after" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
 type mappedParquetMetadata struct {
 	License string `parquet:"license"`
 }

@@ -33,15 +33,16 @@ var recipeStepName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // pipeline. Commands are source-specific external producers; their only output
 // is a WALDO-owned temporary directory.
 type IngestRecipe struct {
-	Kind        string       `json:"kind" yaml:"kind"`
-	Schema      int          `json:"schema" yaml:"schema"`
-	Title       string       `json:"title" yaml:"title"`
-	Description string       `json:"description,omitempty" yaml:"description,omitempty"`
-	License     string       `json:"license" yaml:"license"`
-	Source      RecipeSource `json:"source" yaml:"source"`
-	TextColumn  string       `json:"text_column,omitempty" yaml:"text_column,omitempty"`
-	Input       InputProfile `json:"input,omitempty" yaml:"input,omitempty"`
-	Steps       []RecipeStep `json:"steps" yaml:"steps"`
+	Kind               string       `json:"kind" yaml:"kind"`
+	Schema             int          `json:"schema" yaml:"schema"`
+	Title              string       `json:"title" yaml:"title"`
+	Description        string       `json:"description,omitempty" yaml:"description,omitempty"`
+	License            string       `json:"license" yaml:"license"`
+	Source             RecipeSource `json:"source" yaml:"source"`
+	TextColumn         string       `json:"text_column,omitempty" yaml:"text_column,omitempty"`
+	RecordMaximumBytes int64        `json:"record_maximum_bytes,omitempty" yaml:"record_maximum_bytes,omitempty"`
+	Input              InputProfile `json:"input,omitempty" yaml:"input,omitempty"`
+	Steps              []RecipeStep `json:"steps" yaml:"steps"`
 }
 
 type RecipeSource struct {
@@ -162,6 +163,9 @@ func (recipe IngestRecipe) Validate() error {
 	}
 	if recipe.TextColumn != "" && recipe.Input.Type != "" {
 		return fmt.Errorf("text_column and input profile cannot both be set")
+	}
+	if recipe.RecordMaximumBytes != 0 && (recipe.RecordMaximumBytes < 16<<20 || recipe.RecordMaximumBytes > 256<<20) {
+		return fmt.Errorf("record_maximum_bytes must be between 16777216 and 268435456")
 	}
 	category, _ := index.CanonicalSourceCategory(recipe.Source.Category)
 	switch category {

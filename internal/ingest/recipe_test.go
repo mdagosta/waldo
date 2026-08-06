@@ -62,8 +62,10 @@ schema: 1
 title: Cases
 license: CC0-1.0
 source: {url: https://example.test, category: public-dataset}
+record_maximum_bytes: 134217728
 input:
   type: record-map
+  nul: space
   fields:
     text: [casebody.head_matter, "casebody.opinions[].text"]
     id: id
@@ -74,7 +76,7 @@ steps: [{name: fetch, exec: ./fetch.sh}]
 	if err != nil || !found {
 		t.Fatalf("LoadRecipe() found=%v err=%v", found, err)
 	}
-	if loaded.Recipe.Input.Type != ProfileRecordMap || len(loaded.Recipe.Input.Fields.Text) != 2 {
+	if loaded.Recipe.Input.Type != ProfileRecordMap || loaded.Recipe.Input.NUL != "space" || len(loaded.Recipe.Input.Fields.Text) != 2 || loaded.Recipe.RecordMaximumBytes != 128<<20 {
 		t.Fatalf("input = %+v", loaded.Recipe.Input)
 	}
 }

@@ -26,6 +26,12 @@ belong in the reviewed recipe or fetcher. A fetcher may deposit a simpler
 primitive format such as record-map JSONL when the upstream shape requires
 source-specific transformation.
 
+Profiles fail closed on empty required fields and embedded NUL characters.
+Recipes may explicitly select `on_empty: skip` or `nul: space`; these policies
+are part of the plan identity. A recipe may also raise the default 64 MiB
+indivisible-record ceiling to at most 256 MiB, subject to the plan memory
+budget, without changing the canonical record schema.
+
 Per-record licenses are normalized by WALDO, preserved as raw evidence, and
 partition canonical objects so each shard has one effective license.
 
