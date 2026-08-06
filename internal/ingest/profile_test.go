@@ -42,11 +42,30 @@ func TestInputProfileValidation(t *testing.T) {
 		"bad path":        {Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"body[0]"}}},
 		"missing reply":   {Type: ProfileDialoguePair, Fields: ProfileFields{Text: []string{"prompt"}}},
 		"incomplete tree": {Type: ProfileRankedConversationTree, Tree: ConversationTree{Text: "text"}},
+		"bad boundary":    {Type: ProfileBoundedText, Bounds: TextBounds{StartPattern: "[", EndPattern: "end"}},
+		"relative XPath":  {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"doc/body"}}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := profile.Validate(); err == nil {
 				t.Fatalf("profile was accepted: %+v", profile)
 			}
 		})
+	}
+}
+
+func TestLoadInputProfileIsStrict(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "profile.yaml")
+	if err := os.WriteFile(path, []byte("type: record-map\nfields:\n  text: [body]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile, err := LoadInputProfile(path)
+	if err != nil || profile.Type != ProfileRecordMap {
+		t.Fatalf("profile = %+v, error = %v", profile, err)
+	}
+	if err := os.WriteFile(path, []byte("type: record-map\nunknown: true\nfields:\n  text: [body]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadInputProfile(path); err == nil {
+		t.Fatal("profile with unknown field was accepted")
 	}
 }

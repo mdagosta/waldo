@@ -120,6 +120,66 @@ optional. `title`, `license`, `source.url`, `source.category`, and at least one
 step are required. The destination is never embedded; it remains the second
 positional argument to `index ingest`.
 
+`text_column` is the legacy single-column Parquet mapping. A recipe may instead
+declare one corpus-neutral `input` profile; the two fields are mutually
+exclusive. Physical record cardinality is explicit: `.json` is exactly one
+top-level object per file, `.jsonl` (plain, gzip, or zstd) is one object per
+line, and `.parquet` is one record per row. Top-level JSON arrays are rejected.
+
+```yaml
+input:
+  type: record-map
+  fields:
+    text: [title, abstract, "sections[].text"]
+    id: identifier
+    date: publication.date
+    language: metadata.language
+    license: metadata.license
+```
+
+`record-map` supports dotted paths, terminal `[]` array expansion, and ordered
+joining of text fields. `dialogue-pair` uses `fields.text` as the prompt,
+optional `fields.context`, and `fields.response`. `ranked-conversation-tree`
+uses configurable `tree.root`, `tree.replies`, `tree.text`, `tree.rank`, and
+optional role fields, selecting the lowest numeric rank at each level.
+
+Two whole-file primitives are also available. `bounded-text` excludes the
+first matching start boundary and the first end boundary after it:
+
+```yaml
+input:
+  type: bounded-text
+  bounds:
+    start_pattern: '(?m)^=== START: .+ ===$'
+    end_pattern: '(?m)^=== END: .+ ===$'
+```
+
+`xml-record` maps one XML file to one record. Selectors use an absolute XPath
+subset: child `/`, descendant `//`, wildcard `*`, terminal attributes, repeated
+nodes in document order, and Clark names such as `{urn:example}href` for exact
+namespace matching. Prefixed names match their local name. Predicates,
+functions, parent axes, and inferred namespace bindings are rejected.
+
+```yaml
+input:
+  type: xml-record
+  fields:
+    text: [/doc/title, /doc/abstract, /doc/body]
+    source: /doc/header/id
+    date: /doc/header/date
+    license: '/doc/header/license/@{urn:example}href'
+    meta:
+      publication: /doc/header/journal
+  xml:
+    exclude: [//figure, //references]
+    source_prefix: 'urn:document:'
+```
+
+Profiles contain no corpus names or source-specific defaults. If an upstream
+XML vocabulary needs transformations outside this XPath subset—such as
+assembling a date from several nodes—the fetcher deposits a general JSONL or
+Parquet record-map instead.
+
 `exec: curl` searches `PATH`; `exec: ./fetch.sh`, `exec: ../fetch.sh`, and
 `exec: /opt/fetch.sh` are explicit paths. WALDO does not interpret pipelines,
 redirections, variables, globbing, or shell built-ins. When shell evaluation is

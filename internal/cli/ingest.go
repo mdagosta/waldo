@@ -48,6 +48,12 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
 		return usageError{message: "direct index ingest requires --title, --license, --source, and --source-category"}
 	}
+	if !isRecipe && options.InputProfile != "" {
+		options.Request.Profile, err = ingest.LoadInputProfile(options.InputProfile)
+		if err != nil {
+			return fmt.Errorf("load input profile: %w", err)
+		}
+	}
 	target, err := waldoindex.ResolveDestination(options.Request.Destination)
 	if err != nil {
 		return err
@@ -317,6 +323,7 @@ type indexIngestOptions struct {
 	Request         ingest.PlanRequest
 	Inputs          []string
 	DryRun          bool
+	InputProfile    string
 	MetadataOptions []string
 }
 
@@ -356,6 +363,9 @@ func parseIndexIngest(args []string) (indexIngestOptions, error) {
 		case "--text-column":
 			options.Request.TextColumn, err = value("--text-column")
 			options.MetadataOptions = append(options.MetadataOptions, "--text-column")
+		case "--input-profile":
+			options.InputProfile, err = value("--input-profile")
+			options.MetadataOptions = append(options.MetadataOptions, "--input-profile")
 		default:
 			if strings.HasPrefix(arg, "-") {
 				return indexIngestOptions{}, usageError{message: fmt.Sprintf("unknown index ingest option %q", arg)}

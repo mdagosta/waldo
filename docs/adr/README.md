@@ -37,3 +37,4 @@ logs.
 - [0031: Resume durable model-compose transactions](0031-durable-model-compose-transactions.md)
 - [0032: Calibrate exact forecast topologies from observed runs](0032-observed-run-forecast-calibration.md)
 - [0033: Separate corpus append from authoritative recipe rebuilds](0033-corpus-update-modes.md)
+- [0034: Keep ingest profiles corpus-neutral](0034-declarative-ingest-profiles.md)

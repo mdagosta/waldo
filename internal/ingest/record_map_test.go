@@ -15,7 +15,7 @@ func TestRecordMapReadsOneJSONObjectAndExpandsArrays(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "case.json")
 	contents := `{
   "id":"https://cite.case/1","decision_date":"1825-12","language":"en",
-  "metadata":{"license":"CC-BY-4.0"},
+  "metadata":{"license":"https://creativecommons.org/licenses/by/4.0/"},
   "casebody":{"head_matter":"Case heading","opinions":[{"text":"Majority"},{"text":"Dissent"}]}
 }`
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
@@ -30,7 +30,7 @@ func TestRecordMapReadsOneJSONObjectAndExpandsArrays(t *testing.T) {
 	if len(rows) != 1 || rows[0].Text != "Case heading\n\nMajority\n\nDissent" {
 		t.Fatalf("rows = %+v", rows)
 	}
-	if rows[0].Source != "https://cite.case/1" || rows[0].License != "CC-BY-4.0" || rows[0].LicenseRaw == nil || *rows[0].Language != "en" || *rows[0].Date != "1825-12" {
+	if rows[0].Source != "https://cite.case/1" || rows[0].License != "CC-BY-4.0" || rows[0].LicenseRaw == nil || *rows[0].LicenseRaw != "https://creativecommons.org/licenses/by/4.0/" || *rows[0].Language != "en" || *rows[0].Date != "1825-12" {
 		t.Fatalf("mapped metadata = %+v", rows[0])
 	}
 }

@@ -91,6 +91,9 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 	if request.Source.Name == "" || request.Source.URL == "" || request.Source.Category == "" {
 		return Plan{}, fmt.Errorf("source name, URL, and category are required")
 	}
+	if request.TextColumn != "" && request.Profile.Type != "" {
+		return Plan{}, fmt.Errorf("text column and input profile cannot both be set")
+	}
 	category, ok := index.CanonicalSourceCategory(request.Source.Category)
 	if !ok {
 		return Plan{}, fmt.Errorf("unsupported source category %q", request.Source.Category)

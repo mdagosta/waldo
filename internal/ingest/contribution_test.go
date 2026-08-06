@@ -62,6 +62,27 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	}
 }
 
+func TestDeclarativeProfileIsPartOfConversionAndSourceIdentity(t *testing.T) {
+	base := Plan{Inputs: []PlanInput{{
+		Artifact: Artifact{SHA256: fmt.Sprintf("%064x", 1), Bytes: 10, Format: "json"}, Adapter: "json",
+		Profile: InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"body"}}},
+	}}}
+	changed := base
+	changed.Inputs = append([]PlanInput(nil), base.Inputs...)
+	changed.Inputs[0].Profile.Fields.Text = []string{"content"}
+	baseSource, err := sourceAcquisitionIdentity(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedSource, err := sourceAcquisitionIdentity(changed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseSource == changedSource || conversionProfile(base) == conversionProfile(changed) {
+		t.Fatal("profile mapping did not change persisted identities")
+	}
+}
+
 func TestBuildManifestSizeDoesNotScaleWithInputArtifactCount(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "seed.txt")
 	writeFixture(t, path, "seed document")

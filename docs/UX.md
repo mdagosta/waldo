@@ -134,6 +134,9 @@ waldo index ingest ~/data/books core/books \
   --dry-run
 ```
 
+For existing local structured data, `--input-profile profile.yaml` applies the
+same strict profile shape embedded under `input` in an ingest recipe.
+
 The first implemented slice hashes and senses every input, reads Parquet
 footers without loading their payload, resolves unambiguous column mappings,
 and emits an immutable plan with `--dry-run`. Extensions are hints only; magic
@@ -151,6 +154,13 @@ line. Plain `.jsonl`, gzip, and zstd inputs stream through bounded decoding;
 they are not expanded into an intermediate file. Unknown JSON members are not
 copied into the canonical row. Missing, null, empty, oversized, non-UTF-8, and
 NUL-containing text values fail the ingest.
+
+Ingest recipes can replace the default single-field adapters with declarative,
+corpus-neutral profiles. JSON is one object per file, JSONL is one object per
+line (including streamed gzip and zstd), and Parquet is one row per record.
+Supported mappings are `record-map`, `dialogue-pair`,
+`ranked-conversation-tree`, `bounded-text`, and `xml-record`; source-specific
+knowledge remains in the recipe or fetcher.
 
 The command preflights source metadata, projected shard count, output size,
 destination, and lookaside configuration before conversion. On success

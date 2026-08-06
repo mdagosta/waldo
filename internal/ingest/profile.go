@@ -1,10 +1,17 @@
 package ingest
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"os"
 	"regexp"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
+
+const inputProfileMaximum = 1 << 20
 
 const (
 	ProfileRecordMap              = "record-map"
@@ -47,6 +54,42 @@ type XMLMapping struct {
 	SourcePrefix string   `json:"source_prefix,omitempty" yaml:"source_prefix,omitempty"`
 }
 
+// LoadInputProfile reads one strict standalone YAML or JSON profile for direct
+// local ingestion. Recipes embed the same InputProfile shape under `input`.
+func LoadInputProfile(path string) (InputProfile, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return InputProfile{}, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > inputProfileMaximum {
+		return InputProfile{}, fmt.Errorf("input profile must be a regular non-symlink file no larger than %d bytes", inputProfileMaximum)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return InputProfile{}, err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	var profile InputProfile
+	if err := decoder.Decode(&profile); err != nil {
+		return InputProfile{}, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("multiple YAML documents are not allowed")
+		}
+		return InputProfile{}, err
+	}
+	if err := profile.Validate(); err != nil {
+		return InputProfile{}, err
+	}
+	if profile.Type == "" {
+		return InputProfile{}, fmt.Errorf("input profile type is required")
+	}
+	return profile, nil
+}
+
 type ConversationTree struct {
 	Root          string `json:"root,omitempty" yaml:"root,omitempty"`
 	Replies       string `json:"replies,omitempty" yaml:"replies,omitempty"`
@@ -67,21 +110,21 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) == 0 {
 			return fmt.Errorf("record-map requires fields.text")
 		}
-		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("record-map accepts text, id, date, language, and license fields only")
 		}
 	case ProfileDialoguePair:
 		if len(profile.Fields.Text) == 0 || profile.Fields.Response == "" {
 			return fmt.Errorf("dialogue-pair requires fields.text and fields.response")
 		}
-		if profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("dialogue-pair does not accept tree fields")
 		}
 	case ProfileRankedConversationTree:
 		if profile.Tree.Replies == "" || profile.Tree.Text == "" || profile.Tree.Rank == "" {
 			return fmt.Errorf("ranked-conversation-tree requires tree.replies, tree.text, and tree.rank")
 		}
-		if len(profile.Fields.Text) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if len(profile.Fields.Text) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("ranked-conversation-tree text comes from the tree mapping")
 		}
 	case ProfileBoundedText:
