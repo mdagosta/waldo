@@ -297,6 +297,19 @@ func fixtureIndex(t *testing.T) string {
 	return root
 }
 
+func TestContentHashPathRecognizesCanonicalObjectNames(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	if object, ok := contentHashPath("s3://bucket/lookaside/aa/aa/" + digest); !ok || object != digest {
+		t.Fatalf("contentHashPath() = %q, %t", object, ok)
+	}
+	if _, ok := contentHashPath("https://objects.example/shard.parquet"); ok {
+		t.Fatal("ordinary object name was treated as a content hash")
+	}
+	if object, ok := contentHashPath("s3://bucket/lookaside/aa/aa/" + digest[:62]); !ok || object == digest {
+		t.Fatalf("truncated contentHashPath() = %q, %t", object, ok)
+	}
+}
+
 func writeFile(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
