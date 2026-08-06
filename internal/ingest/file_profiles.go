@@ -1,7 +1,6 @@
 package ingest
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -13,11 +12,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/openwaldo/waldo/internal/shard"
-)
-
-var (
-	gutenbergStart = regexp.MustCompile(`(?mi)^\*\*\*\s*START OF (?:THE|THIS) PROJECT GUTENBERG EBOOK[^\n]*\*\*\*\s*$`)
-	gutenbergEnd   = regexp.MustCompile(`(?mi)^\*\*\*\s*END OF (?:THE|THIS) PROJECT GUTENBERG EBOOK[^\n]*\*\*\*\s*$`)
 )
 
 func StreamProfiledFileBatches(ctx context.Context, plan Plan, consume func(TextBatch) error) error {
@@ -42,13 +36,13 @@ func StreamProfiledFileBatches(ctx context.Context, plan Plan, consume func(Text
 			return closeErr
 		}
 		var row shard.TextRow
-		switch input.Adapter {
-		case ProfileGutenbergText:
-			row, err = mapGutenberg(plan, input, data)
-		case ProfileJATSXML:
-			row, err = mapJATS(plan, input, data)
+		switch input.Profile.Type {
+		case ProfileBoundedText:
+			row, err = mapBoundedText(plan, input, data)
+		case ProfileXMLRecord:
+			row, err = mapXMLRecord(plan, input, data)
 		default:
-			err = fmt.Errorf("unsupported whole-file profile %q", input.Adapter)
+			err = fmt.Errorf("unsupported whole-file profile %q", input.Profile.Type)
 		}
 		if err != nil {
 			return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
@@ -60,53 +54,259 @@ func StreamProfiledFileBatches(ctx context.Context, plan Plan, consume func(Text
 	return nil
 }
 
-func mapGutenberg(plan Plan, input PlanInput, data []byte) (shard.TextRow, error) {
-	text := string(data)
-	start := gutenbergStart.FindStringIndex(text)
-	end := gutenbergEnd.FindStringIndex(text)
-	if start == nil || end == nil {
-		return shard.TextRow{}, fmt.Errorf("Project Gutenberg START and END markers are required")
+func mapBoundedText(plan Plan, input PlanInput, data []byte) (shard.TextRow, error) {
+	startPattern := regexp.MustCompile(input.Profile.Bounds.StartPattern)
+	endPattern := regexp.MustCompile(input.Profile.Bounds.EndPattern)
+	start := startPattern.FindIndex(data)
+	if start == nil {
+		return shard.TextRow{}, fmt.Errorf("start boundary did not match")
 	}
-	if end[0] <= start[1] {
-		return shard.TextRow{}, fmt.Errorf("Project Gutenberg END marker precedes the START marker")
+	endRelative := endPattern.FindIndex(data[start[1]:])
+	if endRelative == nil {
+		return shard.TextRow{}, fmt.Errorf("end boundary did not match after the start boundary")
 	}
-	return profiledFileRow(plan, input, strings.TrimSpace(text[start[1]:end[0]])+"\n", "", "", "", nil)
+	text := strings.TrimSpace(string(data[start[1]:start[1]+endRelative[0]])) + "\n"
+	return profiledFileRow(plan, input, text, "", "", "", "", nil)
 }
 
-type jatsArticle struct {
-	Title, Abstract, Body string
-	DOI, Date, Journal    string
-	License               string
+type xmlNode struct {
+	Name     xml.Name
+	Attrs    map[xml.Name]string
+	Text     strings.Builder
+	Children []*xmlNode
 }
 
-func mapJATS(plan Plan, input PlanInput, data []byte) (shard.TextRow, error) {
-	article, err := parseJATS(bytes.NewReader(data))
+func mapXMLRecord(plan Plan, input PlanInput, data []byte) (shard.TextRow, error) {
+	root, err := parseXMLTree(strings.NewReader(string(data)))
 	if err != nil {
 		return shard.TextRow{}, err
 	}
-	parts := []string{}
-	for _, part := range []string{article.Title, article.Abstract, article.Body} {
-		if strings.TrimSpace(part) != "" {
-			parts = append(parts, part)
+	profile := input.Profile
+	parts := make([]string, 0, len(profile.Fields.Text))
+	for _, selector := range profile.Fields.Text {
+		values := xmlSelectorValues(root, selector, profile.XML.Exclude)
+		if len(values) > 0 {
+			parts = append(parts, strings.Join(values, "\n\n"))
 		}
 	}
 	if len(parts) == 0 {
-		return shard.TextRow{}, fmt.Errorf("JATS article contains no title, abstract, or body text")
+		return shard.TextRow{}, fmt.Errorf("mapped XML text fields are empty or absent")
+	}
+	scalar := func(selector string) (string, error) {
+		if selector == "" {
+			return "", nil
+		}
+		values := xmlSelectorValues(root, selector, profile.XML.Exclude)
+		if len(values) > 1 {
+			return "", fmt.Errorf("XML selector %q produced multiple scalar values", selector)
+		}
+		if len(values) == 0 {
+			return "", nil
+		}
+		return values[0], nil
+	}
+	sourceSelector := profile.Fields.Source
+	if sourceSelector == "" {
+		sourceSelector = profile.Fields.ID
+	}
+	source, err := scalar(sourceSelector)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	if source != "" {
+		source = profile.XML.SourcePrefix + source
+	}
+	date, err := scalar(profile.Fields.Date)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	language, err := scalar(profile.Fields.Language)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	license, err := scalar(profile.Fields.License)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	metadata := map[string]string{}
+	for name, selector := range profile.Fields.Meta {
+		value, err := scalar(selector)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		if value != "" {
+			metadata[name] = value
+		}
 	}
 	var meta *string
-	if article.Journal != "" {
-		encoded, _ := json.Marshal(map[string]string{"journal": article.Journal})
+	if len(metadata) > 0 {
+		encoded, _ := json.Marshal(metadata)
 		value := string(encoded)
 		meta = &value
 	}
-	source := ""
-	if article.DOI != "" {
-		source = "https://doi.org/" + article.DOI
-	}
-	return profiledFileRow(plan, input, strings.Join(parts, "\n\n")+"\n", source, article.Date, article.License, meta)
+	return profiledFileRow(plan, input, strings.Join(parts, "\n\n")+"\n", source, date, language, license, meta)
 }
 
-func profiledFileRow(plan Plan, input PlanInput, text, source, date, rawLicense string, meta *string) (shard.TextRow, error) {
+func parseXMLTree(reader io.Reader) (*xmlNode, error) {
+	decoder := xml.NewDecoder(reader)
+	decoder.Strict = false
+	decoder.Entity = xml.HTMLEntity
+	container := &xmlNode{}
+	stack := []*xmlNode{container}
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		switch token := token.(type) {
+		case xml.StartElement:
+			node := &xmlNode{Name: token.Name, Attrs: map[xml.Name]string{}}
+			for _, attribute := range token.Attr {
+				node.Attrs[attribute.Name] = attribute.Value
+			}
+			parent := stack[len(stack)-1]
+			parent.Children = append(parent.Children, node)
+			stack = append(stack, node)
+		case xml.EndElement:
+			if len(stack) <= 1 {
+				return nil, fmt.Errorf("unexpected XML end element %q", token.Name.Local)
+			}
+			stack = stack[:len(stack)-1]
+		case xml.CharData:
+			stack[len(stack)-1].Text.Write([]byte(token))
+		}
+	}
+	if len(container.Children) != 1 {
+		return nil, fmt.Errorf("XML input must contain exactly one root element")
+	}
+	return container.Children[0], nil
+}
+
+type xpathStep struct {
+	name       string
+	descendant bool
+}
+
+type xmlMatch struct {
+	node *xmlNode
+	path []*xmlNode
+}
+
+func xmlSelectorValues(root *xmlNode, selector string, excludes []string) []string {
+	steps, attribute := parseXPath(selector)
+	var matches []xmlMatch
+	var walk func(*xmlNode, []*xmlNode)
+	walk = func(node *xmlNode, path []*xmlNode) {
+		path = append(path, node)
+		if xpathMatches(path, steps) {
+			copied := append([]*xmlNode(nil), path...)
+			matches = append(matches, xmlMatch{node: node, path: copied})
+		}
+		for _, child := range node.Children {
+			walk(child, path)
+		}
+	}
+	walk(root, nil)
+	values := make([]string, 0, len(matches))
+	for _, match := range matches {
+		var value string
+		if attribute != "" {
+			for name, candidate := range match.node.Attrs {
+				if xmlNameMatches(name, attribute) {
+					value = candidate
+					break
+				}
+			}
+		} else {
+			value = xmlNodeText(match.node, match.path, excludes)
+		}
+		value = strings.Join(strings.Fields(value), " ")
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func xmlNodeText(node *xmlNode, path []*xmlNode, excludes []string) string {
+	if xmlExcluded(path, excludes) {
+		return ""
+	}
+	parts := []string{node.Text.String()}
+	for _, child := range node.Children {
+		parts = append(parts, xmlNodeText(child, append(path, child), excludes))
+	}
+	return strings.Join(parts, " ")
+}
+
+func xmlExcluded(path []*xmlNode, excludes []string) bool {
+	for _, exclude := range excludes {
+		steps, attribute := parseXPath(exclude)
+		if attribute == "" && xpathMatches(path, steps) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseXPath(selector string) ([]xpathStep, string) {
+	parts := strings.Split(strings.TrimPrefix(selector, "/"), "/")
+	steps := make([]xpathStep, 0, len(parts))
+	descendant := false
+	attribute := ""
+	for _, part := range parts {
+		if part == "" {
+			descendant = true
+			continue
+		}
+		if strings.HasPrefix(part, "@") {
+			attribute = strings.TrimPrefix(part, "@")
+			break
+		}
+		steps = append(steps, xpathStep{name: part, descendant: descendant})
+		descendant = false
+	}
+	return steps, attribute
+}
+
+func xpathMatches(path []*xmlNode, steps []xpathStep) bool {
+	var match func(int, int) bool
+	match = func(pathPosition, stepPosition int) bool {
+		if stepPosition == len(steps) {
+			return pathPosition == len(path)
+		}
+		step := steps[stepPosition]
+		if step.descendant {
+			for position := pathPosition; position < len(path); position++ {
+				if xmlNameMatches(path[position].Name, step.name) && match(position+1, stepPosition+1) {
+					return true
+				}
+			}
+			return false
+		}
+		return pathPosition < len(path) && xmlNameMatches(path[pathPosition].Name, step.name) && match(pathPosition+1, stepPosition+1)
+	}
+	return match(0, 0)
+}
+
+func xmlNameMatches(name xml.Name, selector string) bool {
+	if selector == "*" {
+		return true
+	}
+	if strings.HasPrefix(selector, "{") {
+		end := strings.IndexByte(selector, '}')
+		return end > 1 && name.Space == selector[1:end] && name.Local == selector[end+1:]
+	}
+	if colon := strings.IndexByte(selector, ':'); colon >= 0 {
+		selector = selector[colon+1:]
+	}
+	return name.Local == selector
+}
+
+func profiledFileRow(plan Plan, input PlanInput, text, source, date, language, rawLicense string, meta *string) (shard.TextRow, error) {
 	if strings.TrimSpace(text) == "" || !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
 		return shard.TextRow{}, fmt.Errorf("extracted text is not nonempty NUL-free UTF-8")
 	}
@@ -123,156 +323,6 @@ func profiledFileRow(plan Plan, input PlanInput, text, source, date, rawLicense 
 	digest := sha256.Sum256([]byte(text))
 	return shard.TextRow{
 		ContentSHA256: digest, Text: text, Source: source, SourceName: &sourceName,
-		License: license, LicenseRaw: licenseRaw, Date: stringPointer(date), Meta: meta,
+		License: license, LicenseRaw: licenseRaw, Language: stringPointer(language), Date: stringPointer(date), Meta: meta,
 	}, nil
-}
-
-var jatsSkipped = map[string]bool{
-	"sub-article": true, "table-wrap": true, "fig": true, "disp-formula": true,
-	"inline-formula": true, "tex-math": true, "math": true, "supplementary-material": true,
-	"ref-list": true, "object-id": true, "graphic": true, "media": true,
-}
-
-func parseJATS(reader io.Reader) (jatsArticle, error) {
-	decoder := xml.NewDecoder(reader)
-	decoder.Strict = false
-	decoder.Entity = xml.HTMLEntity
-	var article jatsArticle
-	var stack []string
-	var title, abstract, body, license strings.Builder
-	var skip int
-	var articleIDType, publicationType string
-	var year, month, day string
-	in := func(name string) bool {
-		for _, element := range stack {
-			if element == name {
-				return true
-			}
-		}
-		return false
-	}
-	top := func() string {
-		if len(stack) == 0 {
-			return ""
-		}
-		return stack[len(stack)-1]
-	}
-	for {
-		token, err := decoder.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return jatsArticle{}, err
-		}
-		switch token := token.(type) {
-		case xml.StartElement:
-			stack = append(stack, token.Name.Local)
-			if skip > 0 {
-				skip++
-				continue
-			}
-			if jatsSkipped[token.Name.Local] {
-				skip = 1
-				continue
-			}
-			switch token.Name.Local {
-			case "license":
-				article.License = xmlAttribute(token, "href")
-			case "ext-link":
-				if article.License == "" && in("license") {
-					article.License = xmlAttribute(token, "href")
-				}
-			case "article-id":
-				articleIDType = xmlAttribute(token, "pub-id-type")
-			case "pub-date":
-				publicationType, year, month, day = xmlAttribute(token, "pub-type"), "", "", ""
-			}
-		case xml.EndElement:
-			if len(stack) > 0 {
-				stack = stack[:len(stack)-1]
-			}
-			if skip > 0 {
-				skip--
-				continue
-			}
-			switch token.Name.Local {
-			case "p", "title", "sec":
-				if in("body") {
-					body.WriteString("\x00")
-				} else if in("abstract") {
-					abstract.WriteString("\x00")
-				}
-			case "pub-date":
-				if (publicationType == "epub" || article.Date == "") && strings.TrimSpace(year) != "" {
-					article.Date = strings.TrimSpace(year)
-					if strings.TrimSpace(month) != "" {
-						article.Date += "-" + padDate(month)
-					}
-					if strings.TrimSpace(day) != "" {
-						article.Date += "-" + padDate(day)
-					}
-				}
-			case "article-id":
-				articleIDType = ""
-			}
-		case xml.CharData:
-			if skip > 0 {
-				continue
-			}
-			text := string(token)
-			switch {
-			case in("license"):
-				license.WriteString(text)
-			case in("body"):
-				body.WriteString(text)
-			case in("article-meta") && in("abstract"):
-				abstract.WriteString(text)
-			case in("article-meta") && in("title-group") && in("article-title"):
-				title.WriteString(text)
-			case in("article-meta") && top() == "article-id" && articleIDType == "doi" && article.DOI == "":
-				article.DOI = strings.TrimSpace(text)
-			case in("journal-title") && article.Journal == "" && strings.TrimSpace(text) != "":
-				article.Journal = strings.TrimSpace(text)
-			case in("article-meta") && in("pub-date"):
-				switch top() {
-				case "year":
-					year += text
-				case "month":
-					month += text
-				case "day":
-					day += text
-				}
-			}
-		}
-	}
-	article.Title, article.Abstract, article.Body = cleanJATS(title.String()), cleanJATS(abstract.String()), cleanJATS(body.String())
-	if article.License == "" {
-		article.License = cleanJATS(license.String())
-	}
-	return article, nil
-}
-
-var jatsParagraphs = regexp.MustCompile(`\s*\x00[\x00\s]*`)
-
-func cleanJATS(value string) string {
-	value = strings.Join(strings.Fields(value), " ")
-	return strings.TrimSpace(jatsParagraphs.ReplaceAllString(value, "\n\n"))
-}
-
-func xmlAttribute(element xml.StartElement, name string) string {
-	for _, attribute := range element.Attr {
-		if attribute.Name.Local == name {
-			return attribute.Value
-		}
-	}
-	return ""
-}
-
-func padDate(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) == 1 {
-		return "0" + value
-	}
-	return value
 }

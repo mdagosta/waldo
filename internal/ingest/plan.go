@@ -161,16 +161,16 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			continue
 		}
 		switch input.Profile.Type {
-		case ProfileGutenbergText:
+		case ProfileBoundedText:
 			if artifact.Format != "text" {
-				return Plan{}, fmt.Errorf("%s: gutenberg-text requires text input, not %q", artifact.Path, artifact.Format)
+				return Plan{}, fmt.Errorf("%s: bounded-text requires text input, not %q", artifact.Path, artifact.Format)
 			}
-			input.Adapter = ProfileGutenbergText
-		case ProfileJATSXML:
+			input.Adapter = ProfileBoundedText
+		case ProfileXMLRecord:
 			if artifact.Format != "xml" {
-				return Plan{}, fmt.Errorf("%s: jats-xml requires XML input, not %q", artifact.Path, artifact.Format)
+				return Plan{}, fmt.Errorf("%s: xml-record requires XML input, not %q", artifact.Path, artifact.Format)
 			}
-			input.Adapter = ProfileJATSXML
+			input.Adapter = ProfileXMLRecord
 		default:
 			switch artifact.Format {
 			case "text", "markdown":
@@ -282,13 +282,13 @@ func (plan Plan) Validate() error {
 			if artifact.Format != "jsonl" || input.TextColumn != "" || (artifact.Compression != "" && artifact.Compression != "gzip" && artifact.Compression != "zstd") {
 				return fmt.Errorf("input %s has an inconsistent JSONL adapter", artifact.Path)
 			}
-		case ProfileGutenbergText:
-			if artifact.Format != "text" || input.Profile.Type != ProfileGutenbergText {
-				return fmt.Errorf("input %s has an inconsistent Gutenberg adapter", artifact.Path)
+		case ProfileBoundedText:
+			if artifact.Format != "text" || input.Profile.Type != ProfileBoundedText {
+				return fmt.Errorf("input %s has an inconsistent bounded-text adapter", artifact.Path)
 			}
-		case ProfileJATSXML:
-			if artifact.Format != "xml" || input.Profile.Type != ProfileJATSXML {
-				return fmt.Errorf("input %s has an inconsistent JATS adapter", artifact.Path)
+		case ProfileXMLRecord:
+			if artifact.Format != "xml" || input.Profile.Type != ProfileXMLRecord {
+				return fmt.Errorf("input %s has an inconsistent XML-record adapter", artifact.Path)
 			}
 		default:
 			return fmt.Errorf("input %s has unsupported adapter %q", artifact.Path, input.Adapter)

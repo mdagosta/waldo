@@ -246,7 +246,7 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 		artifact.Evidence = []string{"html-root"}
 		return nil
 	}
-	if looksXML(trimmed) {
+	if looksXML(trimmed) || (strings.EqualFold(filepath.Ext(artifact.Path), ".xml") && bytes.HasPrefix(trimmed, []byte("<"))) {
 		artifact.Format = "xml"
 		artifact.Evidence = []string{"xml-root"}
 		return nil
