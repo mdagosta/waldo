@@ -148,6 +148,9 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
 		}
 		if input.Profile.recordProfile() {
+			if input.Profile.Type == ProfileRankedConversationTree && artifact.Format == "parquet" {
+				return Plan{}, fmt.Errorf("%s: ranked-conversation-tree requires JSON or JSONL", artifact.Path)
+			}
 			switch artifact.Format {
 			case "json", "jsonl", "parquet":
 				input.Adapter = artifact.Format

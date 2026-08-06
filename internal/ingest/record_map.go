@@ -99,7 +99,7 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 		}
 		return err
 	}
-	row, err := mapCanonicalRecord(jsonRecord{object}, plan, input, "sha256:"+input.Artifact.SHA256)
+	row, err := mapJSONCanonicalRecord(object, plan, input, "sha256:"+input.Artifact.SHA256)
 	if err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 			_ = reader.Close()
 			return fmt.Errorf("line %d must be one JSON object", line)
 		}
-		row, err := mapCanonicalRecord(jsonRecord{object}, plan, input, fmt.Sprintf("sha256:%s#line=%d", input.Artifact.SHA256, line))
+		row, err := mapJSONCanonicalRecord(object, plan, input, fmt.Sprintf("sha256:%s#line=%d", input.Artifact.SHA256, line))
 		if err != nil {
 			_ = reader.Close()
 			return fmt.Errorf("line %d: %w", line, err)
@@ -221,9 +221,6 @@ func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit f
 }
 
 func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallbackSource string) (shard.TextRow, error) {
-	if input.Profile.Type != ProfileRecordMap {
-		return shard.TextRow{}, fmt.Errorf("profile %q mapper is not implemented", input.Profile.Type)
-	}
 	parts := make([]string, 0, len(input.Profile.Fields.Text))
 	for _, path := range input.Profile.Fields.Text {
 		values, err := record.Values(path)
@@ -240,6 +237,42 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 	if text == "" {
 		return shard.TextRow{}, fmt.Errorf("mapped text fields are empty or absent")
 	}
+	var meta *string
+	if input.Profile.Type == ProfileDialoguePair {
+		contextText, err := optionalScalar(record, input.Profile.Fields.Context)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		if strings.TrimSpace(contextText) != "" {
+			text += "\n\n" + contextText
+		}
+		response, err := optionalScalar(record, input.Profile.Fields.Response)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		if response == "" {
+			return shard.TextRow{}, fmt.Errorf("mapped response field is empty or absent")
+		}
+		text = renderDialogue(text, response)
+		meta = dialogueMeta(2)
+	} else if input.Profile.Type != ProfileRecordMap {
+		return shard.TextRow{}, fmt.Errorf("profile %q cannot be mapped from scalar fields", input.Profile.Type)
+	}
+	return canonicalMappedRow(record, plan, input, fallbackSource, text, meta)
+}
+
+func mapJSONCanonicalRecord(object map[string]any, plan Plan, input PlanInput, fallbackSource string) (shard.TextRow, error) {
+	if input.Profile.Type != ProfileRankedConversationTree {
+		return mapCanonicalRecord(jsonRecord{object}, plan, input, fallbackSource)
+	}
+	text, turns, err := renderRankedTree(object, input.Profile.Tree)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	return canonicalMappedRow(jsonRecord{object}, plan, input, fallbackSource, text, dialogueMeta(turns))
+}
+
+func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallbackSource, text string, meta *string) (shard.TextRow, error) {
 	if int64(len(text)) > plan.Writer.RecordMaximumBytes || !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
 		return shard.TextRow{}, fmt.Errorf("mapped text is not bounded NUL-free UTF-8")
 	}
@@ -272,8 +305,107 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 	hash := sha256.Sum256([]byte(text))
 	return shard.TextRow{
 		ContentSHA256: hash, Text: text, Source: source, SourceName: &sourceName,
-		License: effective, LicenseRaw: rawLicense, Language: stringPointer(language), Date: stringPointer(date),
+		License: effective, LicenseRaw: rawLicense, Language: stringPointer(language), Date: stringPointer(date), Meta: meta,
 	}, nil
+}
+
+func renderDialogue(user, assistant string) string {
+	return "User: " + user + "\n\nAssistant: " + assistant + "\n"
+}
+
+func dialogueMeta(turns int) *string {
+	value := fmt.Sprintf(`{"format":"dialogue-flattened","turns":%d}`, turns)
+	return &value
+}
+
+func renderRankedTree(object map[string]any, tree ConversationTree) (string, int, error) {
+	var current any = object
+	if tree.Root != "" {
+		value, err := jsonPathValue(object, tree.Root)
+		if err != nil {
+			return "", 0, err
+		}
+		current = value
+	}
+	var output strings.Builder
+	turns := 0
+	for current != nil {
+		node, ok := current.(map[string]any)
+		if !ok {
+			return "", 0, fmt.Errorf("conversation node %d is not an object", turns+1)
+		}
+		bodyValues, err := (jsonRecord{node}).Values(tree.Text)
+		if err != nil || len(bodyValues) != 1 || strings.TrimSpace(bodyValues[0]) == "" {
+			return "", 0, fmt.Errorf("conversation node %d has no scalar text", turns+1)
+		}
+		assistant := turns%2 == 1
+		if tree.Role != "" && tree.AssistantRole != "" {
+			role, err := optionalScalar(jsonRecord{node}, tree.Role)
+			if err != nil {
+				return "", 0, err
+			}
+			if (role == tree.AssistantRole) != assistant {
+				return "", 0, fmt.Errorf("conversation node %d role %q does not alternate as expected", turns+1, role)
+			}
+		}
+		label := "User"
+		if assistant {
+			label = "Assistant"
+		}
+		fmt.Fprintf(&output, "%s: %s\n\n", label, strings.TrimSpace(bodyValues[0]))
+		turns++
+		repliesValue, exists := node[tree.Replies]
+		if !exists || repliesValue == nil {
+			break
+		}
+		replies, ok := repliesValue.([]any)
+		if !ok {
+			return "", 0, fmt.Errorf("conversation node %d replies are not an array", turns)
+		}
+		if len(replies) == 0 {
+			break
+		}
+		best := -1
+		bestRank := int64(0)
+		for position, reply := range replies {
+			child, ok := reply.(map[string]any)
+			if !ok {
+				return "", 0, fmt.Errorf("conversation reply %d is not an object", position+1)
+			}
+			rankText, err := optionalScalar(jsonRecord{child}, tree.Rank)
+			if err != nil || rankText == "" {
+				return "", 0, fmt.Errorf("conversation reply %d has no scalar rank", position+1)
+			}
+			rank, err := strconv.ParseInt(rankText, 10, 64)
+			if err != nil {
+				return "", 0, fmt.Errorf("conversation reply %d rank %q is not an integer", position+1, rankText)
+			}
+			if best < 0 || rank < bestRank {
+				best, bestRank = position, rank
+			}
+		}
+		current = replies[best]
+	}
+	if turns == 0 {
+		return "", 0, fmt.Errorf("conversation tree contains no turns")
+	}
+	return strings.TrimRight(output.String(), "\n") + "\n", turns, nil
+}
+
+func jsonPathValue(object map[string]any, path string) (any, error) {
+	var current any = object
+	for _, segment := range strings.Split(path, ".") {
+		next, ok := current.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("field %q traverses a non-object", path)
+		}
+		value, exists := next[segment]
+		if !exists {
+			return nil, fmt.Errorf("field %q is absent", path)
+		}
+		current = value
+	}
+	return current, nil
 }
 
 func optionalScalar(record recordAccessor, path string) (string, error) {
