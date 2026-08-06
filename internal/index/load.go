@@ -1,7 +1,6 @@
 package index
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,7 +8,9 @@ import (
 	"strings"
 )
 
-const indexFile = "index.json"
+const indexFile = "index.yaml"
+
+var indexFiles = []string{"index.yaml", "index.yml", "index.json"}
 
 // Target is a resolved path inside one explicit index checkout.
 type Target struct {
@@ -144,7 +145,11 @@ func findRoot(location string) (string, error) {
 
 	var nearest string
 	for dir := abs; ; dir = filepath.Dir(dir) {
-		if isIndexDirectory(dir) {
+		present, err := isIndexDirectory(dir)
+		if err != nil {
+			return "", err
+		}
+		if present {
 			nearest = dir
 			break
 		}
@@ -154,13 +159,20 @@ func findRoot(location string) (string, error) {
 		}
 	}
 	if nearest == "" {
-		return "", fmt.Errorf("no %s found in this path or its parents", indexFile)
+		return "", fmt.Errorf("no index.yaml, index.yml, or index.json found in this path or its parents")
 	}
 
 	root := nearest
 	for {
 		parent := filepath.Dir(root)
-		if parent == root || !isIndexDirectory(parent) {
+		if parent == root {
+			return root, nil
+		}
+		present, err := isIndexDirectory(parent)
+		if err != nil {
+			return "", err
+		}
+		if !present {
 			return root, nil
 		}
 		root = parent
@@ -210,19 +222,50 @@ func expandUser(value string) (string, error) {
 	return filepath.Join(home, filepath.FromSlash(strings.TrimPrefix(value, "~/"))), nil
 }
 
-func isIndexDirectory(dir string) bool {
-	info, err := os.Stat(filepath.Join(dir, indexFile))
-	return err == nil && !info.IsDir()
+func isIndexDirectory(dir string) (bool, error) {
+	_, err := DirectoryPath(dir)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
+}
+
+// DirectoryPath resolves the single directory-navigation document. JSON and
+// both normal YAML suffixes are readable; competing files are rejected.
+func DirectoryPath(dir string) (string, error) {
+	var matches []string
+	for _, name := range indexFiles {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err == nil && !info.IsDir() {
+			matches = append(matches, path)
+		} else if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	if len(matches) == 0 {
+		return "", &os.PathError{Op: "open", Path: filepath.Join(dir, indexFile), Err: os.ErrNotExist}
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("index directory %s contains competing metadata files %s; keep exactly one", dir, strings.Join(matches, ", "))
+	}
+	return matches[0], nil
 }
 
 func LoadDirectory(dir string) (Directory, error) {
-	path := filepath.Join(dir, indexFile)
+	path, err := DirectoryPath(dir)
+	if err != nil {
+		return Directory{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Directory{}, err
 	}
 	var index Directory
-	if err := json.Unmarshal(data, &index); err != nil {
+	if err := decodeMetadata(path, data, &index); err != nil {
 		return Directory{}, fmt.Errorf("%s: %w", path, err)
 	}
 	if index.Schema != DirectorySchema {
@@ -237,7 +280,7 @@ func LoadManifest(path string) (Manifest, error) {
 		return Manifest{}, err
 	}
 	var manifest Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	if err := decodeMetadata(path, data, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("%s: %w", path, err)
 	}
 	if manifest.Schema != ManifestSchema {
@@ -247,7 +290,7 @@ func LoadManifest(path string) (Manifest, error) {
 }
 
 // WalkCorpora visits every manifest indexed beneath target. Filesystem content
-// absent from index.json is deliberately ignored.
+// absent from the directory's index metadata is deliberately ignored.
 func WalkCorpora(target Target, visit func(Corpus) error) error {
 	info, err := os.Stat(target.Abs)
 	if err != nil {
@@ -288,7 +331,8 @@ func walkDirectory(root, dir string, visit func(Corpus) error) error {
 				return err
 			}
 		default:
-			return fmt.Errorf("%s: entry %q has unsupported type %q", filepath.Join(dir, indexFile), entry.Name, entry.Type)
+			directoryPath, _ := DirectoryPath(dir)
+			return fmt.Errorf("%s: entry %q has unsupported type %q", directoryPath, entry.Name, entry.Type)
 		}
 	}
 	return nil

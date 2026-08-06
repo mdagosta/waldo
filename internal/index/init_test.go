@@ -31,6 +31,12 @@ func TestInitializeCreatesMinimalValidIndex(t *testing.T) {
 	if verification.Directories != 1 || verification.Corpora != 0 || verification.Shards != 0 {
 		t.Fatalf("verification = %+v", verification)
 	}
+	if _, err := os.Stat(filepath.Join(root, "index.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "index.json")); !os.IsNotExist(err) {
+		t.Fatalf("Initialize wrote legacy JSON navigation: %v", err)
+	}
 }
 
 func TestInitializeRefusesNonemptyDirectory(t *testing.T) {

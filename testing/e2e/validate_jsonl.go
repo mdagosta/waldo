@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+
+	waldoindex "github.com/openwaldo/waldo/internal/index"
 )
 
 type exportedRecord struct {
@@ -16,25 +18,6 @@ type exportedRecord struct {
 	Source     string `json:"source"`
 	SourceName string `json:"source_name"`
 	License    string `json:"license"`
-}
-
-type manifestRecord struct {
-	Kind    string `json:"kind"`
-	Schema  int    `json:"schema"`
-	Name    string `json:"name"`
-	License string `json:"license"`
-	Sources []struct {
-		Name   string `json:"name"`
-		URL    string `json:"url"`
-		SHA256 string `json:"sha256"`
-	} `json:"sources"`
-	Shards []struct {
-		URL    string `json:"url"`
-		SHA256 string `json:"sha256"`
-		Docs   int64  `json:"docs"`
-		Tokens int64  `json:"tokens"`
-		Bytes  int64  `json:"bytes"`
-	} `json:"shards"`
 }
 
 func main() {
@@ -84,13 +67,9 @@ func main() {
 }
 
 func validateManifest(path, inputDirectory, sourceURL, sourceName, license string, expectedDocuments int64) {
-	data, err := os.ReadFile(path)
+	manifest, err := waldoindex.LoadManifest(path)
 	if err != nil {
-		fatalf("read manifest: %v", err)
-	}
-	var manifest manifestRecord
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		fatalf("decode manifest: %v", err)
+		fatalf("load manifest: %v", err)
 	}
 	if manifest.Kind != "manifest" || manifest.Schema != 1 || manifest.Name != "tiny" || manifest.License != license || len(manifest.Sources) != 1 {
 		fatalf("manifest identity or license is incorrect")
@@ -110,8 +89,12 @@ func validateManifest(path, inputDirectory, sourceURL, sourceName, license strin
 	if shard.Docs != expectedDocuments || shard.Tokens <= 0 || shard.Bytes <= 0 || len(shard.SHA256) != 64 || shard.URL == "" {
 		fatalf("manifest shard is %+v, want %d documents with positive tokens and bytes", shard, expectedDocuments)
 	}
-	if len(data) > 16<<10 {
-		fatalf("manifest is %d bytes; compact single-shard manifest must be at most 16 KiB", len(data))
+	info, err := os.Stat(path)
+	if err != nil {
+		fatalf("stat manifest: %v", err)
+	}
+	if info.Size() > 16<<10 {
+		fatalf("manifest is %d bytes; compact single-shard manifest must be at most 16 KiB", info.Size())
 	}
 }
 

@@ -118,7 +118,7 @@ func writeLookasideListIndex(t *testing.T, baseURL, referenced, missing string) 
 		t.Fatal(err)
 	}
 	directory := waldoindex.Directory{
-		Kind: "index", Schema: 1, Path: "", Entries: []waldoindex.Entry{{Name: "tiny.json", Type: "manifest"}},
+		Kind: "index", Schema: 1, Path: "", Entries: []waldoindex.Entry{{Name: "tiny.yaml", Type: "manifest"}},
 	}
 	manifest := waldoindex.Manifest{
 		Kind: "manifest", Schema: 1, Name: "tiny", Title: "Tiny", Description: "List relationship fixture", License: "CC0-1.0",
@@ -130,18 +130,17 @@ func writeLookasideListIndex(t *testing.T, baseURL, referenced, missing string) 
 			{URL: baseURL + "/" + missing[:2] + "/" + missing[2:4] + "/" + missing, SHA256: missing, Docs: 1, Bytes: 1, Sources: []string{"fixture"}},
 		},
 	}
-	writeListJSON(t, filepath.Join(root, "index.json"), directory)
-	writeListJSON(t, filepath.Join(root, "tiny.json"), manifest)
+	writeListYAML(t, filepath.Join(root, "index.yaml"), directory)
+	writeListYAML(t, filepath.Join(root, "tiny.yaml"), manifest)
 	return root
 }
 
-func writeListJSON(t *testing.T, path string, value any) {
+func writeListYAML(t *testing.T, path string, value any) {
 	t.Helper()
-	data, err := json.MarshalIndent(value, "", "  ")
+	data, err := waldoindex.MarshalYAML(value)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data = append(data, '\n')
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}

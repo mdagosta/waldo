@@ -14,8 +14,9 @@ complexity.
 ## Decision
 
 Every persistent WALDO format begins at schema 1 for the first release. In
-particular, both `index.json` directory metadata and corpus manifests use
-schema 1, and canonical Parquet records use record schema 1.
+particular, both directory navigation metadata and corpus manifests use schema
+1, and canonical Parquet records use record schema 1. Their later YAML-primary
+encoding does not change that schema identity.
 
 The existing `waldo-index` checkout is migrated in place. WALDO emits and
 accepts directory schema 1 only; it does not carry a legacy schema-2 reader.

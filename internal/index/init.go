@@ -1,7 +1,6 @@
 package index
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,11 +33,10 @@ func Initialize(path string) (string, error) {
 	}
 
 	directory := Directory{Kind: "index", Schema: DirectorySchema, Path: "", Entries: []Entry{}}
-	data, err := json.MarshalIndent(directory, "", "  ")
+	data, err := MarshalYAML(directory)
 	if err != nil {
 		return "", err
 	}
-	data = append(data, '\n')
 	temporary, err := os.CreateTemp(absolute, ".waldo-index-*")
 	if err != nil {
 		return "", err

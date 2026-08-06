@@ -76,12 +76,8 @@ func TestIndexIngestRecipePublishesAuditableManifestAndPurgesInputs(t *testing.T
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	manifestData, err := os.ReadFile(filepath.Join(output.Contribution.Root, "core", "recipe-corpus", "recipe-corpus.json"))
+	manifest, err := waldoindex.LoadManifest(filepath.Join(output.Contribution.Root, "core", "recipe-corpus", "recipe-corpus.yaml"))
 	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest waldoindex.Manifest
-	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		t.Fatal(err)
 	}
 	if manifest.ComposedBy != nil || !strings.Contains(manifest.ConvertedBy.Collector, ":recipe.yaml#sha256=") {

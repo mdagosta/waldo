@@ -9,8 +9,9 @@ verifiable inputs—and carries that provenance all the way into trained model
 releases. It is one command-line tool connecting three deliberately separate
 things:
 
-- a Git-governed index containing corpus meaning, sources, licenses, counts,
-  and object hashes;
+- a Git-governed, YAML-primary index containing corpus meaning, sources,
+  licenses, counts, and object hashes, with read compatibility for existing
+  JSON metadata;
 - content-addressed lookaside storage containing only canonical Parquet files;
   and
 - local model build and validation tools including support for BOMs that
@@ -494,9 +495,10 @@ unsigned warning.
 
 Working end to end today:
 
-- **Data governance:** schema-1 directory indexes, corpus manifests, canonical
-  Parquet records, recursive inspection, lightweight availability checks,
-  object hashing, and full record-level audits;
+- **Data governance:** YAML-primary schema-1 directory indexes and corpus
+  manifests with JSON read compatibility, canonical Parquet records, recursive
+  inspection, lightweight availability checks, object hashing, and full
+  record-level audits;
 - **Storage:** local and S3 lookaside publication through the AWS SDK,
   keychain-backed credentials, ordered read mirrors, bounded verified caching,
   scratch cleanup, inventory, scrubbing, and explicit object removal;
@@ -553,6 +555,7 @@ repository policy remain visible.
 - [EU GPAI disclosure mapping](docs/EU-GPAI-DISCLOSURE.md)
 - [Architectural decisions](docs/adr/README.md)
 - [Implementation roadmap](docs/ROADMAP.md)
+- [Prioritized remaining work](TODO.md)
 - [Testing guide](testing/README.md)
 
 ## Development

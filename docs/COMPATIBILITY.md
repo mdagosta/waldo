@@ -9,8 +9,9 @@ Compatibility is intentional, tested, and limited to the surfaces below.
 
 The binary and the unreleased `waldo-index` use one clean baseline:
 
-- `index.json` kind `index`, schema 1
-- Manifest kind `manifest`, schema 1
+- Directory navigation kind `index`, schema 1, read from `index.yaml`,
+  `index.yml`, or the established `index.json`
+- Manifest kind `manifest`, schema 1, read from `.yaml`, `.yml`, or `.json`
 - Existing source, conversion, shard, rollup, and inheritance fields
 - Current Git checkout path semantics
 - Current Parquet shards and legacy shard formats still referenced by a valid
@@ -25,6 +26,12 @@ tree's corpus, shard, document, token, byte, and license totals remain intact.
 Schema-1 `shards` is deliberately polymorphic: readers accept either the
 inline array or the documented rollup object. Object-enabled operations verify
 and expand rollup trees; local summaries use their Git-pinned aggregate totals.
+
+YAML is the canonical encoding for new writes. This does not increment the
+schema because the represented fields and meaning are unchanged. Existing
+JSON navigation and manifests remain readable indefinitely for the schema-1
+compatibility surface. A touched JSON navigation file is replaced explicitly
+with YAML; WALDO rejects two competing navigation files in one directory.
 
 ### Existing object identities
 

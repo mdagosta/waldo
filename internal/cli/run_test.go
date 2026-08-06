@@ -226,7 +226,7 @@ func TestIndexIngestPublishesAndBuildsContributionOverlay(t *testing.T) {
 	if remote.objects[output.Publication.Objects[0].SHA256] == 0 {
 		t.Fatal("published object is absent from fake lookaside")
 	}
-	if _, err := os.Stat(filepath.Join(output.Contribution.Root, "core", "example", "example.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(output.Contribution.Root, "core", "example", "example.yaml")); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -298,7 +298,7 @@ func TestIndexIngestPublishesToConfiguredLocalLookaside(t *testing.T) {
 	if !strings.HasPrefix(object.URL, "file://") {
 		t.Fatalf("object URL = %q", object.URL)
 	}
-	manifestPath := filepath.Join(output.Contribution.Root, "core", "local-published", "local-published.json")
+	manifestPath := filepath.Join(output.Contribution.Root, "core", "local-published", "local-published.yaml")
 	manifest, err := os.ReadFile(manifestPath)
 	if err != nil {
 		t.Fatal(err)

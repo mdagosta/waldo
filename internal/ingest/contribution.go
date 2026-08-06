@@ -54,7 +54,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			Docs: object.Docs, Tokens: object.Tokens, Bytes: object.Bytes,
 		})
 	}
-	validationPath := filepath.Join(plan.Destination, name+".json")
+	validationPath := filepath.Join(plan.Destination, name+index.YAMLExtension)
 	if err := index.ValidateManifest(validationPath, manifest); err != nil {
 		return index.Manifest{}, err
 	}

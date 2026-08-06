@@ -252,7 +252,7 @@ if [ "$line_count" -ne 2 ]; then
   echo "JSONL export contains $line_count records, want 2" >&2
   exit 1
 fi
-"$validator" "$jsonl" "$destination/tiny.json" \
+"$validator" "$jsonl" "$destination/tiny.yaml" \
   https://example.invalid/waldo-e2e tiny CC0-1.0 "$fixture" \
   "$fixture/01-plain.txt" "$fixture/02-markdown.md"
 

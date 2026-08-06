@@ -30,7 +30,8 @@ Implemented:
 - JSON output
 - Unit fixtures and acceptance tests against the real public index
 
-Deferred to the writing slice: regenerating and byte-comparing `index.json`.
+The later writing slice now emits deterministic YAML while retaining JSON
+read compatibility.
 
 ## Phase 2: verified OpenWALDO BOMs — complete
 

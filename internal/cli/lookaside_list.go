@@ -186,7 +186,7 @@ func compactIndexReferences(references []string, width int) string {
 	if len(references) == 0 {
 		return "--"
 	}
-	value := strings.TrimSuffix(references[0], ".json")
+	value := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(references[0], ".json"), ".yaml"), ".yml")
 	if len(references) > 1 {
 		value += fmt.Sprintf(" +%d", len(references)-1)
 	}

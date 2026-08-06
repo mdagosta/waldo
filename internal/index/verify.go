@@ -48,7 +48,10 @@ func verifyDirectory(root, dir string, result *Verification) error {
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(dir, indexFile)
+	path, err := DirectoryPath(dir)
+	if err != nil {
+		return err
+	}
 	if index.Kind != "index" {
 		return fmt.Errorf("%s: kind is %q, want %q", path, index.Kind, "index")
 	}

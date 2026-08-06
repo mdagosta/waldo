@@ -42,7 +42,7 @@ func TestStageContributionProducesMinimalValidIndexOverlay(t *testing.T) {
 	if resumed.Root != result.Root || len(resumed.Files) != len(result.Files) {
 		t.Fatalf("resumed contribution = %+v, want %+v", resumed, result)
 	}
-	want := []string{"core/example/example.json", "core/example/index.json", "core/index.json"}
+	want := []string{"core/example/example.yaml", "core/example/index.yaml", "core/index.yaml"}
 	if len(result.Files) != len(want) {
 		t.Fatalf("files = %v", result.Files)
 	}
@@ -60,6 +60,18 @@ func TestStageContributionProducesMinimalValidIndexOverlay(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(destination, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	wantRemoved := []string{"core/index.json"}
+	if len(result.Removed) != len(wantRemoved) {
+		t.Fatalf("removed = %v", result.Removed)
+	}
+	for position, relative := range wantRemoved {
+		if result.Removed[position] != relative {
+			t.Fatalf("removed = %v", result.Removed)
+		}
+		if err := os.Remove(filepath.Join(root, filepath.FromSlash(relative))); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -1,7 +1,6 @@
 package ingest
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,13 +11,16 @@ import (
 )
 
 type ContributionResult struct {
-	Root  string   `json:"root"`
-	Files []string `json:"files"`
+	Root    string   `json:"root"`
+	Files   []string `json:"files"`
+	Removed []string `json:"removed,omitempty"`
 }
 
 // StageContribution writes a minimal overlay containing the new manifest,
-// leaf index, and every changed ancestor index.json. It does not mutate the Git
-// checkout; the overlay is intended for review and an explicit apply step.
+// leaf index, and every changed ancestor index.yaml. Existing JSON/YML
+// navigation files superseded by those writes are returned in Removed. It does
+// not mutate the Git checkout; the overlay is intended for review and an
+// explicit apply-and-remove step.
 func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest index.Manifest) (ContributionResult, error) {
 	root, err := filepath.Abs(indexRoot)
 	if err != nil {
@@ -55,17 +57,17 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 	}()
 	result := ContributionResult{Root: finalRoot}
 	name := manifest.Name
-	manifestRelative := filepath.ToSlash(filepath.Join(filepath.FromSlash(plan.Destination), name+".json"))
-	if err := writeContributionJSON(temporary, manifestRelative, manifest); err != nil {
+	manifestRelative := filepath.ToSlash(filepath.Join(filepath.FromSlash(plan.Destination), name+index.YAMLExtension))
+	if err := writeContributionYAML(temporary, manifestRelative, manifest); err != nil {
 		return ContributionResult{}, err
 	}
 	result.Files = append(result.Files, manifestRelative)
 	leaf := index.Directory{
 		Kind: "index", Schema: index.DirectorySchema, Path: plan.Destination,
-		Entries: []index.Entry{{Name: name + ".json", Type: "manifest"}},
+		Entries: []index.Entry{{Name: name + index.YAMLExtension, Type: "manifest"}},
 	}
-	leafRelative := filepath.ToSlash(filepath.Join(filepath.FromSlash(plan.Destination), "index.json"))
-	if err := writeContributionJSON(temporary, leafRelative, leaf); err != nil {
+	leafRelative := filepath.ToSlash(filepath.Join(filepath.FromSlash(plan.Destination), "index.yaml"))
+	if err := writeContributionYAML(temporary, leafRelative, leaf); err != nil {
 		return ContributionResult{}, err
 	}
 	result.Files = append(result.Files, leafRelative)
@@ -79,6 +81,17 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 		parentPath := filepath.Join(root, filepath.FromSlash(parent))
 		directory, loadErr := index.LoadDirectory(parentPath)
 		if loadErr == nil {
+			existingPath, err := index.DirectoryPath(parentPath)
+			if err != nil {
+				return ContributionResult{}, err
+			}
+			if filepath.Base(existingPath) != "index.yaml" {
+				existingRelative, err := filepath.Rel(root, existingPath)
+				if err != nil {
+					return ContributionResult{}, err
+				}
+				result.Removed = append(result.Removed, filepath.ToSlash(existingRelative))
+			}
 			for _, entry := range directory.Entries {
 				if entry.Name == child {
 					return ContributionResult{}, fmt.Errorf("index directory %q already contains %q", parent, child)
@@ -86,8 +99,8 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 			}
 			directory.Entries = append(directory.Entries, index.Entry{Name: child, Type: "dir"})
 			directory.Entries = index.SortedEntries(directory.Entries)
-			relative := filepath.ToSlash(filepath.Join(filepath.FromSlash(parent), "index.json"))
-			if err := writeContributionJSON(temporary, relative, directory); err != nil {
+			relative := filepath.ToSlash(filepath.Join(filepath.FromSlash(parent), "index.yaml"))
+			if err := writeContributionYAML(temporary, relative, directory); err != nil {
 				return ContributionResult{}, err
 			}
 			result.Files = append(result.Files, relative)
@@ -100,8 +113,8 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 			Kind: "index", Schema: index.DirectorySchema, Path: parent,
 			Entries: []index.Entry{{Name: child, Type: "dir"}},
 		}
-		relative := filepath.ToSlash(filepath.Join(filepath.FromSlash(parent), "index.json"))
-		if err := writeContributionJSON(temporary, relative, directory); err != nil {
+		relative := filepath.ToSlash(filepath.Join(filepath.FromSlash(parent), "index.yaml"))
+		if err := writeContributionYAML(temporary, relative, directory); err != nil {
 			return ContributionResult{}, err
 		}
 		result.Files = append(result.Files, relative)
@@ -113,6 +126,8 @@ func StageContribution(indexRoot, stagingDirectory string, plan Plan, manifest i
 	}
 	slices.Sort(result.Files)
 	result.Files = slices.Compact(result.Files)
+	slices.Sort(result.Removed)
+	result.Removed = slices.Compact(result.Removed)
 	if err := syncContributionTree(temporary); err != nil {
 		return ContributionResult{}, err
 	}
@@ -226,15 +241,14 @@ func compareContributionTrees(left, right string, expected []string) error {
 	return nil
 }
 
-func writeContributionJSON(root, relative string, value any) error {
+func writeContributionYAML(root, relative string, value any) error {
 	if relative == "" || filepath.IsAbs(relative) || strings.HasPrefix(filepath.Clean(relative), "..") {
 		return fmt.Errorf("invalid contribution path %q", relative)
 	}
-	data, err := json.MarshalIndent(value, "", "  ")
+	data, err := index.MarshalYAML(value)
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
 	destination := filepath.Join(root, filepath.FromSlash(relative))
 	if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
 		return err

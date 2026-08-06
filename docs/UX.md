@@ -90,7 +90,7 @@ waldo index init /path/to/new-waldo-index
 ```
 
 The destination must be new or empty. WALDO writes only the root schema-1
-`index.json`; it does not initialize Git, configure a lookaside, or create a
+`index.yaml`; it does not initialize Git, configure a lookaside, or create a
 corpus. Those remain separate, visible actions.
 
 ### Inspect and verify an index
@@ -281,6 +281,13 @@ SHA-256, document count, reference-token estimate, and encoded byte size.
 Detailed processing prose, command arrays, modality duplication, and input
 inventories stay out of Git. Secrets and environment values are never written
 to the manifest.
+
+Index metadata is YAML-primary: new manifests use `<name>.yaml` and generated
+navigation uses `index.yaml`. Readers retain schema-1 compatibility with
+`.json`, `.yaml`, and `.yml`. When an overlay changes navigation that is still
+JSON or `.yml`, its result lists both the YAML replacement and the superseded
+path to remove before verification and commit. Two competing navigation files
+in one directory are rejected.
 
 Publication is configured once through `waldo config set`; ingestion
 has no second per-run destination or alternate partial execution mode.
