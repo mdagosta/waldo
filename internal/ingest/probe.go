@@ -298,8 +298,11 @@ func detectCompressedContent(file *os.File, artifactPath, compression string) (s
 	if !complete {
 		sample = sample[:probeBytes]
 	}
-	format := detectJSON(bytes.TrimSpace(sample), complete)
-	if format == "jsonl" || (format == "json" && compressedJSONLExtension(artifactPath)) {
+	trimmed := bytes.TrimSpace(sample)
+	format := detectJSON(trimmed, complete)
+	compoundJSONL := compressedJSONLExtension(artifactPath)
+	if format == "jsonl" || (format == "json" && compoundJSONL) ||
+		(format == "" && compoundJSONL && bytes.HasPrefix(trimmed, []byte("{")) && validUTF8Sample(sample, complete)) {
 		return "jsonl", nil
 	}
 	return "", nil

@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/klauspost/compress/zstd"
@@ -91,6 +92,19 @@ func TestCompressedJSONLAssemblesDocumentAndTokenCounts(t *testing.T) {
 func TestSingleRecordCompressedJSONLUsesCompoundExtensionHint(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "one.jsonl.gz")
 	writeCompressedJSONL(t, path, "gzip", "{\"text\":\"only document\"}\n")
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Artifacts[0].Format != "jsonl" || probe.Artifacts[0].Compression != "gzip" {
+		t.Fatalf("artifact = %+v", probe.Artifacts[0])
+	}
+}
+
+func TestCompressedJSONLDetectsObjectLargerThanProbeSample(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large-first-record.jsonl.gz")
+	contents := "{\"text\":\"" + strings.Repeat("a", probeBytes+1) + "\"}\n{\"text\":\"second\"}\n"
+	writeCompressedJSONL(t, path, "gzip", contents)
 	probe, err := ProbePaths(context.Background(), []string{path})
 	if err != nil {
 		t.Fatal(err)
