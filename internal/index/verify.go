@@ -2,7 +2,9 @@ package index
 
 import (
 	"fmt"
+	"net/url"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -10,6 +12,7 @@ import (
 )
 
 var sha256Pattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var contentHashPathPattern = regexp.MustCompile(`^[0-9a-f]{64,}$`)
 
 type Verification struct {
 	Directories int64 `json:"directories"`
@@ -187,6 +190,9 @@ func verifyManifest(path string, manifest Manifest) error {
 		if shard.Docs < 0 || shard.Tokens < 0 || shard.Bytes < 0 {
 			return fmt.Errorf("%s: shard %s has negative totals", path, shard.SHA256[:12])
 		}
+		if object, ok := contentHashPath(shard.URL); ok && object != shard.SHA256 {
+			return fmt.Errorf("%s: shard %s URL object %q does not match its sha256", path, shard.SHA256[:12], object)
+		}
 		for _, name := range shard.Sources {
 			if !sources[name] {
 				return fmt.Errorf("%s: shard %s refers to unknown source %q", path, shard.SHA256[:12], name)
@@ -208,6 +214,15 @@ func verifyManifest(path string, manifest Manifest) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil
+}
+
+func contentHashPath(raw string) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", false
+	}
+	object := pathpkg.Base(parsed.Path)
+	return object, contentHashPathPattern.MatchString(object)
 }
 
 // ValidateIngestRecipeEvidence validates portable historical recipe evidence
