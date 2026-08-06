@@ -67,6 +67,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 			CollectedFrom: loadedRecipe.Recipe.Source.CollectedFrom, CollectedTo: loadedRecipe.Recipe.Source.CollectedTo,
 		}
 		options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
+		options.Request.Profile = loadedRecipe.Recipe.Input
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
 		return usageError{message: "direct index update requires --title, --license, --source, and --source-category"}
 	}

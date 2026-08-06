@@ -99,7 +99,7 @@ func TestIndexIngestRecipePublishesAuditableManifestAndPurgesInputs(t *testing.T
 }
 
 func TestIndexUpdateRecipeRebuildsWithoutReadingOldShardAndMigratesYAML(t *testing.T) {
-	recipePath := writeCLIRecipe(t)
+	recipePath := writeCLIProfileRecipe(t)
 	root := t.TempDir()
 	writeCLIFile(t, filepath.Join(root, "index.json"), `{"kind":"index","schema":1,"path":"","entries":[{"name":"core","type":"dir"}]}`)
 	writeCLIFile(t, filepath.Join(root, "core", "index.json"), `{"kind":"index","schema":1,"path":"core","entries":[{"name":"example.json","type":"manifest"}]}`)
@@ -119,7 +119,10 @@ func TestIndexUpdateRecipeRebuildsWithoutReadingOldShardAndMigratesYAML(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
-	runner := &cliRecipeRunner{}
+	runner := &cliRecipeRunner{
+		outputName: "dialogue.jsonl",
+		outputData: []byte(`{"prompt":"How are you?","reply":"Well, thank you."}` + "\n"),
+	}
 	originalRunner := ingestRecipeRunner
 	ingestRecipeRunner = runner
 	t.Cleanup(func() { ingestRecipeRunner = originalRunner })
@@ -162,6 +165,8 @@ func TestIndexUpdateRecipeRebuildsWithoutReadingOldShardAndMigratesYAML(t *testi
 type cliRecipeRunner struct {
 	calls       int
 	updateState []byte
+	outputName  string
+	outputData  []byte
 }
 
 func (runner *cliRecipeRunner) Run(_ context.Context, _ string, _ []string, directory string, environment []string, _, _ io.Writer) error {
@@ -175,7 +180,13 @@ func (runner *cliRecipeRunner) Run(_ context.Context, _ string, _ []string, dire
 			runner.updateState = data
 		}
 	}
-	return os.WriteFile(filepath.Join(directory, "document.txt"), []byte("recipe corpus document"), 0o644)
+	name := runner.outputName
+	data := runner.outputData
+	if name == "" {
+		name = "document.txt"
+		data = []byte("recipe corpus document")
+	}
+	return os.WriteFile(filepath.Join(directory, name), data, 0o644)
 }
 
 func containsString(values []string, target string) bool {
@@ -204,6 +215,39 @@ source:
   name: recipe-source
   url: https://example.test/recipe
   category: public-dataset
+steps:
+  - name: fetch
+    exec: ./fetch.sh
+    args: [fixture]
+`
+	if err := os.WriteFile(recipePath, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return recipePath
+}
+
+func writeCLIProfileRecipe(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	script := filepath.Join(root, "fetch.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recipePath := filepath.Join(root, "recipe.yaml")
+	contents := `kind: waldo-ingest-recipe
+schema: 1
+title: Recipe Corpus
+description: Produced by a reviewed ingest recipe.
+license: CC0-1.0
+source:
+  name: recipe-source
+  url: https://example.test/recipe
+  category: public-dataset
+input:
+  type: dialogue-pair
+  fields:
+    text: [prompt]
+    response: reply
 steps:
   - name: fetch
     exec: ./fetch.sh
