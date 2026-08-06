@@ -12,8 +12,8 @@ func TestAppendSeedDropsExistingContentWithoutProducingShard(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "document.txt")
 	writeFixture(t, input, "already indexed")
 	plan := textFixturePlan(t, input)
-	result, err := AssembleTextObjectsWithSeedAndSink(context.Background(), plan, t.TempDir(), func(add func([]string) error) error {
-		return add([]string{record.TextHash("already indexed")})
+	result, err := AssembleTextObjectsWithSeedAndSink(context.Background(), plan, t.TempDir(), func(add func([]DedupIdentity) error) error {
+		return add([]DedupIdentity{{SHA256: record.TextHash("already indexed"), License: plan.License}})
 	}, nil)
 	if err != nil {
 		t.Fatal(err)

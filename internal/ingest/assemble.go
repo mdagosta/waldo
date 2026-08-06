@@ -29,6 +29,7 @@ type ObjectResult struct {
 	Tokens       int64  `json:"tokens"`
 	LogicalBytes int64  `json:"logical_bytes"`
 	RowGroups    int    `json:"row_groups"`
+	License      string `json:"license"`
 }
 
 type AssemblyResult struct {
@@ -40,7 +41,7 @@ type AssemblyResult struct {
 
 // DedupSeed streams existing canonical content identities into an update's
 // disk-backed exact membership set before any new records are admitted.
-type DedupSeed func(func([]string) error) error
+type DedupSeed func(func([]DedupIdentity) error) error
 
 // AssembleTextObjects runs the accepted adapters and packs their canonical
 // rows into verified Parquet files beneath stagingDirectory/objects. Complete
@@ -97,7 +98,7 @@ func AssembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 		return assembler.addBatch(unique)
 	})
 	if err == nil {
-		err = assembler.finishActive()
+		err = assembler.finishAll()
 	}
 	if err != nil {
 		assembler.discardActive()
@@ -119,7 +120,8 @@ type objectAssembler struct {
 	ctx       context.Context
 	plan      Plan
 	directory string
-	active    *activeObject
+	active    map[string]*activeObject
+	clock     int64
 	results   []ObjectResult
 	sink      func(ObjectResult) error
 	counter   tokenizer.Counter
@@ -134,57 +136,47 @@ type activeObject struct {
 	tokens          int64
 	logicalBytes    int64
 	rowGroupLogical int64
-	licenses        map[string]struct{}
+	license         string
+	lastUsed        int64
 }
 
 func (assembler *objectAssembler) addBatch(batch TextBatch) error {
-	for position := 0; position < len(batch.Rows); {
+	if assembler.active == nil {
+		assembler.active = map[string]*activeObject{}
+	}
+	for position := range batch.Rows {
 		if err := assembler.ctx.Err(); err != nil {
 			return err
 		}
-		if assembler.active == nil {
-			if err := assembler.start(); err != nil {
-				return err
-			}
+		row := batch.Rows[position]
+		if row.License == "" {
+			return fmt.Errorf("canonical row has no effective license")
 		}
-		active := assembler.active
-		start := position
-		for position < len(batch.Rows) {
-			rowBytes := int64(len(batch.Rows[position].Text))
-			if position > start && active.rowGroupLogical+rowBytes > assembler.plan.Writer.RowGroupLogicalBytes {
-				break
-			}
-			if position == start && active.rowGroupLogical > 0 && active.rowGroupLogical+rowBytes > assembler.plan.Writer.RowGroupLogicalBytes {
-				break
-			}
-			active.rowGroupLogical += rowBytes
-			position++
-			if active.rowGroupLogical >= assembler.plan.Writer.RowGroupLogicalBytes {
-				break
-			}
-		}
-		if position == start {
-			if err := assembler.flushRowGroup(); err != nil {
-				return err
-			}
-			continue
-		}
-		rows := batch.Rows[start:position]
-		for index := range rows {
-			count := int64(assembler.counter.Count(rows[index].Text))
-			rows[index].TokenCount = &count
-			active.tokens += count
-		}
-		if _, err := active.writer.Write(rows); err != nil {
+		active, err := assembler.writerFor(row.License)
+		if err != nil {
 			return err
 		}
-		for _, row := range rows {
-			active.docs++
-			active.logicalBytes += int64(len(row.Text))
-			active.licenses[row.License] = struct{}{}
+		rowBytes := int64(len(row.Text))
+		if active.rowGroupLogical > 0 && active.rowGroupLogical+rowBytes > assembler.plan.Writer.RowGroupLogicalBytes {
+			if err := assembler.flushRowGroup(active); err != nil {
+				return err
+			}
+			active, err = assembler.writerFor(row.License)
+			if err != nil {
+				return err
+			}
 		}
+		count := int64(assembler.counter.Count(row.Text))
+		row.TokenCount = &count
+		active.tokens += count
+		if _, err := active.writer.Write([]shard.TextRow{row}); err != nil {
+			return err
+		}
+		active.docs++
+		active.logicalBytes += rowBytes
+		active.rowGroupLogical += rowBytes
 		if active.rowGroupLogical >= assembler.plan.Writer.RowGroupLogicalBytes {
-			if err := assembler.flushRowGroup(); err != nil {
+			if err := assembler.flushRowGroup(active); err != nil {
 				return err
 			}
 		}
@@ -192,22 +184,39 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 	return nil
 }
 
-func (assembler *objectAssembler) start() error {
+const maximumActiveLicenseWriters = 16
+
+func (assembler *objectAssembler) writerFor(license string) (*activeObject, error) {
+	assembler.clock++
+	if active := assembler.active[license]; active != nil {
+		active.lastUsed = assembler.clock
+		return active, nil
+	}
+	if len(assembler.active) >= maximumActiveLicenseWriters {
+		var evict *activeObject
+		for _, candidate := range assembler.active {
+			if evict == nil || candidate.lastUsed < evict.lastUsed || (candidate.lastUsed == evict.lastUsed && candidate.license < evict.license) {
+				evict = candidate
+			}
+		}
+		if err := assembler.finishActive(evict); err != nil {
+			return nil, err
+		}
+	}
 	file, err := os.CreateTemp(assembler.directory, ".waldo-shard-*")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	stream := newCountingHashWriter(file)
-	assembler.active = &activeObject{
+	active := &activeObject{
 		path: file.Name(), file: file, stream: stream,
-		writer:   shard.NewTextParquetWriter(stream),
-		licenses: map[string]struct{}{},
+		writer: shard.NewTextParquetWriter(stream), license: license, lastUsed: assembler.clock,
 	}
-	return nil
+	assembler.active[license] = active
+	return active, nil
 }
 
-func (assembler *objectAssembler) flushRowGroup() error {
-	active := assembler.active
+func (assembler *objectAssembler) flushRowGroup(active *activeObject) error {
 	if active == nil || active.rowGroupLogical == 0 {
 		return nil
 	}
@@ -218,17 +227,16 @@ func (assembler *objectAssembler) flushRowGroup() error {
 	// Writer.Size observes completed row groups even when parquet-go's small
 	// output buffer has not yet reached the underlying file.
 	if active.writer.Size() >= assembler.plan.Writer.CompressedTarget {
-		return assembler.finishActive()
+		return assembler.finishActive(active)
 	}
 	return nil
 }
 
-func (assembler *objectAssembler) finishActive() error {
-	active := assembler.active
+func (assembler *objectAssembler) finishActive(active *activeObject) error {
 	if active == nil {
 		return nil
 	}
-	assembler.active = nil
+	delete(assembler.active, active.license)
 	setAggregateMetadata(active)
 	if err := active.writer.Close(); err != nil {
 		_ = active.file.Close()
@@ -248,6 +256,7 @@ func (assembler *objectAssembler) finishActive() error {
 	result := ObjectResult{
 		Path: active.path, SHA256: digest, Bytes: active.stream.n,
 		Docs: active.docs, Tokens: active.tokens, LogicalBytes: active.logicalBytes,
+		License: active.license,
 	}
 	if result.Bytes > assembler.plan.Writer.CompressedMaximum {
 		_ = os.Remove(active.path)
@@ -293,32 +302,34 @@ func (assembler *objectAssembler) finishActive() error {
 	return nil
 }
 
+func (assembler *objectAssembler) finishAll() error {
+	licenses := make([]string, 0, len(assembler.active))
+	for license := range assembler.active {
+		licenses = append(licenses, license)
+	}
+	sort.Strings(licenses)
+	for _, license := range licenses {
+		if err := assembler.finishActive(assembler.active[license]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func setAggregateMetadata(active *activeObject) {
 	active.writer.SetKeyValueMetadata("waldo.records", fmt.Sprint(active.docs))
 	active.writer.SetKeyValueMetadata("waldo.tokens", fmt.Sprint(active.tokens))
 	active.writer.SetKeyValueMetadata("waldo.content_bytes", fmt.Sprint(active.logicalBytes))
-	for _, aggregate := range []struct {
-		key    string
-		values map[string]struct{}
-	}{{"waldo.licenses", active.licenses}} {
-		key, values := aggregate.key, aggregate.values
-		list := make([]string, 0, len(values))
-		for value := range values {
-			list = append(list, value)
-		}
-		sort.Strings(list)
-		encoded, _ := json.Marshal(list)
-		active.writer.SetKeyValueMetadata(key, string(encoded))
-	}
+	encoded, _ := json.Marshal([]string{active.license})
+	active.writer.SetKeyValueMetadata("waldo.licenses", string(encoded))
 }
 
 func (assembler *objectAssembler) discardActive() {
-	if assembler.active == nil {
-		return
+	for _, active := range assembler.active {
+		_ = active.writer.Close()
+		_ = active.file.Close()
+		_ = os.Remove(active.path)
 	}
-	_ = assembler.active.writer.Close()
-	_ = assembler.active.file.Close()
-	_ = os.Remove(assembler.active.path)
 	assembler.active = nil
 }
 
@@ -373,6 +384,9 @@ func verifyAssembledObject(object ObjectResult) (int, error) {
 	}
 	if audited.Records != object.Docs || audited.Tokens != object.Tokens || audited.ContentBytes != object.LogicalBytes {
 		return 0, fmt.Errorf("assembled object audit totals do not match assembly totals")
+	}
+	if len(audited.Licenses) != 1 || audited.Licenses[0] != object.License {
+		return 0, fmt.Errorf("assembled object license partition does not match %q", object.License)
 	}
 	return len(parquetFile.RowGroups()), nil
 }

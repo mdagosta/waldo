@@ -86,7 +86,7 @@ func TestBuildManifestSizeDoesNotScaleWithInputArtifactCount(t *testing.T) {
 		plan.Inputs[position] = input
 	}
 	assembly := AssemblyResult{
-		Objects:   []ObjectResult{{SHA256: fmt.Sprintf("%064x", 1), Bytes: 1024, Docs: 25_000, Tokens: 50_000, LogicalBytes: 500_000}},
+		Objects:   []ObjectResult{{SHA256: fmt.Sprintf("%064x", 1), Bytes: 1024, Docs: 25_000, Tokens: 50_000, LogicalBytes: 500_000, License: plan.License}},
 		InputDocs: 25_000, RetainedDocs: 25_000,
 	}
 	manifest, err := BuildManifest(plan, assembly, "s3://openwaldo/lookaside/v1")

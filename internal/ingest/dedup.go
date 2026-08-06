@@ -10,22 +10,27 @@ import (
 
 var dedupBucket = []byte("content-sha256")
 
+type DedupIdentity struct {
+	SHA256  string
+	License string
+}
+
 type deduplicator struct {
 	database *bbolt.DB
 	input    int64
 	kept     int64
 }
 
-func (dedup *deduplicator) seedIDs(values []string) error {
+func (dedup *deduplicator) seedIDs(values []DedupIdentity) error {
 	return dedup.database.Update(func(transaction *bbolt.Tx) error {
 		bucket := transaction.Bucket(dedupBucket)
 		if bucket == nil {
 			return fmt.Errorf("deduplication bucket is missing")
 		}
 		for _, value := range values {
-			key, err := hex.DecodeString(value)
-			if err != nil || len(key) != 32 {
-				return fmt.Errorf("invalid seeded content SHA-256 %q", value)
+			key, err := dedupKey(value.SHA256, value.License)
+			if err != nil {
+				return err
 			}
 			if err := bucket.Put(key, []byte{1}); err != nil {
 				return err
@@ -59,7 +64,8 @@ func (dedup *deduplicator) filter(batch TextBatch) (TextBatch, error) {
 		}
 		for _, row := range batch.Rows {
 			dedup.input++
-			key := row.ContentSHA256[:]
+			key := append(append([]byte(nil), row.ContentSHA256[:]...), 0)
+			key = append(key, row.License...)
 			if bucket.Get(key) != nil {
 				continue
 			}
@@ -73,4 +79,16 @@ func (dedup *deduplicator) filter(batch TextBatch) (TextBatch, error) {
 		return nil
 	})
 	return result, err
+}
+
+func dedupKey(digest, license string) ([]byte, error) {
+	hash, err := hex.DecodeString(digest)
+	if err != nil || len(hash) != 32 {
+		return nil, fmt.Errorf("invalid seeded content SHA-256 %q", digest)
+	}
+	if license == "" {
+		return nil, fmt.Errorf("seeded content %s has no effective license", digest)
+	}
+	key := append(hash, 0)
+	return append(key, license...), nil
 }

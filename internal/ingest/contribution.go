@@ -47,6 +47,9 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		},
 	}
 	for _, object := range assembly.Objects {
+		if object.License == "" {
+			return index.Manifest{}, fmt.Errorf("assembled object %s has no effective license", object.SHA256)
+		}
 		objectURL, err := contentAddressedURL(objectBase, object.SHA256)
 		if err != nil {
 			return index.Manifest{}, err
@@ -55,6 +58,9 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			URL: objectURL, SHA256: object.SHA256, Sources: []string{plan.Source.Name},
 			Docs: object.Docs, Tokens: object.Tokens, Bytes: object.Bytes,
 		})
+		if object.License != plan.License {
+			manifest.Shards[len(manifest.Shards)-1].License = object.License
+		}
 	}
 	validationPath := filepath.Join(plan.Destination, name+index.YAMLExtension)
 	if err := index.ValidateManifest(validationPath, manifest); err != nil {

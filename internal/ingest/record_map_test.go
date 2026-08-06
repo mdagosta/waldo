@@ -82,6 +82,39 @@ func TestRecordMapReadsMappedParquetFields(t *testing.T) {
 	}
 }
 
+func TestPerRecordLicensesPartitionObjectsAndManifest(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "licenses.jsonl")
+	contents := "{\"text\":\"same\",\"license\":\"CC0-1.0\"}\n{\"text\":\"same\",\"license\":\"CC-BY-4.0\"}\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := mappedFixturePlan(t, path, InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"text"}, License: "license"}})
+	assembly, err := AssembleTextObjects(context.Background(), plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assembly.RetainedDocs != 2 || assembly.DuplicateDocs != 0 || len(assembly.Objects) != 2 {
+		t.Fatalf("assembly = %+v", assembly)
+	}
+	licenses := map[string]bool{}
+	for _, object := range assembly.Objects {
+		licenses[object.License] = true
+	}
+	if !licenses["CC0-1.0"] || !licenses["CC-BY-4.0"] {
+		t.Fatalf("object licenses = %v", licenses)
+	}
+	manifest, err := BuildManifest(plan, assembly, "s3://openwaldo/lookaside/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, object := range manifest.Shards {
+		licenses[manifest.EffectiveLicense(object)] = true
+	}
+	if !licenses["CC0-1.0"] || !licenses["CC-BY-4.0"] {
+		t.Fatalf("manifest shards = %+v", manifest.Shards)
+	}
+}
+
 func mappedFixturePlan(t *testing.T, path string, profile InputProfile) Plan {
 	t.Helper()
 	probe, err := ProbePaths(context.Background(), []string{path})

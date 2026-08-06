@@ -276,9 +276,9 @@ func updateDedupSeed(ctx context.Context, target waldoindex.Target) (ingest.Dedu
 	if _, err := shard.Audit(ctx, paths); err != nil {
 		return nil, fmt.Errorf("audit existing update corpus: %w", err)
 	}
-	return func(add func([]string) error) error {
+	return func(add func([]ingest.DedupIdentity) error) error {
 		const batchSize = 8192
-		batch := make([]string, 0, batchSize)
+		batch := make([]ingest.DedupIdentity, 0, batchSize)
 		flush := func() error {
 			if len(batch) == 0 {
 				return nil
@@ -291,7 +291,7 @@ func updateDedupSeed(ctx context.Context, target waldoindex.Target) (ingest.Dedu
 		}
 		for _, path := range paths {
 			if err := shard.WalkRecords(path, func(_ int64, record shard.RecordView) error {
-				batch = append(batch, record.ID)
+				batch = append(batch, ingest.DedupIdentity{SHA256: record.ID, License: record.License})
 				if len(batch) == batchSize {
 					return flush()
 				}
