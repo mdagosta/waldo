@@ -51,6 +51,34 @@ steps:
 	}
 }
 
+func TestLoadRecipeAcceptsDeclarativeInputProfile(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "fetch.sh")
+	writeExecutable(t, script, "#!/bin/sh\n")
+	recipePath := filepath.Join(root, "example.yaml")
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-recipe
+schema: 1
+title: Cases
+license: CC0-1.0
+source: {url: https://example.test, category: public-dataset}
+input:
+  type: record-map
+  fields:
+    text: [casebody.head_matter, "casebody.opinions[].text"]
+    id: id
+    license: metadata.license
+steps: [{name: fetch, exec: ./fetch.sh}]
+`)
+	loaded, found, err := LoadRecipe(recipePath)
+	if err != nil || !found {
+		t.Fatalf("LoadRecipe() found=%v err=%v", found, err)
+	}
+	if loaded.Recipe.Input.Type != ProfileRecordMap || len(loaded.Recipe.Input.Fields.Text) != 2 {
+		t.Fatalf("input = %+v", loaded.Recipe.Input)
+	}
+}
+
 func TestLoadRecipeRejectsUnknownFieldsAndNonExecutableCommands(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "fetch.sh")

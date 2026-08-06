@@ -58,10 +58,11 @@ type WriterPlan struct {
 }
 
 type PlanInput struct {
-	Artifact   Artifact `json:"artifact"`
-	Adapter    string   `json:"adapter"`
-	TextColumn string   `json:"text_column,omitempty"`
-	SourcePath string   `json:"source_path,omitempty"`
+	Artifact   Artifact     `json:"artifact"`
+	Adapter    string       `json:"adapter"`
+	TextColumn string       `json:"text_column,omitempty"`
+	SourcePath string       `json:"source_path,omitempty"`
+	Profile    InputProfile `json:"profile,omitempty"`
 }
 
 type PlanRequest struct {
@@ -73,6 +74,7 @@ type PlanRequest struct {
 	Mode           string
 	MemoryBytes    int64
 	TextColumn     string
+	Profile        InputProfile
 	InputRoot      string
 	RecipeEvidence *index.IngestRecipeEvidence
 	Update         *UpdatePlan
@@ -130,7 +132,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		plan.Description = "Training corpus acquired from " + request.Source.Name + "."
 	}
 	for _, artifact := range probe.Artifacts {
-		input := PlanInput{Artifact: artifact}
+		input := PlanInput{Artifact: artifact, Profile: request.Profile}
 		if request.InputRoot != "" {
 			root, err := filepath.Abs(request.InputRoot)
 			if err != nil {
@@ -142,20 +144,46 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			}
 			input.SourcePath = filepath.ToSlash(relative)
 		}
-		switch artifact.Format {
-		case "text", "markdown":
-			input.Adapter = artifact.Format
-		case "parquet":
-			input.Adapter = "parquet"
-			column, err := chooseTextColumn(artifact, request.TextColumn)
-			if err != nil {
-				return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
+		if err := input.Profile.Validate(); err != nil {
+			return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
+		}
+		if input.Profile.recordProfile() {
+			switch artifact.Format {
+			case "json", "jsonl", "parquet":
+				input.Adapter = artifact.Format
+			default:
+				return Plan{}, fmt.Errorf("%s: profile %s requires JSON, JSONL, or Parquet, not %q", artifact.Path, input.Profile.Type, artifact.Format)
 			}
-			input.TextColumn = column
-		case "jsonl":
-			input.Adapter = "jsonl"
+			plan.Inputs = append(plan.Inputs, input)
+			continue
+		}
+		switch input.Profile.Type {
+		case ProfileGutenbergText:
+			if artifact.Format != "text" {
+				return Plan{}, fmt.Errorf("%s: gutenberg-text requires text input, not %q", artifact.Path, artifact.Format)
+			}
+			input.Adapter = ProfileGutenbergText
+		case ProfileJATSXML:
+			if artifact.Format != "xml" {
+				return Plan{}, fmt.Errorf("%s: jats-xml requires XML input, not %q", artifact.Path, artifact.Format)
+			}
+			input.Adapter = ProfileJATSXML
 		default:
-			return Plan{}, fmt.Errorf("%s: detected format %q has no enabled adapter", artifact.Path, artifact.Format)
+			switch artifact.Format {
+			case "text", "markdown":
+				input.Adapter = artifact.Format
+			case "parquet":
+				input.Adapter = "parquet"
+				column, err := chooseTextColumn(artifact, request.TextColumn)
+				if err != nil {
+					return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
+				}
+				input.TextColumn = column
+			case "jsonl":
+				input.Adapter = "jsonl"
+			default:
+				return Plan{}, fmt.Errorf("%s: detected format %q has no enabled adapter", artifact.Path, artifact.Format)
+			}
 		}
 		plan.Inputs = append(plan.Inputs, input)
 	}
@@ -228,6 +256,16 @@ func (plan Plan) Validate() error {
 				return fmt.Errorf("input %s has invalid source path %q", artifact.Path, input.SourcePath)
 			}
 		}
+		if err := input.Profile.Validate(); err != nil {
+			return fmt.Errorf("input %s: %w", artifact.Path, err)
+		}
+		if input.Profile.recordProfile() {
+			if input.Adapter != artifact.Format || (input.Adapter != "json" && input.Adapter != "jsonl" && input.Adapter != "parquet") || input.TextColumn != "" {
+				return fmt.Errorf("input %s has an inconsistent record-profile adapter", artifact.Path)
+			}
+			previous = artifact.Path
+			continue
+		}
 		switch input.Adapter {
 		case "text", "markdown":
 			if artifact.Format != input.Adapter || input.TextColumn != "" {
@@ -240,6 +278,14 @@ func (plan Plan) Validate() error {
 		case "jsonl":
 			if artifact.Format != "jsonl" || input.TextColumn != "" || (artifact.Compression != "" && artifact.Compression != "gzip" && artifact.Compression != "zstd") {
 				return fmt.Errorf("input %s has an inconsistent JSONL adapter", artifact.Path)
+			}
+		case ProfileGutenbergText:
+			if artifact.Format != "text" || input.Profile.Type != ProfileGutenbergText {
+				return fmt.Errorf("input %s has an inconsistent Gutenberg adapter", artifact.Path)
+			}
+		case ProfileJATSXML:
+			if artifact.Format != "xml" || input.Profile.Type != ProfileJATSXML {
+				return fmt.Errorf("input %s has an inconsistent JATS adapter", artifact.Path)
 			}
 		default:
 			return fmt.Errorf("input %s has unsupported adapter %q", artifact.Path, input.Adapter)

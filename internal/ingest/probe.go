@@ -246,6 +246,11 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 		artifact.Evidence = []string{"html-root"}
 		return nil
 	}
+	if looksXML(trimmed) {
+		artifact.Format = "xml"
+		artifact.Evidence = []string{"xml-root"}
+		return nil
+	}
 	if format := detectJSON(trimmed, artifact.Bytes <= probeBytes); format != "" {
 		if format == "json" && strings.EqualFold(filepath.Ext(artifact.Path), ".jsonl") {
 			format = "jsonl"
@@ -371,6 +376,10 @@ func detectMedia(sample []byte, mediaType string) string {
 func looksHTML(trimmed []byte) bool {
 	lower := bytes.ToLower(trimmed)
 	return bytes.HasPrefix(lower, []byte("<!doctype html")) || bytes.HasPrefix(lower, []byte("<html"))
+}
+
+func looksXML(trimmed []byte) bool {
+	return bytes.HasPrefix(trimmed, []byte("<?xml")) || bytes.HasPrefix(trimmed, []byte("<article"))
 }
 
 func detectJSON(trimmed []byte, complete bool) string {

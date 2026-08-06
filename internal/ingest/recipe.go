@@ -40,6 +40,7 @@ type IngestRecipe struct {
 	License     string       `json:"license" yaml:"license"`
 	Source      RecipeSource `json:"source" yaml:"source"`
 	TextColumn  string       `json:"text_column,omitempty" yaml:"text_column,omitempty"`
+	Input       InputProfile `json:"input,omitempty" yaml:"input,omitempty"`
 	Steps       []RecipeStep `json:"steps" yaml:"steps"`
 }
 
@@ -155,6 +156,12 @@ func (recipe IngestRecipe) Validate() error {
 	}
 	if _, ok := index.CanonicalSourceCategory(recipe.Source.Category); !ok {
 		return fmt.Errorf("unsupported source category %q", recipe.Source.Category)
+	}
+	if err := recipe.Input.Validate(); err != nil {
+		return fmt.Errorf("input: %w", err)
+	}
+	if recipe.TextColumn != "" && recipe.Input.Type != "" {
+		return fmt.Errorf("text_column and input profile cannot both be set")
 	}
 	category, _ := index.CanonicalSourceCategory(recipe.Source.Category)
 	switch category {
