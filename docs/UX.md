@@ -439,7 +439,9 @@ paths. It may optionally name a locally managed downloaded base and assert its
 origin hash. The command validates every selection, creates the model if
 absent, and executes its stages. Existing names are refused unless `--replace`
 is explicitly supplied; replacement is prepared fully before the old model is
-removed.
+removed. Compose work is staged in a content-identified durable transaction.
+Repeating the exact command after interruption resumes its current stage and
+run; changed composes, corpus BOMs, or replacement targets never share staging.
 
 Direct `model train` defaults to one epoch. `--epochs` is the sole direct-run
 training-budget flag and means complete passes over the training partition.

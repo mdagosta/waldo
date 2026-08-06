@@ -52,7 +52,11 @@ func runModelComposeForecast(context Context, path string, stdout io.Writer) err
 	if err != nil {
 		return err
 	}
-	report, err := model.ForecastCompose(compose)
+	calibrations, err := configuredForecastCalibration()
+	if err != nil {
+		return err
+	}
+	report, err := model.ForecastComposeWithCalibration(compose, calibrations)
 	if err != nil {
 		return err
 	}
@@ -83,7 +87,11 @@ func runModelIndexForecast(context Context, paths []string, stdout io.Writer) er
 	if err != nil {
 		return err
 	}
-	preset, report, err := model.ForecastIndexSelection(bom.Totals.Tokens)
+	calibrations, err := configuredForecastCalibration()
+	if err != nil {
+		return err
+	}
+	preset, report, err := model.ForecastIndexSelectionWithCalibration(bom.Totals.Tokens, calibrations)
 	if err != nil {
 		return err
 	}
@@ -119,9 +127,13 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 		duration     string
 	}
 	rows := make([]row, 0, len(report.Configurations))
+	observedRuns := 0
 	manufacturerWidth, acceleratorWidth := len("MFR"), len("ACCELERATOR")
 	GPUsWidth, memoryWidth, durationWidth := len("GPUS"), len("MEMORY/GPU"), len("APPROX. TIME")
 	for _, configuration := range report.Configurations {
+		if configuration.EstimateSource == "observed-runs" {
+			observedRuns += configuration.ObservedRuns
+		}
 		candidate := row{
 			manufacturer: configuration.Manufacturer,
 			accelerator:  configuration.Accelerator,
@@ -136,10 +148,25 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 		memoryWidth = max(memoryWidth, len(candidate.memory))
 		durationWidth = max(durationWidth, len(candidate.duration))
 	}
+	if observedRuns > 0 {
+		label := "runs"
+		if observedRuns == 1 {
+			label = "run"
+		}
+		fmt.Fprintf(stdout, "CALIBRATION: %d completed local %s applied\n\n", observedRuns, label)
+	}
 	fmt.Fprintf(stdout, "%*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, "GPUS", manufacturerWidth, "MFR", acceleratorWidth, "ACCELERATOR", memoryWidth, "MEMORY/GPU", durationWidth, "APPROX. TIME")
 	for _, candidate := range rows {
 		fmt.Fprintf(stdout, "%*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, candidate.GPUs, manufacturerWidth, candidate.manufacturer, acceleratorWidth, candidate.accelerator, memoryWidth, candidate.memory, durationWidth, candidate.duration)
 	}
+}
+
+func configuredForecastCalibration() ([]model.ForecastCalibration, error) {
+	root, err := configuredModelRoot()
+	if err != nil {
+		return nil, err
+	}
+	return model.LoadForecastCalibration(root)
 }
 
 func hardwareMemory(bytes uint64) string {

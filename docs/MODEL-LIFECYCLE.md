@@ -270,10 +270,15 @@ An existing name is refused. Explicit replacement uses one flag:
 waldo model compose example model.yaml --replace
 ```
 
-WALDO resolves and audits every stage and builds the replacement in a sibling
-temporary directory. The old model remains intact if parsing, preflight,
-backend resolution, or training fails. Only a complete replacement is swapped
-into the configured model root.
+WALDO resolves and audits every stage and builds the replacement in a durable,
+content-identified transaction beneath `<model.root>/.waldo-compose`. The
+transaction pins the compose, every corpus BOM, and the model being replaced.
+After Ctrl-C or process loss, repeating the exact command discovers the staged
+model, marks an abandoned running attempt interrupted, and resumes the same
+stage and run from its newest verified checkpoint. Changed inputs create a
+different transaction rather than contaminating prior work. A failed stage is
+cleared; interrupted work is retained. The old model remains intact until all
+stages complete and the replacement is atomically published.
 
 ## Durable layout
 
@@ -349,7 +354,13 @@ GPUS  MFR     ACCELERATOR                    MEMORY/GPU  APPROX. TIME
 
 The estimate uses planned tokens, approximate parameters, optimizer and
 activation memory, device headroom, and conservative effective throughput from
-a versioned hardware catalog. JSON includes the formula and unrounded inputs.
+a versioned hardware catalog. WALDO also verifies completed, non-simulated
+runs beneath `model.root` and measures their active attempt time. Evidence is
+aggregated only for the exact accelerator model and GPU count observed; that
+row uses measured throughput, while every unmatched row retains its dated
+catalog value and overhead. Human output states when local calibration is
+applied. JSON includes the formula, source per row, unrounded inputs, aggregate
+run count, measured seconds and FLOPs, and a hash of the contributing evidence.
 
 ## Backend boundary
 

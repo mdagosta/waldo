@@ -34,3 +34,5 @@ logs.
 - [0028: Make index metadata YAML-primary with JSON compatibility](0028-yaml-primary-index-metadata.md)
 - [0029: Resume interrupted runs from complete checkpoint bundles](0029-resumable-training-checkpoints.md)
 - [0030: Pin a bounded deterministic held-out evaluation set](0030-deterministic-heldout-evaluation.md)
+- [0031: Resume durable model-compose transactions](0031-durable-model-compose-transactions.md)
+- [0032: Calibrate exact forecast topologies from observed runs](0032-observed-run-forecast-calibration.md)

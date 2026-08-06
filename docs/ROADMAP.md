@@ -152,8 +152,8 @@ the same files independently of an index checkout.
   **Implemented.**
 - Forecast runtime and memory across exact Apple, NVIDIA, and AMD accelerator
   profiles, including viable 1, 4, and 8 accelerator configurations per node.
-  **Implemented with a versioned planning catalog; empirical calibration is
-  ongoing.**
+  **Implemented with a versioned planning catalog and exact-topology
+  calibration from verified completed local runs.**
 - Resolve multiple direct index paths through the current or configured index,
   deduplicate their corpora, recommend a model rung, and forecast one pass.
   **Implemented.**
@@ -180,7 +180,8 @@ the same files independently of an index checkout.
   guarded PyTorch and TorchTitan lifecycles.**
 - Atomic weight, optimizer, runtime-random-state checkpoints and exact
   same-run resume after direct-training interruption. **Implemented for MLX,
-  PyTorch, and single-node TorchTitan.** Transactional compose staging remains.
+  PyTorch, and single-node TorchTitan, including durable content-identified
+  model-compose staging and transactional replacement.**
 - Actual consumption totals. **Implemented.**
 - Deterministic bounded held-out selection, immutable evaluation-set evidence,
   no-gradient loss/perplexity, and output weight hashes. **Implemented.**
@@ -206,7 +207,8 @@ record can be inspected.
 - Quantized GGUF and Ollama releases with simple bit-level profiles, exact
   upstream tool identity, and optional deterministic bounded calibration from
   a verified WALDO index selection. **Implemented.**
-- Empirical forecast calibration from observed runs
+- Empirical forecast calibration from observed runs **implemented for exact
+  accelerator model and GPU-count matches, with hashed aggregate evidence.**
 - Fork and lineage
 - Explicit additional training runs **implemented through `waldo model train`.**
 - Training-content report rendering **implemented as a versioned JSON EU GPAI

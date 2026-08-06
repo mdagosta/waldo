@@ -14,15 +14,7 @@ about unfinished work.
 - Authenticate through standard Hugging Face credentials and publish one
   reviewable commit without silently overwriting unrelated remote files.
 
-## 2. Training reliability
-
-- Make transactional model-compose staging discoverable and resumable after
-  interruption; direct `model train` already resumes the same run from a
-  complete weight/optimizer/runtime checkpoint bundle.
-- Calibrate forecasts from observed WALDO runs while retaining the versioned
-  hardware assumptions used for every estimate.
-
-## 3. Model lineage and tuning
+## 2. Model lineage and tuning
 
 - Add explicit model fork and parent-lineage operations.
 - Broaden Hugging Face tokenizer and architecture compatibility beyond the
@@ -33,14 +25,14 @@ about unfinished work.
 - Add preference training only after the SFT and evaluation contracts are
   stable.
 
-## 4. Index and lookaside maintenance
+## 3. Index and lookaside maintenance
 
 - Add append-only corpus updates.
 - Add explicit corpus-removal contribution overlays.
 - Add verified lookaside-to-lookaside replication.
 - Design non-text and multimodal ingestion as a separate bounded phase.
 
-## 5. Release readiness
+## 4. Release readiness
 
 - Render the exact official editable EU GPAI template from the existing
   version-pinned disclosure evidence.

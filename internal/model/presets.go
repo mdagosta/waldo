@@ -78,6 +78,10 @@ func RecommendedPreset(tokens int64) (Preset, error) {
 }
 
 func ForecastIndexSelection(tokens int64) (Preset, ResourceForecast, error) {
+	return ForecastIndexSelectionWithCalibration(tokens, nil)
+}
+
+func ForecastIndexSelectionWithCalibration(tokens int64, calibrations []ForecastCalibration) (Preset, ResourceForecast, error) {
 	selected, err := RecommendedPreset(tokens)
 	if err != nil {
 		return Preset{}, ResourceForecast{}, err
@@ -99,6 +103,6 @@ func ForecastIndexSelection(tokens int64) (Preset, ResourceForecast, error) {
 			Parameters: training.Parameters{Steps: steps, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
 		}},
 	}
-	report, err := forecastPlan(plan)
+	report, err := forecastPlanWithCalibration(plan, calibrations)
 	return selected, report, err
 }

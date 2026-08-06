@@ -356,6 +356,67 @@ func TestComposeReplacementIsTransactional(t *testing.T) {
 	}
 }
 
+func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
+	root := t.TempDir()
+	compose := validCompose()
+	stage := preparedFixture(t, compose.Stages[0])
+	attempts := 0
+	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
+		attempts++
+		if attempts == 1 {
+			return training.Observation{}, context.Canceled
+		}
+		data := []byte("resumed compose weights")
+		path := filepath.Join(request.ArtifactDirectory, "model.safetensors")
+		if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
+			return training.Observation{}, err
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			return training.Observation{}, err
+		}
+		digest := sha256.Sum256(data)
+		loss := 0.5
+		return training.Observation{
+			Steps: 2, ConsumedTokens: 128, FinalLoss: &loss,
+			Evaluations: []training.Evaluation{{Step: 2, Tokens: 128, Metrics: map[string]float64{"heldout_loss": 0.75}}},
+			Artifacts:   []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}},
+		}, nil
+	})
+	ids := 0
+	builder := Builder{Root: root, NewID: func() (string, error) {
+		ids++
+		return "compose0001", nil
+	}, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})}
+	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false); !errors.Is(err, context.Canceled) {
+		t.Fatalf("first Compose error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "smoke")); !os.IsNotExist(err) {
+		t.Fatalf("interrupted compose published destination: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".waldo-compose"))
+	if err != nil || len(entries) < 2 {
+		t.Fatalf("durable staging entries = %v, err = %v", entries, err)
+	}
+	completed, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || ids != 1 || len(completed.Runs) != 1 || completed.Runs[0].State != RunComplete || len(completed.Runs[0].Attempts) != 2 {
+		t.Fatalf("completed compose: attempts %d ids %d run %+v", attempts, ids, completed.Runs)
+	}
+	entries, err = os.ReadDir(filepath.Join(root, ".waldo-compose"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			t.Fatalf("completed compose retained workspace %s", entry.Name())
+		}
+	}
+}
+
 func TestListExportAndRemoveModels(t *testing.T) {
 	root := t.TempDir()
 	builder := Builder{Root: root}

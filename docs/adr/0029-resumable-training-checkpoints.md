@@ -37,6 +37,5 @@ WALDO's shared Safetensors contract.
 - Resume cannot silently reset optimizer or scheduler behavior.
 - Corrupt, incomplete, mismatched, or path-escaping checkpoint bundles fail
   before a trainer starts.
-- Transactional model-compose staging still needs its own durable discovery
-  contract before an interrupted compose can be resumed.
-
+- ADR 0031 applies this same-run recovery contract to durable model-compose
+  transactions without exposing a partial model at its published name.

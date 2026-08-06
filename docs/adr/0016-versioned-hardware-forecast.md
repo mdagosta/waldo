@@ -44,3 +44,6 @@ below 100 hours remain in hours; longer durations are rounded to days.
 - Estimates are useful planning numbers, not benchmark guarantees.
 - Hardware measurements can revise the catalog without changing recipes or
   model identity; the catalog revision makes that change visible to automation.
+
+ADR 0032 later permits verified completed local runs to calibrate an exact
+accelerator topology while retaining this catalog for every unmatched row.

@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	forecastCatalog = "openwaldo-training-hardware-2026-08-05"
-	forecastFormula = "6 * parameters * planned_tokens / effective_throughput, including 8% run overhead"
+	forecastCatalog           = "openwaldo-training-hardware-2026-08-05"
+	forecastFormula           = "6 * parameters * planned_tokens / effective_throughput; catalog estimates include 8% run overhead and exact observed configurations use measured active run time"
+	forecastCalibrationSchema = 1
 )
 
 type ResourceForecast struct {
@@ -17,7 +18,22 @@ type ResourceForecast struct {
 	ApproximateParameters uint64                  `json:"approximate_parameters"`
 	PlannedTokens         int64                   `json:"planned_tokens"`
 	TrainingFLOPs         float64                 `json:"training_flops"`
+	Calibrations          []ForecastCalibration   `json:"calibrations,omitempty"`
 	Configurations        []HardwareConfiguration `json:"configurations"`
+}
+
+// ForecastCalibration is aggregate, reproducible evidence from completed
+// WALDO runs on one exact accelerator topology.
+type ForecastCalibration struct {
+	Schema          int     `json:"schema"`
+	Manufacturer    string  `json:"manufacturer"`
+	Accelerator     string  `json:"accelerator"`
+	GPUs            int     `json:"gpus"`
+	Runs            int     `json:"runs"`
+	TrainingFLOPs   float64 `json:"training_flops"`
+	ActiveSeconds   float64 `json:"active_seconds"`
+	EffectiveTFLOPS float64 `json:"effective_tflops"`
+	EvidenceSHA256  string  `json:"evidence_sha256"`
 }
 
 type HardwareConfiguration struct {
@@ -28,6 +44,8 @@ type HardwareConfiguration struct {
 	RequiredPerGPUBytes uint64  `json:"required_per_gpu_bytes"`
 	EffectiveTFLOPS     float64 `json:"effective_tflops"`
 	ApproximateSeconds  int64   `json:"approximate_seconds"`
+	EstimateSource      string  `json:"estimate_source"`
+	ObservedRuns        int     `json:"observed_runs,omitempty"`
 }
 
 type acceleratorProfile struct {
@@ -55,6 +73,10 @@ var acceleratorCatalog = []acceleratorProfile{
 // training budget. Index resolution is unnecessary because the workload is
 // steps * batch size * sequence length for each stage.
 func ForecastCompose(compose Compose) (ResourceForecast, error) {
+	return ForecastComposeWithCalibration(compose, nil)
+}
+
+func ForecastComposeWithCalibration(compose Compose, calibrations []ForecastCalibration) (ResourceForecast, error) {
 	if err := compose.Validate(); err != nil {
 		return ResourceForecast{}, err
 	}
@@ -62,10 +84,14 @@ func ForecastCompose(compose Compose) (ResourceForecast, error) {
 	if err != nil {
 		return ResourceForecast{}, err
 	}
-	return forecastPlan(plan)
+	return forecastPlanWithCalibration(plan, calibrations)
 }
 
 func forecastPlan(plan Plan) (ResourceForecast, error) {
+	return forecastPlanWithCalibration(plan, nil)
+}
+
+func forecastPlanWithCalibration(plan Plan, calibrations []ForecastCalibration) (ResourceForecast, error) {
 	var plannedTokens int64
 	for _, stage := range plan.Stages {
 		if stage.PlannedTokens <= 0 || plannedTokens > math.MaxInt64-stage.PlannedTokens {
@@ -99,7 +125,19 @@ func forecastPlan(plan Plan) (ResourceForecast, error) {
 				continue
 			}
 			effective := profile.throughput * float64(count) * scaling(profile, count)
-			secondsFloat := math.Ceil(trainingFLOPs / (effective * 1e12) * 1.08)
+			overhead := 1.08
+			source := "catalog"
+			observedRuns := 0
+			if calibration, ok := matchingCalibration(calibrations, profile, count); ok {
+				effective = calibration.EffectiveTFLOPS
+				overhead = 1
+				source = "observed-runs"
+				observedRuns = calibration.Runs
+				if !containsCalibration(report.Calibrations, calibration.EvidenceSHA256) {
+					report.Calibrations = append(report.Calibrations, calibration)
+				}
+			}
+			secondsFloat := math.Ceil(trainingFLOPs / (effective * 1e12) * overhead)
 			if secondsFloat > math.MaxInt64 {
 				return ResourceForecast{}, fmt.Errorf("training duration exceeds the supported forecast range")
 			}
@@ -111,7 +149,7 @@ func forecastPlan(plan Plan) (ResourceForecast, error) {
 				Manufacturer: profile.manufacturer, Accelerator: profile.accelerator,
 				GPUs: count, MemoryPerGPUBytes: profile.memoryBytes,
 				RequiredPerGPUBytes: required, EffectiveTFLOPS: effective,
-				ApproximateSeconds: seconds,
+				ApproximateSeconds: seconds, EstimateSource: source, ObservedRuns: observedRuns,
 			})
 		}
 	}
@@ -132,6 +170,25 @@ func forecastPlan(plan Plan) (ResourceForecast, error) {
 		return left.GPUs < right.GPUs
 	})
 	return report, nil
+}
+
+func containsCalibration(calibrations []ForecastCalibration, digest string) bool {
+	for _, calibration := range calibrations {
+		if calibration.EvidenceSHA256 == digest {
+			return true
+		}
+	}
+	return false
+}
+
+func matchingCalibration(calibrations []ForecastCalibration, profile acceleratorProfile, GPUs int) (ForecastCalibration, bool) {
+	key := acceleratorKey(profile.manufacturer, profile.accelerator)
+	for _, calibration := range calibrations {
+		if calibration.Schema == forecastCalibrationSchema && calibration.GPUs == GPUs && calibration.EffectiveTFLOPS > 0 && acceleratorKey(calibration.Manufacturer, calibration.Accelerator) == key {
+			return calibration, true
+		}
+	}
+	return ForecastCalibration{}, false
 }
 
 func requiredMemoryPerGPU(plan Plan, GPUs int) (uint64, error) {
