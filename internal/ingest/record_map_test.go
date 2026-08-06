@@ -180,6 +180,31 @@ func TestRankedConversationTreeChoosesLowestRankAtEveryLevel(t *testing.T) {
 	}
 }
 
+func TestRankedConversationTreeUsesDeclaredSourceOrderForUnrankedLevel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "conversation-tree.json")
+	contents := `{
+  "prompt":{"text":"Question","role":"prompter","replies":[
+    {"text":"Unranked answer","role":"assistant","replies":[]},
+    {"text":"Ranked answer","role":"assistant","rank":2,"replies":[
+      {"text":"First follow up","role":"prompter","replies":[]},
+      {"text":"Second follow up","role":"prompter","replies":[]}
+    ]}
+  ]}
+}`
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := mappedFixturePlan(t, path, InputProfile{
+		Type: ProfileRankedConversationTree,
+		Tree: ConversationTree{Root: "prompt", Replies: "replies", Text: "text", Rank: "rank", MissingRank: "source-order", Role: "role", AssistantRole: "assistant"},
+	})
+	rows := collectMappedRows(t, plan)
+	want := "User: Question\n\nAssistant: Ranked answer\n\nUser: First follow up\n"
+	if len(rows) != 1 || rows[0].Text != want {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
 func mappedFixturePlan(t *testing.T, path string, profile InputProfile) Plan {
 	t.Helper()
 	probe, err := ProbePaths(context.Background(), []string{path})

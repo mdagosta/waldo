@@ -96,6 +96,7 @@ type ConversationTree struct {
 	Replies       string `json:"replies,omitempty" yaml:"replies,omitempty"`
 	Text          string `json:"text,omitempty" yaml:"text,omitempty"`
 	Rank          string `json:"rank,omitempty" yaml:"rank,omitempty"`
+	MissingRank   string `json:"missing_rank,omitempty" yaml:"missing_rank,omitempty"`
 	Role          string `json:"role,omitempty" yaml:"role,omitempty"`
 	AssistantRole string `json:"assistant_role,omitempty" yaml:"assistant_role,omitempty"`
 }
@@ -133,6 +134,9 @@ func (profile InputProfile) Validate() error {
 		}
 		if len(profile.Fields.Text) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("ranked-conversation-tree text comes from the tree mapping")
+		}
+		if profile.Tree.MissingRank != "" && profile.Tree.MissingRank != "source-order" {
+			return fmt.Errorf("ranked-conversation-tree tree.missing_rank must be source-order")
 		}
 	case ProfileBoundedText:
 		if profile.Bounds.StartPattern == "" || profile.Bounds.EndPattern == "" {

@@ -396,21 +396,32 @@ func renderRankedTree(object map[string]any, tree ConversationTree) (string, int
 		}
 		best := -1
 		bestRank := int64(0)
+		hasRankedBest := false
 		for position, reply := range replies {
 			child, ok := reply.(map[string]any)
 			if !ok {
 				return "", 0, fmt.Errorf("conversation reply %d is not an object", position+1)
 			}
 			rankText, err := optionalScalar(jsonRecord{child}, tree.Rank)
-			if err != nil || rankText == "" {
+			if err != nil {
 				return "", 0, fmt.Errorf("conversation reply %d has no scalar rank", position+1)
+			}
+			if rankText == "" {
+				if tree.MissingRank != "source-order" {
+					return "", 0, fmt.Errorf("conversation reply %d has no scalar rank", position+1)
+				}
+				if best < 0 {
+					best = position
+				}
+				continue
 			}
 			rank, err := strconv.ParseInt(rankText, 10, 64)
 			if err != nil {
 				return "", 0, fmt.Errorf("conversation reply %d rank %q is not an integer", position+1, rankText)
 			}
-			if best < 0 || rank < bestRank {
+			if !hasRankedBest || rank < bestRank {
 				best, bestRank = position, rank
+				hasRankedBest = true
 			}
 		}
 		current = replies[best]

@@ -142,6 +142,10 @@ joining of text fields. `dialogue-pair` uses `fields.text` as the prompt,
 optional `fields.context`, and `fields.response`. `ranked-conversation-tree`
 uses configurable `tree.root`, `tree.replies`, `tree.text`, `tree.rank`, and
 optional role fields, selecting the lowest numeric rank at each level.
+Recipes whose source intentionally omits some ranks may declare
+`tree.missing_rank: source-order`. Ranked candidates still take precedence;
+when every candidate is unranked, WALDO deterministically selects the first
+source candidate. Missing ranks otherwise fail closed.
 
 Mapped records fail closed when a required text or response field is empty.
 `record-map` and `dialogue-pair` recipes may explicitly set `on_empty: skip` to

@@ -42,6 +42,7 @@ func TestInputProfileValidation(t *testing.T) {
 		"bad path":             {Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"body[0]"}}},
 		"missing reply":        {Type: ProfileDialoguePair, Fields: ProfileFields{Text: []string{"prompt"}}},
 		"incomplete tree":      {Type: ProfileRankedConversationTree, Tree: ConversationTree{Text: "text"}},
+		"bad rank fallback":    {Type: ProfileRankedConversationTree, Tree: ConversationTree{Replies: "replies", Text: "text", Rank: "rank", MissingRank: "random"}},
 		"bad boundary":         {Type: ProfileBoundedText, Bounds: TextBounds{StartPattern: "[", EndPattern: "end"}},
 		"relative XPath":       {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"doc/body"}}},
 		"bad empty policy":     {Type: ProfileRecordMap, OnEmpty: "discard", Fields: ProfileFields{Text: []string{"body"}}},
