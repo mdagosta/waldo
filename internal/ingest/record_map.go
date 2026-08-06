@@ -1,0 +1,456 @@
+package ingest
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/openwaldo/waldo/internal/shard"
+	"github.com/parquet-go/parquet-go"
+)
+
+type recordAccessor interface {
+	Values(string) ([]string, error)
+}
+
+func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(TextBatch) error) error {
+	if err := plan.Validate(); err != nil {
+		return err
+	}
+	batch := TextBatch{}
+	flush := func() error {
+		if len(batch.Rows) == 0 {
+			return nil
+		}
+		if err := consume(batch); err != nil {
+			return err
+		}
+		batch = TextBatch{}
+		return nil
+	}
+	emit := func(row shard.TextRow) error {
+		size := int64(len(row.Text))
+		if len(batch.Rows) > 0 && batch.LogicalBytes+size > plan.Writer.AdapterBatchBytes {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		batch.Rows = append(batch.Rows, row)
+		batch.LogicalBytes += size
+		if batch.LogicalBytes >= plan.Writer.AdapterBatchBytes {
+			return flush()
+		}
+		return nil
+	}
+	for _, input := range plan.Inputs {
+		if !input.Profile.recordProfile() {
+			return fmt.Errorf("input %s has no record profile", input.Artifact.Path)
+		}
+		var err error
+		switch input.Adapter {
+		case "json":
+			err = streamJSONObject(ctx, plan, input, emit)
+		case "jsonl":
+			err = streamMappedJSONL(ctx, plan, input, emit)
+		case "parquet":
+			err = streamMappedParquet(ctx, plan, input, emit)
+		default:
+			err = fmt.Errorf("unsupported record container %q", input.Adapter)
+		}
+		if err != nil {
+			return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
+		}
+	}
+	return flush()
+}
+
+func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error) error {
+	file, verified, err := openVerifiedInput(ctx, input.Artifact)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(io.LimitReader(&contextReader{ctx: ctx, reader: file}, plan.MemoryBytes/2+1))
+	decoder.UseNumber()
+	var raw any
+	if err := decoder.Decode(&raw); err != nil {
+		return fmt.Errorf("decode JSON object: %w", err)
+	}
+	object, ok := raw.(map[string]any)
+	if !ok {
+		if _, array := raw.([]any); array {
+			return fmt.Errorf("top-level JSON arrays are not supported; JSON input is exactly one object per file (use a future explicit json-array container)")
+		}
+		return fmt.Errorf("top-level JSON value must be an object")
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("JSON input contains more than one top-level value")
+		}
+		return err
+	}
+	row, err := mapCanonicalRecord(jsonRecord{object}, plan, input, "sha256:"+input.Artifact.SHA256)
+	if err != nil {
+		return err
+	}
+	if err := emit(row); err != nil {
+		return err
+	}
+	return unchangedInput(file, verified)
+}
+
+func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error) error {
+	file, verified, err := openVerifiedInput(ctx, input.Artifact)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	reader, err := openDecompressed(&contextReader{ctx: ctx, reader: file}, input.Artifact.Compression)
+	if err != nil {
+		return err
+	}
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 64<<10), int(plan.Writer.RecordMaximumBytes+1<<20))
+	line := int64(0)
+	documents := int64(0)
+	for scanner.Scan() {
+		line++
+		data := bytes.TrimSpace(scanner.Bytes())
+		if len(data) == 0 {
+			continue
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		var raw any
+		if err := decoder.Decode(&raw); err != nil {
+			_ = reader.Close()
+			return fmt.Errorf("line %d: %w", line, err)
+		}
+		object, ok := raw.(map[string]any)
+		if !ok {
+			_ = reader.Close()
+			return fmt.Errorf("line %d must be one JSON object", line)
+		}
+		row, err := mapCanonicalRecord(jsonRecord{object}, plan, input, fmt.Sprintf("sha256:%s#line=%d", input.Artifact.SHA256, line))
+		if err != nil {
+			_ = reader.Close()
+			return fmt.Errorf("line %d: %w", line, err)
+		}
+		if err := emit(row); err != nil {
+			_ = reader.Close()
+			return err
+		}
+		documents++
+	}
+	scanErr := scanner.Err()
+	closeErr := reader.Close()
+	if scanErr != nil {
+		return scanErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if documents == 0 {
+		return fmt.Errorf("JSONL input contains no records")
+	}
+	return unchangedInput(file, verified)
+}
+
+func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error) error {
+	file, verified, err := openVerifiedInput(ctx, input.Artifact)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	parquetFile, err := parquet.OpenFile(file, input.Artifact.Bytes)
+	if err != nil {
+		return err
+	}
+	compiled, err := compileParquetRecord(parquetFile.Schema(), input.Profile)
+	if err != nil {
+		return err
+	}
+	rowGroups := parquetFile.RowGroups()
+	if len(rowGroups) == 0 || parquetFile.NumRows() == 0 {
+		return fmt.Errorf("Parquet input contains no records")
+	}
+	var group parquet.RowGroup = rowGroups[0]
+	if len(rowGroups) > 1 {
+		group = parquet.MultiRowGroup(rowGroups...)
+	}
+	rows := group.Rows()
+	defer rows.Close()
+	buffer := make([]parquet.Row, 1)
+	position := int64(0)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		count, readErr := rows.ReadRows(buffer)
+		if count > 0 {
+			position++
+			row, err := mapCanonicalRecord(compiled.accessor(buffer[0]), plan, input, fmt.Sprintf("sha256:%s#row=%d", input.Artifact.SHA256, position))
+			if err != nil {
+				return fmt.Errorf("row %d: %w", position, err)
+			}
+			if err := emit(row); err != nil {
+				return err
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+	if position == 0 {
+		return fmt.Errorf("Parquet input contains no records")
+	}
+	return unchangedInput(file, verified)
+}
+
+func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallbackSource string) (shard.TextRow, error) {
+	if input.Profile.Type != ProfileRecordMap {
+		return shard.TextRow{}, fmt.Errorf("profile %q mapper is not implemented", input.Profile.Type)
+	}
+	parts := make([]string, 0, len(input.Profile.Fields.Text))
+	for _, path := range input.Profile.Fields.Text {
+		values, err := record.Values(path)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		for _, value := range values {
+			if strings.TrimSpace(value) != "" {
+				parts = append(parts, value)
+			}
+		}
+	}
+	text := strings.Join(parts, "\n\n")
+	if text == "" {
+		return shard.TextRow{}, fmt.Errorf("mapped text fields are empty or absent")
+	}
+	if int64(len(text)) > plan.Writer.RecordMaximumBytes || !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
+		return shard.TextRow{}, fmt.Errorf("mapped text is not bounded NUL-free UTF-8")
+	}
+	source, err := optionalScalar(record, input.Profile.Fields.ID)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	if source == "" {
+		source = fallbackSource
+	}
+	language, err := optionalScalar(record, input.Profile.Fields.Language)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	date, err := optionalScalar(record, input.Profile.Fields.Date)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	license, err := optionalScalar(record, input.Profile.Fields.License)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	effective := plan.License
+	var rawLicense *string
+	if license != "" {
+		effective = license
+		rawLicense = &license
+	}
+	sourceName := plan.Source.Name
+	hash := sha256.Sum256([]byte(text))
+	return shard.TextRow{
+		ContentSHA256: hash, Text: text, Source: source, SourceName: &sourceName,
+		License: effective, LicenseRaw: rawLicense, Language: stringPointer(language), Date: stringPointer(date),
+	}, nil
+}
+
+func optionalScalar(record recordAccessor, path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	values, err := record.Values(path)
+	if err != nil {
+		return "", err
+	}
+	if len(values) > 1 {
+		return "", fmt.Errorf("field %q expands to multiple values but must be scalar", path)
+	}
+	if len(values) == 1 {
+		return values[0], nil
+	}
+	return "", nil
+}
+
+func stringPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+type jsonRecord struct{ value map[string]any }
+
+func (record jsonRecord) Values(path string) ([]string, error) {
+	segments := strings.Split(path, ".")
+	values := []any{record.value}
+	for _, raw := range segments {
+		expand := strings.HasSuffix(raw, "[]")
+		name := strings.TrimSuffix(raw, "[]")
+		next := []any{}
+		for _, value := range values {
+			object, ok := value.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("field %q traverses a non-object", path)
+			}
+			child, exists := object[name]
+			if !exists || child == nil {
+				continue
+			}
+			if expand {
+				array, ok := child.([]any)
+				if !ok {
+					return nil, fmt.Errorf("field %q declares [] but value is not an array", path)
+				}
+				next = append(next, array...)
+			} else {
+				next = append(next, child)
+			}
+		}
+		values = next
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		scalar, ok := jsonScalar(value)
+		if !ok {
+			return nil, fmt.Errorf("field %q resolves to a non-scalar value", path)
+		}
+		result = append(result, scalar)
+	}
+	return result, nil
+}
+
+func jsonScalar(value any) (string, bool) {
+	switch value := value.(type) {
+	case string:
+		return value, true
+	case json.Number:
+		return value.String(), true
+	case bool:
+		return strconv.FormatBool(value), true
+	case nil:
+		return "", true
+	default:
+		return "", false
+	}
+}
+
+type parquetField struct {
+	path     string
+	column   int
+	repeated bool
+}
+
+type parquetRecord struct{ fields map[string]parquetField }
+
+func compileParquetRecord(schema *parquet.Schema, profile InputProfile) (parquetRecord, error) {
+	result := parquetRecord{fields: map[string]parquetField{}}
+	for _, path := range profile.paths() {
+		if path == "" {
+			continue
+		}
+		clean := strings.ReplaceAll(path, "[]", "")
+		leaf, ok := schema.Lookup(strings.Split(clean, ".")...)
+		if !ok {
+			return parquetRecord{}, fmt.Errorf("mapped field %q is absent or non-scalar", path)
+		}
+		repeated := strings.Contains(path, "[]")
+		if repeated != (leaf.MaxRepetitionLevel > 0) {
+			return parquetRecord{}, fmt.Errorf("mapped field %q repetition does not match its [] declaration", path)
+		}
+		result.fields[path] = parquetField{path: path, column: leaf.ColumnIndex, repeated: repeated}
+	}
+	return result, nil
+}
+
+func (record parquetRecord) accessor(row parquet.Row) recordAccessor {
+	values := map[string][]string{}
+	row.Range(func(column int, columnValues []parquet.Value) bool {
+		for path, field := range record.fields {
+			if field.column != column {
+				continue
+			}
+			for _, value := range columnValues {
+				if !value.IsNull() {
+					values[path] = append(values[path], parquetScalar(value))
+				}
+			}
+		}
+		return true
+	})
+	return parquetValues(values)
+}
+
+type parquetValues map[string][]string
+
+func (values parquetValues) Values(path string) ([]string, error) {
+	return values[path], nil
+}
+
+func parquetScalar(value parquet.Value) string {
+	switch value.Kind() {
+	case parquet.Boolean:
+		return strconv.FormatBool(value.Boolean())
+	case parquet.Int32:
+		return strconv.FormatInt(int64(value.Int32()), 10)
+	case parquet.Int64:
+		return strconv.FormatInt(value.Int64(), 10)
+	case parquet.Float:
+		return strconv.FormatFloat(float64(value.Float()), 'g', -1, 32)
+	case parquet.Double:
+		return strconv.FormatFloat(value.Double(), 'g', -1, 64)
+	case parquet.ByteArray, parquet.FixedLenByteArray:
+		return string(value.ByteArray())
+	default:
+		return value.String()
+	}
+}
+
+func openVerifiedInput(ctx context.Context, artifact Artifact) (*os.File, os.FileInfo, error) {
+	file, err := os.Open(artifact.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	verified, err := verifyPlannedArtifact(ctx, file, artifact)
+	if err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		file.Close()
+		return nil, nil, err
+	}
+	return file, verified, nil
+}
+
+func unchangedInput(file *os.File, verified os.FileInfo) error {
+	after, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if after.Size() != verified.Size() || !after.ModTime().Equal(verified.ModTime()) {
+		return fmt.Errorf("artifact changed while it was being converted")
+	}
+	return nil
+}

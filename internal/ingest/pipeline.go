@@ -20,6 +20,14 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 		inputPlan := plan
 		inputPlan.Inputs = []PlanInput{input}
 		var err error
+		if input.Profile.recordProfile() {
+			err = StreamMappedRecordBatches(ctx, inputPlan, consume)
+			if err != nil {
+				return err
+			}
+			emitProgress(ctx, ProgressEvent{Phase: "convert", Status: "completed", Input: input.Artifact.Path, Adapter: input.Adapter, Bytes: input.Artifact.Bytes, TotalBytes: input.Artifact.Bytes})
+			continue
+		}
 		switch input.Adapter {
 		case "text", "markdown":
 			err = StreamTextBatches(ctx, inputPlan, consume)
