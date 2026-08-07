@@ -580,3 +580,7 @@ Live S3 and public-index tests are guarded and never run implicitly. See
 Before changing code, read [AGENTS.md](AGENTS.md), then the relevant design
 contract or ADR. This repository preserves the public data contract where it
 matters; it does not preserve the former backend's internal complexity.
+
+## License
+
+WALDO is licensed under the [Apache License, Version 2.0](LICENSE).
