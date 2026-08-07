@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/openwaldo/waldo/internal/shard"
@@ -27,15 +29,20 @@ func runShardSummary(context Context, args []string, stdout, _ io.Writer) error 
 	return nil
 }
 
-func runShardAudit(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) == 0 {
-		return usageError{message: "usage: waldo shard audit <path...>"}
-	}
-	paths, err := shard.ResolvePaths(args)
+func runShardAudit(context Context, args []string, stdout, progress io.Writer) error {
+	paths, options, err := parseAuditOptions(args, "usage: waldo shard audit <path...> [--workers <n>]")
 	if err != nil {
 		return err
 	}
-	summary, err := shard.Audit(context.Execution, paths)
+	if len(paths) == 0 {
+		return usageError{message: "usage: waldo shard audit <path...> [--workers <n>]"}
+	}
+	paths, err = shard.ResolvePaths(paths)
+	if err != nil {
+		return err
+	}
+	options.Progress = auditProgressPrinter(progress)
+	summary, err := shard.AuditWithOptions(context.Execution, paths, options)
 	if err != nil {
 		return err
 	}
@@ -48,6 +55,43 @@ func runShardAudit(context Context, args []string, stdout, _ io.Writer) error {
 	fmt.Fprintln(stdout, "STATUS:         VERIFIED")
 	printShardSummary(stdout, summary)
 	return nil
+}
+
+func parseAuditOptions(args []string, usage string) ([]string, shard.AuditOptions, error) {
+	var paths []string
+	var options shard.AuditOptions
+	for index := 0; index < len(args); index++ {
+		argument := args[index]
+		value := ""
+		if argument == "--workers" {
+			index++
+			if index == len(args) {
+				return nil, options, usageError{message: usage}
+			}
+			value = args[index]
+		} else if strings.HasPrefix(argument, "--workers=") {
+			value = strings.TrimPrefix(argument, "--workers=")
+		} else if strings.HasPrefix(argument, "-") {
+			return nil, options, usageError{message: fmt.Sprintf("unknown audit option %q", argument)}
+		} else {
+			paths = append(paths, argument)
+			continue
+		}
+		workers, err := strconv.Atoi(value)
+		if err != nil || workers < 1 || workers > 32 {
+			return nil, options, usageError{message: "--workers must be an integer from 1 to 32"}
+		}
+		options.Workers = workers
+	}
+	return paths, options, nil
+}
+
+func auditProgressPrinter(output io.Writer) func(shard.AuditProgress) {
+	return func(event shard.AuditProgress) {
+		if event.Current == 1 || event.Current == event.Total || event.Current%5 == 0 {
+			fmt.Fprintf(output, "  validated %s/%s shards  %s records  %s tokens\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), humanInteger(event.Summary.Records), humanInteger(event.Summary.Tokens))
+		}
+	}
 }
 
 func runShardListRecords(context Context, args []string, stdout, _ io.Writer) error {

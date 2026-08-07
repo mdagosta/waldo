@@ -26,16 +26,37 @@ var (
 )
 
 func Get(name string) (Counter, error) {
-	initialize.Do(func() {
-		// Loading vocabulary data must never require network access during an
-		// ingestion run.
-		tiktoken.SetBpeLoader(tiktokenloader.NewOfflineLoader())
-	})
+	initializeLoader()
 	mutex.Lock()
 	defer mutex.Unlock()
 	if counter, ok := loaded[name]; ok {
 		return counter, nil
 	}
+	counter, err := New(name)
+	if err != nil {
+		return nil, err
+	}
+	loaded[name] = counter
+	return counter, nil
+}
+
+// New returns an independent counter. Callers that count concurrently should
+// use one counter per worker because the underlying encoder's regular
+// expression state is not documented as safe for concurrent use.
+func New(name string) (Counter, error) {
+	initializeLoader()
+	return newCounter(name)
+}
+
+func initializeLoader() {
+	initialize.Do(func() {
+		// Loading vocabulary data must never require network access during an
+		// ingestion run.
+		tiktoken.SetBpeLoader(tiktokenloader.NewOfflineLoader())
+	})
+}
+
+func newCounter(name string) (Counter, error) {
 	const prefix = "tiktoken/"
 	if len(name) <= len(prefix) || name[:len(prefix)] != prefix {
 		return nil, fmt.Errorf("unknown tokenizer %q (supported: tiktoken/<encoding>)", name)
@@ -45,7 +66,6 @@ func Get(name string) (Counter, error) {
 		return nil, fmt.Errorf("tokenizer %q: %w", name, err)
 	}
 	counter := &tiktokenCounter{name: name, encoding: encoding}
-	loaded[name] = counter
 	return counter, nil
 }
 

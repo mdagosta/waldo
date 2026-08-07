@@ -161,10 +161,14 @@ func runIndexVerify(context Context, args []string, stdout, stderr io.Writer) er
 }
 
 func runIndexAudit(context Context, args []string, stdout, progress io.Writer) error {
-	if len(args) > 1 {
-		return usageError{message: "usage: waldo index audit [path]"}
+	paths, auditOptions, err := parseAuditOptions(args, "usage: waldo index audit [path] [--workers <n>]")
+	if err != nil {
+		return err
 	}
-	target, err := resolveIndexArgument(context, args)
+	if len(paths) > 1 {
+		return usageError{message: "usage: waldo index audit [path] [--workers <n>]"}
+	}
+	target, err := resolveIndexArgument(context, paths)
 	if err != nil {
 		return err
 	}
@@ -201,7 +205,8 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 			unique = append(unique, object.Path)
 		}
 	}
-	audited, err := shard.Audit(context.Execution, unique)
+	auditOptions.Progress = auditProgressPrinter(progress)
+	audited, err := shard.AuditWithOptions(context.Execution, unique, auditOptions)
 	if err != nil {
 		return err
 	}

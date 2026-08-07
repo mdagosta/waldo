@@ -9,10 +9,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/tokenizer"
@@ -42,6 +44,20 @@ type Summary struct {
 	RowGroups    int64    `json:"row_groups"`
 	Licenses     []string `json:"licenses"`
 	Recipes      []string `json:"writer_recipes"`
+}
+
+type AuditOptions struct {
+	// Workers controls concurrent shard scans. Zero selects a conservative
+	// automatic value capped at four to bound decompression and text memory.
+	Workers  int
+	Progress func(AuditProgress)
+}
+
+type AuditProgress struct {
+	Current int
+	Total   int
+	Path    string
+	Summary Summary
 }
 
 func ResolvePaths(arguments []string) ([]string, error) {
@@ -137,10 +153,10 @@ func Summarize(paths []string) (Summary, error) {
 }
 
 func Audit(ctx context.Context, paths []string) (Summary, error) {
-	counter, err := tokenizer.Get(tokenizer.Default)
-	if err != nil {
-		return Summary{}, err
-	}
+	return AuditWithOptions(ctx, paths, AuditOptions{})
+}
+
+func AuditWithOptions(ctx context.Context, paths []string, options AuditOptions) (Summary, error) {
 	dedupFile, err := os.CreateTemp("", "waldo-shard-audit-*.db")
 	if err != nil {
 		return Summary{}, err
@@ -165,55 +181,179 @@ func Audit(ctx context.Context, paths []string) (Summary, error) {
 	if err != nil {
 		return Summary{}, err
 	}
+	workers := options.Workers
+	if workers <= 0 {
+		workers = runtime.GOMAXPROCS(0)
+		if workers > 4 {
+			workers = 4
+		}
+	}
+	if workers > len(paths) {
+		workers = len(paths)
+	}
+	if workers == 0 {
+		return Summary{}, nil
+	}
+
+	type auditResult struct {
+		index   int
+		summary Summary
+		err     error
+	}
+	auditContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan int)
+	results := make(chan auditResult, workers)
+	var dedupMutex sync.Mutex
+	var wait sync.WaitGroup
+	worker := func() {
+		defer wait.Done()
+		counter, counterErr := tokenizer.New(tokenizer.Default)
+		if counterErr != nil {
+			results <- auditResult{err: counterErr}
+			cancel()
+			return
+		}
+		for index := range jobs {
+			path := paths[index]
+			const dedupBatchSize = 8192
+			ids := make([]string, 0, dedupBatchSize)
+			flush := func() error {
+				if len(ids) == 0 {
+					return nil
+				}
+				dedupMutex.Lock()
+				defer dedupMutex.Unlock()
+				if err := auditContext.Err(); err != nil {
+					return err
+				}
+				for _, id := range ids {
+					key := []byte(id)
+					if previous := seen.Get(key); previous != nil {
+						return fmt.Errorf("record %s is duplicated in %s and %s", id, string(previous), path)
+					}
+					if err := seen.Put(key, []byte(path)); err != nil {
+						return err
+					}
+				}
+				ids = ids[:0]
+				return nil
+			}
+			one, scanErr := auditOne(auditContext, path, counter, func(id string) error {
+				ids = append(ids, id)
+				if len(ids) == dedupBatchSize {
+					return flush()
+				}
+				return nil
+			})
+			if scanErr == nil {
+				scanErr = flush()
+			}
+			results <- auditResult{index: index, summary: one, err: scanErr}
+			if scanErr != nil {
+				cancel()
+				return
+			}
+		}
+	}
+	wait.Add(workers)
+	for i := 0; i < workers; i++ {
+		go worker()
+	}
+	go func() {
+		defer close(jobs)
+		for index := range paths {
+			select {
+			case jobs <- index:
+			case <-auditContext.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wait.Wait()
+		close(results)
+	}()
+
 	licenses, recipes := map[string]bool{}, map[string]bool{}
 	var total Summary
-	for _, path := range paths {
-		file, parquetFile, size, err := openShard(path)
-		if err != nil {
-			return Summary{}, err
+	completed := 0
+	var auditErr error
+	for result := range results {
+		if result.err != nil {
+			if auditErr == nil || errors.Is(auditErr, context.Canceled) {
+				auditErr = fmt.Errorf("%s: %w", paths[result.index], result.err)
+			}
+			continue
 		}
-		one, err := scan(parquetFile, true, func(position int64, view RecordView, canonical record.Record, meta string) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if canonical.Tokens != int64(counter.Count(canonical.Text)) {
-				return fmt.Errorf("record %d (%s): token count is %d, want %d", position, view.ID, canonical.Tokens, counter.Count(canonical.Text))
-			}
-			key := []byte(view.ID)
-			if previous := seen.Get(key); previous != nil {
-				return fmt.Errorf("record %s is duplicated in %s and %s", view.ID, string(previous), path)
-			}
-			return seen.Put(key, []byte(path))
-		})
-		if err == nil {
-			footer, complete := footerSummary(parquetFile, size)
-			recipe, _ := parquetFile.Lookup("waldo.recipe")
-			if recipe == TextWriterRecipe && !complete {
-				err = fmt.Errorf("current writer recipe is missing valid aggregate footer metadata")
-			} else if complete && (footer.Records != one.Records || footer.Tokens != one.Tokens || footer.ContentBytes != one.ContentBytes || !slices.Equal(footer.Licenses, one.Licenses)) {
-				err = fmt.Errorf("footer aggregates do not match streamed records")
-			}
-		}
-		file.Close()
-		if err != nil {
-			return Summary{}, fmt.Errorf("%s: %w", path, err)
-		}
+		one := result.summary
+		path := paths[result.index]
 		total.Shards++
 		total.Records += one.Records
 		total.Tokens += one.Tokens
 		total.ContentBytes += one.ContentBytes
-		total.EncodedBytes += size
-		total.RowGroups += int64(len(parquetFile.RowGroups()))
-		for _, v := range one.Licenses {
-			licenses[v] = true
+		total.EncodedBytes += one.EncodedBytes
+		total.RowGroups += one.RowGroups
+		for _, value := range one.Licenses {
+			licenses[value] = true
 		}
-		for _, v := range one.Recipes {
-			recipes[v] = true
+		for _, value := range one.Recipes {
+			recipes[value] = true
 		}
+		completed++
+		if options.Progress != nil {
+			progress := total
+			progress.Licenses = keys(licenses)
+			progress.Recipes = keys(recipes)
+			options.Progress(AuditProgress{Current: completed, Total: len(paths), Path: path, Summary: progress})
+		}
+	}
+	if auditErr != nil {
+		return Summary{}, auditErr
+	}
+	if err := ctx.Err(); err != nil {
+		return Summary{}, err
 	}
 	total.Licenses = keys(licenses)
 	total.Recipes = keys(recipes)
 	return total, nil
+}
+
+func auditOne(ctx context.Context, path string, counter tokenizer.Counter, addID func(string) error) (Summary, error) {
+	file, parquetFile, size, err := openShard(path)
+	if err != nil {
+		return Summary{}, err
+	}
+	one, err := scan(parquetFile, true, func(position int64, view RecordView, canonical record.Record, meta string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		count := int64(counter.Count(canonical.Text))
+		if canonical.Tokens != count {
+			return fmt.Errorf("record %d (%s): token count is %d, want %d", position, view.ID, canonical.Tokens, count)
+		}
+		return addID(view.ID)
+	})
+	if err == nil {
+		footer, complete := footerSummary(parquetFile, size)
+		recipe, _ := parquetFile.Lookup("waldo.recipe")
+		if recipe == TextWriterRecipe && !complete {
+			err = fmt.Errorf("current writer recipe is missing valid aggregate footer metadata")
+		} else if complete && (footer.Records != one.Records || footer.Tokens != one.Tokens || footer.ContentBytes != one.ContentBytes || !slices.Equal(footer.Licenses, one.Licenses)) {
+			err = fmt.Errorf("footer aggregates do not match streamed records")
+		}
+	}
+	closeErr := file.Close()
+	if err != nil {
+		return Summary{}, err
+	}
+	if closeErr != nil {
+		return Summary{}, closeErr
+	}
+	one.Shards = 1
+	one.EncodedBytes = size
+	one.RowGroups = int64(len(parquetFile.RowGroups()))
+	return one, nil
 }
 
 func WalkRecords(path string, callback func(int64, RecordView) error) error {

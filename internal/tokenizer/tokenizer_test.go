@@ -25,3 +25,20 @@ func TestDefaultCounterIsOfflineDeterministicAndCached(t *testing.T) {
 		t.Fatal("unknown tokenizer accepted")
 	}
 }
+
+func TestNewReturnsIndependentEquivalentCounters(t *testing.T) {
+	first, err := New(Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := New(Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("New returned the same counter instance")
+	}
+	if first.Count("parallel audit") != second.Count("parallel audit") {
+		t.Fatal("independent counters disagree")
+	}
+}

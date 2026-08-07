@@ -95,6 +95,29 @@ func TestAuditDetectsDuplicatesWithinAndAcrossShards(t *testing.T) {
 	}
 }
 
+func TestAuditWithOptionsScansShardsConcurrentlyAndReportsProgress(t *testing.T) {
+	directory := t.TempDir()
+	var paths []string
+	for index, text := range []string{"first unique record", "second unique record", "third unique record"} {
+		path := filepath.Join(directory, fmt.Sprintf("%d.parquet", index))
+		writeCanonicalFixture(t, path, []TextRow{validTextRow(text, tokenCount(t, text))}, true, nil)
+		paths = append(paths, path)
+	}
+	var progress []AuditProgress
+	summary, err := AuditWithOptions(context.Background(), paths, AuditOptions{Workers: 2, Progress: func(event AuditProgress) {
+		progress = append(progress, event)
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Shards != 3 || summary.Records != 3 {
+		t.Fatalf("summary = %+v", summary)
+	}
+	if len(progress) != 3 || progress[2].Current != 3 || progress[2].Total != 3 || progress[2].Summary.Records != 3 {
+		t.Fatalf("progress = %+v", progress)
+	}
+}
+
 func TestAuditRejectsCancellationTruncationAndWrongPhysicalSchema(t *testing.T) {
 	text := "valid"
 	tokens := tokenCount(t, text)
