@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -73,6 +74,21 @@ func TestProbePathsAllowsUTF8RuneSplitAtSampleBoundary(t *testing.T) {
 	}
 	if probe.Artifacts[0].Format != "text" {
 		t.Fatalf("format = %q, want text", probe.Artifacts[0].Format)
+	}
+}
+
+func TestProbePathsDetectsJSONObjectLargerThanSample(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.json")
+	contents := `{"text":"` + strings.Repeat("a", probeBytes+1) + `"}`
+	writeProbeFile(t, path, contents)
+
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := probe.Artifacts[0]
+	if artifact.Format != "json" || !slices.Contains(artifact.Evidence, "extension-hint:.json") {
+		t.Fatalf("artifact = %+v", artifact)
 	}
 }
 

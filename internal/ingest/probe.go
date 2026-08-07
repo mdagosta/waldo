@@ -259,6 +259,16 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 		artifact.Evidence = []string{"json-structure"}
 		return nil
 	}
+	// A single JSON object may be larger than the bounded probe sample. In that
+	// case the truncated prefix cannot pass json.Valid, but the .json extension
+	// plus a JSON container opener is sufficient to choose the JSON adapter;
+	// the streaming reader still validates the complete record during ingest.
+	if artifact.Bytes > probeBytes && strings.EqualFold(filepath.Ext(artifact.Path), ".json") &&
+		(bytes.HasPrefix(trimmed, []byte("{")) || bytes.HasPrefix(trimmed, []byte("["))) {
+		artifact.Format = "json"
+		artifact.Evidence = []string{"json-container-prefix", "extension-hint:.json"}
+		return nil
+	}
 	if validUTF8Sample(sample, artifact.Bytes <= int64(len(sample))) && !bytes.ContainsRune(sample, '\x00') {
 		extension := strings.ToLower(filepath.Ext(artifact.Path))
 		if extension == ".md" || extension == ".markdown" {
