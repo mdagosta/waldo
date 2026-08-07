@@ -1,3 +1,8 @@
+// Copyright (c) 2026 OpenWALDO Project contributors
+// Copyright (c) 2026 CtrlIQ, Inc.
+// Copyright (c) 2026 Gregory M. Kurtzer
+// SPDX-License-Identifier: Apache-2.0
+
 // Package tokenizer provides the reference token estimates recorded in index
 // manifests. Counts are planning metadata: they never affect canonical row or
 // object identity.

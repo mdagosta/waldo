@@ -1,3 +1,8 @@
+// Copyright (c) 2026 OpenWALDO Project contributors
+// Copyright (c) 2026 CtrlIQ, Inc.
+// Copyright (c) 2026 Gregory M. Kurtzer
+// SPDX-License-Identifier: Apache-2.0
+
 // Package inference owns ephemeral model generation sessions. It consumes
 // verified model artifacts but never mutates model lifecycle state.
 package inference

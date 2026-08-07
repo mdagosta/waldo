@@ -1,3 +1,8 @@
+// Copyright (c) 2026 OpenWALDO Project contributors
+// Copyright (c) 2026 CtrlIQ, Inc.
+// Copyright (c) 2026 Gregory M. Kurtzer
+// SPDX-License-Identifier: Apache-2.0
+
 // Package training is the narrow adapter boundary between WALDO's durable
 // model lifecycle and an execution framework.
 package training

@@ -1,3 +1,8 @@
+// Copyright (c) 2026 OpenWALDO Project contributors
+// Copyright (c) 2026 CtrlIQ, Inc.
+// Copyright (c) 2026 Gregory M. Kurtzer
+// SPDX-License-Identifier: Apache-2.0
+
 // Package modelexport converts one verified WALDO model run into separately
 // executable release formats without changing the managed model.
 package modelexport

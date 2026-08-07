@@ -1,3 +1,8 @@
+// Copyright (c) 2026 OpenWALDO Project contributors
+// Copyright (c) 2026 CtrlIQ, Inc.
+// Copyright (c) 2026 Gregory M. Kurtzer
+// SPDX-License-Identifier: Apache-2.0
+
 // Package corpus resolves indexed manifests into immutable, verified selections
 // consumed by export and model workflows.
 package corpus

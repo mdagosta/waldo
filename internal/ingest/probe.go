@@ -1,3 +1,8 @@
+// Copyright (c) 2026 OpenWALDO Project contributors
+// Copyright (c) 2026 CtrlIQ, Inc.
+// Copyright (c) 2026 Gregory M. Kurtzer
+// SPDX-License-Identifier: Apache-2.0
+
 // Package ingest probes acquired artifacts and builds immutable execution plans
 // for the corpus ingestion workflow. Format adapters and writers consume the
 // plan; they do not repeat detection or silently choose a different mapping.

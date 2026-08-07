@@ -1,3 +1,8 @@
+# Copyright (c) 2026 OpenWALDO Project contributors
+# Copyright (c) 2026 CtrlIQ, Inc.
+# Copyright (c) 2026 Gregory M. Kurtzer
+# SPDX-License-Identifier: Apache-2.0
+
 import mlx.core as mx
 import mlx.nn as nn
 

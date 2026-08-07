@@ -1,3 +1,8 @@
+// Copyright (c) 2026 OpenWALDO Project contributors
+// Copyright (c) 2026 CtrlIQ, Inc.
+// Copyright (c) 2026 Gregory M. Kurtzer
+// SPDX-License-Identifier: Apache-2.0
+
 // Package lookaside provides verified access to content-addressed objects. It
 // knows where bytes live and whether they match a hash; it never assigns those
 // bytes corpus meaning.
