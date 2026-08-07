@@ -146,6 +146,23 @@ steps: [{name: fetch, exec: ./fetch.sh}]
 	if runner.calls != 1 || resumed.Workspace != prepared.Workspace {
 		t.Fatalf("prepared recipe was not reused: calls=%d resumed=%+v", runner.calls, resumed)
 	}
+	statePath := filepath.Join(prepared.Workspace, recipeJournal)
+	state, exists, err := loadRecipeState(statePath)
+	if err != nil || !exists || state.Probe == nil {
+		t.Fatalf("load prepared state: exists=%v state=%+v err=%v", exists, state, err)
+	}
+	state.Probe.Artifacts[0].Format = "unknown"
+	state.Probe.Artifacts[0].Evidence = []string{"old-detector"}
+	if err := writeRecipeState(statePath, state); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := PrepareRecipe(context.Background(), loaded, "core/example", filepath.Dir(filepath.Dir(prepared.Workspace)), runner, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runner.calls != 1 || refreshed.Probe.Artifacts[0].Format != "text" {
+		t.Fatalf("probe metadata was not safely refreshed: calls=%d refreshed=%+v", runner.calls, refreshed)
+	}
 	if err := os.WriteFile(filepath.Join(prepared.Inputs, "document.txt"), []byte("changed"), 0o644); err != nil {
 		t.Fatal(err)
 	}

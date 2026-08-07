@@ -366,7 +366,16 @@ func prepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagin
 			return PreparedRecipe{}, err
 		}
 		if !sameProbe(*state.Probe, observed) {
-			return PreparedRecipe{}, fmt.Errorf("prepared recipe inputs changed in %s", inputs)
+			if !sameProbeContent(*state.Probe, observed) {
+				return PreparedRecipe{}, fmt.Errorf("prepared recipe inputs changed in %s", inputs)
+			}
+			// Detection metadata can legitimately improve across WALDO upgrades.
+			// Refresh it only when every immutable input path, size, and digest is
+			// unchanged, preserving the fail-closed content guarantee.
+			state.Probe = &observed
+			if err := writeRecipeState(statePath, state); err != nil {
+				return PreparedRecipe{}, err
+			}
 		}
 		return PreparedRecipe{Loaded: loaded, Workspace: workspace, Inputs: inputs, Probe: observed}, nil
 	}
@@ -464,6 +473,19 @@ func sameProbe(expected, observed Probe) bool {
 	left, _ := json.Marshal(expected)
 	right, _ := json.Marshal(observed)
 	return bytes.Equal(left, right)
+}
+
+func sameProbeContent(expected, observed Probe) bool {
+	if expected.Totals != observed.Totals || len(expected.Artifacts) != len(observed.Artifacts) {
+		return false
+	}
+	for position := range expected.Artifacts {
+		left, right := expected.Artifacts[position], observed.Artifacts[position]
+		if left.Path != right.Path || left.SHA256 != right.SHA256 || left.Bytes != right.Bytes {
+			return false
+		}
+	}
+	return true
 }
 
 func loadRecipeState(path string) (recipeState, bool, error) {
