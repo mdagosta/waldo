@@ -21,6 +21,8 @@ import (
 	"github.com/openwaldo/waldo/internal/shard"
 )
 
+var errEmptyProfiledText = errors.New("extracted text is empty")
+
 func StreamProfiledFileBatches(ctx context.Context, plan Plan, consume func(TextBatch) error) error {
 	for _, input := range plan.Inputs {
 		file, verified, err := openVerifiedInput(ctx, input.Artifact)
@@ -52,6 +54,12 @@ func StreamProfiledFileBatches(ctx context.Context, plan Plan, consume func(Text
 			err = fmt.Errorf("unsupported whole-file profile %q", input.Profile.Type)
 		}
 		if err != nil {
+			if input.Profile.Type == ProfileBoundedText && input.Profile.OnEmpty == "skip" && errors.Is(err, errEmptyProfiledText) {
+				if err := consume(TextBatch{RejectedDocs: 1}); err != nil {
+					return err
+				}
+				continue
+			}
 			var syntaxError *xml.SyntaxError
 			if input.Profile.Type == ProfileXMLRecord && input.Profile.XML.OnMalformed == "skip" && errors.As(err, &syntaxError) {
 				if err := consume(TextBatch{RejectedDocs: 1}); err != nil {
@@ -331,8 +339,11 @@ func xmlNameMatches(name xml.Name, selector string) bool {
 }
 
 func profiledFileRow(plan Plan, input PlanInput, text, source, date, language, rawLicense string, meta *string) (shard.TextRow, error) {
-	if strings.TrimSpace(text) == "" || !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
-		return shard.TextRow{}, fmt.Errorf("extracted text is not nonempty NUL-free UTF-8")
+	if strings.TrimSpace(text) == "" {
+		return shard.TextRow{}, errEmptyProfiledText
+	}
+	if !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
+		return shard.TextRow{}, fmt.Errorf("extracted text is not NUL-free UTF-8")
 	}
 	if source == "" {
 		source = "sha256:" + input.Artifact.SHA256

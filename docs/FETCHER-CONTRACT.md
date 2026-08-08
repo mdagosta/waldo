@@ -148,9 +148,10 @@ when every candidate is unranked, WALDO deterministically selects the first
 source candidate. Missing ranks otherwise fail closed.
 
 Mapped records fail closed when a required text or response field is empty.
-`record-map` and `dialogue-pair` recipes may explicitly set `on_empty: skip` to
-reject those physical records instead. WALDO reports rejected-empty records
-separately from content duplicates, and the policy is pinned in the plan.
+`record-map`, `dialogue-pair`, and `bounded-text` recipes may explicitly set
+`on_empty: skip` to reject those physical records instead. WALDO reports
+rejected-empty records separately from content duplicates, and the policy is
+pinned in the plan.
 Record profiles also fail closed on embedded NUL characters unless the recipe
 declares `nul: space`. Recipes may set `record_maximum_bytes` between 16 MiB
 and 256 MiB when one indivisible mapped record legitimately exceeds the 64 MiB
@@ -162,6 +163,7 @@ first matching start boundary and the first end boundary after it:
 ```yaml
 input:
   type: bounded-text
+  on_empty: skip # optional; reject a file whose matched bounds contain no text
   bounds:
     start_pattern: '(?m)^=== START: .+ ===$'
     end_pattern: '(?m)^=== END: .+ ===$'

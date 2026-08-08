@@ -51,7 +51,6 @@ func TestInputProfileValidation(t *testing.T) {
 		"bad boundary":         {Type: ProfileBoundedText, Bounds: TextBounds{StartPattern: "[", EndPattern: "end"}},
 		"relative XPath":       {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"doc/body"}}},
 		"bad empty policy":     {Type: ProfileRecordMap, OnEmpty: "discard", Fields: ProfileFields{Text: []string{"body"}}},
-		"empty policy on file": {Type: ProfileBoundedText, OnEmpty: "skip", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}},
 		"bad NUL policy":       {Type: ProfileRecordMap, NUL: "drop", Fields: ProfileFields{Text: []string{"body"}}},
 		"NUL policy on file":   {Type: ProfileBoundedText, NUL: "space", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}},
 		"bad malformed policy": {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"/doc/body"}}, XML: XMLMapping{OnMalformed: "discard"}},
@@ -62,6 +61,9 @@ func TestInputProfileValidation(t *testing.T) {
 				t.Fatalf("profile was accepted: %+v", profile)
 			}
 		})
+	}
+	if err := (InputProfile{Type: ProfileBoundedText, OnEmpty: "skip", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}}).Validate(); err != nil {
+		t.Fatalf("bounded-text on_empty policy was rejected: %v", err)
 	}
 }
 

@@ -112,8 +112,8 @@ func (profile InputProfile) Validate() error {
 	if profile.OnEmpty != "" && profile.OnEmpty != "error" && profile.OnEmpty != "skip" {
 		return fmt.Errorf("on_empty must be error or skip")
 	}
-	if profile.OnEmpty != "" && profile.Type != ProfileRecordMap && profile.Type != ProfileDialoguePair {
-		return fmt.Errorf("on_empty is supported only for record-map and dialogue-pair")
+	if profile.OnEmpty != "" && profile.Type != ProfileRecordMap && profile.Type != ProfileDialoguePair && profile.Type != ProfileBoundedText {
+		return fmt.Errorf("on_empty is supported only for record-map, dialogue-pair, and bounded-text")
 	}
 	if profile.NUL != "" && profile.NUL != "error" && profile.NUL != "space" {
 		return fmt.Errorf("nul must be error or space")
@@ -162,7 +162,7 @@ func (profile InputProfile) Validate() error {
 			return fmt.Errorf("invalid bounds.end_pattern: %w", err)
 		}
 		if !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || !profile.XML.empty() {
-			return fmt.Errorf("bounded-text accepts bounds only")
+			return fmt.Errorf("bounded-text accepts bounds and on_empty only")
 		}
 	case ProfileXMLRecord:
 		if len(profile.Fields.Text) == 0 {

@@ -7,6 +7,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,31 @@ func TestBoundedTextRequiresBothConfiguredBoundaries(t *testing.T) {
 	err := StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, profile), func(TextBatch) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), "end boundary did not match") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestBoundedTextExplicitlySkipsEmptyExtraction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "document.txt")
+	if err := os.WriteFile(path, []byte("BEGIN\n\nEND\nlicense footer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type: ProfileBoundedText, OnEmpty: "skip",
+		Bounds: TextBounds{StartPattern: `(?m)^BEGIN$`, EndPattern: `(?m)^END$`},
+	}
+	var rejected int64
+	if err := StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, profile), func(batch TextBatch) error {
+		rejected += batch.RejectedDocs
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rejected != 1 {
+		t.Fatalf("rejected = %d, want 1", rejected)
+	}
+	profile.OnEmpty = "error"
+	if err := StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, profile), func(TextBatch) error { return nil }); !errors.Is(err, errEmptyProfiledText) {
+		t.Fatalf("error = %v, want empty profiled text", err)
 	}
 }
 
