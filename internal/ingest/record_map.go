@@ -25,6 +25,7 @@ import (
 )
 
 var errEmptyMappedRecord = errors.New("required mapped content is empty")
+var errLicensePolicy = errors.New("effective license is excluded by input policy")
 
 type recordAccessor interface {
 	Values(string) ([]string, error)
@@ -59,8 +60,12 @@ func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(Text
 		}
 		return nil
 	}
-	reject := func() error {
+	reject := func(reason string) error {
 		batch.RejectedDocs++
+		if batch.Rejections == nil {
+			batch.Rejections = make(map[string]int64)
+		}
+		batch.Rejections[reason]++
 		return nil
 	}
 	for _, input := range plan.Inputs {
@@ -85,20 +90,32 @@ func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(Text
 	return flush()
 }
 
-func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func() error) error {
+func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func(string) error) error {
 	file, verified, err := openVerifiedInput(ctx, input.Artifact)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
+	rejectVerified := func(reason string) error {
+		if err := reject(reason); err != nil {
+			return err
+		}
+		return unchangedInput(file, verified)
+	}
 	decoder := json.NewDecoder(io.LimitReader(&contextReader{ctx: ctx, reader: file}, plan.MemoryBytes/2+1))
 	decoder.UseNumber()
 	var raw any
 	if err := decoder.Decode(&raw); err != nil {
+		if plan.RecipeEvidence != nil {
+			return rejectVerified(RejectionMalformed)
+		}
 		return fmt.Errorf("decode JSON object: %w", err)
 	}
 	object, ok := raw.(map[string]any)
 	if !ok {
+		if plan.RecipeEvidence != nil {
+			return rejectVerified(RejectionMapping)
+		}
 		if _, array := raw.([]any); array {
 			return fmt.Errorf("top-level JSON arrays are not supported; JSON input is exactly one object per file (use a future explicit json-array container)")
 		}
@@ -106,6 +123,9 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
+		if plan.RecipeEvidence != nil {
+			return rejectVerified(RejectionMalformed)
+		}
 		if err == nil {
 			return fmt.Errorf("JSON input contains more than one top-level value")
 		}
@@ -113,11 +133,17 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 	}
 	row, err := mapJSONCanonicalRecord(object, plan, input, "sha256:"+input.Artifact.SHA256)
 	if err != nil {
-		if errors.Is(err, errEmptyMappedRecord) && input.Profile.OnEmpty == "skip" {
-			if err := reject(); err != nil {
+		if errors.Is(err, errLicensePolicy) {
+			return rejectVerified(RejectionLicense)
+		}
+		if errors.Is(err, errEmptyMappedRecord) && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) {
+			if err := reject(RejectionEmpty); err != nil {
 				return err
 			}
 			return unchangedInput(file, verified)
+		}
+		if plan.RecipeEvidence != nil {
+			return rejectVerified(RejectionMapping)
 		}
 		return err
 	}
@@ -127,7 +153,7 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 	return unchangedInput(file, verified)
 }
 
-func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func() error) error {
+func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func(string) error) error {
 	file, verified, err := openVerifiedInput(ctx, input.Artifact)
 	if err != nil {
 		return err
@@ -140,29 +166,58 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64<<10), int(plan.Writer.RecordMaximumBytes+1<<20))
 	line := int64(0)
-	documents := int64(0)
+	candidates := int64(0)
 	for scanner.Scan() {
 		line++
 		data := bytes.TrimSpace(scanner.Bytes())
 		if len(data) == 0 {
 			continue
 		}
+		candidates++
 		decoder := json.NewDecoder(bytes.NewReader(data))
 		decoder.UseNumber()
 		var raw any
 		if err := decoder.Decode(&raw); err != nil {
+			if plan.RecipeEvidence != nil {
+				if err := reject(RejectionMalformed); err != nil {
+					_ = reader.Close()
+					return err
+				}
+				continue
+			}
 			_ = reader.Close()
 			return fmt.Errorf("line %d: %w", line, err)
 		}
 		object, ok := raw.(map[string]any)
 		if !ok {
+			if plan.RecipeEvidence != nil {
+				if err := reject(RejectionMapping); err != nil {
+					_ = reader.Close()
+					return err
+				}
+				continue
+			}
 			_ = reader.Close()
 			return fmt.Errorf("line %d must be one JSON object", line)
 		}
 		row, err := mapJSONCanonicalRecord(object, plan, input, fmt.Sprintf("sha256:%s#line=%d", input.Artifact.SHA256, line))
 		if err != nil {
-			if errors.Is(err, errEmptyMappedRecord) && input.Profile.OnEmpty == "skip" {
-				if err := reject(); err != nil {
+			if errors.Is(err, errLicensePolicy) {
+				if err := reject(RejectionLicense); err != nil {
+					_ = reader.Close()
+					return err
+				}
+				continue
+			}
+			if errors.Is(err, errEmptyMappedRecord) && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) {
+				if err := reject(RejectionEmpty); err != nil {
+					_ = reader.Close()
+					return err
+				}
+				continue
+			}
+			if plan.RecipeEvidence != nil {
+				if err := reject(RejectionMapping); err != nil {
 					_ = reader.Close()
 					return err
 				}
@@ -175,7 +230,6 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 			_ = reader.Close()
 			return err
 		}
-		documents++
 	}
 	scanErr := scanner.Err()
 	closeErr := reader.Close()
@@ -185,13 +239,13 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 	if closeErr != nil {
 		return closeErr
 	}
-	if documents == 0 {
+	if candidates == 0 {
 		return fmt.Errorf("JSONL input contains no records")
 	}
 	return unchangedInput(file, verified)
 }
 
-func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func() error) error {
+func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func(string) error) error {
 	file, verified, err := openVerifiedInput(ctx, input.Artifact)
 	if err != nil {
 		return err
@@ -226,8 +280,20 @@ func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit f
 			position++
 			row, err := mapCanonicalRecord(compiled.accessor(buffer[0]), plan, input, fmt.Sprintf("sha256:%s#row=%d", input.Artifact.SHA256, position))
 			if err != nil {
-				if errors.Is(err, errEmptyMappedRecord) && input.Profile.OnEmpty == "skip" {
-					if err := reject(); err != nil {
+				if errors.Is(err, errLicensePolicy) {
+					if err := reject(RejectionLicense); err != nil {
+						return err
+					}
+					continue
+				}
+				if errors.Is(err, errEmptyMappedRecord) && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) {
+					if err := reject(RejectionEmpty); err != nil {
+						return err
+					}
+					continue
+				}
+				if plan.RecipeEvidence != nil {
+					if err := reject(RejectionMapping); err != nil {
 						return err
 					}
 					continue
@@ -334,6 +400,9 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 	if license != "" {
 		effective = waldorecord.NormalizeLicense(license)
 		rawLicense = &license
+	}
+	if !input.Profile.LicensePolicy.Allows(effective) {
+		return shard.TextRow{}, fmt.Errorf("%w: %s", errLicensePolicy, effective)
 	}
 	sourceName := plan.Source.Name
 	hash := sha256.Sum256([]byte(text))

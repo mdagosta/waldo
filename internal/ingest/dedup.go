@@ -25,6 +25,7 @@ type deduplicator struct {
 	input    int64
 	kept     int64
 	rejected int64
+	reasons  map[string]int64
 }
 
 func (dedup *deduplicator) seedIDs(values []DedupIdentity) error {
@@ -62,8 +63,14 @@ func openDeduplicator(path string) (*deduplicator, error) {
 }
 
 func (dedup *deduplicator) filter(batch TextBatch) (TextBatch, error) {
-	result := TextBatch{Rows: make([]shard.TextRow, 0, len(batch.Rows)), RejectedDocs: batch.RejectedDocs}
+	result := TextBatch{Rows: make([]shard.TextRow, 0, len(batch.Rows)), RejectedDocs: batch.RejectedDocs, Rejections: batch.Rejections}
 	dedup.rejected += batch.RejectedDocs
+	if dedup.reasons == nil {
+		dedup.reasons = make(map[string]int64)
+	}
+	for reason, count := range batch.Rejections {
+		dedup.reasons[reason] += count
+	}
 	err := dedup.database.Update(func(transaction *bbolt.Tx) error {
 		bucket := transaction.Bucket(dedupBucket)
 		if bucket == nil {

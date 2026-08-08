@@ -131,6 +131,10 @@ func runShardExportRecord(context Context, args []string, stdout, _ io.Writer) e
 
 func printShardSummary(output io.Writer, summary shard.Summary) {
 	fmt.Fprintf(output, "SHARDS:         %s\n", humanInteger(summary.Shards))
+	if summary.Attested > 0 || summary.DeepScanned > 0 {
+		fmt.Fprintf(output, "ATTESTED:       %s\n", humanInteger(summary.Attested))
+		fmt.Fprintf(output, "DEEP SCANNED:   %s\n", humanInteger(summary.DeepScanned))
+	}
 	fmt.Fprintf(output, "RECORDS:        %s\n", humanInteger(summary.Records))
 	fmt.Fprintf(output, "TOKENS:         %s\n", humanInteger(summary.Tokens))
 	fmt.Fprintf(output, "LICENSES:       %s\n", humanInteger(int64(len(summary.Licenses))))

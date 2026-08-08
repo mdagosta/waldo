@@ -12,6 +12,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -197,6 +198,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 				return err
 			}
 		}
+		emitIngestExclusionWarning(stderr, assembly, plan)
 		if context.JSON {
 			return writeJSON(stdout, struct {
 				Identity     string                    `json:"identity"`
@@ -281,6 +283,28 @@ func rejectionLabel(plan ingest.Plan) string {
 		}
 	}
 	return "empty"
+}
+
+func emitIngestExclusionWarning(output io.Writer, assembly ingest.AssemblyResult, plan ingest.Plan) {
+	if assembly.RejectedDocs == 0 {
+		return
+	}
+	detail := strings.ToUpper(rejectionLabel(plan))
+	if len(assembly.Rejections) > 0 {
+		reasons := make([]string, 0, len(assembly.Rejections))
+		for reason := range assembly.Rejections {
+			reasons = append(reasons, reason)
+		}
+		sort.Strings(reasons)
+		parts := make([]string, 0, len(reasons))
+		for _, reason := range reasons {
+			parts = append(parts, fmt.Sprintf("%s %s", humanInteger(assembly.Rejections[reason]), strings.ToUpper(reason)))
+		}
+		detail = strings.Join(parts, ", ")
+	}
+	fmt.Fprintf(output, "\nWARNING: WALDO EXCLUDED %s RECORDS DURING INGESTION (%s).\n", humanInteger(assembly.RejectedDocs), detail)
+	fmt.Fprintln(output, "WARNING: EXCLUDED RECORDS ARE NOT PRESENT IN THE PUBLISHED SHARDS; REVIEW THE SOURCE POLICY AND COUNTS BEFORE COMMITTING.")
+	fmt.Fprintln(output)
 }
 
 type recipeJSONLogWriter struct {

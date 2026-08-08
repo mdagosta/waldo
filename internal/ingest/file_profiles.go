@@ -27,6 +27,12 @@ func StreamProfiledFileBatches(ctx context.Context, plan Plan, consume func(Text
 	for _, input := range plan.Inputs {
 		file, verified, err := openVerifiedInput(ctx, input.Artifact)
 		if err != nil {
+			if errors.Is(err, errLicensePolicy) {
+				if err := consume(rejectionBatch(RejectionLicense)); err != nil {
+					return err
+				}
+				continue
+			}
 			return err
 		}
 		limited := io.LimitReader(&contextReader{ctx: ctx, reader: file}, plan.Writer.RecordMaximumBytes+1)
@@ -54,15 +60,21 @@ func StreamProfiledFileBatches(ctx context.Context, plan Plan, consume func(Text
 			err = fmt.Errorf("unsupported whole-file profile %q", input.Profile.Type)
 		}
 		if err != nil {
-			if input.Profile.Type == ProfileBoundedText && input.Profile.OnEmpty == "skip" && errors.Is(err, errEmptyProfiledText) {
-				if err := consume(TextBatch{RejectedDocs: 1}); err != nil {
+			if input.Profile.Type == ProfileBoundedText && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) && errors.Is(err, errEmptyProfiledText) {
+				if err := consume(rejectionBatch(RejectionEmpty)); err != nil {
 					return err
 				}
 				continue
 			}
 			var syntaxError *xml.SyntaxError
-			if input.Profile.Type == ProfileXMLRecord && input.Profile.XML.OnMalformed == "skip" && errors.As(err, &syntaxError) {
-				if err := consume(TextBatch{RejectedDocs: 1}); err != nil {
+			if input.Profile.Type == ProfileXMLRecord && (input.Profile.XML.OnMalformed == "skip" || plan.RecipeEvidence != nil) && errors.As(err, &syntaxError) {
+				if err := consume(rejectionBatch(RejectionMalformed)); err != nil {
+					return err
+				}
+				continue
+			}
+			if plan.RecipeEvidence != nil {
+				if err := consume(rejectionBatch(RejectionMapping)); err != nil {
 					return err
 				}
 				continue
@@ -353,6 +365,9 @@ func profiledFileRow(plan Plan, input PlanInput, text, source, date, language, r
 	if rawLicense != "" {
 		license = record.NormalizeLicense(rawLicense)
 		licenseRaw = &rawLicense
+	}
+	if !input.Profile.LicensePolicy.Allows(license) {
+		return shard.TextRow{}, fmt.Errorf("%w: %s", errLicensePolicy, license)
 	}
 	sourceName := plan.Source.Name
 	digest := sha256.Sum256([]byte(text))

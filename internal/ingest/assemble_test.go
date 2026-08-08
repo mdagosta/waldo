@@ -10,6 +10,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/openwaldo/waldo/internal/shard"
+	"github.com/parquet-go/parquet-go"
 )
 
 func TestAssembleTextObjectsRotatesVerifiesAndIsDeterministic(t *testing.T) {
@@ -38,6 +41,24 @@ func TestAssembleTextObjectsRotatesVerifiesAndIsDeterministic(t *testing.T) {
 	if len(first.Objects) != 2 || first.Objects[0].Docs != 2 || first.Objects[1].Docs != 1 || first.Objects[0].Tokens <= 0 || first.Objects[1].Tokens <= 0 {
 		t.Fatalf("objects = %+v", first)
 	}
+	file, err := os.Open(first.Objects[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info, _ := file.Stat()
+	parquetFile, err := parquet.OpenFile(file, info.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
+	bom, err := shard.ReadBOM(parquetFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, _ := plan.Identity()
+	if bom.PlanSHA256 != identity || bom.Records != first.Objects[0].Docs || !bom.Validation.ContentHashes || !bom.Validation.TokenCounts {
+		t.Fatalf("embedded BOM = %+v", bom)
+	}
+	_ = file.Close()
 	second, err := AssembleTextObjects(context.Background(), plan, filepath.Join(t.TempDir(), "second"))
 	if err != nil {
 		t.Fatal(err)

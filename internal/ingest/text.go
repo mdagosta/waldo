@@ -25,6 +25,18 @@ type TextBatch struct {
 	Rows         []shard.TextRow
 	LogicalBytes int64
 	RejectedDocs int64
+	Rejections   map[string]int64
+}
+
+const (
+	RejectionEmpty     = "empty"
+	RejectionMalformed = "malformed"
+	RejectionMapping   = "mapping"
+	RejectionLicense   = "license-policy"
+)
+
+func rejectionBatch(reason string) TextBatch {
+	return TextBatch{RejectedDocs: 1, Rejections: map[string]int64{reason: 1}}
 }
 
 // StreamTextBatches preserves one text or Markdown file as one logical row.

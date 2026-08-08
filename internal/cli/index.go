@@ -209,7 +209,12 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 		}
 	}
 	auditOptions.Progress = auditProgressPrinter(progress)
-	audited, err := shard.AuditWithOptions(context.Execution, unique, auditOptions)
+	var audited shard.Summary
+	if boolOption(context, "deep") {
+		audited, err = shard.AuditWithOptions(context.Execution, unique, auditOptions)
+	} else {
+		audited, err = shard.VerifyWithOptions(context.Execution, unique, auditOptions)
+	}
 	if err != nil {
 		return err
 	}

@@ -38,11 +38,12 @@ type ObjectResult struct {
 }
 
 type AssemblyResult struct {
-	Objects       []ObjectResult `json:"objects"`
-	InputDocs     int64          `json:"input_docs"`
-	RetainedDocs  int64          `json:"retained_docs"`
-	DuplicateDocs int64          `json:"duplicate_docs"`
-	RejectedDocs  int64          `json:"rejected_docs,omitempty"`
+	Objects       []ObjectResult   `json:"objects"`
+	InputDocs     int64            `json:"input_docs"`
+	RetainedDocs  int64            `json:"retained_docs"`
+	DuplicateDocs int64            `json:"duplicate_docs"`
+	RejectedDocs  int64            `json:"rejected_docs,omitempty"`
+	Rejections    map[string]int64 `json:"rejections,omitempty"`
 }
 
 // DedupSeed streams existing canonical content identities into an update's
@@ -112,13 +113,13 @@ func AssembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 	}
 	if len(assembler.results) == 0 {
 		if seed != nil && dedup.input > 0 {
-			return AssemblyResult{InputDocs: dedup.input + dedup.rejected, DuplicateDocs: dedup.input, RejectedDocs: dedup.rejected}, nil
+			return AssemblyResult{InputDocs: dedup.input + dedup.rejected, DuplicateDocs: dedup.input, RejectedDocs: dedup.rejected, Rejections: dedup.reasons}, nil
 		}
 		return AssemblyResult{}, fmt.Errorf("ingestion produced no canonical records")
 	}
 	return AssemblyResult{
 		Objects: assembler.results, InputDocs: dedup.input + dedup.rejected, RetainedDocs: dedup.kept,
-		DuplicateDocs: dedup.input - dedup.kept, RejectedDocs: dedup.rejected,
+		DuplicateDocs: dedup.input - dedup.kept, RejectedDocs: dedup.rejected, Rejections: dedup.reasons,
 	}, nil
 }
 
@@ -174,6 +175,9 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 		}
 		count := int64(assembler.counter.Count(row.Text))
 		row.TokenCount = &count
+		if err := shard.ValidateTextRow(row); err != nil {
+			return fmt.Errorf("validate canonical ingest row: %w", err)
+		}
 		active.tokens += count
 		if _, err := active.writer.Write([]shard.TextRow{row}); err != nil {
 			return err
@@ -243,7 +247,12 @@ func (assembler *objectAssembler) finishActive(active *activeObject) error {
 		return nil
 	}
 	delete(assembler.active, active.license)
-	setAggregateMetadata(active)
+	if err := setAggregateMetadata(active, assembler.plan); err != nil {
+		_ = active.writer.Close()
+		_ = active.file.Close()
+		_ = os.Remove(active.path)
+		return err
+	}
 	if err := active.writer.Close(); err != nil {
 		_ = active.file.Close()
 		_ = os.Remove(active.path)
@@ -322,12 +331,22 @@ func (assembler *objectAssembler) finishAll() error {
 	return nil
 }
 
-func setAggregateMetadata(active *activeObject) {
+func setAggregateMetadata(active *activeObject, plan Plan) error {
 	active.writer.SetKeyValueMetadata("waldo.records", fmt.Sprint(active.docs))
 	active.writer.SetKeyValueMetadata("waldo.tokens", fmt.Sprint(active.tokens))
 	active.writer.SetKeyValueMetadata("waldo.content_bytes", fmt.Sprint(active.logicalBytes))
 	encoded, _ := json.Marshal([]string{active.license})
 	active.writer.SetKeyValueMetadata("waldo.licenses", string(encoded))
+	identity, err := plan.Identity()
+	if err != nil {
+		return err
+	}
+	bom, err := shard.EncodeBOM(shard.NewBOM(identity, tokenizer.Default, active.docs, active.tokens, active.logicalBytes, []string{active.license}))
+	if err != nil {
+		return err
+	}
+	active.writer.SetKeyValueMetadata(shard.BOMMetadataKey, bom)
+	return nil
 }
 
 func (assembler *objectAssembler) discardActive() {
@@ -384,9 +403,12 @@ func verifyAssembledObject(object ObjectResult) (int, error) {
 	if value, ok := parquetFile.Lookup("waldo.recipe"); !ok || value != shard.TextWriterRecipe {
 		return 0, fmt.Errorf("assembled object has invalid writer recipe metadata")
 	}
-	audited, err := shard.Audit(context.Background(), []string{object.Path})
+	audited, err := shard.VerifyWithOptions(context.Background(), []string{object.Path}, shard.AuditOptions{Workers: 1})
 	if err != nil {
-		return 0, fmt.Errorf("audit assembled object: %w", err)
+		return 0, fmt.Errorf("verify assembled object attestation: %w", err)
+	}
+	if audited.Attested != 1 || audited.DeepScanned != 0 {
+		return 0, fmt.Errorf("assembled object is missing its ingest attestation")
 	}
 	if audited.Records != object.Docs || audited.Tokens != object.Tokens || audited.ContentBytes != object.LogicalBytes {
 		return 0, fmt.Errorf("assembled object audit totals do not match assembly totals")

@@ -42,6 +42,8 @@ type RecordView struct {
 
 type Summary struct {
 	Shards       int64    `json:"shards"`
+	Attested     int64    `json:"attested_shards,omitempty"`
+	DeepScanned  int64    `json:"deep_scanned_shards,omitempty"`
 	Records      int64    `json:"records"`
 	Tokens       int64    `json:"tokens"`
 	ContentBytes int64    `json:"content_bytes"`
@@ -159,6 +161,153 @@ func Summarize(paths []string) (Summary, error) {
 
 func Audit(ctx context.Context, paths []string) (Summary, error) {
 	return AuditWithOptions(ctx, paths, AuditOptions{})
+}
+
+// VerifyWithOptions verifies builder-attested shards from their Parquet
+// footer. Shards without a recognized ingest attestation fall back to a deep
+// record scan; already attested content is never re-tokenized.
+func VerifyWithOptions(ctx context.Context, paths []string, options AuditOptions) (Summary, error) {
+	workers := options.Workers
+	if workers <= 0 {
+		workers = runtime.GOMAXPROCS(0)
+		if workers > 16 {
+			workers = 16
+		}
+	}
+	if workers > len(paths) {
+		workers = len(paths)
+	}
+	if workers == 0 {
+		return Summary{}, nil
+	}
+	type result struct {
+		index   int
+		summary Summary
+		err     error
+	}
+	auditContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan int)
+	results := make(chan result, workers)
+	var wait sync.WaitGroup
+	worker := func() {
+		defer wait.Done()
+		var counter tokenizer.Counter
+		for index := range jobs {
+			one, err := verifyAttestedOne(paths[index])
+			if errors.Is(err, errDeepScanRequired) {
+				if counter == nil {
+					counter, err = tokenizer.New(tokenizer.Default)
+				}
+				if err == nil {
+					one, err = auditOne(auditContext, paths[index], counter, func(string) error { return nil })
+				}
+			}
+			results <- result{index: index, summary: one, err: err}
+			if err != nil {
+				cancel()
+				return
+			}
+		}
+	}
+	wait.Add(workers)
+	for range workers {
+		go worker()
+	}
+	go func() {
+		defer close(jobs)
+		for index := range paths {
+			select {
+			case jobs <- index:
+			case <-auditContext.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wait.Wait()
+		close(results)
+	}()
+	licenses, recipes := map[string]bool{}, map[string]bool{}
+	var total Summary
+	completed := 0
+	var verifyErr error
+	for result := range results {
+		if result.err != nil {
+			if verifyErr == nil || errors.Is(verifyErr, context.Canceled) {
+				verifyErr = fmt.Errorf("%s: %w", paths[result.index], result.err)
+			}
+			continue
+		}
+		addSummary(&total, result.summary, licenses, recipes)
+		completed++
+		if options.Progress != nil {
+			progress := total
+			progress.Licenses, progress.Recipes = keys(licenses), keys(recipes)
+			options.Progress(AuditProgress{Current: completed, Total: len(paths), Path: paths[result.index], Summary: progress})
+		}
+	}
+	if verifyErr != nil {
+		return Summary{}, verifyErr
+	}
+	if err := ctx.Err(); err != nil {
+		return Summary{}, err
+	}
+	total.Licenses, total.Recipes = keys(licenses), keys(recipes)
+	return total, nil
+}
+
+var errDeepScanRequired = errors.New("shard has no recognized ingest attestation")
+
+func verifyAttestedOne(path string) (Summary, error) {
+	file, parquetFile, size, err := openShard(path)
+	if err != nil {
+		return Summary{}, err
+	}
+	defer file.Close()
+	one, complete := footerSummary(parquetFile, size)
+	if !complete || parquetFile.NumRows() != one.Records {
+		return Summary{}, errDeepScanRequired
+	}
+	recipe, _ := parquetFile.Lookup("waldo.recipe")
+	switch recipe {
+	case TextWriterRecipe:
+		if _, ok := parquetFile.Lookup(BOMMetadataKey); !ok {
+			return Summary{}, errDeepScanRequired
+		}
+		bom, err := ReadBOM(parquetFile)
+		if err != nil {
+			return Summary{}, err
+		}
+		if bom.Records != one.Records || bom.Tokens != one.Tokens || bom.ContentBytes != one.ContentBytes || !slices.Equal(bom.Licenses, one.Licenses) {
+			return Summary{}, fmt.Errorf("embedded shard BOM differs from Parquet footer aggregates")
+		}
+	case FormerTextRecipe:
+		// Writer v4 performed a complete record/hash/token audit before its
+		// object hash was published, but predates the explicit BOM metadata.
+	default:
+		return Summary{}, errDeepScanRequired
+	}
+	one.Shards = 1
+	one.Attested = 1
+	return one, nil
+}
+
+func addSummary(total *Summary, one Summary, licenses, recipes map[string]bool) {
+	total.Shards += one.Shards
+	total.Attested += one.Attested
+	total.DeepScanned += one.DeepScanned
+	total.Records += one.Records
+	total.Tokens += one.Tokens
+	total.ContentBytes += one.ContentBytes
+	total.EncodedBytes += one.EncodedBytes
+	total.RowGroups += one.RowGroups
+	for _, value := range one.Licenses {
+		licenses[value] = true
+	}
+	for _, value := range one.Recipes {
+		recipes[value] = true
+	}
 }
 
 func AuditWithOptions(ctx context.Context, paths []string, options AuditOptions) (Summary, error) {
@@ -293,18 +442,7 @@ func AuditWithOptions(ctx context.Context, paths []string, options AuditOptions)
 		}
 		one := result.summary
 		path := paths[result.index]
-		total.Shards++
-		total.Records += one.Records
-		total.Tokens += one.Tokens
-		total.ContentBytes += one.ContentBytes
-		total.EncodedBytes += one.EncodedBytes
-		total.RowGroups += one.RowGroups
-		for _, value := range one.Licenses {
-			licenses[value] = true
-		}
-		for _, value := range one.Recipes {
-			recipes[value] = true
-		}
+		addSummary(&total, one, licenses, recipes)
 		completed++
 		if options.Progress != nil {
 			progress := total
@@ -356,6 +494,7 @@ func auditOne(ctx context.Context, path string, counter tokenizer.Counter, addID
 		return Summary{}, closeErr
 	}
 	one.Shards = 1
+	one.DeepScanned = 1
 	one.EncodedBytes = size
 	one.RowGroups = int64(len(parquetFile.RowGroups()))
 	return one, nil
@@ -474,7 +613,7 @@ func scanCanonical(file *parquet.File, validate bool, callback func(int64, Recor
 		count, readErr := reader.Read(rows)
 		for i := 0; i < count; i++ {
 			row := rows[i]
-			canonical := record.Record{SHA256: hex.EncodeToString(row.ContentSHA256[:]), Kind: record.KindPretrain, Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, LicenseRaw: stringValue(row.LicenseRaw), Lang: stringValue(row.Language), LangScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount)}
+			canonical := canonicalTextRow(row)
 			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil); err != nil {
 				return consumer.finish(), err
 			}
@@ -487,6 +626,34 @@ func scanCanonical(file *parquet.File, validate bool, callback func(int64, Recor
 		}
 	}
 	return consumer.finish(), nil
+}
+
+// ValidateTextRow applies the complete canonical record contract immediately
+// before ingestion writes a row. Published shards therefore carry builder
+// evidence for checks that do not need to be repeated after object hashing.
+func ValidateTextRow(row TextRow) error {
+	if row.TokenCount == nil {
+		return fmt.Errorf("token_count is required")
+	}
+	canonical := canonicalTextRow(row)
+	if err := canonical.Validate(); err != nil {
+		return err
+	}
+	meta := stringValue(row.Meta)
+	if meta != "" && (!json.Valid([]byte(meta)) || meta[0] != '{') {
+		return fmt.Errorf("record meta is not a JSON object")
+	}
+	return nil
+}
+
+func canonicalTextRow(row TextRow) record.Record {
+	return record.Record{
+		SHA256: hex.EncodeToString(row.ContentSHA256[:]), Kind: record.KindPretrain,
+		Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName),
+		License: row.License, LicenseRaw: stringValue(row.LicenseRaw),
+		Lang: stringValue(row.Language), LangScore: int64(int32Value(row.LanguageScore)),
+		Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount),
+	}
 }
 
 func scanLegacy(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {

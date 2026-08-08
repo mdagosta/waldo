@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/openwaldo/waldo/internal/corpus"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,13 +31,14 @@ const (
 // text. The container remains a separately detected fact: JSON is one object,
 // JSONL is one object per line, and Parquet is one row per record.
 type InputProfile struct {
-	Type    string           `json:"type" yaml:"type"`
-	OnEmpty string           `json:"on_empty,omitempty" yaml:"on_empty,omitempty"`
-	NUL     string           `json:"nul,omitempty" yaml:"nul,omitempty"`
-	Fields  ProfileFields    `json:"fields,omitempty" yaml:"fields,omitempty"`
-	Tree    ConversationTree `json:"tree,omitempty" yaml:"tree,omitempty"`
-	Bounds  TextBounds       `json:"bounds,omitempty" yaml:"bounds,omitempty"`
-	XML     XMLMapping       `json:"xml,omitempty" yaml:"xml,omitempty"`
+	Type          string               `json:"type" yaml:"type"`
+	OnEmpty       string               `json:"on_empty,omitempty" yaml:"on_empty,omitempty"`
+	NUL           string               `json:"nul,omitempty" yaml:"nul,omitempty"`
+	Fields        ProfileFields        `json:"fields,omitempty" yaml:"fields,omitempty"`
+	Tree          ConversationTree     `json:"tree,omitempty" yaml:"tree,omitempty"`
+	Bounds        TextBounds           `json:"bounds,omitempty" yaml:"bounds,omitempty"`
+	XML           XMLMapping           `json:"xml,omitempty" yaml:"xml,omitempty"`
+	LicensePolicy corpus.LicensePolicy `json:"license_policy,omitempty" yaml:"license_policy,omitempty"`
 }
 
 type ProfileFields struct {
@@ -109,6 +111,13 @@ type ConversationTree struct {
 }
 
 func (profile InputProfile) Validate() error {
+	policy, err := corpus.NewLicensePolicy(profile.LicensePolicy.Include, profile.LicensePolicy.Exclude)
+	if err != nil {
+		return err
+	}
+	if len(policy.Include) != len(profile.LicensePolicy.Include) || len(policy.Exclude) != len(profile.LicensePolicy.Exclude) {
+		return fmt.Errorf("license_policy patterns must be non-empty and unique")
+	}
 	if profile.OnEmpty != "" && profile.OnEmpty != "error" && profile.OnEmpty != "skip" {
 		return fmt.Errorf("on_empty must be error or skip")
 	}
@@ -123,7 +132,7 @@ func (profile InputProfile) Validate() error {
 	}
 	switch profile.Type {
 	case "":
-		if profile.OnEmpty != "" || profile.NUL != "" || !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if profile.OnEmpty != "" || profile.NUL != "" || !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() || len(profile.LicensePolicy.Include) > 0 || len(profile.LicensePolicy.Exclude) > 0 {
 			return fmt.Errorf("input profile fields require a type")
 		}
 		return nil

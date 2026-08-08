@@ -13,8 +13,8 @@ import (
 )
 
 type LicensePolicy struct {
-	Include []string `json:"include,omitempty"`
-	Exclude []string `json:"exclude,omitempty"`
+	Include []string `json:"include,omitempty" yaml:"include,omitempty"`
+	Exclude []string `json:"exclude,omitempty" yaml:"exclude,omitempty"`
 }
 
 func NewLicensePolicy(include, exclude []string) (LicensePolicy, error) {

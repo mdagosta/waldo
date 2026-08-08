@@ -39,6 +39,11 @@ func TestIndexAuditComparesStreamedShardTotalsWithManifest(t *testing.T) {
 	writer.SetKeyValueMetadata("waldo.tokens", fmt.Sprint(tokens))
 	writer.SetKeyValueMetadata("waldo.content_bytes", fmt.Sprint(len(text)))
 	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
+	bom, err := shard.EncodeBOM(shard.NewBOM(strings.Repeat("b", 64), tokenizer.Default, 1, tokens, int64(len(text)), []string{"CC0-1.0"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.SetKeyValueMetadata(shard.BOMMetadataKey, bom)
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +61,7 @@ func TestIndexAuditComparesStreamedShardTotalsWithManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"index", "audit", root}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "VERIFIED") {
+	if code := Run([]string{"index", "audit", root}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "VERIFIED") || !strings.Contains(stdout.String(), "ATTESTED:       1") {
 		t.Fatalf("valid audit code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	writeAuditManifest(t, root, objectPath, objectDigest, int64(encoded.Len()), tokens+1)

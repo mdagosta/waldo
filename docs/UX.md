@@ -149,6 +149,12 @@ SHA-256, and purges successful scratch material afterward. Availability checks
 always probe the manifest URL itself; a mirror must not hide a missing
 canonical object.
 
+`index audit` verifies each materialized object's SHA-256, Parquet schema,
+embedded ingest attestation, and aggregate totals without repeating work
+already completed by the immutable shard builder. Unattested legacy shards
+fall back to a complete record scan. `index audit --deep` explicitly
+recomputes every record hash and reference-token count.
+
 `index list` is recursive and returns one row per corpus beneath the selected
 path, including logical path, title, shard/document/token/byte totals, and a
 license summary. `index show` is the detailed view for one corpus or directory.
@@ -340,6 +346,13 @@ SHA-256, document count, reference-token estimate, and encoded byte size.
 Detailed processing prose, command arrays, modality duplication, and input
 inventories stay out of Git. Secrets and environment values are never written
 to the manifest.
+
+The canonical Parquet footer carries a subject-`shard` OpenWALDO BOM. It pins
+the ingest plan, schema, writer, tokenizer, license partition, aggregate
+totals, and builder validation claims without adding a synthetic training row.
+Recipe-driven ingestion excludes bounded malformed, empty, or unmappable
+records and WALDO prints a prominent warning with counts by reason before presenting the
+contribution for review.
 
 ### Update an existing corpus
 

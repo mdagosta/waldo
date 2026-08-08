@@ -194,6 +194,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 		}
 	}
 	if commandContext.JSON {
+		emitIngestExclusionWarning(stderr, assembly, plan)
 		return writeJSON(stdout, struct {
 			Identity     string                    `json:"identity"`
 			Plan         ingest.Plan               `json:"plan"`
@@ -202,6 +203,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 			Contribution ingest.ContributionResult `json:"contribution"`
 		}{identity, plan, assembly, publication, contribution})
 	}
+	emitIngestExclusionWarning(stderr, assembly, plan)
 	verb := "appended"
 	if rebuild {
 		verb = "rebuilt"

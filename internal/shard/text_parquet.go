@@ -16,7 +16,8 @@ import (
 
 const (
 	TextRecordSchema  = 1
-	TextWriterRecipe  = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v4"
+	TextWriterRecipe  = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v5-bom"
+	FormerTextRecipe  = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v4"
 	TextRowGroupBytes = 64 << 20
 	TextPageBytes     = 1 << 20
 )
