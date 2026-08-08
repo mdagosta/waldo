@@ -54,6 +54,9 @@ func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {
 	if bom.Manifests[0].ComposedBy == nil || bom.Manifests[0].ComposedBy.Path != "composes/books.yaml" || len(bom.Manifests[0].ComposedBy.Steps) != 1 {
 		t.Fatalf("composition evidence was not preserved = %+v", bom.Manifests[0].ComposedBy)
 	}
+	if source := bom.Manifests[0].Sources[0]; source.LicenseEvidence == nil || source.LicenseEvidence.Declaration == "" || source.Content == nil || source.Content.Selection == "" || source.Acquisition == nil || source.CollectedTo != "2026-08-08T10:05:00Z" {
+		t.Fatalf("source evidence was not preserved = %+v", source)
+	}
 	if bom.Totals.Shards != 1 || bom.Totals.Docs != 3 || bom.Totals.Tokens != 30 || bom.Totals.Bytes != 300 {
 		t.Fatalf("bom totals = %+v", bom.Totals)
 	}
@@ -168,7 +171,10 @@ func bomFixture(t *testing.T) string {
   "description": "Example books.", "license": "CC0-1.0",
   "sources": [{"name": "source", "source": "Example", "url": "https://example.test", "sha256": %q,
     "category": "public-dataset", "usage": {"text": {"samples": 5, "tokens": 50, "content_bytes": 400}},
-    "content": {"types": ["books"], "languages": ["en"], "copyrighted": "unknown"},
+    "collected_from": "2026-08-08T10:00:00Z", "collected_to": "2026-08-08T10:05:00Z",
+    "license_evidence": {"declaration": "Creative Commons Zero v1.0", "url": "https://example.test/license"},
+    "content": {"types": ["books"], "languages": ["en"], "from": "1900", "to": "2024", "selection": "Complete pinned release.", "copyrighted": "unknown"},
+    "acquisition": {"basis": "Public release."},
     "files": [{"name": "input", "url": "https://example.test/input", "sha256": %q}]}],
   "converted_by": {"tool": "test", "version": "1", "profile": "text", "recipe": "test/v1", "tokenizer": "byte"},
   "processing": {"steps": [{"name": "normalize", "description": "Normalize text."}]},

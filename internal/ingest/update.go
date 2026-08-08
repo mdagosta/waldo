@@ -133,17 +133,14 @@ func preserveSourceContext(existing, fresh []index.Source) []index.Source {
 			prior.URL = fresh[position].URL
 			prior.Category = fresh[position].Category
 			prior.License = fresh[position].License
+			prior.LicenseEvidence = fresh[position].LicenseEvidence
+			prior.Content = fresh[position].Content
+			prior.Acquisition = fresh[position].Acquisition
 			prior.SHA256 = fresh[position].SHA256
 			prior.Files = fresh[position].Files
-			if fresh[position].Version != "" {
-				prior.Version = fresh[position].Version
-			}
-			if fresh[position].CollectedFrom != "" {
-				prior.CollectedFrom = fresh[position].CollectedFrom
-			}
-			if fresh[position].CollectedTo != "" {
-				prior.CollectedTo = fresh[position].CollectedTo
-			}
+			prior.Version = fresh[position].Version
+			prior.CollectedFrom = fresh[position].CollectedFrom
+			prior.CollectedTo = fresh[position].CollectedTo
 			fresh[position] = prior
 			break
 		}

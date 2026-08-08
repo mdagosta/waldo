@@ -67,12 +67,15 @@ type RecipeSourceGroup struct {
 }
 
 type RecipeSource struct {
-	Name          string `json:"name,omitempty" yaml:"name,omitempty"`
-	Version       string `json:"version,omitempty" yaml:"version,omitempty"`
-	URL           string `json:"url" yaml:"url"`
-	Category      string `json:"category" yaml:"category"`
-	CollectedFrom string `json:"collected_from,omitempty" yaml:"collected_from,omitempty"`
-	CollectedTo   string `json:"collected_to,omitempty" yaml:"collected_to,omitempty"`
+	Name            string                 `json:"name,omitempty" yaml:"name,omitempty"`
+	Version         string                 `json:"version,omitempty" yaml:"version,omitempty"`
+	URL             string                 `json:"url" yaml:"url"`
+	Category        string                 `json:"category" yaml:"category"`
+	CollectedFrom   string                 `json:"collected_from,omitempty" yaml:"collected_from,omitempty"`
+	CollectedTo     string                 `json:"collected_to,omitempty" yaml:"collected_to,omitempty"`
+	LicenseEvidence *index.LicenseEvidence `json:"license_evidence,omitempty" yaml:"license_evidence,omitempty"`
+	Content         *index.Content         `json:"content,omitempty" yaml:"content,omitempty"`
+	Acquisition     *index.Acquisition     `json:"acquisition,omitempty" yaml:"acquisition,omitempty"`
 }
 
 type RecipeStep struct {
@@ -234,14 +237,14 @@ func validateRecipeSource(label, license string, source RecipeSource, textColumn
 	if strings.TrimSpace(source.URL) == "" || strings.TrimSpace(source.Category) == "" {
 		return fmt.Errorf("source url and category are required")
 	}
-	category, ok := index.CanonicalSourceCategory(source.Category)
-	if !ok {
+	if _, ok := index.CanonicalSourceCategory(source.Category); !ok {
 		return fmt.Errorf("unsupported source category %q", source.Category)
 	}
-	switch category {
-	case index.SourcePublicDataset, index.SourcePrivateThirdParty, index.SourceOther:
-	default:
-		return fmt.Errorf("source category %q requires acquisition evidence fields that ingest recipe does not collect yet", category)
+	if err := index.ValidateSourceProvenance(index.Source{
+		Category: source.Category, CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo,
+		LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
+	}); err != nil {
+		return err
 	}
 	if err := input.Validate(); err != nil {
 		return fmt.Errorf("input: %w", err)
@@ -377,12 +380,20 @@ func (prepared PreparedRecipe) SourceRequests() []PlanSourceRequest {
 		}
 		requests = append(requests, PlanSourceRequest{
 			ID: source.ID, License: source.License,
-			Source:    PlanSource{Name: name, Version: source.Source.Version, URL: source.Source.URL, Category: source.Source.Category, CollectedFrom: source.Source.CollectedFrom, CollectedTo: source.Source.CollectedTo},
+			Source:    source.Source.AsPlanSource(source.ID, name),
 			InputRoot: filepath.Join(prepared.Inputs, source.ID), TextColumn: source.TextColumn,
 			RecordMaximumBytes: source.RecordMaximumBytes, Profile: source.Input,
 		})
 	}
 	return requests
+}
+
+func (source RecipeSource) AsPlanSource(id, name string) PlanSource {
+	return PlanSource{
+		ID: id, Name: name, Version: source.Version, URL: source.URL, Category: source.Category,
+		CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo,
+		LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
+	}
 }
 
 type RecipeUpdateState struct {

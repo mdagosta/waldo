@@ -321,13 +321,48 @@ func TestWebCrawlProvenanceRequiresCrawlerEvidence(t *testing.T) {
 	source := Source{
 		Name: "crawl", Category: SourceWebCrawl,
 		Usage:       Modalities{"text": {Samples: 1, Tokens: 2}},
-		Acquisition: &Acquisition{Domains: []DomainMeasure{{Domain: "example.com", RetainedBytes: 10}}},
+		Acquisition: &Acquisition{Domains: []DomainMeasure{{Domain: "example.com", AcquiredBytes: 20, RetainedBytes: 10}}},
 	}
 	if err := validateSourceProvenance(source); err == nil || !strings.Contains(err.Error(), "crawler details") {
 		t.Fatalf("validateSourceProvenance() error = %v, want crawler error", err)
 	}
-	source.Acquisition.Crawler = &Crawler{Name: "waldo", Purpose: "Acquire public pages.", Behaviour: "Honours robots.txt."}
+	source.Acquisition.Crawler = &Crawler{Name: "waldo", Purpose: "Acquire public pages.", Behaviour: "Honours robots.txt.", Protocols: []string{"robots.txt"}}
 	if err := validateSourceProvenance(source); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSourceProvenanceSeparatesLicenseAndPeriodEvidence(t *testing.T) {
+	source := Source{
+		Name: "dataset", Category: SourcePublicDataset,
+		License: "Apache-2.0",
+		LicenseEvidence: &LicenseEvidence{
+			Declaration: "Apache License, Version 2.0",
+			URL:         "https://example.test/LICENSE",
+		},
+		CollectedFrom: "2026-08-08T10:00:00Z",
+		CollectedTo:   "2026-08-08T10:05:00Z",
+		Content: &Content{
+			Types: []string{"text"}, Languages: []string{"en"},
+			From: "2020", To: "2025-12", Selection: "Pinned train split.",
+		},
+	}
+	if err := ValidateSourceProvenance(source); err != nil {
+		t.Fatal(err)
+	}
+	source.LicenseEvidence.URL = "relative/LICENSE"
+	if err := ValidateSourceProvenance(source); err == nil || !strings.Contains(err.Error(), "absolute URL") {
+		t.Fatalf("license evidence error = %v", err)
+	}
+}
+
+func TestPrivateSourceRequiresAcquisitionBasis(t *testing.T) {
+	source := Source{Name: "private", Category: SourcePrivateThirdParty}
+	if err := ValidateSourceProvenance(source); err == nil || !strings.Contains(err.Error(), "acquisition details") {
+		t.Fatalf("missing acquisition error = %v", err)
+	}
+	source.Acquisition = &Acquisition{Basis: "Private data-sharing agreement; terms withheld."}
+	if err := ValidateSourceProvenance(source); err != nil {
 		t.Fatal(err)
 	}
 }

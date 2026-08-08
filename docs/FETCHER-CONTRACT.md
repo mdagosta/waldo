@@ -23,8 +23,7 @@ indexed corpus and its OpenWALDO BOM into a local directory.
 - Downloading upstream artifacts without silently changing their contents
 - Deterministic output paths
 - Verification of declared upstream checksums or immutable revisions
-- Acquisition time and upstream revision where available
-- Acquisition start/end time and the underlying content period when known
+- Upstream revision, acquisition period, and underlying content period when known
 - The upstream's raw license declaration or evidence location, without mapping
   it to a different license
 - Source category: public dataset, commercially licensed, private third party,
@@ -107,14 +106,28 @@ description: Community-contributed cooking and food articles.
 license: CC-BY-3.0
 source:
   name: common-pile/foodista_filtered
+  version: 28ac18deab7ed2ec3580f4f13f0ed141e47957ef
   url: https://huggingface.co/datasets/common-pile/foodista_filtered
   category: public-dataset
-text_column: text
+  collected_to: 2026-07
+  license_evidence:
+    declaration: Creative Commons Attribution 3.0 Unported
+    url: https://huggingface.co/datasets/common-pile/foodista_filtered/blob/28ac18deab7ed2ec3580f4f13f0ed141e47957ef/README.md
+  content:
+    types: [food and cooking articles]
+    languages: [en]
+    selection: The pinned foodista-dolma-0000.json.gz artifact from the filtered Common Pile v0.1 release.
+    copyrighted: "yes"
+    machine_generated: unknown
+  acquisition:
+    basis: Public dataset release at the pinned revision.
 steps:
-  - name: fetch
-    exec: ../../fetchers/common-pile.sh
+  - name: download
+    exec: ../../fetchers/http.sh
     args:
-      - foodista_filtered
+      - https://huggingface.co/datasets/common-pile/foodista_filtered/resolve/28ac18deab7ed2ec3580f4f13f0ed141e47957ef/foodista-dolma-0000.json.gz?download=true
+      - foodista.jsonl.gz
+      - c39b3e7efc54ec03a38fbf2aa0e471d9bcb898879b2df1ff1e6646fdbcc4476f
 ```
 
 `description`, `source.name`, `text_column`, and each step's `args` are
@@ -141,6 +154,66 @@ For raw project trees, one selected UTF-8 file is one canonical text row.
 preserves the path relative to that project's acquisition directory. Project
 identity is the provenance and train/evaluation grouping boundary; shards do
 not create a project boundary.
+
+A complete public Git source uses the same evidence shape. Additional projects
+are additional `sources[]` entries:
+
+```yaml
+kind: waldo-ingest-recipe
+schema: 2
+title: Open Source Project Code
+description: Project-owned source files from pinned revisions.
+sources:
+  - id: kubernetes
+    license: Apache-2.0
+    source:
+      name: kubernetes
+      version: 0f29094e5b73085e3802ecc1298ecae13866bfe6
+      url: https://github.com/kubernetes/kubernetes
+      category: public-dataset
+      license_evidence:
+        declaration: Apache License 2.0
+        url: https://github.com/kubernetes/kubernetes/blob/0f29094e5b73085e3802ecc1298ecae13866bfe6/LICENSE
+      content:
+        types: [source code]
+        languages: [Go]
+        selection: Project-owned Go files under cmd, pkg, plugin, and staging/src/k8s.io; vendor, testdata, and generated files excluded.
+        copyrighted: "yes"
+      acquisition:
+        basis: Public Git repository at the pinned commit.
+    steps:
+      - name: fetch
+        exec: ../../fetchers/git.sh
+        args:
+          - https://github.com/kubernetes/kubernetes.git
+          - refs/tags/v1.36.3
+          - 0f29094e5b73085e3802ecc1298ecae13866bfe6
+          - :(glob)cmd/**/*.go
+          - :(glob)pkg/**/*.go
+          - :(glob)plugin/**/*.go
+          - :(glob)staging/src/k8s.io/**/*.go
+          - :(exclude,glob)**/vendor/**
+          - :(exclude,glob)**/testdata/**
+          - :(exclude,glob)**/zz_generated.*
+          - :(exclude,glob)**/generated.pb.go
+          - :(exclude,glob)**/generated.deepcopy.go
+          - :(exclude,glob)**/generated.conversion.go
+          - :(exclude,glob)**/generated.defaults.go
+```
+
+`collected_from`/`collected_to` describe acquisition, while
+`content.from`/`content.to` describe the material itself. Values are ISO 8601
+years, months, dates, or RFC3339 timestamps. Omit unknown facts; never invent
+them. `content.selection` is required by policy whenever the fetcher arguments
+select less than the complete pinned source.
+
+`license_evidence.declaration` is preserved verbatim and
+`license_evidence.url` is absolute. Neither replaces the enclosing normalized
+`license`. `acquisition.basis` is mandatory for commercially licensed and
+private-third-party sources; web crawls require crawler and acquired-domain
+facts, user data requires service/interaction facts, and synthetic data
+requires generator identity. Unknown categories and incomplete mandatory
+category evidence are rejected.
 
 ```yaml
 input:
@@ -217,10 +290,11 @@ redirections, variables, globbing, or shell built-ins. When shell evaluation is
 intentionally required, declare the shell itself (for example `exec: sh`) and
 pass its program through `args`.
 
-The initial schema supports the same source categories as executable direct
-ingestion: `public-dataset`, `private-third-party`, and `other`. Categories
-whose EU GPAI evidence is structurally required will be enabled only when the
-recipe can express that evidence without flags or inference.
+Recipes accept the controlled source categories `public-dataset`,
+`commercially-licensed`, `private-third-party`, `web-crawl`, `user-data`,
+`synthetic`, and `other`. Validation fails closed when a category's mandatory
+`acquisition` evidence is absent or incomplete. Direct CLI ingestion cannot use
+flags to bypass those requirements.
 
 ## Non-goals
 

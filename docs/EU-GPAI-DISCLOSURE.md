@@ -154,6 +154,19 @@ Future sources need additive, generally useful provenance fields for:
 - for commercial/private data, the acquisition basis without publishing
   confidential agreement terms.
 
+Ingest recipes can declare these facts directly on each source. Existing
+`collected_from`/`collected_to` are the acquisition period;
+`content.from`/`content.to` are the distinct underlying content period, and
+`content.selection` preserves the declared subset rule. `content` and
+`acquisition` use the same durable structures in recipes, plans, manifests, and
+OpenWALDO BOMs.
+
+The normalized effective/default source license remains `source.license`.
+`source.license_evidence.declaration` preserves upstream wording verbatim and
+`source.license_evidence.url` preserves its evidence location. Per-record raw
+license values remain in canonical `license_raw`; none of these evidence fields
+is silently substituted for the normalized effective license.
+
 Unknown must be distinguishable from false. The wire format should use explicit
 states or omit a fact and let the exporter report the gap; it must never infer
 `no` from absence.

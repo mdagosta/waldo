@@ -42,3 +42,4 @@ logs.
 - [0036: Use a managed default index checkout](0036-managed-index-checkout.md)
 - [0037: Embed ingest attestations in canonical shards](0037-embedded-shard-bom.md)
 - [0038: Preserve recipe-relative paths for file records](0038-preserve-recipe-source-paths.md)
+- [0039: Preserve source evidence in ingest recipes](0039-recipe-source-evidence.md)

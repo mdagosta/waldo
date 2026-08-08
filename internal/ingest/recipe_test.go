@@ -88,6 +88,114 @@ steps: [{name: fetch, exec: ./fetch.sh}]
 	}
 }
 
+func TestLoadSchemaOneRecipePreservesGeneralSourceEvidence(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "fetch.sh")
+	writeExecutable(t, script, "#!/bin/sh\n")
+	recipePath := filepath.Join(root, "dataset.yaml")
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-recipe
+schema: 1
+title: Dataset
+license: Apache-2.0
+source:
+  name: example
+  version: 0123456789abcdef
+  url: https://huggingface.co/datasets/example/data
+  category: public-dataset
+  collected_from: 2026-08-08T10:00:00Z
+  collected_to: 2026-08-08T10:05:00Z
+  license_evidence:
+    declaration: Apache License 2.0
+    url: https://huggingface.co/datasets/example/data/blob/0123456789abcdef/README.md
+  content:
+    types: [instruction-response text]
+    languages: [en]
+    from: 2020
+    to: 2025-12
+    selection: Pinned train split in upstream source order.
+    copyrighted: unknown
+  acquisition:
+    basis: Public dataset release at the pinned revision.
+steps: [{name: fetch, exec: ./fetch.sh}]
+`)
+	loaded, found, err := LoadRecipe(recipePath)
+	if err != nil || !found {
+		t.Fatalf("LoadRecipe() found=%v err=%v", found, err)
+	}
+	source := loaded.Recipe.Source
+	if source.LicenseEvidence == nil || source.LicenseEvidence.Declaration != "Apache License 2.0" || source.Content == nil || source.Content.Selection == "" || source.Acquisition == nil || source.Acquisition.Basis == "" {
+		t.Fatalf("source evidence = %+v", source)
+	}
+	prepared, err := PrepareRecipe(context.Background(), loaded, "core/dataset", t.TempDir(), &fixtureRecipeRunner{}, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recipeEvidence := loaded.Evidence
+	plan, err := NewPlan(prepared.Probe, PlanRequest{
+		Destination: "core/dataset", Title: loaded.Recipe.Title, License: loaded.Recipe.License,
+		Source: source.AsPlanSource("", source.Name), InputRoot: prepared.Inputs, RecipeEvidence: &recipeEvidence,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assembly, err := AssembleTextObjects(context.Background(), plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := BuildManifest(plan, assembly, "https://example.test/objects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted := manifest.Sources[0]; persisted.LicenseEvidence == nil || persisted.Content == nil || persisted.Acquisition == nil || persisted.Content.Selection != source.Content.Selection {
+		t.Fatalf("persisted source evidence = %+v", persisted)
+	}
+}
+
+func TestLoadRecipeRejectsUnknownNestedSourceEvidence(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "fetch.sh")
+	writeExecutable(t, script, "#!/bin/sh\n")
+	for name, recipe := range map[string]string{
+		"schema-1": `
+kind: waldo-ingest-recipe
+schema: 1
+title: Invalid
+license: CC0-1.0
+source:
+  url: https://example.test
+  category: public-dataset
+  content:
+    types: [text]
+    corpus_specific_guess: forbidden
+steps: [{name: fetch, exec: ./fetch.sh}]
+		`,
+		"schema-2": `
+kind: waldo-ingest-recipe
+schema: 2
+title: Invalid
+sources:
+  - id: example
+    license: CC0-1.0
+    source:
+      url: https://example.test
+      category: public-dataset
+      license_evidence:
+        declaration: Public domain
+        corpus_specific_guess: forbidden
+    steps: [{name: fetch, exec: ./fetch.sh}]
+		`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			recipePath := filepath.Join(root, name+".yaml")
+			writeRecipeFixture(t, recipePath, recipe)
+			if _, found, err := LoadRecipe(recipePath); !found || err == nil || !strings.Contains(err.Error(), "field corpus_specific_guess not found") {
+				t.Fatalf("LoadRecipe() found=%v err=%v", found, err)
+			}
+		})
+	}
+}
+
 func TestMultiSourceRecipeCombinesProjectsAndLicensesInOneShard(t *testing.T) {
 	root := t.TempDir()
 	script := filepath.Join(root, "fetch.sh")
@@ -100,7 +208,18 @@ title: Open Source Code
 sources:
   - id: linux
     license: GPL-2.0-only
-    source: {name: linux, url: https://example.test/linux, category: public-dataset}
+    source:
+      name: linux
+      url: https://example.test/linux
+      category: public-dataset
+      collected_to: 2026-08-08
+      license_evidence:
+        declaration: GNU General Public License version 2 only
+        url: https://example.test/linux/COPYING
+      content:
+        types: [source code]
+        languages: [C]
+        selection: Tracked C and header files at the pinned revision.
     steps: [{name: fetch, exec: ./fetch.sh}]
   - id: kubernetes
     license: Apache-2.0
@@ -136,6 +255,9 @@ sources:
 	}
 	if len(manifest.Sources) != 2 || len(manifest.Shards) != 1 || strings.Join(manifest.Shards[0].Sources, ",") != "kubernetes,linux" || strings.Join(manifest.Shards[0].Licenses, ",") != "Apache-2.0,GPL-2.0-only" {
 		t.Fatalf("manifest = %+v", manifest)
+	}
+	if manifest.Sources[0].LicenseEvidence == nil || manifest.Sources[0].LicenseEvidence.Declaration == "" || manifest.Sources[0].Content == nil || manifest.Sources[0].Content.Selection == "" || manifest.Sources[0].CollectedTo != "2026-08-08" {
+		t.Fatalf("manifest source evidence = %+v", manifest.Sources[0])
 	}
 }
 

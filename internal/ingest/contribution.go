@@ -57,7 +57,9 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		manifest.Sources = append(manifest.Sources, index.Source{
 			Name: source.Name, Source: source.Name, URL: source.URL, License: source.License,
 			Version: source.Version, Category: source.Category,
-			CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo, SHA256: sourceHash,
+			CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo,
+			LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
+			SHA256: sourceHash,
 		})
 	}
 	licenseSet := map[string]bool{}
@@ -132,7 +134,19 @@ func sourceAcquisitionIdentity(plan Plan, sourceID string) (string, error) {
 	// stream into the digest so source count does not imply equivalent memory.
 	hasher := sha256.New()
 	writeIdentityString(hasher, "waldo-acquisition-identity")
-	writeIdentityString(hasher, "1")
+	writeIdentityString(hasher, "2")
+	source, license, err := plan.sourceFor(PlanInput{SourceID: sourceID})
+	if err != nil {
+		return "", err
+	}
+	if source.License == "" {
+		source.License = license
+	}
+	encodedSource, err := json.Marshal(source)
+	if err != nil {
+		return "", err
+	}
+	writeIdentityString(hasher, string(encodedSource))
 	for _, input := range plan.Inputs {
 		if input.SourceID != sourceID {
 			continue

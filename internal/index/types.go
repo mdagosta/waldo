@@ -106,19 +106,27 @@ func (manifest Manifest) MarshalJSON() ([]byte, error) {
 }
 
 type Source struct {
-	Name          string       `json:"name"`
-	Source        string       `json:"source"`
-	Version       string       `json:"version,omitempty"`
-	License       string       `json:"license,omitempty"`
-	URL           string       `json:"url"`
-	Category      string       `json:"category,omitempty"`
-	CollectedFrom string       `json:"collected_from,omitempty"`
-	CollectedTo   string       `json:"collected_to,omitempty"`
-	SHA256        string       `json:"sha256"`
-	Files         []SourceFile `json:"files,omitempty"`
-	Usage         Modalities   `json:"usage,omitempty"`
-	Content       *Content     `json:"content,omitempty"`
-	Acquisition   *Acquisition `json:"acquisition,omitempty"`
+	Name            string           `json:"name"`
+	Source          string           `json:"source"`
+	Version         string           `json:"version,omitempty"`
+	License         string           `json:"license,omitempty"`
+	LicenseEvidence *LicenseEvidence `json:"license_evidence,omitempty"`
+	URL             string           `json:"url"`
+	Category        string           `json:"category,omitempty"`
+	CollectedFrom   string           `json:"collected_from,omitempty"`
+	CollectedTo     string           `json:"collected_to,omitempty"`
+	SHA256          string           `json:"sha256"`
+	Files           []SourceFile     `json:"files,omitempty"`
+	Usage           Modalities       `json:"usage,omitempty"`
+	Content         *Content         `json:"content,omitempty"`
+	Acquisition     *Acquisition     `json:"acquisition,omitempty"`
+}
+
+// LicenseEvidence preserves what the upstream said about licensing separately
+// from Source.License, which is WALDO's normalized effective/default license.
+type LicenseEvidence struct {
+	Declaration string `json:"declaration,omitempty" yaml:"declaration,omitempty"`
+	URL         string `json:"url,omitempty" yaml:"url,omitempty"`
 }
 
 // Modalities contains exact, additive measures keyed by a stable modality
@@ -139,51 +147,51 @@ type ModalityMeasure struct {
 // encoded it. Tri-state declarations use "yes", "no", or "unknown"; absence
 // means the contributor did not make a declaration.
 type Content struct {
-	Types            []string `json:"types,omitempty"`
-	Languages        []string `json:"languages,omitempty"`
-	Geographies      []string `json:"geographies,omitempty"`
-	Demographics     []string `json:"demographics,omitempty"`
-	From             string   `json:"from,omitempty"`
-	To               string   `json:"to,omitempty"`
-	Selection        string   `json:"selection,omitempty"`
-	PersonalData     string   `json:"personal_data,omitempty"`
-	Copyrighted      string   `json:"copyrighted,omitempty"`
-	MachineGenerated string   `json:"machine_generated,omitempty"`
+	Types            []string `json:"types,omitempty" yaml:"types,omitempty"`
+	Languages        []string `json:"languages,omitempty" yaml:"languages,omitempty"`
+	Geographies      []string `json:"geographies,omitempty" yaml:"geographies,omitempty"`
+	Demographics     []string `json:"demographics,omitempty" yaml:"demographics,omitempty"`
+	From             string   `json:"from,omitempty" yaml:"from,omitempty"`
+	To               string   `json:"to,omitempty" yaml:"to,omitempty"`
+	Selection        string   `json:"selection,omitempty" yaml:"selection,omitempty"`
+	PersonalData     string   `json:"personal_data,omitempty" yaml:"personal_data,omitempty"`
+	Copyrighted      string   `json:"copyrighted,omitempty" yaml:"copyrighted,omitempty"`
+	MachineGenerated string   `json:"machine_generated,omitempty" yaml:"machine_generated,omitempty"`
 }
 
 // Acquisition records how an upstream source was obtained. Variant details
 // are present only for the applicable source category.
 type Acquisition struct {
-	Basis     string          `json:"basis,omitempty"`
-	Crawler   *Crawler        `json:"crawler,omitempty"`
-	UserData  *UserData       `json:"user_data,omitempty"`
-	Synthetic *SyntheticData  `json:"synthetic,omitempty"`
-	Domains   []DomainMeasure `json:"domains,omitempty"`
+	Basis     string          `json:"basis,omitempty" yaml:"basis,omitempty"`
+	Crawler   *Crawler        `json:"crawler,omitempty" yaml:"crawler,omitempty"`
+	UserData  *UserData       `json:"user_data,omitempty" yaml:"user_data,omitempty"`
+	Synthetic *SyntheticData  `json:"synthetic,omitempty" yaml:"synthetic,omitempty"`
+	Domains   []DomainMeasure `json:"domains,omitempty" yaml:"domains,omitempty"`
 }
 
 type Crawler struct {
-	Name      string   `json:"name"`
-	Purpose   string   `json:"purpose"`
-	Behaviour string   `json:"behaviour"`
-	Protocols []string `json:"protocols,omitempty"`
+	Name      string   `json:"name" yaml:"name"`
+	Purpose   string   `json:"purpose" yaml:"purpose"`
+	Behaviour string   `json:"behaviour" yaml:"behaviour"`
+	Protocols []string `json:"protocols,omitempty" yaml:"protocols,omitempty"`
 }
 
 type UserData struct {
-	Service     string `json:"service"`
-	Interaction string `json:"interaction"`
+	Service     string `json:"service" yaml:"service"`
+	Interaction string `json:"interaction" yaml:"interaction"`
 }
 
 type SyntheticData struct {
-	Model       string `json:"model"`
-	Version     string `json:"version,omitempty"`
-	SummaryURL  string `json:"summary_url,omitempty"`
-	Description string `json:"description,omitempty"`
+	Model       string `json:"model" yaml:"model"`
+	Version     string `json:"version,omitempty" yaml:"version,omitempty"`
+	SummaryURL  string `json:"summary_url,omitempty" yaml:"summary_url,omitempty"`
+	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 }
 
 type DomainMeasure struct {
-	Domain        string `json:"domain"`
-	AcquiredBytes int64  `json:"acquired_bytes,omitempty"`
-	RetainedBytes int64  `json:"retained_bytes,omitempty"`
+	Domain        string `json:"domain" yaml:"domain"`
+	AcquiredBytes int64  `json:"acquired_bytes,omitempty" yaml:"acquired_bytes,omitempty"`
+	RetainedBytes int64  `json:"retained_bytes,omitempty" yaml:"retained_bytes,omitempty"`
 }
 
 type Processing struct {

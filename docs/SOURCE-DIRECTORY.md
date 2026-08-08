@@ -21,6 +21,19 @@ contains no WALDO-specific manifest.
 Recipe acquisition may leave empty regular files; WALDO ignores them. Each
 declared source must still produce at least one supported non-empty input.
 
+## Shared source evidence
+
+Shared facts live in the CLI or recipe, never in directory sidecars:
+
+- `license` is WALDO's normalized effective/default license;
+  `source.license_evidence` preserves the upstream declaration and/or URL.
+- `source.collected_from` and `source.collected_to` are the acquisition period.
+- `source.content.from` and `source.content.to` are the underlying content
+  period; `source.content.selection` states any subset rule.
+- `source.content` also carries types, languages, geography/demography, and
+  tri-state content characteristics. `source.acquisition` carries general or
+  category-specific acquisition evidence.
+
 ## Ingestible containers
 
 | Container | Physical record | Without an input profile |

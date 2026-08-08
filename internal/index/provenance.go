@@ -8,9 +8,11 @@ package index
 import (
 	"fmt"
 	"maps"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 )
 
 const (
@@ -103,7 +105,7 @@ func validateSourceProvenance(source Source) error {
 	if err := validateModalities("usage", source.Usage); err != nil {
 		return err
 	}
-	hasNewFacts := len(source.Usage) > 0 || source.Content != nil || source.Acquisition != nil
+	hasNewFacts := len(source.Usage) > 0 || source.Content != nil || source.Acquisition != nil || source.LicenseEvidence != nil || source.CollectedFrom != "" || source.CollectedTo != ""
 	category := source.Category
 	if category == "public" {
 		category = SourcePublicDataset
@@ -114,13 +116,21 @@ func validateSourceProvenance(source Source) error {
 	if category != "" && !validSourceCategory(category) {
 		return fmt.Errorf("unsupported category %q", source.Category)
 	}
+	if err := validatePeriod("acquisition", source.CollectedFrom, source.CollectedTo); err != nil {
+		return err
+	}
+	if source.LicenseEvidence != nil {
+		if err := validateLicenseEvidence(*source.LicenseEvidence); err != nil {
+			return err
+		}
+	}
 	if source.Content != nil {
 		if err := validateContent(*source.Content); err != nil {
 			return err
 		}
 	}
 	if source.Acquisition == nil {
-		if category == SourceCommerciallyLicensed || category == SourceWebCrawl || category == SourceUserData || category == SourceSynthetic {
+		if category == SourceCommerciallyLicensed || category == SourcePrivateThirdParty || category == SourceWebCrawl || category == SourceUserData || category == SourceSynthetic {
 			return fmt.Errorf("category %q requires acquisition details", category)
 		}
 		return nil
@@ -205,12 +215,72 @@ func validateContent(content Content) error {
 			return fmt.Errorf("content %s must be yes, no, or unknown", label)
 		}
 	}
+	if err := validatePeriod("content", content.From, content.To); err != nil {
+		return err
+	}
+	if content.Selection != "" && strings.TrimSpace(content.Selection) == "" {
+		return fmt.Errorf("content selection must not be blank")
+	}
 	return nil
 }
 
+func validateLicenseEvidence(evidence LicenseEvidence) error {
+	if strings.TrimSpace(evidence.Declaration) == "" && strings.TrimSpace(evidence.URL) == "" {
+		return fmt.Errorf("license_evidence requires declaration or url")
+	}
+	if evidence.URL == "" {
+		return nil
+	}
+	parsed, err := url.Parse(evidence.URL)
+	if err != nil || !parsed.IsAbs() || (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host == "" {
+		return fmt.Errorf("license_evidence url must be an absolute URL")
+	}
+	return nil
+}
+
+func validatePeriod(label, from, to string) error {
+	fromTime, err := parseEvidenceDate(from, false)
+	if err != nil {
+		return fmt.Errorf("%s from: %w", label, err)
+	}
+	toTime, err := parseEvidenceDate(to, true)
+	if err != nil {
+		return fmt.Errorf("%s to: %w", label, err)
+	}
+	if from != "" && to != "" && fromTime.After(toTime) {
+		return fmt.Errorf("%s from must not be after to", label)
+	}
+	return nil
+}
+
+func parseEvidenceDate(value string, upperBound bool) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed, nil
+	}
+	for _, period := range []struct {
+		layout string
+		add    func(time.Time) time.Time
+	}{
+		{"2006-01-02", func(value time.Time) time.Time { return value.AddDate(0, 0, 1) }},
+		{"2006-01", func(value time.Time) time.Time { return value.AddDate(0, 1, 0) }},
+		{"2006", func(value time.Time) time.Time { return value.AddDate(1, 0, 0) }},
+	} {
+		if parsed, err := time.Parse(period.layout, value); err == nil {
+			if upperBound {
+				return period.add(parsed).Add(-time.Nanosecond), nil
+			}
+			return parsed, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("%q must be an ISO 8601 year, month, date, or RFC3339 timestamp", value)
+}
+
 func validateAcquisition(category string, acquisition Acquisition) error {
-	if category == SourceCommerciallyLicensed && strings.TrimSpace(acquisition.Basis) == "" {
-		return fmt.Errorf("commercially licensed source requires acquisition basis")
+	if (category == SourceCommerciallyLicensed || category == SourcePrivateThirdParty) && strings.TrimSpace(acquisition.Basis) == "" {
+		return fmt.Errorf("category %q requires acquisition basis", category)
 	}
 	if category == SourceWebCrawl {
 		if acquisition.Crawler == nil {
@@ -222,6 +292,12 @@ func validateAcquisition(category string, acquisition Acquisition) error {
 		}
 		if err := validateStrings("crawler protocols", crawler.Protocols, true); err != nil {
 			return err
+		}
+		if len(crawler.Protocols) == 0 {
+			return fmt.Errorf("crawler requires honoured access or opt-out protocols")
+		}
+		if len(acquisition.Domains) == 0 {
+			return fmt.Errorf("web crawl requires acquired domain measures")
 		}
 	} else if acquisition.Crawler != nil || len(acquisition.Domains) > 0 {
 		return fmt.Errorf("crawler and domain facts require category %q", SourceWebCrawl)
@@ -250,6 +326,9 @@ func validateAcquisition(category string, acquisition Acquisition) error {
 		}
 		if domain.AcquiredBytes < 0 || domain.RetainedBytes < 0 || domain.AcquiredBytes+domain.RetainedBytes == 0 {
 			return fmt.Errorf("domain %q has invalid byte measures", domain.Domain)
+		}
+		if category == SourceWebCrawl && domain.AcquiredBytes == 0 {
+			return fmt.Errorf("web crawl domain %q requires acquired bytes", domain.Domain)
 		}
 		previous = domain.Domain
 	}

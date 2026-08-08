@@ -88,6 +88,47 @@ func TestDeclarativeProfileIsPartOfConversionAndSourceIdentity(t *testing.T) {
 	}
 }
 
+func TestSourceEvidenceChangesPlanAndAcquisitionIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.txt")
+	writeFixture(t, path, "source evidence identity")
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := NewPlan(probe, PlanRequest{
+		Destination: "core/evidence", Title: "Evidence", License: "Apache-2.0",
+		Source: PlanSource{
+			Name: "evidence", URL: "https://example.test/data", Category: "public-dataset",
+			Content: &index.Content{Types: []string{"text"}, Selection: "All records."},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := base
+	changed.Source = base.Source
+	changed.Source.Content = &index.Content{Types: []string{"text"}, Selection: "Only the train split."}
+	basePlan, err := base.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedPlan, err := changed.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseSource, err := sourceAcquisitionIdentity(base, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedSource, err := sourceAcquisitionIdentity(changed, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if basePlan == changedPlan || baseSource == changedSource {
+		t.Fatal("source selection did not change plan and acquisition identities")
+	}
+}
+
 func TestBuildManifestSizeDoesNotScaleWithInputArtifactCount(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "seed.txt")
 	writeFixture(t, path, "seed document")

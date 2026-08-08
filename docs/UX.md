@@ -341,8 +341,9 @@ verified preparation state beneath `ingest.staging`; an unchanged retry reuses
 it, while a partially executed preparation is cleared and rerun.
 
 Generated manifests use the established compact index shape. The source record
-contains one aggregate acquisition digest; it never embeds a per-file or
-per-record inventory. A recipe-driven run uses the existing
+contains one aggregate acquisition digest over its source declaration and
+accepted input facts; it never embeds a per-file or per-record inventory. A
+recipe-driven run uses the existing
 `converted_by.collector` string to pin repository, commit, and recipe path.
 Dirty or uncommitted recipes are marked and include the recipe SHA-256. The
 manifest has one entry per published Parquet shard containing its URL,
@@ -394,12 +395,15 @@ recipe's complete output, writes new shards using the current 256 MiB target,
 and replaces the manifest's shard and source set. Existing lookaside objects
 remain untouched. Both modes pin the original manifest bytes before fetching,
 recheck them before producing the contribution, and rewrite the touched
-manifest and navigation document as schema-1 YAML. Superseded `.json` or
+manifest as schema-2 YAML and navigation as schema-1 YAML. Superseded `.json` or
 `.yml` paths are listed explicitly for removal.
 
-Recipe `source` may include optional `version`, `collected_from`, and
-`collected_to` fields. These become compact manifest source facts and are
-returned to the next update through `WALDO_UPDATE_STATE`.
+Recipe `source` may include `version`, upstream `license_evidence`, `content`,
+`acquisition`, and `collected_from`/`collected_to`. The collected fields are the
+acquisition period; `content.from`/`content.to` are the distinct underlying
+content period, and `content.selection` preserves any subset rule implemented
+by fetcher arguments. These facts enter the immutable plan, source acquisition
+identity, compact manifest, OpenWALDO BOM, and update state.
 
 Index metadata is YAML-primary: new manifests use `<name>.yaml` and generated
 navigation uses `index.yaml`. Readers retain schema-1 compatibility with

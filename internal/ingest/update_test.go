@@ -55,3 +55,26 @@ func TestAppendResolvesLegacyInheritedLicenseBeforeAddingAnother(t *testing.T) {
 		t.Fatalf("updated = %+v", updated)
 	}
 }
+
+func TestPreserveSourceContextReplacesDeclaredEvidence(t *testing.T) {
+	existing := []index.Source{{
+		Name: "source", Source: "upstream", Version: "old", URL: "https://example.test/source",
+		CollectedFrom: "2024", CollectedTo: "2025",
+		LicenseEvidence: &index.LicenseEvidence{Declaration: "old"},
+		Content:         &index.Content{Selection: "old selection"},
+		Acquisition:     &index.Acquisition{Basis: "old acquisition"},
+		Usage:           index.Modalities{"text": {Samples: 1}},
+	}}
+	fresh := []index.Source{{
+		Name: "source", Source: "upstream", URL: "https://example.test/source",
+	}}
+
+	got := preserveSourceContext(existing, fresh)
+	if got[0].Version != "" || got[0].CollectedFrom != "" || got[0].CollectedTo != "" ||
+		got[0].LicenseEvidence != nil || got[0].Content != nil || got[0].Acquisition != nil {
+		t.Fatalf("stale declared evidence survived rebuild: %+v", got[0])
+	}
+	if got[0].Usage["text"].Samples != 1 {
+		t.Fatalf("derived source context was not preserved: %+v", got[0].Usage)
+	}
+}

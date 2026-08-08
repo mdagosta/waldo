@@ -43,14 +43,17 @@ type UpdatePlan struct {
 }
 
 type PlanSource struct {
-	ID            string `json:"id,omitempty"`
-	Name          string `json:"name"`
-	License       string `json:"license,omitempty"`
-	Version       string `json:"version,omitempty"`
-	URL           string `json:"url"`
-	Category      string `json:"category"`
-	CollectedFrom string `json:"collected_from,omitempty"`
-	CollectedTo   string `json:"collected_to,omitempty"`
+	ID              string                 `json:"id,omitempty"`
+	Name            string                 `json:"name"`
+	License         string                 `json:"license,omitempty"`
+	Version         string                 `json:"version,omitempty"`
+	URL             string                 `json:"url"`
+	Category        string                 `json:"category"`
+	CollectedFrom   string                 `json:"collected_from,omitempty"`
+	CollectedTo     string                 `json:"collected_to,omitempty"`
+	LicenseEvidence *index.LicenseEvidence `json:"license_evidence,omitempty"`
+	Content         *index.Content         `json:"content,omitempty"`
+	Acquisition     *index.Acquisition     `json:"acquisition,omitempty"`
 }
 
 type WriterPlan struct {
@@ -283,12 +286,10 @@ func normalizePlanSource(source *PlanSource) error {
 		return fmt.Errorf("unsupported source category %q", source.Category)
 	}
 	source.Category = category
-	switch category {
-	case index.SourcePublicDataset, index.SourcePrivateThirdParty, index.SourceOther:
-		return nil
-	default:
-		return fmt.Errorf("source category %q requires acquisition evidence fields that index ingest does not collect yet", category)
-	}
+	return index.ValidateSourceProvenance(index.Source{
+		Category: category, CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo,
+		LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
+	})
 }
 
 func sourceRequestForArtifact(sources []PlanSourceRequest, artifactPath string) (PlanSourceRequest, error) {
@@ -360,6 +361,9 @@ func (plan Plan) Validate() error {
 		if plan.License == "" || plan.Source.Name == "" || plan.Source.URL == "" || plan.Source.Category == "" {
 			return fmt.Errorf("ingestion plan is missing corpus or source identity")
 		}
+		if err := validatePlanSource(plan.Source); err != nil {
+			return fmt.Errorf("ingestion plan source: %w", err)
+		}
 	} else {
 		seen := map[string]bool{}
 		for _, source := range plan.Sources {
@@ -367,6 +371,9 @@ func (plan Plan) Validate() error {
 				return fmt.Errorf("ingestion plan has an invalid multi-source identity")
 			}
 			seen[source.ID] = true
+			if err := validatePlanSource(source); err != nil {
+				return fmt.Errorf("ingestion plan source %q: %w", source.ID, err)
+			}
 		}
 	}
 	if plan.Mode != "streaming" && plan.Mode != "canonical" {
@@ -436,6 +443,17 @@ func (plan Plan) Validate() error {
 		return fmt.Errorf("ingestion plan has no inputs")
 	}
 	return nil
+}
+
+func validatePlanSource(source PlanSource) error {
+	category, ok := index.CanonicalSourceCategory(source.Category)
+	if !ok || category != source.Category {
+		return fmt.Errorf("source category %q is not canonical", source.Category)
+	}
+	return index.ValidateSourceProvenance(index.Source{
+		Category: category, CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo,
+		LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
+	})
 }
 
 func validSHA256(value string) bool {

@@ -29,15 +29,16 @@ Generated manifests use schema 2 while retaining the existing compact shape:
 - compact conversion and, when applicable, one ingest-recipe collector pin.
 
 Generated text manifests omit `format`, `processing`, `composed_by`, source
-`files`, `usage`, and `content`, and shard `modalities`. Those reader fields
-remain supported for existing or richer manifests, but this ingestion path
-does not populate them. `record_schema` remains because it identifies the
+`files` and `usage`, and shard `modalities`. They preserve compact source-level
+`license_evidence`, `content`, and `acquisition` declarations without copying
+them per file or record. `record_schema` remains because it identifies the
 Parquet row contract explicitly.
 
-The acquisition digest is streamed over length-delimited accepted input facts.
-No per-input path, record, hash, or adapter array is serialized into the Git
-manifest. The immutable plan and recovery journal may retain those facts while
-the execution needs them; record-level evidence belongs in canonical Parquet.
+The acquisition digest is streamed over the canonical source declaration and
+length-delimited accepted input facts. No per-input path, record, hash, or
+adapter array is serialized into the Git manifest. The immutable plan and
+recovery journal may retain those facts while execution needs them;
+record-level evidence belongs in canonical Parquet.
 
 WALDO counts retained text with the offline embedded
 `tiktoken/cl100k_base` reference counter during shard assembly. It records the

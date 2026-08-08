@@ -45,11 +45,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		options.Request.Description = loadedRecipe.Recipe.Description
 		if loadedRecipe.Recipe.Schema == ingest.RecipeSchema {
 			options.Request.License = loadedRecipe.Recipe.License
-			options.Request.Source = ingest.PlanSource{
-				Name: loadedRecipe.Recipe.Source.Name, Version: loadedRecipe.Recipe.Source.Version,
-				URL: loadedRecipe.Recipe.Source.URL, Category: loadedRecipe.Recipe.Source.Category,
-				CollectedFrom: loadedRecipe.Recipe.Source.CollectedFrom, CollectedTo: loadedRecipe.Recipe.Source.CollectedTo,
-			}
+			options.Request.Source = loadedRecipe.Recipe.Source.AsPlanSource("", loadedRecipe.Recipe.Source.Name)
 			options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
 			options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
 			options.Request.Profile = loadedRecipe.Recipe.Input

@@ -15,7 +15,12 @@ import (
 func TestYAMLManifestRoundTripsInlineAndRollupShards(t *testing.T) {
 	inline := Manifest{
 		Kind: "manifest", Schema: 1, Name: "books", Title: "Books", Description: "Readable YAML.", License: "CC0-1.0",
-		Sources:     []Source{{Name: "source", Source: "Source", URL: "https://example.test", SHA256: strings.Repeat("a", 64), CollectedFrom: "2024-01-01"}},
+		Sources: []Source{{
+			Name: "source", Source: "Source", URL: "https://example.test", Category: SourcePublicDataset, SHA256: strings.Repeat("a", 64), CollectedFrom: "2024-01-01",
+			LicenseEvidence: &LicenseEvidence{Declaration: "Creative Commons Zero v1.0", URL: "https://example.test/license"},
+			Content:         &Content{Types: []string{"books"}, Languages: []string{"en"}, From: "1900", To: "2024-12", Selection: "Complete pinned release."},
+			Acquisition:     &Acquisition{Basis: "Public release."},
+		}},
 		ConvertedBy: Conversion{Tool: "test", Version: "1", Profile: "text", Recipe: "test/v1"},
 		Shards:      []Shard{{URL: "https://example.test/object", SHA256: strings.Repeat("b", 64), Docs: 2, Tokens: 3, Bytes: 4}},
 	}
@@ -34,7 +39,7 @@ func TestYAMLManifestRoundTripsInlineAndRollupShards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded.Shards) != 1 || loaded.Shards[0].Tokens != 3 || loaded.Sources[0].CollectedFrom != "2024-01-01" {
+	if len(loaded.Shards) != 1 || loaded.Shards[0].Tokens != 3 || loaded.Sources[0].CollectedFrom != "2024-01-01" || loaded.Sources[0].LicenseEvidence == nil || loaded.Sources[0].Content == nil || loaded.Sources[0].Content.Selection != "Complete pinned release." || loaded.Sources[0].Acquisition == nil {
 		t.Fatalf("loaded inline manifest = %+v", loaded)
 	}
 

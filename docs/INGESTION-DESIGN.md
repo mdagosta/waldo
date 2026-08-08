@@ -43,10 +43,12 @@ The Git manifest is a compact object map, not an acquisition-file or record
 catalog. It carries one aggregate source digest and one small entry per
 published shard. Per-input paths and hashes may exist in temporary execution
 state, but their count must not determine the size of the committed manifest.
-Generated text manifests do not repeat static processing steps, source usage,
-content declarations, shard modalities, or a nested compose structure. The
-conversion recipe names the processing behavior, and composed acquisition is a
-single immutable `converted_by.collector` reference.
+Generated text manifests preserve compact shared source declarations, including
+license evidence, content description/period/selection, acquisition period,
+and category-specific acquisition facts. They do not repeat those facts per
+file or record, nor embed input inventories. The conversion recipe names the
+processing behavior, and composed acquisition is a single immutable
+`converted_by.collector` reference.
 
 Manifest and ingestion requirements for the EU GPAI public-summary projection
 are specified in `docs/EU-GPAI-DISCLOSURE.md`. The core fields describe general
