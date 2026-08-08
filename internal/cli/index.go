@@ -168,7 +168,10 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 	if err != nil {
 		return err
 	}
-	target, err := resolveIndexArgument(context.Execution, args, progress)
+	// Audit the exact checkout selected by the caller. Validation roots are
+	// immutable review snapshots and must not require network Git credentials
+	// or move commits before their shard claims are checked.
+	target, err := resolveIndexArgumentPolicy(context.Execution, args, progress, false)
 	if err != nil {
 		return err
 	}
@@ -188,32 +191,32 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 	if err != nil {
 		return err
 	}
-	if err := validateAuditCacheCapacity(cache, bom.Totals.Bytes); err != nil {
-		return err
-	}
 	fmt.Fprintf(progress, "auditing %s indexed shard references (%s)\n", humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes))
-	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
-		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
-			fmt.Fprintf(progress, "  fetched %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
-		}
-	})
-	if err != nil {
-		return err
-	}
-	unique := make([]string, 0, len(materialized.Objects))
-	seen := map[string]bool{}
-	for _, object := range materialized.Objects {
-		if !seen[object.Shard.SHA256] {
-			seen[object.Shard.SHA256] = true
-			unique = append(unique, object.Path)
-		}
-	}
-	auditOptions.Progress = auditProgressPrinter(progress)
 	var audited shard.Summary
 	if boolOption(context, "deep") {
+		if err := validateAuditCacheCapacity(cache, bom.Totals.Bytes); err != nil {
+			return err
+		}
+		materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
+			if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
+				fmt.Fprintf(progress, "  fetched %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
+			}
+		})
+		if err != nil {
+			return err
+		}
+		unique := make([]string, 0, len(materialized.Objects))
+		seen := map[string]bool{}
+		for _, object := range materialized.Objects {
+			if !seen[object.Shard.SHA256] {
+				seen[object.Shard.SHA256] = true
+				unique = append(unique, object.Path)
+			}
+		}
+		auditOptions.Progress = auditProgressPrinter(progress)
 		audited, err = shard.AuditWithOptions(context.Execution, unique, auditOptions)
 	} else {
-		audited, err = shard.VerifyWithOptions(context.Execution, unique, auditOptions)
+		audited, err = verifyAuditStream(context.Execution, bom, cache, progress)
 	}
 	if err != nil {
 		return err
@@ -237,6 +240,69 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 	fmt.Fprintln(stdout, "STATUS:         VERIFIED")
 	printShardSummary(stdout, audited)
 	return nil
+}
+
+// verifyAuditStream bounds disk use to the retained cache policy by verifying
+// each content-addressed object immediately after Fetch. Unlike a deep audit,
+// the attestation path never requires the entire corpus to coexist locally.
+func verifyAuditStream(ctx context.Context, bom corpus.BOM, cache *lookaside.Cache, progress io.Writer) (shard.Summary, error) {
+	seen := make(map[string]int64)
+	totalUnique := 0
+	for _, pin := range bom.Shards {
+		if size, ok := seen[pin.SHA256]; ok {
+			if size != pin.Bytes {
+				return shard.Summary{}, fmt.Errorf("object %s has conflicting declared sizes %d and %d", pin.SHA256, size, pin.Bytes)
+			}
+			continue
+		}
+		seen[pin.SHA256] = pin.Bytes
+		totalUnique++
+	}
+	clear(seen)
+	licenses, recipes := map[string]bool{}, map[string]bool{}
+	var total shard.Summary
+	current := 0
+	for _, pin := range bom.Shards {
+		if _, ok := seen[pin.SHA256]; ok {
+			continue
+		}
+		seen[pin.SHA256] = pin.Bytes
+		path, err := cache.Fetch(ctx, pin.URL, pin.SHA256, pin.Bytes)
+		if err != nil {
+			return shard.Summary{}, fmt.Errorf("%s shard %s: %w", pin.Manifest, pin.SHA256[:12], err)
+		}
+		one, err := shard.VerifyWithOptions(ctx, []string{path}, shard.AuditOptions{Workers: 1})
+		if err != nil {
+			return shard.Summary{}, fmt.Errorf("%s shard %s: %w", pin.Manifest, pin.SHA256[:12], err)
+		}
+		total.Shards += one.Shards
+		total.Attested += one.Attested
+		total.DeepScanned += one.DeepScanned
+		total.Records += one.Records
+		total.Tokens += one.Tokens
+		total.ContentBytes += one.ContentBytes
+		total.EncodedBytes += one.EncodedBytes
+		total.RowGroups += one.RowGroups
+		for _, value := range one.Licenses {
+			licenses[value] = true
+		}
+		for _, value := range one.Recipes {
+			recipes[value] = true
+		}
+		current++
+		if current == 1 || current == totalUnique || current%25 == 0 {
+			fmt.Fprintf(progress, "  verified %s/%s  %s\n", humanInteger(int64(current)), humanInteger(int64(totalUnique)), pin.SHA256[:12])
+		}
+	}
+	for value := range licenses {
+		total.Licenses = append(total.Licenses, value)
+	}
+	for value := range recipes {
+		total.Recipes = append(total.Recipes, value)
+	}
+	sort.Strings(total.Licenses)
+	sort.Strings(total.Recipes)
+	return total, nil
 }
 
 func validateAuditCacheCapacity(cache *lookaside.Cache, required int64) error {
