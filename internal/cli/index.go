@@ -160,6 +160,12 @@ func runIndexSummary(context Context, args []string, stdout, stderr io.Writer) e
 }
 
 func runIndexVerify(context Context, args []string, stdout, stderr io.Writer) error {
+	if len(args) == 1 && isCorpusExportLocation(args[0]) {
+		if boolOption(context, "objects") || boolOption(context, "offline") {
+			return fmt.Errorf("--objects and --offline apply to index checkouts, not corpus exports")
+		}
+		return runCorpusExportVerify(context, args, stdout)
+	}
 	return runIndexVerifyWithProgress(context, args, stdout, stderr)
 }
 

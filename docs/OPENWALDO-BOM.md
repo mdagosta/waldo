@@ -73,11 +73,11 @@ equal the shard declaration before publishing the file atomically.
 ## Verification and limits
 
 ```bash
-waldo bom show /path/to/export
-waldo bom verify /path/to/export
+waldo index bom /path/to/export
+waldo index verify /path/to/export
 ```
 
-`bom verify` validates identities, references, policy, totals, safe file paths,
+`index verify` validates identities, references, policy, totals, safe file paths,
 native/interchange relationships, and then hashes every exported file. It is
 offline and does not require the original index or lookaside.
 

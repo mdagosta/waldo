@@ -50,7 +50,7 @@ Implemented:
 - Native shard export with safe resume and `EXPORT.json`
 - Streaming canonical JSONL export with record and text-hash validation
 - Recursive, hash-verified submanifest expansion with aggregate validation
-- Stable corpus export BOM contract with offline `bom show` and `bom verify`
+- Stable corpus export BOM contract with offline `index bom` and `index verify`
 - Real-index OpenWALDO BOM acceptance tests
 
 Exit: a selection from the public index can be materialized with every object
@@ -102,7 +102,7 @@ Implemented foundation:
 - Direct index-backed training selections through the verified shard cache
 - Training-stage classification in the compose and run BOM
 - EU GPAI training-content gap analysis and fail-closed
-  `bom export --format eu-gpai`
+  `model disclose --format eu-gpai`
 
 The current GPAI export is a versioned machine-readable mapping and gap report.
 Filling the Commission's official editable Word file remains a separate

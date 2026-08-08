@@ -367,15 +367,25 @@ func TestRootHelpLocksCommandVocabulary(t *testing.T) {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 	help := stdout.String()
-	for _, want := range []string{"index", "lookaside", "model", "bom", "config"} {
+	for _, want := range []string{"index", "lookaside", "model", "config"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("root help does not contain %q:\n%s", want, help)
 		}
 	}
-	for _, unwanted := range []string{"store", "corpus"} {
+	for _, unwanted := range []string{"store", "corpus", "\n  bom"} {
 		if strings.Contains(help, unwanted) {
 			t.Errorf("root help unexpectedly contains %q:\n%s", unwanted, help)
 		}
+	}
+}
+
+func TestRootRejectsRemovedBOMCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"bom", "show", "anything"}, &stdout, &stderr); code == 0 {
+		t.Fatalf("removed bom command unexpectedly succeeded: stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unknown command") {
+		t.Fatalf("removed bom command error = %q", stderr.String())
 	}
 }
 
@@ -384,7 +394,7 @@ func TestIndexOwnsCorpusWorkflows(t *testing.T) {
 	if code := Run([]string{"index", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
-	for _, want := range []string{"pull", "list", "show", "summary", "verify", "ingest", "update", "export"} {
+	for _, want := range []string{"pull", "list", "show", "summary", "bom", "verify", "ingest", "update", "export"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("index help does not contain %q:\n%s", want, stdout.String())
 		}

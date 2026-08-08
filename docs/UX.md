@@ -602,8 +602,8 @@ and durable layout are documented in `docs/MODEL-LIFECYCLE.md`.
 ### Inspect provenance
 
 ```bash
-waldo bom show ~/training-data
-waldo bom verify ~/training-data
+waldo index bom ~/training-data
+waldo index verify ~/training-data
 waldo model summary smoke
 waldo model bom smoke
 ```
@@ -635,7 +635,7 @@ The model lifecycle also supports a fail-closed EU GPAI mapping:
 
 ```bash
 waldo config set disclosure.provider docs/examples/eu-gpai-provider.json
-waldo bom export smoke \
+waldo model disclose smoke \
   --format eu-gpai
 ```
 

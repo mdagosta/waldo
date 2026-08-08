@@ -307,8 +307,8 @@ waldo index export core/books science/papers ./training-jsonl \
 # With no selection, export the entire resolved index (and warn).
 waldo index export ./complete-index-export
 
-waldo bom show ./books-export
-waldo bom verify ./books-export
+waldo index bom ./books-export
+waldo index verify ./books-export
 ```
 
 Local shard tools work without an index or lookaside:

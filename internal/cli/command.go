@@ -92,7 +92,6 @@ func newRootCommand() *cobra.Command {
 		newShardCommand(state),
 		newLookasideCommand(state),
 		newModelCommand(state),
-		newBOMCommand(state),
 		newConfigCommand(state),
 	)
 	return root
@@ -106,7 +105,8 @@ func newIndexCommand(state *cobraState) *cobra.Command {
 		leaf(state, "list [path]", "List all corpora beneath an index path", "", cobra.MaximumNArgs(1), runIndexList),
 		leaf(state, "show [path]", "Show an index entry or corpus manifest", "", cobra.MaximumNArgs(1), runIndexShow),
 		leaf(state, "summary [path]", "Summarize corpora, licenses, and totals", "", cobra.MaximumNArgs(1), runIndexSummary),
-		leaf(state, "verify [path]", "Verify an index and its canonical object locations", "Verification levels:\n  (default)  Recursively validate metadata, then check every canonical object URL and declared size without downloading bodies.\n  --objects  Download every referenced object, verify its SHA-256, then purge it after success.\n  --offline  Validate only local index and manifest structure; make no network requests.\n\nMirrors never hide an unavailable canonical URL during the default check.", cobra.MaximumNArgs(1), runIndexVerify,
+		leaf(state, "bom [path...]", "Emit an index selection or exported corpus OpenWALDO BOM", "Index paths resolve like other index commands. An export directory or explicitly named EXPORT.json displays its persisted BOM instead.", cobra.ArbitraryArgs, runIndexBOM),
+		leaf(state, "verify [path]", "Verify an index, canonical objects, or exported corpus", "An export directory or explicitly named EXPORT.json validates the persisted BOM and hashes every exported file.\n\nIndex verification levels:\n  (default)  Recursively validate metadata, then check every canonical object URL and declared size without downloading bodies.\n  --objects  Download every referenced object, verify its SHA-256, then purge it after success.\n  --offline  Validate only local index and manifest structure; make no network requests.\n\nMirrors never hide an unavailable canonical URL during the default check.", cobra.MaximumNArgs(1), runIndexVerify,
 			booleanFlag("objects", "download and hash every referenced object"),
 			booleanFlag("offline", "validate only local metadata without network access")),
 		leaf(state, "audit [path]", "Verify indexed shards and their ingest attestations", "Audits the exact selected checkout without fetching Git. The default streams each unique content-addressed shard through the bounded lookaside cache, verifies its embedded ingest attestation, Parquet schema and aggregate totals, then reconciles manifest totals. Unattested legacy shards fall back to a complete record scan. --deep materializes the full selection and explicitly revalidates every record hash and token count.", cobra.MaximumNArgs(1), runIndexAudit,
@@ -175,6 +175,11 @@ func newModelCommand(state *cobraState) *cobra.Command {
 		leaf(state, "list [pattern...]", "List locally managed models", "Patterns use shell-style *, ?, and character classes.", cobra.ArbitraryArgs, runModelList),
 		leaf(state, "summary <name>", "Summarize architecture and training history", "", cobra.ExactArgs(1), runModelSummary),
 		leaf(state, "bom <name> [output.json]", "Emit a model OpenWALDO BOM", "Writes canonical JSON to stdout when output is omitted.", cobra.RangeArgs(1, 2), runModelBOM),
+		leaf(state, "disclose <model-name-or-path> [output.json]", "Map a model BOM to a disclosure format", "Normal disclosure generation fails before emitting anything if required facts are absent.", cobra.RangeArgs(1, 2), runModelDisclosure,
+			requiredTextFlag("format", "disclosure format: eu-gpai"),
+			textFlag("provider", "", "provider profile override"),
+			booleanFlag("allow-incomplete", "emit a marked incomplete draft"),
+			booleanFlag("force", "replace an existing output file")),
 		leaf(state, "forecast [index-path...] | <compose.yaml>", "Estimate viable GPU configurations and runtime", "Forecasts one pass over selected index tokens or a declared model compose.", cobra.ArbitraryArgs, runModelForecast),
 		leaf(state, "train <name> [index-path...]", "Train an existing model on indexed corpora", "With no index path, WALDO trains on the entire resolved index.", modelTrainArgs, runModelTrain,
 			integer64Flag("epochs", 1, "complete training passes (1..1000000)")),
@@ -191,20 +196,6 @@ func newModelCommand(state *cobraState) *cobra.Command {
 			decimalFlag("top-p", 0.95, "nucleus sampling probability"),
 			unsigned64Flag("seed", 0, "deterministic sampling seed")),
 		leaf(state, "rm <name...>", "Remove explicitly named local models", "Names are preflighted before removal.", cobra.MinimumNArgs(1), runModelRemove),
-	)
-	return command
-}
-
-func newBOMCommand(state *cobraState) *cobra.Command {
-	command := group("bom", "Inspect and exchange provenance records", "")
-	command.AddCommand(
-		leaf(state, "show <export-directory|EXPORT.json>", "Show an exported OpenWALDO BOM", "", cobra.ExactArgs(1), runBOMShow),
-		leaf(state, "verify <export-directory|EXPORT.json>", "Validate a BOM and hash its exported files", "", cobra.ExactArgs(1), runBOMVerify),
-		leaf(state, "export <model-name-or-path> [output.json]", "Map a model BOM to a disclosure format", "Normal export fails before emitting anything if required disclosure facts are absent.", cobra.RangeArgs(1, 2), runBOMExport,
-			requiredTextFlag("format", "disclosure format: eu-gpai"),
-			textFlag("provider", "", "provider profile override"),
-			booleanFlag("allow-incomplete", "emit a marked incomplete draft"),
-			booleanFlag("force", "replace an existing output file")),
 	)
 	return command
 }

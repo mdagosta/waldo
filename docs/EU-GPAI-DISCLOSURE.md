@@ -237,7 +237,7 @@ from corpus manifests alone.
 The implemented audit UX is:
 
 ```bash
-waldo bom export <model-name-or-path> \
+waldo model disclose <model-name-or-path> \
   --format eu-gpai
 ```
 
@@ -250,12 +250,12 @@ output, so ordinary shell redirection works. A final positional destination
 writes the same document atomically instead:
 
 ```bash
-waldo bom export <model-name-or-path> training-content.json \
+waldo model disclose <model-name-or-path> training-content.json \
   --format eu-gpai
 ```
 
-`bom export` is the right command family, but a complete export consumes a
-model or aggregate model BOM, not only a corpus OpenWALDO BOM.
+`model disclose` consumes a model or aggregate model BOM, not only a corpus
+OpenWALDO BOM.
 
 The current exporter:
 

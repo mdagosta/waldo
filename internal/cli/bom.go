@@ -16,11 +16,47 @@ import (
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/disclosure"
+	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/provenance"
 )
 
-func runBOMShow(context Context, args []string, stdout, _ io.Writer) error {
+func isCorpusExportLocation(location string) bool {
+	info, err := os.Stat(location)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		_, err = os.Stat(filepath.Join(location, "EXPORT.json"))
+		return err == nil
+	}
+	return filepath.Base(location) == "EXPORT.json"
+}
+
+func runIndexBOM(context Context, args []string, stdout, progress io.Writer) error {
+	if len(args) == 1 && isCorpusExportLocation(args[0]) {
+		return runCorpusExportBOM(context, args, stdout)
+	}
+	targets, err := resolveIndexArgumentsWithWarning(context.Execution, args, progress)
+	if err != nil {
+		return err
+	}
+	policy, err := corpus.NewLicensePolicy(nil, nil)
+	if err != nil {
+		return err
+	}
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		return err
+	}
+	document, err := corpus.BuildBOM(context.Execution, targets, policy, cache)
+	if err != nil {
+		return err
+	}
+	return writeJSON(stdout, document)
+}
+
+func runCorpusExportBOM(context Context, args []string, stdout io.Writer) error {
 	document, path, err := provenance.LoadCorpusExport(args[0])
 	if err != nil {
 		return err
@@ -58,7 +94,7 @@ func runBOMShow(context Context, args []string, stdout, _ io.Writer) error {
 	return nil
 }
 
-func runBOMVerify(context Context, args []string, stdout, _ io.Writer) error {
+func runCorpusExportVerify(context Context, args []string, stdout io.Writer) error {
 	document, report, err := provenance.VerifyCorpusExport(args[0])
 	if err != nil {
 		return err
@@ -73,7 +109,7 @@ func runBOMVerify(context Context, args []string, stdout, _ io.Writer) error {
 	return nil
 }
 
-type bomExportOptions struct {
+type disclosureOptions struct {
 	Model           string
 	Output          string
 	Format          string
@@ -82,8 +118,8 @@ type bomExportOptions struct {
 	Force           bool
 }
 
-func runBOMExport(context Context, args []string, stdout, stderr io.Writer) error {
-	options, err := cobraBOMExportOptions(context, args)
+func runModelDisclosure(context Context, args []string, stdout, stderr io.Writer) error {
+	options, err := cobraModelDisclosureOptions(context, args)
 	if err != nil {
 		return err
 	}
@@ -179,19 +215,19 @@ func requireCompleteDisclosure(report disclosure.EUGPAIReport, allowIncomplete b
 	return nil
 }
 
-func cobraBOMExportOptions(context Context, args []string) (bomExportOptions, error) {
-	options := bomExportOptions{
+func cobraModelDisclosureOptions(context Context, args []string) (disclosureOptions, error) {
+	options := disclosureOptions{
 		Format: stringOption(context, "format"), Provider: stringOption(context, "provider"),
 		AllowIncomplete: boolOption(context, "allow-incomplete"), Force: boolOption(context, "force"),
 	}
 	if options.Format != "eu-gpai" {
-		return bomExportOptions{}, fmt.Errorf("unsupported BOM export format %q; use eu-gpai", options.Format)
+		return disclosureOptions{}, fmt.Errorf("unsupported disclosure format %q; use eu-gpai", options.Format)
 	}
 	if len(args) == 1 && options.Force {
-		return bomExportOptions{}, fmt.Errorf("--force requires an output file")
+		return disclosureOptions{}, fmt.Errorf("--force requires an output file")
 	}
 	if len(args) == 2 && strings.ToLower(filepath.Ext(args[1])) != ".json" {
-		return bomExportOptions{}, fmt.Errorf("eu-gpai output must use a .json filename; editable document rendering is not implemented yet")
+		return disclosureOptions{}, fmt.Errorf("eu-gpai output must use a .json filename; editable document rendering is not implemented yet")
 	}
 	options.Model = args[0]
 	if len(args) == 2 {

@@ -19,7 +19,7 @@ leaf facts and exact redundant totals. The envelope separately identifies the
 files created by one materialization.
 
 Validate all self-contained invariants before writing or accepting a document.
-Provide offline `waldo bom show` and `waldo bom verify`; verification also
+Provide offline `waldo index bom` and `waldo index verify`; verification also
 hashes every exported file. Canonical JSONL conversion reconciles emitted
 document and token totals with the shard declaration.
 

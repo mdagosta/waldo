@@ -68,6 +68,14 @@ func TestIndexExportEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"index", "bom", filepath.Join(root, "books")}, &stdout, &stderr); code != 0 {
+		t.Fatalf("index bom code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"subject": "corpus"`) || !strings.Contains(stdout.String(), `"paths": [`+"\n"+`    "books"`) {
+		t.Fatalf("index bom output = %q", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
 	code := Run([]string{"index", "export", filepath.Join(root, "books"), destination}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
@@ -88,16 +96,16 @@ func TestIndexExportEndToEnd(t *testing.T) {
 	assertNoCacheFiles(t, cache)
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"bom", "verify", destination}, &stdout, &stderr); code != 0 {
-		t.Fatalf("bom verify code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	if code := Run([]string{"index", "verify", destination}, &stdout, &stderr); code != 0 {
+		t.Fatalf("index verify export code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "verified OpenWALDO BOM") {
 		t.Fatalf("bom verify output = %q", stdout.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"bom", "show", destination}, &stdout, &stderr); code != 0 {
-		t.Fatalf("bom show code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	if code := Run([]string{"index", "bom", destination}, &stdout, &stderr); code != 0 {
+		t.Fatalf("index bom export code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "OpenWALDO corpus export") || !strings.Contains(stdout.String(), "native") {
 		t.Fatalf("bom show output = %q", stdout.String())
@@ -161,7 +169,7 @@ stages:
 	disclosureOutput := filepath.Join(t.TempDir(), "eu-gpai.json")
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"bom", "export", "smoke", disclosureOutput, "--format", "eu-gpai"}, &stdout, &stderr); code != 1 {
+	if code := Run([]string{"model", "disclose", "smoke", disclosureOutput, "--format", "eu-gpai"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("complete disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "export blocked") {
@@ -172,7 +180,7 @@ stages:
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"bom", "export", "smoke", disclosureOutput, "--format=eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"model", "disclose", "smoke", disclosureOutput, "--format=eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("draft disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	disclosureData, err := os.ReadFile(disclosureOutput)
@@ -184,7 +192,7 @@ stages:
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"bom", "export", "smoke", "--format", "eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"model", "disclose", "smoke", "--format", "eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("stdout disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	if !strings.HasPrefix(stdout.String(), "{\n") || !strings.Contains(stdout.String(), `"kind": "waldo-eu-gpai-training-content"`) || !strings.Contains(stdout.String(), `"status": "incomplete-draft"`) {
@@ -353,32 +361,32 @@ func TestParseExportOptionsAllowsWholeIndexSelection(t *testing.T) {
 	}
 }
 
-func TestParseBOMExportOptions(t *testing.T) {
-	context, args, err := parseCobraCommand(t, []string{"bom", "export"}, []string{"smoke", "report.json", "--format=eu-gpai", "--provider", "provider.json", "--allow-incomplete", "--force"})
+func TestParseModelDisclosureOptions(t *testing.T) {
+	context, args, err := parseCobraCommand(t, []string{"model", "disclose"}, []string{"smoke", "report.json", "--format=eu-gpai", "--provider", "provider.json", "--allow-incomplete", "--force"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	options, err := cobraBOMExportOptions(context, args)
+	options, err := cobraModelDisclosureOptions(context, args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if options.Model != "smoke" || options.Output != "report.json" || options.Provider != "provider.json" || !options.AllowIncomplete || !options.Force {
-		t.Fatalf("cobraBOMExportOptions() = %+v", options)
+		t.Fatalf("cobraModelDisclosureOptions() = %+v", options)
 	}
-	context, args, err = parseCobraCommand(t, []string{"bom", "export"}, []string{"smoke", "report.docx", "--format", "eu-gpai"})
-	if _, err := cobraBOMExportOptions(context, args); err == nil || !strings.Contains(err.Error(), ".json") {
+	context, args, err = parseCobraCommand(t, []string{"model", "disclose"}, []string{"smoke", "report.docx", "--format", "eu-gpai"})
+	if _, err := cobraModelDisclosureOptions(context, args); err == nil || !strings.Contains(err.Error(), ".json") {
 		t.Fatalf("document output error = %v", err)
 	}
-	context, args, err = parseCobraCommand(t, []string{"bom", "export"}, []string{"smoke", "--format", "eu-gpai", "--allow-incomplete"})
+	context, args, err = parseCobraCommand(t, []string{"model", "disclose"}, []string{"smoke", "--format", "eu-gpai", "--allow-incomplete"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	stdoutOptions, err := cobraBOMExportOptions(context, args)
+	stdoutOptions, err := cobraModelDisclosureOptions(context, args)
 	if err != nil || stdoutOptions.Model != "smoke" || stdoutOptions.Output != "" || !stdoutOptions.AllowIncomplete {
 		t.Fatalf("stdout parse = %+v, %v", stdoutOptions, err)
 	}
-	context, args, err = parseCobraCommand(t, []string{"bom", "export"}, []string{"smoke", "--format", "eu-gpai", "--force"})
-	if _, err := cobraBOMExportOptions(context, args); err == nil || !strings.Contains(err.Error(), "requires an output file") {
+	context, args, err = parseCobraCommand(t, []string{"model", "disclose"}, []string{"smoke", "--format", "eu-gpai", "--force"})
+	if _, err := cobraModelDisclosureOptions(context, args); err == nil || !strings.Contains(err.Error(), "requires an output file") {
 		t.Fatalf("stdout force error = %v", err)
 	}
 }
