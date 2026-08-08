@@ -7,7 +7,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 
@@ -43,6 +42,7 @@ type commandFlag struct {
 	usage        string
 	kind         flagKind
 	defaultValue any
+	required     bool
 }
 
 func booleanFlag(name, usage string) commandFlag {
@@ -51,6 +51,10 @@ func booleanFlag(name, usage string) commandFlag {
 
 func textFlag(name, defaultValue, usage string) commandFlag {
 	return commandFlag{name: name, usage: usage, kind: stringFlag, defaultValue: defaultValue}
+}
+
+func requiredTextFlag(name, usage string) commandFlag {
+	return commandFlag{name: name, usage: usage, kind: stringFlag, defaultValue: "", required: true}
 }
 
 func repeatedTextFlag(name, usage string) commandFlag {
@@ -83,7 +87,6 @@ func newRootCommand() *cobra.Command {
 	}
 	root.SetVersionTemplate("waldo {{.Version}}\n")
 	root.PersistentFlags().BoolVar(&state.json, "json", false, "emit structured JSON output; progress remains on stderr")
-	wrapCobraUsageErrors(root)
 	root.AddCommand(
 		newIndexCommand(state),
 		newShardCommand(state),
@@ -164,7 +167,7 @@ func newModelCommand(state *cobraState) *cobra.Command {
 	command := group("model", "Create, train, compose, and use auditable models", "")
 	command.AddCommand(
 		leaf(state, "init <name>", "Initialize an untrained model", "Available presets: 10m, 35m, 90m, 300m, 1b, 3b, 7b, 13b, 34b, 70b.", cobra.ExactArgs(1), runModelInit,
-			textFlag("preset", "", "model architecture preset")),
+			requiredTextFlag("preset", "model architecture preset")),
 		leaf(state, "pull <name> <huggingface-source>", "Pull training-quality open weights", "Pulls and validates a Hugging Face Safetensors model into WALDO's managed model store.", cobra.ExactArgs(2), runModelPull),
 		leaf(state, "list [pattern...]", "List locally managed models", "Patterns use shell-style *, ?, and character classes.", cobra.ArbitraryArgs, runModelList),
 		leaf(state, "summary <name>", "Summarize architecture and training history", "", cobra.ExactArgs(1), runModelSummary),
@@ -195,7 +198,7 @@ func newBOMCommand(state *cobraState) *cobra.Command {
 		leaf(state, "show <export-directory|EXPORT.json>", "Show an exported OpenWALDO BOM", "", cobra.ExactArgs(1), runBOMShow),
 		leaf(state, "verify <export-directory|EXPORT.json>", "Validate a BOM and hash its exported files", "", cobra.ExactArgs(1), runBOMVerify),
 		leaf(state, "export <model-name-or-path> [output.json]", "Map a model BOM to a disclosure format", "Normal export fails before emitting anything if required disclosure facts are absent.", cobra.RangeArgs(1, 2), runBOMExport,
-			textFlag("format", "", "disclosure format: eu-gpai"),
+			requiredTextFlag("format", "disclosure format: eu-gpai"),
 			textFlag("provider", "", "provider profile override"),
 			booleanFlag("allow-incomplete", "emit a marked incomplete draft"),
 			booleanFlag("force", "replace an existing output file")),
@@ -216,18 +219,11 @@ func newConfigCommand(state *cobraState) *cobra.Command {
 
 func group(use, short, long string) *cobra.Command {
 	command := &cobra.Command{
-		Use: use, Short: short, Long: long,
-		Args: func(command *cobra.Command, args []string) error {
-			if err := cobra.NoArgs(command, args); err != nil {
-				return usageError{message: err.Error()}
-			}
-			return nil
-		},
+		Use: use, Short: short, Long: long, Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			return command.Help()
 		},
 	}
-	wrapCobraUsageErrors(command)
 	return command
 }
 
@@ -244,35 +240,22 @@ func unavailable(use, short string) *cobra.Command {
 
 func modelTrainArgs(command *cobra.Command, args []string) error {
 	if err := cobra.MinimumNArgs(1)(command, args); err != nil {
-		return usageError{message: err.Error()}
+		return err
 	}
 	if len(args) == 1 && looksLikeIndexPath(args[0]) {
-		return usageError{message: fmt.Sprintf("model name is required before index path %q", args[0])}
+		return fmt.Errorf("model name is required before index path %q", args[0])
 	}
 	return nil
 }
 
 func leaf(state *cobraState, use, short, long string, args cobra.PositionalArgs, handler Handler, flags ...commandFlag) *cobra.Command {
-	command := &cobra.Command{
-		Use: use, Short: short, Long: long,
-		Args: func(command *cobra.Command, positional []string) error {
-			if err := args(command, positional); err != nil {
-				var usage usageError
-				if errors.As(err, &usage) {
-					return err
-				}
-				return usageError{message: err.Error()}
-			}
-			return nil
-		},
-	}
+	command := &cobra.Command{Use: use, Short: short, Long: long, Args: args}
 	for index := range flags {
 		registerFlag(command, &flags[index])
 	}
 	command.RunE = func(command *cobra.Command, positional []string) error {
 		return handler(Context{Execution: command.Context(), JSON: state.json, Command: command}, positional, command.OutOrStdout(), command.ErrOrStderr())
 	}
-	wrapCobraUsageErrors(command)
 	return command
 }
 
@@ -292,6 +275,9 @@ func registerFlag(command *cobra.Command, flag *commandFlag) {
 		command.Flags().Uint64(flag.name, flag.defaultValue.(uint64), flag.usage)
 	case float64Flag:
 		command.Flags().Float64(flag.name, flag.defaultValue.(float64), flag.usage)
+	}
+	if flag.required {
+		_ = command.MarkFlagRequired(flag.name)
 	}
 }
 

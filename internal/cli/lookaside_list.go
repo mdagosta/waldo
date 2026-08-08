@@ -41,9 +41,6 @@ type lookasideListTotals struct {
 }
 
 func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer) error {
-	if len(args) > 1 {
-		return usageError{message: "usage: waldo lookaside list [index-path] [--all] [--json]"}
-	}
 	indexArgument := ""
 	if len(args) == 1 {
 		indexArgument = args[0]
@@ -54,7 +51,7 @@ func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer
 		return err
 	}
 	if configuration.Lookaside.Publish == nil {
-		return usageError{message: "configure a writable lookaside before listing objects: waldo config set lookaside <url>"}
+		return fmt.Errorf("configure a writable lookaside before listing objects: waldo config set lookaside <url>")
 	}
 	lister, err := lookaside.NewObjectLister(commandContext.Execution, *configuration.Lookaside.Publish)
 	if err != nil {

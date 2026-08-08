@@ -349,7 +349,7 @@ func TestParseExportOptionsAllowsWholeIndexSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if options.Output != "destination" || len(options.Paths) != 0 {
-		t.Fatalf("parseExportOptions() = %+v", options)
+		t.Fatalf("cobraExportOptions() = %+v", options)
 	}
 }
 
@@ -363,7 +363,7 @@ func TestParseBOMExportOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	if options.Model != "smoke" || options.Output != "report.json" || options.Provider != "provider.json" || !options.AllowIncomplete || !options.Force {
-		t.Fatalf("parseBOMExportOptions() = %+v", options)
+		t.Fatalf("cobraBOMExportOptions() = %+v", options)
 	}
 	context, args, err = parseCobraCommand(t, []string{"bom", "export"}, []string{"smoke", "report.docx", "--format", "eu-gpai"})
 	if _, err := cobraBOMExportOptions(context, args); err == nil || !strings.Contains(err.Error(), ".json") {

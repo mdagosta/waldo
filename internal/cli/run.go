@@ -7,10 +7,7 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"io"
-
-	"github.com/spf13/cobra"
 )
 
 const version = "0.0.0-dev"
@@ -29,19 +26,5 @@ func RunContext(execution context.Context, args []string, stdout, stderr io.Writ
 	if err == nil {
 		return 0
 	}
-	var usage usageError
-	if errors.As(err, &usage) {
-		return 2
-	}
 	return 1
-}
-
-type usageError struct{ message string }
-
-func (e usageError) Error() string { return e.message }
-
-func wrapCobraUsageErrors(command *cobra.Command) {
-	command.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		return usageError{message: err.Error()}
-	})
 }

@@ -22,7 +22,7 @@ import (
 
 func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Writer) error {
 	rebuild := boolOption(commandContext, "rebuild-shards")
-	options, err := cobraIndexIngestOptions(commandContext, args, "index update")
+	options, err := cobraIndexIngestOptions(commandContext, args)
 	if err != nil {
 		return err
 	}
@@ -60,7 +60,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 	}
 	if isRecipe {
 		if len(options.MetadataOptions) > 0 {
-			return usageError{message: fmt.Sprintf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))}
+			return fmt.Errorf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
 		}
 		options.Request.Title = loadedRecipe.Recipe.Title
 		options.Request.Description = loadedRecipe.Recipe.Description
@@ -74,7 +74,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 		options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
 		options.Request.Profile = loadedRecipe.Recipe.Input
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
-		return usageError{message: "direct index update requires --title, --license, --source, and --source-category"}
+		return fmt.Errorf("direct index update requires --title, --license, --source, and --source-category")
 	}
 	if options.Request.Source.Name == "" {
 		options.Request.Source.Name = corpusTarget.Manifest.Name
@@ -98,7 +98,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 			return err
 		}
 		if configuration.Lookaside.Publish == nil {
-			return usageError{message: "index update needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`"}
+			return fmt.Errorf("index update needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`")
 		}
 	}
 	execution := ingest.WithProgress(commandContext.Execution, ingestProgressReporter(stderr, commandContext.JSON))

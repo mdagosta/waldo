@@ -43,10 +43,7 @@ var promptS3Credentials = func(output io.Writer) (lookaside.Credentials, error) 
 	return credentials, nil
 }
 
-func runLookasideLogin(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) != 0 {
-		return usageError{message: "usage: waldo lookaside login [--json]"}
-	}
+func runLookasideLogin(context Context, _ []string, stdout, stderr io.Writer) error {
 	publish, scope, err := configuredS3Lookaside()
 	if err != nil {
 		return err
@@ -80,10 +77,7 @@ func runLookasideLogin(context Context, args []string, stdout, stderr io.Writer)
 	return nil
 }
 
-func runLookasideLogout(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 0 {
-		return usageError{message: "usage: waldo lookaside logout [--json]"}
-	}
+func runLookasideLogout(context Context, _ []string, stdout, _ io.Writer) error {
 	publish, scope, err := configuredS3Lookaside()
 	if err != nil {
 		return err
@@ -111,12 +105,12 @@ func configuredS3Lookaside() (config.Publish, string, error) {
 		return config.Publish{}, "", err
 	}
 	if configuration.Lookaside.Publish == nil {
-		return config.Publish{}, "", usageError{message: "configure an S3 lookaside before login: waldo config set lookaside s3://bucket/prefix"}
+		return config.Publish{}, "", fmt.Errorf("configure an S3 lookaside before login: waldo config set lookaside s3://bucket/prefix")
 	}
 	publish := *configuration.Lookaside.Publish
 	parsed, err := url.Parse(publish.URL)
 	if err != nil || parsed.Scheme != "s3" {
-		return config.Publish{}, "", usageError{message: "lookaside login requires a configured s3:// lookaside"}
+		return config.Publish{}, "", fmt.Errorf("lookaside login requires a configured s3:// lookaside")
 	}
 	scope, err := lookaside.CredentialScope(publish.URL)
 	if err != nil {

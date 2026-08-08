@@ -14,16 +14,13 @@ import (
 )
 
 func runLookasideRemove(commandContext Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 {
-		return usageError{message: "usage: waldo lookaside rm <sha256>... [--json]"}
-	}
 	seen := make(map[string]struct{}, len(args))
 	for _, name := range args {
 		if err := lookaside.ValidateObjectName(name); err != nil {
-			return usageError{message: err.Error()}
+			return err
 		}
 		if _, exists := seen[name]; exists {
-			return usageError{message: fmt.Sprintf("object %s is listed more than once", name)}
+			return fmt.Errorf("object %s is listed more than once", name)
 		}
 		seen[name] = struct{}{}
 	}
@@ -33,7 +30,7 @@ func runLookasideRemove(commandContext Context, args []string, stdout, stderr io
 		return err
 	}
 	if configuration.Lookaside.Publish == nil {
-		return usageError{message: "configure a writable lookaside before removing objects: waldo config set lookaside <url>"}
+		return fmt.Errorf("configure a writable lookaside before removing objects: waldo config set lookaside <url>")
 	}
 	remover, err := lookaside.NewObjectRemover(commandContext.Execution, *configuration.Lookaside.Publish)
 	if err != nil {

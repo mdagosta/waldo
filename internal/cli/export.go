@@ -34,7 +34,7 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	policy, err := corpus.NewLicensePolicy(options.Include, options.Exclude)
 	if err != nil {
-		return usageError{message: err.Error()}
+		return err
 	}
 	targets, err := resolveIndexArgumentsWithWarning(context.Execution, options.Paths, stderr)
 	if err != nil {
@@ -116,9 +116,6 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 }
 
 func cobraExportOptions(context Context, args []string) (exportOptions, error) {
-	if len(args) < 1 {
-		return exportOptions{}, usageError{message: "usage: waldo index export [path...] <directory> [--format native|jsonl]"}
-	}
 	options := exportOptions{
 		Paths:  append([]string(nil), args[:len(args)-1]...),
 		Output: args[len(args)-1],
@@ -132,7 +129,7 @@ func cobraExportOptions(context Context, args []string) (exportOptions, error) {
 		options.Exclude = append(options.Exclude, splitComma(value)...)
 	}
 	if options.Format != "native" && options.Format != "jsonl" {
-		return exportOptions{}, usageError{message: fmt.Sprintf("unsupported export format %q; use native or jsonl", options.Format)}
+		return exportOptions{}, fmt.Errorf("unsupported export format %q; use native or jsonl", options.Format)
 	}
 	return options, nil
 }

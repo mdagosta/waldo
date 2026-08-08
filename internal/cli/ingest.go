@@ -28,7 +28,7 @@ var newIngestPublisher = func(ctx context.Context, publish config.Publish) (look
 var ingestRecipeRunner ingest.CommandRunner = ingest.ExecCommandRunner{}
 
 func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) error {
-	options, err := cobraIndexIngestOptions(context, args, "index ingest")
+	options, err := cobraIndexIngestOptions(context, args)
 	if err != nil {
 		return err
 	}
@@ -38,7 +38,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	if isRecipe {
 		if len(options.MetadataOptions) > 0 {
-			return usageError{message: fmt.Sprintf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))}
+			return fmt.Errorf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
 		}
 		options.Request.Title = loadedRecipe.Recipe.Title
 		options.Request.Description = loadedRecipe.Recipe.Description
@@ -52,7 +52,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
 		options.Request.Profile = loadedRecipe.Recipe.Input
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
-		return usageError{message: "direct index ingest requires --title, --license, --source, and --source-category"}
+		return fmt.Errorf("direct index ingest requires --title, --license, --source, and --source-category")
 	}
 	if !isRecipe && options.InputProfile != "" {
 		options.Request.Profile, err = ingest.LoadInputProfile(options.InputProfile)
@@ -106,7 +106,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	if !options.DryRun {
 		if configuration.Lookaside.Publish == nil {
-			return usageError{message: "index ingest needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`"}
+			return fmt.Errorf("index ingest needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`")
 		}
 	}
 	execution := ingest.WithProgress(context.Execution, ingestProgressReporter(stderr, context.JSON))
@@ -374,10 +374,7 @@ type indexIngestOptions struct {
 	MetadataOptions []string
 }
 
-func cobraIndexIngestOptions(context Context, args []string, commandName string) (indexIngestOptions, error) {
-	if len(args) != 2 {
-		return indexIngestOptions{}, usageError{message: commandName + " requires exactly two positional arguments: <input> <destination>"}
-	}
+func cobraIndexIngestOptions(context Context, args []string) (indexIngestOptions, error) {
 	options := indexIngestOptions{
 		Inputs:       []string{args[0]},
 		DryRun:       boolOption(context, "dry-run"),

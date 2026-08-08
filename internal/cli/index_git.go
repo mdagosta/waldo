@@ -13,10 +13,7 @@ import (
 	managedgit "github.com/openwaldo/waldo/internal/git"
 )
 
-func runIndexPull(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) != 0 {
-		return usageError{message: "usage: waldo index pull"}
-	}
+func runIndexPull(context Context, _ []string, stdout, stderr io.Writer) error {
 	root, label, err := selectedIndexCheckout(context, stderr)
 	if err != nil {
 		return err

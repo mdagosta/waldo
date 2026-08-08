@@ -24,7 +24,7 @@ func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
 		t.Fatalf("epochs = %d, error = %v", int64Option(context, "epochs"), err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"model", "train", "foo", "core/books", "--epochs", "0"}, &stdout, &stderr); code != 2 {
+	if code := Run([]string{"model", "train", "foo", "core/books", "--epochs", "0"}, &stdout, &stderr); code != 1 {
 		t.Fatal("zero epochs accepted")
 	}
 }
@@ -32,7 +32,7 @@ func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
 func TestParseModelTrainDiagnosesOmittedModelName(t *testing.T) {
 	for _, path := range []string{"core/common-pile/python-enhancement-proposals/peps", "."} {
 		var stdout, stderr bytes.Buffer
-		if code := Run([]string{"model", "train", path}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "model name is required") {
+		if code := Run([]string{"model", "train", path}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "model name is required") {
 			t.Fatalf("path %q: code = %d, error = %q", path, code, stderr.String())
 		}
 	}
@@ -41,7 +41,7 @@ func TestParseModelTrainDiagnosesOmittedModelName(t *testing.T) {
 func TestModelTrainFormatsOmittedNameDiagnostic(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	path := "core/common-pile/python-enhancement-proposals/peps"
-	if code := Run([]string{"model", "train", path}, &stdout, &stderr); code != 2 {
+	if code := Run([]string{"model", "train", path}, &stdout, &stderr); code != 1 {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}
 	wantError := "Error: model name is required before index path \"" + path + "\"\n"

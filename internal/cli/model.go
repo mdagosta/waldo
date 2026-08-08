@@ -201,13 +201,10 @@ func approximateDuration(seconds int64) string {
 }
 
 func runModelInit(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) != 1 || !optionChanged(context, "preset") || stringOption(context, "preset") == "" {
-		return usageError{message: "usage: waldo model init <name> --preset <preset>"}
-	}
 	name, presetName := args[0], stringOption(context, "preset")
 	preset, err := model.PresetByName(presetName)
 	if err != nil {
-		return usageError{message: err.Error()}
+		return err
 	}
 	builder, err := configuredModelBuilder(context, stderr)
 	if err != nil {
@@ -229,9 +226,6 @@ func runModelInit(context Context, args []string, stdout, stderr io.Writer) erro
 }
 
 func runModelPull(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) != 2 {
-		return usageError{message: "usage: waldo model pull <name> <huggingface://organization/repository[@revision]> [--json]"}
-	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
@@ -255,11 +249,6 @@ func runModelPull(context Context, args []string, stdout, stderr io.Writer) erro
 }
 
 func runModelList(context Context, args []string, stdout, _ io.Writer) error {
-	for _, argument := range args {
-		if strings.HasPrefix(argument, "-") {
-			return usageError{message: fmt.Sprintf("unknown model list option %q", argument)}
-		}
-	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
@@ -287,9 +276,6 @@ func runModelList(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 func runModelSummary(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo model summary <name> [--json]"}
-	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
@@ -357,9 +343,6 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 }
 
 func runModelBOM(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) < 1 || len(args) > 2 {
-		return usageError{message: "usage: waldo model bom <name> [output.json] [--json]"}
-	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
@@ -397,15 +380,9 @@ func runModelBOM(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) < 1 {
-		return usageError{message: "usage: waldo model train <name> [index-path...] [--epochs <n>] [--json]"}
-	}
-	if len(args) == 1 && looksLikeIndexPath(args[0]) {
-		return usageError{message: fmt.Sprintf("model name is required before index path %q\n\nUsage:\n  waldo model train <name> [index-path...] [--epochs <n>] [--json]", args[0])}
-	}
 	epochs := int64Option(context, "epochs")
 	if epochs < 1 || epochs > 1_000_000 {
-		return usageError{message: "--epochs must be an integer in 1..1000000"}
+		return fmt.Errorf("--epochs must be an integer in 1..1000000")
 	}
 	name, paths := args[0], args[1:]
 	root, err := configuredModelRoot()
@@ -443,9 +420,6 @@ func looksLikeIndexPath(value string) bool {
 }
 
 func runModelCompose(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) != 2 {
-		return usageError{message: "usage: waldo model compose <name> <compose-file> [--replace] [--json]"}
-	}
 	name, path, replace := args[0], args[1], boolOption(context, "replace")
 	compose, composePath, err := model.LoadCompose(path)
 	if err != nil {
@@ -650,35 +624,29 @@ type modelExportOptions struct {
 }
 
 func cobraModelExportOptions(context Context, args []string) (modelExportOptions, error) {
-	if len(args) != 2 {
-		return modelExportOptions{}, usageError{message: "usage: waldo model export <name> <directory> [--format waldo|huggingface|mlx|gguf|ollama] [--quant 2|3|4|5|6|8] [--calibration <index-path>] [--allow-incomplete] [--json]"}
-	}
 	result := modelExportOptions{
 		Name: args[0], Destination: args[1],
 		Format: stringOption(context, "format"), Quant: stringOption(context, "quant"),
 		Calibration: stringOption(context, "calibration"), AllowIncomplete: boolOption(context, "allow-incomplete"),
 	}
 	if result.Format != "waldo" && result.Format != "huggingface" && result.Format != "mlx" && result.Format != "gguf" && result.Format != "ollama" {
-		return modelExportOptions{}, usageError{message: fmt.Sprintf("model export format %q is not implemented; use waldo, huggingface, mlx, gguf, or ollama", result.Format)}
+		return modelExportOptions{}, fmt.Errorf("model export format %q is not implemented; use waldo, huggingface, mlx, gguf, or ollama", result.Format)
 	}
 	if result.Quant != "" && result.Format != "gguf" && result.Format != "ollama" {
-		return modelExportOptions{}, usageError{message: "--quant is supported only with --format gguf or ollama"}
+		return modelExportOptions{}, fmt.Errorf("--quant is supported only with --format gguf or ollama")
 	}
 	if result.Quant != "" {
 		if _, err := modelquant.ResolveProfile(result.Quant); err != nil {
-			return modelExportOptions{}, usageError{message: err.Error()}
+			return modelExportOptions{}, err
 		}
 	}
 	if result.Calibration != "" && result.Quant == "" {
-		return modelExportOptions{}, usageError{message: "--calibration requires --quant"}
+		return modelExportOptions{}, fmt.Errorf("--calibration requires --quant")
 	}
 	return result, nil
 }
 
 func runModelRemove(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) == 0 {
-		return usageError{message: "usage: waldo model rm <name...> [--json]"}
-	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
@@ -720,7 +688,7 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	}
 	interactive := prompt == nil && modelChatTerminal()
 	if context.JSON && interactive {
-		return usageError{message: "--json requires a positional prompt or piped standard input"}
+		return fmt.Errorf("--json requires a positional prompt or piped standard input")
 	}
 	if !interactive && prompt == nil {
 		data, err := io.ReadAll(modelChatInput)
@@ -753,11 +721,8 @@ func cobraModelChatOptions(context Context, args []string) (string, *string, inf
 		seed := uint64Option(context, "seed")
 		options.Seed = &seed
 	}
-	if len(args) < 1 || len(args) > 2 {
-		return "", nil, options, usageError{message: "usage: waldo model chat <name> [prompt] [--max-tokens <n>] [--temperature <n>] [--top-p <n>] [--seed <n>] [--json]"}
-	}
 	if err := options.Validate(); err != nil {
-		return "", nil, options, usageError{message: err.Error()}
+		return "", nil, options, err
 	}
 	if len(args) == 2 {
 		return args[0], &args[1], options, nil

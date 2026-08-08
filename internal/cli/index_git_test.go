@@ -96,7 +96,7 @@ func TestManagedIndexRejectsCorpusUpdateAndConfigurationOverride(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"config", "set", "index", managed}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "already the default") {
+	if code := Run([]string{"config", "set", "index", managed}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "already the default") {
 		t.Fatalf("config set code=%d stderr=%q", code, stderr.String())
 	}
 }

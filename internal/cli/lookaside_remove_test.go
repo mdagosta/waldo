@@ -74,7 +74,7 @@ func TestLookasideRemovePreflightsEntireList(t *testing.T) {
 
 func TestLookasideRemoveRejectsNonObjectNames(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"lookaside", "rm", "s3://bucket/prefix"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "64 lowercase hexadecimal") {
+	if code := Run([]string{"lookaside", "rm", "s3://bucket/prefix"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "64 lowercase hexadecimal") {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
 }

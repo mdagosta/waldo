@@ -26,9 +26,6 @@ import (
 )
 
 func runIndexInit(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo index init <directory>"}
-	}
 	managed, err := config.IsManagedIndexPath(args[0])
 	if err != nil {
 		return err
@@ -54,9 +51,6 @@ func runIndexInit(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 func runIndexList(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) > 1 {
-		return usageError{message: "usage: waldo index list [path]"}
-	}
 	target, err := resolveIndexArgument(context.Execution, args, stderr)
 	if err != nil {
 		return err
@@ -86,9 +80,6 @@ func runIndexList(context Context, args []string, stdout, stderr io.Writer) erro
 }
 
 func runIndexShow(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) > 1 {
-		return usageError{message: "usage: waldo index show [path]"}
-	}
 	target, err := resolveIndexArgument(context.Execution, args, stderr)
 	if err != nil {
 		return err
@@ -129,9 +120,6 @@ func runIndexShow(context Context, args []string, stdout, stderr io.Writer) erro
 }
 
 func runIndexSummary(context Context, args []string, stdout, stderr io.Writer) error {
-	if len(args) > 1 {
-		return usageError{message: "usage: waldo index summary [path]"}
-	}
 	target, err := resolveIndexArgument(context.Execution, args, stderr)
 	if err != nil {
 		return err
@@ -179,9 +167,6 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 	auditOptions, err := cobraAuditOptions(context)
 	if err != nil {
 		return err
-	}
-	if len(args) > 1 {
-		return usageError{message: "usage: waldo index audit [path] [--workers <n>]"}
 	}
 	target, err := resolveIndexArgument(context.Execution, args, progress)
 	if err != nil {
@@ -260,10 +245,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	objects := boolOption(context, "objects")
 	offline := boolOption(context, "offline")
 	if objects && offline {
-		return usageError{message: "--objects and --offline are different verification levels; choose one"}
-	}
-	if len(args) > 1 {
-		return usageError{message: "usage: waldo index verify [path] [--offline|--objects]"}
+		return fmt.Errorf("--objects and --offline are different verification levels; choose one")
 	}
 	target, err := resolveIndexArgumentPolicy(context.Execution, args, progress, !offline)
 	if err != nil {

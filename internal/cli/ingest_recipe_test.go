@@ -42,7 +42,7 @@ func TestIndexIngestRecipeDryRunDoesNotExecuteCommands(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	code = Run([]string{"index", "ingest", recipePath, filepath.Join(root, "core", "recipe-corpus"), "--title", "Override", "--dry-run"}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "recipe input owns corpus metadata") {
+	if code != 1 || !strings.Contains(stderr.String(), "recipe input owns corpus metadata") {
 		t.Fatalf("override code=%d stderr=%q", code, stderr.String())
 	}
 }

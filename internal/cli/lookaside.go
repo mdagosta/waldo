@@ -13,10 +13,7 @@ import (
 	"github.com/openwaldo/waldo/internal/lookaside"
 )
 
-func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 0 {
-		return usageError{message: "usage: waldo lookaside status [--json]"}
-	}
+func runLookasideStatus(context Context, _ []string, stdout, _ io.Writer) error {
 	cache, err := lookaside.DefaultCache()
 	if err != nil {
 		return err
@@ -82,10 +79,7 @@ func runLookasideStatus(context Context, args []string, stdout, _ io.Writer) err
 	return nil
 }
 
-func runLookasideVerify(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 0 {
-		return usageError{message: "usage: waldo lookaside verify [--json]"}
-	}
+func runLookasideVerify(context Context, _ []string, stdout, _ io.Writer) error {
 	cache, err := lookaside.DefaultCache()
 	if err != nil {
 		return err

@@ -164,7 +164,7 @@ func TestIndexIngestRejectsFormerToOption(t *testing.T) {
 		"--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset", "--dry-run",
 	}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "unknown flag: --to") {
+	if code != 1 || !strings.Contains(stderr.String(), "unknown flag: --to") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 }
@@ -182,7 +182,7 @@ func TestIndexIngestRejectsRemovedModeFlags(t *testing.T) {
 			args = append(args, "value")
 		}
 		code := Run(args, &stdout, &stderr)
-		if code != 2 || !strings.Contains(stderr.String(), "unknown flag: "+removed) {
+		if code != 1 || !strings.Contains(stderr.String(), "unknown flag: "+removed) {
 			t.Fatalf("%s: code = %d, stderr = %q", removed, code, stderr.String())
 		}
 	}
@@ -197,7 +197,7 @@ func TestIndexIngestExecutionRequiresWritableLookaside(t *testing.T) {
 		"--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset",
 	}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "needs a writable lookaside") {
+	if code != 1 || !strings.Contains(stderr.String(), "needs a writable lookaside") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 }
@@ -476,8 +476,8 @@ func TestFlagRichHelpExplainsRetainedOptions(t *testing.T) {
 
 func TestModelTrainRequiresName(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"model", "train"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("Run() code = %d, want 2", code)
+	if code := Run([]string{"model", "train"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("Run() code = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "Error: requires at least 1 arg") || !strings.Contains(stdout.String(), "waldo model train <name> [index-path") {
 		t.Fatalf("Cobra error/usage = stderr %q, stdout %q", stderr.String(), stdout.String())
@@ -496,8 +496,8 @@ func TestModelTrainAllowsOmittedIndexSelection(t *testing.T) {
 
 func TestUnknownCommandSuggestsScopedHelp(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"lookaside", "explode"}, &stdout, &stderr); code != 2 {
-		t.Fatalf("Run() code = %d, want 2", code)
+	if code := Run([]string{"lookaside", "explode"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("Run() code = %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "unknown command \"explode\" for \"waldo lookaside\"") || !strings.Contains(stdout.String(), "waldo lookaside [flags]") {
 		t.Fatalf("Cobra error/usage = stderr %q, stdout %q", stderr.String(), stdout.String())
@@ -507,7 +507,7 @@ func TestUnknownCommandSuggestsScopedHelp(t *testing.T) {
 func TestIndexVerifyRejectsConflictingVerificationLevels(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"index", "verify", "--offline", "--objects"}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "different verification levels") {
+	if code != 1 || !strings.Contains(stderr.String(), "different verification levels") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 }
@@ -527,7 +527,7 @@ func TestIndexVerifyAcceptsAbsoluteCorpusDirectory(t *testing.T) {
 func TestRemovedIndexOptionIsRejected(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--index", "/tmp/index", "index", "list"}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "unknown flag: --index") {
+	if code != 1 || !strings.Contains(stderr.String(), "unknown flag: --index") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 }
@@ -730,7 +730,7 @@ func TestLookasideLoginRequiresConfiguredS3(t *testing.T) {
 	}
 	useCLICredentialStore(t, &cliCredentialStore{})
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"lookaside", "login"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "requires a configured s3:// lookaside") {
+	if code := Run([]string{"lookaside", "login"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "requires a configured s3:// lookaside") {
 		t.Fatalf("login code = %d, stderr = %q", code, stderr.String())
 	}
 }
@@ -867,7 +867,7 @@ func TestConfigGetJSONPreservesOrderedMatchesAndUnsetState(t *testing.T) {
 func TestConfigRejectsUnknownKey(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"config", "set", "mystery", "value"}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "unknown configuration key") {
+	if code := Run([]string{"config", "set", "mystery", "value"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "unknown configuration key") {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}
 }

@@ -14,9 +14,6 @@ import (
 )
 
 func runShardSummary(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) == 0 {
-		return usageError{message: "usage: waldo shard summary <path...>"}
-	}
 	paths, err := shard.ResolvePaths(args)
 	if err != nil {
 		return err
@@ -36,9 +33,6 @@ func runShardAudit(context Context, args []string, stdout, progress io.Writer) e
 	options, err := cobraAuditOptions(context)
 	if err != nil {
 		return err
-	}
-	if len(args) == 0 {
-		return usageError{message: "usage: waldo shard audit <path...> [--workers <n>]"}
 	}
 	paths, err := shard.ResolvePaths(args)
 	if err != nil {
@@ -63,7 +57,7 @@ func runShardAudit(context Context, args []string, stdout, progress io.Writer) e
 func cobraAuditOptions(context Context) (shard.AuditOptions, error) {
 	workers := intOption(context, "workers")
 	if workers < 0 || workers > 32 || (optionChanged(context, "workers") && workers == 0) {
-		return shard.AuditOptions{}, usageError{message: "--workers must be an integer from 1 to 32"}
+		return shard.AuditOptions{}, fmt.Errorf("--workers must be an integer from 1 to 32")
 	}
 	return shard.AuditOptions{Workers: workers}, nil
 }
@@ -77,15 +71,12 @@ func auditProgressPrinter(output io.Writer) func(shard.AuditProgress) {
 }
 
 func runShardListRecords(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo shard list-records <shard-file>"}
-	}
 	paths, err := shard.ResolvePaths(args)
 	if err != nil {
 		return err
 	}
 	if len(paths) != 1 {
-		return usageError{message: "list-records requires exactly one shard file"}
+		return fmt.Errorf("list-records requires exactly one shard file")
 	}
 	if context.JSON {
 		encoder := newJSONLineEncoder(stdout)
@@ -125,18 +116,15 @@ func compactShardField(value string, maximum int) string {
 }
 
 func runShardExportRecord(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 2 {
-		return usageError{message: "usage: waldo shard export-record <shard-file> <record-id>"}
-	}
 	if context.JSON {
-		return usageError{message: "--json is not supported by shard export-record because stdout is the record data"}
+		return fmt.Errorf("--json is not supported by shard export-record because stdout is the record data")
 	}
 	paths, err := shard.ResolvePaths(args[:1])
 	if err != nil {
 		return err
 	}
 	if len(paths) != 1 {
-		return usageError{message: "export-record requires exactly one shard file"}
+		return fmt.Errorf("export-record requires exactly one shard file")
 	}
 	return shard.ExportRecord(paths[0], args[1], stdout)
 }

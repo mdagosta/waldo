@@ -21,9 +21,6 @@ import (
 )
 
 func runBOMShow(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo bom show <export-directory|EXPORT.json> [--json]"}
-	}
 	document, path, err := provenance.LoadCorpusExport(args[0])
 	if err != nil {
 		return err
@@ -62,9 +59,6 @@ func runBOMShow(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 func runBOMVerify(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo bom verify <export-directory|EXPORT.json> [--json]"}
-	}
 	document, report, err := provenance.VerifyCorpusExport(args[0])
 	if err != nil {
 		return err
@@ -190,17 +184,14 @@ func cobraBOMExportOptions(context Context, args []string) (bomExportOptions, er
 		Format: stringOption(context, "format"), Provider: stringOption(context, "provider"),
 		AllowIncomplete: boolOption(context, "allow-incomplete"), Force: boolOption(context, "force"),
 	}
-	if (len(args) != 1 && len(args) != 2) || options.Format == "" {
-		return bomExportOptions{}, usageError{message: "usage: waldo bom export <model-name-or-path> [output.json] --format eu-gpai [--provider <profile.json>] [--allow-incomplete] [--force]"}
-	}
 	if options.Format != "eu-gpai" {
-		return bomExportOptions{}, usageError{message: fmt.Sprintf("unsupported BOM export format %q; use eu-gpai", options.Format)}
+		return bomExportOptions{}, fmt.Errorf("unsupported BOM export format %q; use eu-gpai", options.Format)
 	}
 	if len(args) == 1 && options.Force {
-		return bomExportOptions{}, usageError{message: "--force requires an output file"}
+		return bomExportOptions{}, fmt.Errorf("--force requires an output file")
 	}
 	if len(args) == 2 && strings.ToLower(filepath.Ext(args[1])) != ".json" {
-		return bomExportOptions{}, usageError{message: "eu-gpai output must use a .json filename; editable document rendering is not implemented yet"}
+		return bomExportOptions{}, fmt.Errorf("eu-gpai output must use a .json filename; editable document rendering is not implemented yet")
 	}
 	options.Model = args[0]
 	if len(args) == 2 {

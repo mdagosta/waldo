@@ -35,10 +35,7 @@ var configKeys = []string{
 	"signing.key",
 }
 
-func runConfigShow(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 0 {
-		return usageError{message: "usage: waldo config show [--json]"}
-	}
+func runConfigShow(context Context, _ []string, stdout, _ io.Writer) error {
 	configuration, err := config.Load()
 	if err != nil {
 		return err
@@ -79,9 +76,6 @@ func runConfigShow(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 func runConfigGet(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) > 1 {
-		return usageError{message: "usage: waldo config get [key-or-prefix] [--json]"}
-	}
 	configuration, err := config.Load()
 	if err != nil {
 		return err
@@ -95,7 +89,7 @@ func runConfigGet(context Context, args []string, stdout, _ io.Writer) error {
 		return err
 	}
 	if len(matches) == 0 {
-		return usageError{message: unknownConfigKey(selector)}
+		return fmt.Errorf("%s", unknownConfigKey(selector))
 	}
 	exactLeaf := len(matches) == 1 && matches[0].Key == selector
 	if context.JSON && exactLeaf {
@@ -150,9 +144,6 @@ func matchingConfigValues(configuration config.Config, selector string) ([]confi
 }
 
 func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) < 2 {
-		return usageError{message: "usage: waldo config set <key> <value...> [--json]"}
-	}
 	key, values := args[0], args[1:]
 	configuration, err := config.Load()
 	if err != nil {
@@ -165,14 +156,14 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		}
 		target, err := waldoindex.Resolve("", values[0])
 		if err != nil {
-			return usageError{message: fmt.Sprintf("index must name an existing WALDO index checkout: %v", err)}
+			return fmt.Errorf("index must name an existing WALDO index checkout: %v", err)
 		}
 		managed, err := config.IsManagedIndexPath(target.Root)
 		if err != nil {
 			return err
 		}
 		if managed {
-			return usageError{message: "the managed index is already the default; leave index unset or configure a separate contributor checkout"}
+			return fmt.Errorf("the managed index is already the default; leave index unset or configure a separate contributor checkout")
 		}
 		configuration.Index = target.Root
 	case "lookaside":
@@ -203,7 +194,7 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		}
 		workers, err := strconv.Atoi(values[0])
 		if err != nil {
-			return usageError{message: "lookaside.workers must be an integer in 1..32"}
+			return fmt.Errorf("lookaside.workers must be an integer in 1..32")
 		}
 		publish, err := configuredPublisher(&configuration, key)
 		if err != nil {
@@ -226,7 +217,7 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		}
 		configuration.Lookaside.CacheMaxBytes, err = parseByteSize(values[0])
 		if err != nil {
-			return usageError{message: "lookaside.cache.max-size must be a positive byte size such as 20GiB or 500MiB"}
+			return fmt.Errorf("lookaside.cache.max-size must be a positive byte size such as 20GiB or 500MiB")
 		}
 	case "lookaside.scratch":
 		if len(values) != 1 {
@@ -257,7 +248,7 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 			return oneConfigValue(key)
 		}
 		if values[0] != "auto" && values[0] != "mlx" && values[0] != "torchtitan" && values[0] != "pytorch" && values[0] != "fake" {
-			return usageError{message: "model.backend must be auto, mlx, torchtitan, pytorch, or fake"}
+			return fmt.Errorf("model.backend must be auto, mlx, torchtitan, pytorch, or fake")
 		}
 		configuration.Model.Backend = values[0]
 	case "disclosure.provider":
@@ -269,7 +260,7 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 			return err
 		}
 		if _, err := disclosure.LoadProvider(providerPath); err != nil {
-			return usageError{message: fmt.Sprintf("disclosure.provider must name a valid provider JSON file: %v", err)}
+			return fmt.Errorf("disclosure.provider must name a valid provider JSON file: %v", err)
 		}
 		configuration.Disclosure.Provider = providerPath
 	case "signing.method":
@@ -277,7 +268,7 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 			return oneConfigValue(key)
 		}
 		if values[0] != "sigstore-keyless" && values[0] != "sigstore-key" {
-			return usageError{message: "signing.method must be sigstore-keyless or sigstore-key"}
+			return fmt.Errorf("signing.method must be sigstore-keyless or sigstore-key")
 		}
 		configuration.Signing.Method = values[0]
 		if values[0] == "sigstore-keyless" {
@@ -293,13 +284,13 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		}
 		info, err := os.Stat(configuration.Signing.Key)
 		if err != nil {
-			return usageError{message: fmt.Sprintf("signing.key must name a readable key file: %v", err)}
+			return fmt.Errorf("signing.key must name a readable key file: %v", err)
 		}
 		if info.IsDir() {
-			return usageError{message: "signing.key must name a key file, not a directory"}
+			return fmt.Errorf("signing.key must name a key file, not a directory")
 		}
 	default:
-		return usageError{message: unknownConfigKey(key)}
+		return fmt.Errorf("%s", unknownConfigKey(key))
 	}
 	if err := config.Save(configuration); err != nil {
 		return err
@@ -308,9 +299,6 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) != 1 {
-		return usageError{message: "usage: waldo config unset <key> [--json]"}
-	}
 	key := args[0]
 	configuration, err := config.Load()
 	if err != nil {
@@ -350,7 +338,7 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 	case "signing.key":
 		configuration.Signing.Key = ""
 	default:
-		return usageError{message: unknownConfigKey(key)}
+		return fmt.Errorf("%s", unknownConfigKey(key))
 	}
 	if err := config.Save(configuration); err != nil {
 		return err
@@ -472,13 +460,13 @@ func parseByteSize(value string) (int64, error) {
 
 func configuredPublisher(configuration *config.Config, key string) (*config.Publish, error) {
 	if configuration.Lookaside.Publish == nil {
-		return nil, usageError{message: fmt.Sprintf("set lookaside before %s", key)}
+		return nil, fmt.Errorf("set lookaside before %s", key)
 	}
 	return configuration.Lookaside.Publish, nil
 }
 
 func oneConfigValue(key string) error {
-	return usageError{message: fmt.Sprintf("configuration key %s requires exactly one value", key)}
+	return fmt.Errorf("configuration key %s requires exactly one value", key)
 }
 
 func unknownConfigKey(key string) string {
