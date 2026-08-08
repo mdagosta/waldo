@@ -166,6 +166,13 @@ waldo config set lookaside file:///tmp/waldo-lookaside
 waldo config set model.backend auto
 ```
 
+Once `index` is configured, every relative index path—including one beginning
+with `./`—resolves beneath that checkout. Absolute paths and paths beginning
+with `~/` explicitly select another checkout. If a command's index selection
+is omitted, WALDO warns on standard error and uses the entire configured
+index. Without this setting, WALDO discovers an enclosing checkout from the
+current directory.
+
 For S3 publication:
 
 ```bash
@@ -239,7 +246,7 @@ probe text, Markdown, plain/gzip/zstd JSONL, and raw Parquet without using an
 intermediate interchange file:
 
 ```bash
-waldo index ingest ./acquired-data ./waldo-index/core/example \
+waldo index ingest ./acquired-data core/example \
   --title "Example corpus" \
   --description "A small example corpus." \
   --license CC-BY-4.0 \
@@ -266,7 +273,7 @@ WALDO-owned temporary directory:
 
 ```bash
 waldo index ingest ../waldo-fetchers/recipes/example.yaml \
-  ./waldo-index/core/example
+  core/example
 ```
 
 Recipe steps use `exec`. Bare commands resolve through `PATH`; paths resolve
@@ -287,6 +294,9 @@ waldo index export core/books ./books-export
 waldo index export core/books science/papers ./training-jsonl \
   --format jsonl \
   --exclude-license 'LicenseRef-*'
+
+# With no selection, export the entire configured index (and warn).
+waldo index export ./complete-index-export
 
 waldo bom show ./books-export
 waldo bom verify ./books-export
@@ -315,7 +325,10 @@ waldo lookaside list /path/to/waldo-index/core/books --all
 waldo lookaside verify
 ```
 
-With an index path, `lookaside list` normally shows only matching objects;
+Unlike corpus-consuming commands, argumentless `lookaside list` is an
+unfiltered storage inventory and does not select or warn about an index. Use
+`waldo lookaside list .` to filter against the entire configured index. With
+an index path, `lookaside list` normally shows only matching objects;
 `--all` adds unmatched objects without claiming they are unreachable from every
 other index or BOM. Destructive cleanup is intentionally explicit:
 
@@ -334,6 +347,7 @@ and sorts approximate runtime from slowest to fastest:
 ```bash
 waldo model forecast ./model.yaml
 waldo model forecast core/books science/papers
+waldo model forecast # entire configured index, with a warning
 ```
 
 Initialize an immutable architecture and train it directly on recursive index
@@ -342,6 +356,7 @@ selections:
 ```bash
 waldo model init small --preset 10m
 waldo model train small core/books --epochs 1
+waldo model train small --epochs 1 # entire configured index, with a warning
 waldo model summary small
 waldo model bom small
 ```

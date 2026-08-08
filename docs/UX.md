@@ -10,9 +10,11 @@ changes it.
    implementation phase.
 2. Keep the common path short. Put destructive and operational commands behind
    explicit nouns and verbs.
-3. Resolve index paths consistently from positional paths, discovering the
-   enclosing checkout by walking upward like Git. Do not maintain an invisible
-   index clone.
+3. Resolve relative index paths beneath the checkout set by `waldo config set
+   index`. Without that setting, discover the enclosing checkout by walking
+   upward from the current directory like Git. Absolute and `~/` paths
+   explicitly discover another checkout. When a corpus-consuming command
+   omits its selection, warn and use the entire resolved index.
 4. Show a human-readable result by default and offer `--json` wherever output
    is useful to automation.
 5. Perform a preflight before moving large data or starting paid compute.
@@ -217,8 +219,9 @@ waldo index ingest ~/data/books core/books/example \
   --source-category public-dataset
 ```
 
-When the current directory is outside the checkout, make the destination an
-absolute or filesystem-relative positional path instead:
+When `index` is configured, relative destinations resolve beneath that
+checkout regardless of the current directory. An absolute or `~/` destination
+explicitly selects another checkout:
 
 ```bash
 waldo index ingest ~/data/books /path/to/waldo-index/core/books/example \
@@ -262,7 +265,7 @@ The same command accepts a strict YAML or JSON recipe identified by
 
 ```bash
 waldo index ingest ../waldo-fetchers/recipes/common-pile/foodista.yaml \
-  /path/to/waldo-index/core/common-pile/foodista --dry-run
+  core/common-pile/foodista --dry-run
 ```
 
 An ingest recipe supplies title, description, license, source facts, optional Parquet
@@ -358,6 +361,9 @@ waldo index export core science \
 waldo index export core \
   --format jsonl \
   ~/portable-training-data
+
+# No selection exports the entire resolved index and warns on stderr.
+waldo index export ~/complete-training-data
 ```
 
 This is the first local fetch/materialization workflow. The command prints
@@ -424,6 +430,10 @@ rows. It shows a shortened object hash, size, absolute UTC storage time, object
 prefix, and index manifest. JSON output preserves full object paths,
 hashes, timestamps, inventory context, missing references, and totals.
 
+Unlike corpus-consuming commands, argumentless `lookaside list` remains an
+unfiltered object inventory and emits no whole-index warning. Pass `.` to
+filter it against the entire configured index.
+
 Canonical objects are recognized by a trailing
 `<sha[0:2]>/<sha[2:4]>/<sha256>` path at any bucket prefix. With no index path,
 all objects are shown and `INDEX` is `--`. The optional index path follows the
@@ -476,6 +486,7 @@ waldo model init smoke --preset 10m
 waldo model pull llama-base huggingface://organization/model@main
 waldo model train smoke core/books
 waldo model train smoke core/books --epochs 3
+waldo model train smoke # entire configured index, with a warning
 waldo model compose smoke configs/smoke.yaml
 ```
 
