@@ -46,6 +46,9 @@ func Resolve(knownRoot, target string) (Target, error) {
 			return Target{}, err
 		}
 		root, err := findRoot(abs)
+		if err != nil && os.IsNotExist(err) {
+			root, err = findRoot(filepath.Dir(abs))
+		}
 		if err != nil {
 			return Target{}, err
 		}
@@ -220,12 +223,61 @@ func within(root, target string) (Target, error) {
 		return Target{}, fmt.Errorf("target %s is outside index checkout %s", target, root)
 	}
 	if _, err := os.Stat(abs); err != nil {
-		return Target{}, fmt.Errorf("index path %s: %w", target, err)
+		if !os.IsNotExist(err) {
+			return Target{}, fmt.Errorf("index path %s: %w", target, err)
+		}
+		manifest, found, resolveErr := indexedManifestPath(abs)
+		if resolveErr != nil {
+			return Target{}, fmt.Errorf("index path %s: %w", target, resolveErr)
+		}
+		if !found {
+			return Target{}, fmt.Errorf("index path %s: %w", target, err)
+		}
+		abs = manifest
+		rel, err = filepath.Rel(root, abs)
+		if err != nil {
+			return Target{}, err
+		}
 	}
 	if rel == "." {
 		rel = ""
 	}
 	return Target{Root: root, Abs: abs, Rel: filepath.ToSlash(rel)}, nil
+}
+
+func indexedManifestPath(logicalPath string) (string, bool, error) {
+	dir := filepath.Dir(logicalPath)
+	directory, err := LoadDirectory(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	name := filepath.Base(logicalPath)
+	var matches []string
+	for _, entry := range directory.Entries {
+		if entry.Type != "manifest" || filepath.Base(entry.Name) != entry.Name {
+			continue
+		}
+		extension := strings.ToLower(filepath.Ext(entry.Name))
+		if extension != ".json" && extension != ".yaml" && extension != ".yml" {
+			continue
+		}
+		if strings.TrimSuffix(entry.Name, filepath.Ext(entry.Name)) == name {
+			matches = append(matches, filepath.Join(dir, entry.Name))
+		}
+	}
+	if len(matches) == 0 {
+		return "", false, nil
+	}
+	if len(matches) > 1 {
+		return "", false, fmt.Errorf("logical corpus path is ambiguous; matches %s", strings.Join(matches, ", "))
+	}
+	if _, err := os.Stat(matches[0]); err != nil {
+		return "", false, err
+	}
+	return matches[0], true, nil
 }
 
 func isFilesystemPath(value string) bool {

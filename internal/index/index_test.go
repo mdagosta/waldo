@@ -85,6 +85,22 @@ func TestResolveDiscoversCheckoutFromAbsoluteTargets(t *testing.T) {
 	}
 }
 
+func TestResolveAcceptsLogicalCorpusPathPrintedByList(t *testing.T) {
+	root := fixtureIndex(t)
+	for _, targetPath := range []string{"alpha/books", filepath.Join(root, "alpha", "books")} {
+		target, err := Resolve(root, targetPath)
+		if filepath.IsAbs(targetPath) {
+			target, err = Resolve("", targetPath)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target.Abs != filepath.Join(root, "alpha", "books.json") || target.Rel != "alpha/books.json" {
+			t.Fatalf("Resolve(%q) = %+v", targetPath, target)
+		}
+	}
+}
+
 func TestResolveConfiguredTreatsEveryRelativePathAsIndexRelative(t *testing.T) {
 	root := fixtureIndex(t)
 	t.Chdir(t.TempDir())
