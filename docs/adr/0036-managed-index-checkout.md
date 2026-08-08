@@ -35,6 +35,11 @@ remote references only. Pull derives the current branch's tracking remote and
 performs only a clean fast-forward; it refuses dirty worktrees, local commits,
 divergence, detached HEAD, and missing tracking configuration.
 
+Only `waldo index pull` is exposed as a synchronization command. WALDO does not
+recapitulate Git with public `index clone`, `index fetch`, or `index status`
+commands. Read commands invoke the same safe update policy automatically, and
+the managed checkout is created automatically when absent.
+
 ## Consequences
 
 The normal read workflow works without prior configuration and normally uses

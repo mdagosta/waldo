@@ -154,7 +154,7 @@ the same files independently of an index checkout.
   profiles, including viable 1, 4, and 8 accelerator configurations per node.
   **Implemented with a versioned planning catalog and exact-topology
   calibration from verified completed local runs.**
-- Resolve multiple direct index paths through the current or configured index,
+- Resolve multiple direct index paths through the configured or managed index,
   deduplicate their corpora, recommend a model rung, and forecast one pass.
   **Implemented.**
 - Select MLX automatically on Apple Silicon. **Implemented for the built-in

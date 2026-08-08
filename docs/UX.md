@@ -15,8 +15,8 @@ changes it.
    unset. Clone that managed checkout on first use. Before use, automatically
    fast-forward any selected Git checkout only when it is clean and behind its
    tracking branch. Absolute and `~/` paths explicitly discover another
-   checkout. When a corpus-consuming command omits its selection, warn and use
-   the entire resolved index.
+   checkout. When a corpus-consuming command omits its selection, use the
+   entire resolved index without a warning.
 4. Show a human-readable result by default and offer `--json` wherever output
    is useful to automation.
 5. Perform a preflight before moving large data or starting paid compute.
@@ -30,47 +30,51 @@ changes it.
 waldo
 ├── index
 │   ├── init
-│   ├── status
-│   ├── fetch
 │   ├── pull
-│   ├── clone
 │   ├── list
 │   ├── show
 │   ├── summary
 │   ├── verify
+│   ├── audit
 │   ├── ingest
 │   ├── update
-│   ├── export
-│   └── remove
+│   └── export
+├── shard
+│   ├── summary
+│   ├── audit
+│   ├── list-records
+│   └── export-record
 ├── lookaside
 │   ├── login
 │   ├── logout
 │   ├── list
 │   ├── status
 │   ├── verify
+│   ├── mirror (reserved)
 │   └── rm
 ├── model
-│   ├── create
-│   ├── build
+│   ├── init
+│   ├── pull
+│   ├── list
+│   ├── summary
+│   ├── bom
+│   ├── forecast
 │   ├── train
-│   ├── inspect
-│   ├── test
-│   ├── chat
-│   ├── fork
+│   ├── compose
 │   ├── export
-│   └── remove
+│   ├── chat
+│   └── rm
 ├── bom
 │   ├── show
 │   ├── verify
 │   └── export
-└── config
-    ├── show
-    ├── get
-    └── set
+├── config
+│   ├── show
+│   ├── get
+│   ├── set
+│   └── unset
+└── completion
 ```
-
-Several model commands remain post-MVP capabilities. Their placement is
-decided now so the initial commands do not grow into the wrong namespace.
 
 The CLI intentionally groups corpus workflows under `index`. Users encounter a
 corpus as an indexed path, and should not have to choose between two command
@@ -105,6 +109,12 @@ managed default. Automatic and explicit pulls accept only a clean
 fast-forward; they refuse local changes, local-only commits, divergence,
 detached HEAD, or a missing tracking remote. `index verify --offline` is the
 exception: it uses the current local revision without network access.
+
+The CLI does not expose `clone`, `fetch`, or `status` as Git-shaped index
+commands. Clone is an implementation detail of first use, fetch is part of the
+safe pull operation, and unsafe states are reported by the command that needs
+the checkout. Contributors clone their own writable checkout with their normal
+Git tooling.
 
 ### Initialize an empty index
 

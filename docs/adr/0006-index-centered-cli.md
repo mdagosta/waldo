@@ -8,14 +8,14 @@
 Index and corpus are useful separate implementation concepts: the index owns
 metadata meaning while corpus workflows resolve, ingest, and materialize data.
 As adjacent CLI groups, however, they make users decide which one owns the same
-indexed corpus. Operations such as list, add, update, export, and remove can
+indexed corpus. Operations such as list, ingest, update, and export can
 plausibly appear under either name.
 
 ## Decision
 
 Expose corpus workflows beneath `waldo index`. `index list` recursively lists
-the corpora beneath a path; `index show` provides one detailed view; `index ingest`,
-`update`, `export`, and `remove` own corpus mutation and materialization.
+the corpora beneath a path; `index show` provides one detailed view; `index
+ingest`, `update`, and `export` own corpus mutation and materialization.
 
 Index locations are positional, not a global option. An existing checkout,
 subtree, corpus directory, or manifest anchors checkout discovery by walking

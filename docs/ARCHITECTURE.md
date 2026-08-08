@@ -39,7 +39,9 @@ That checkout is read-only to authoring workflows. Synchronization operates on
 the selected checkout—configured, explicitly supplied, or managed default—and
 derives its current branch and tracking remote from Git metadata. It may
 fast-forward only a clean, behind checkout. Ingestion and corpus update still
-require an explicit contributor checkout.
+require an explicit contributor checkout. Clone, fetch, state inspection, and
+fast-forward are implemented in-process with `go-git`; WALDO never requires or
+shells out to an installed `git` executable for managed index reads.
 
 ### Record and license
 
