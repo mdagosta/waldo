@@ -33,7 +33,7 @@ func TestManagedIndexAutoClonesForDefaultRead(t *testing.T) {
 		t.Fatalf("list code = %d, stderr = %q", code, stderr.String())
 	}
 	managed := filepath.Join(home, ".waldo", "index")
-	if !strings.Contains(stderr.String(), "cloning managed index") || !strings.Contains(stderr.String(), "warning: no index path specified; using the entire managed index "+managed) {
+	if stderr.String() != "cloning managed index from "+upstream+"\n" {
 		t.Fatalf("stderr = %q", stderr.String())
 	}
 	if _, err := os.Stat(filepath.Join(managed, "index.json")); err != nil {

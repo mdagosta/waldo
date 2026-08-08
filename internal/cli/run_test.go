@@ -778,7 +778,7 @@ func TestConfigSetIndexEnablesLogicalIndexPaths(t *testing.T) {
 	if code := Run([]string{"--json", "index", "summary"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("whole summary code = %d, stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "warning: no index path specified; using the entire configured index "+root) || !json.Valid(stdout.Bytes()) {
+	if stderr.Len() != 0 || !json.Valid(stdout.Bytes()) {
 		t.Fatalf("whole summary stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 	stdout.Reset()

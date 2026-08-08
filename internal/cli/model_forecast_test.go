@@ -72,7 +72,7 @@ func TestModelForecastAcceptsConfiguredMultipleIndexPaths(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("whole-index forecast code = %d, stderr = %q", code, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "warning: no index path specified; using the entire configured index "+root) {
+	if stderr.Len() != 0 {
 		t.Fatalf("whole-index forecast stderr = %q", stderr.String())
 	}
 

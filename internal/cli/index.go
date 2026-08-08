@@ -395,10 +395,7 @@ func resolveIndexArguments(execution context.Context, args []string, progress io
 }
 
 type resolvedIndexSelection struct {
-	Targets    []waldoindex.Target
-	Omitted    bool
-	Configured bool
-	Managed    bool
+	Targets []waldoindex.Target
 }
 
 var indexGitManager = managedgit.DefaultManager()
@@ -412,15 +409,6 @@ func resolveIndexArgumentsWithWarningPolicy(execution context.Context, args []st
 	if err != nil {
 		return nil, err
 	}
-	if selection.Omitted && warnings != nil {
-		source := "discovered"
-		if selection.Managed {
-			source = "managed"
-		} else if selection.Configured {
-			source = "configured"
-		}
-		fmt.Fprintf(warnings, "warning: no index path specified; using the entire %s index %s\n", source, selection.Targets[0].Root)
-	}
 	return selection.Targets, nil
 }
 
@@ -430,7 +418,6 @@ func resolveIndexSelection(execution context.Context, args []string, progress io
 		return resolvedIndexSelection{}, err
 	}
 	values := args
-	omitted := len(values) == 0
 	if len(values) == 0 {
 		values = []string{""}
 	}
@@ -439,7 +426,6 @@ func resolveIndexSelection(execution context.Context, args []string, progress io
 	if err != nil {
 		return resolvedIndexSelection{}, err
 	}
-	defaultRoot := knownRoot
 	explicit := explicitIndexPath(values[0])
 	if managed && !explicit && refresh {
 		ensured, err := indexGitManager.Ensure(execution, knownRoot, progress)
@@ -478,7 +464,7 @@ func resolveIndexSelection(execution context.Context, args []string, progress io
 		}
 		targets = append(targets, target)
 	}
-	return resolvedIndexSelection{Targets: targets, Omitted: omitted, Configured: configuration.Index != "", Managed: managed && targets[0].Root == defaultRoot}, nil
+	return resolvedIndexSelection{Targets: targets}, nil
 }
 
 func refreshIndexCheckout(execution context.Context, root string, progress io.Writer) error {
