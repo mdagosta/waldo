@@ -9,8 +9,8 @@ Compatibility is intentional, tested, and limited to the surfaces below.
 
 The binary and the unreleased `waldo-index` use one clean baseline:
 
-- Directory navigation kind `index`, schema 1, read from `index.yaml`,
-  `index.yml`, or the established `index.json`
+- Directory navigation kind `index`, schema 1 or the public index's legacy
+  schema 2, read from `index.yaml`, `index.yml`, or `index.json`
 - Manifest kind `manifest`, schema 1, read from `.yaml`, `.yml`, or `.json`
 - Existing source, conversion, shard, rollup, and inheritance fields
 - Current Git checkout path semantics
@@ -18,10 +18,10 @@ The binary and the unreleased `waldo-index` use one clean baseline:
   manifest
 - SHA-256 object identity and existing lookaside URLs
 
-The pre-release schema-2 directory indexes were migrated in place. WALDO does
-not retain a schema-2 compatibility reader: an unsupported schema fails closed
-and must be migrated explicitly. The acceptance suite proves that the schema-1
-tree's corpus, shard, document, token, byte, and license totals remain intact.
+WALDO writes directory schema 1 but retains a schema-2 compatibility reader for
+the existing public JSON index. Other directory schema versions fail closed.
+The acceptance suite proves that the tree's corpus, shard, document, token,
+byte, and license totals remain intact.
 
 Schema-1 `shards` is deliberately polymorphic: readers accept either the
 inline array or the documented rollup object. Object-enabled operations verify
@@ -29,9 +29,10 @@ and expand rollup trees; local summaries use their Git-pinned aggregate totals.
 
 YAML is the canonical encoding for new writes. This does not increment the
 schema because the represented fields and meaning are unchanged. Existing
-JSON navigation and manifests remain readable indefinitely for the schema-1
-compatibility surface. A touched JSON navigation file is replaced explicitly
-with YAML; WALDO rejects two competing navigation files in one directory.
+JSON navigation and manifests remain readable, including the legacy directory
+schema-2 JSON compatibility surface. A touched JSON navigation file is replaced
+explicitly with YAML; WALDO rejects two competing navigation files in one
+directory.
 
 ### Existing object identities
 

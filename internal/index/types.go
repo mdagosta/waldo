@@ -17,6 +17,13 @@ const (
 	ManifestSchema  = 1
 )
 
+// SupportedDirectorySchema reports whether WALDO can read a directory index
+// schema. New directory indexes use schema 1; schema 2 remains readable for
+// compatibility with the existing public JSON index.
+func SupportedDirectorySchema(schema int) bool {
+	return schema == DirectorySchema || schema == 2
+}
+
 // Directory is one index.yaml/index.yml/index.json file. Directory indexes are
 // generated navigation data; manifests remain the authority for corpus meaning.
 type Directory struct {

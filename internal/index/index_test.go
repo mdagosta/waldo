@@ -158,14 +158,37 @@ func TestVerifyRejectsUnsortedDirectory(t *testing.T) {
 	}
 }
 
-func TestVerifyRejectsDirectorySchemaTwo(t *testing.T) {
+func TestVerifyAcceptsPublicJSONDirectorySchemaTwo(t *testing.T) {
 	root := fixtureIndex(t)
 	writeFile(t, filepath.Join(root, "index.json"), `{
   "kind": "index", "schema": 2, "path": "",
   "entries": [{"name": "alpha", "type": "dir"}]
 }`)
 	target := Target{Root: root, Abs: root}
-	if _, err := Verify(target); err == nil || !strings.Contains(err.Error(), "unsupported index schema 2") {
+	directory, err := LoadDirectory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if directory.Schema != DirectorySchema {
+		t.Fatalf("LoadDirectory() schema = %d, want normalized schema %d", directory.Schema, DirectorySchema)
+	}
+	verified, err := Verify(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if verified.Directories != 2 || verified.Corpora != 1 {
+		t.Fatalf("Verify() = %+v", verified)
+	}
+}
+
+func TestVerifyRejectsUnknownDirectorySchema(t *testing.T) {
+	root := fixtureIndex(t)
+	writeFile(t, filepath.Join(root, "index.json"), `{
+  "kind": "index", "schema": 3, "path": "",
+  "entries": [{"name": "alpha", "type": "dir"}]
+}`)
+	target := Target{Root: root, Abs: root}
+	if _, err := Verify(target); err == nil || !strings.Contains(err.Error(), "unsupported index schema 3") {
 		t.Fatalf("Verify() error = %v, want unsupported schema error", err)
 	}
 }

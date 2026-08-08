@@ -292,9 +292,12 @@ func LoadDirectory(dir string) (Directory, error) {
 	if err := decodeMetadata(path, data, &index); err != nil {
 		return Directory{}, fmt.Errorf("%s: %w", path, err)
 	}
-	if index.Schema != DirectorySchema {
+	if !SupportedDirectorySchema(index.Schema) {
 		return Directory{}, fmt.Errorf("%s: unsupported index schema %d", path, index.Schema)
 	}
+	// Schema 2 used the same directory fields as schema 1. Normalize it at the
+	// read boundary so any subsequently written metadata uses the current schema.
+	index.Schema = DirectorySchema
 	return index, nil
 }
 

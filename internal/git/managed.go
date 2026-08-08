@@ -71,12 +71,12 @@ func CheckoutStatus(destination string) (State, error) {
 
 // CheckoutFetch refreshes the selected checkout's tracking remote without
 // changing its worktree.
-func CheckoutFetch(ctx context.Context, destination string, progress io.Writer) (Result, error) {
+func CheckoutFetch(ctx context.Context, destination string, _ io.Writer) (Result, error) {
 	selected, err := openCheckout(destination)
 	if err != nil {
 		return Result{}, err
 	}
-	err = selected.repository.FetchContext(ctx, &git.FetchOptions{RemoteName: selected.remoteName, Progress: progress, Prune: true})
+	err = selected.repository.FetchContext(ctx, &git.FetchOptions{RemoteName: selected.remoteName, Prune: true})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return Result{}, fmt.Errorf("fetch index checkout %s: %w", destination, err)
 	}
@@ -177,7 +177,7 @@ func (manager Manager) Ensure(ctx context.Context, destination string, progress 
 	if progress != nil {
 		fmt.Fprintf(progress, "cloning managed index from %s\n", manager.URL)
 	}
-	if err := manager.cloneAtomic(ctx, destination, progress); err != nil {
+	if err := manager.cloneAtomic(ctx, destination); err != nil {
 		return Result{}, err
 	}
 	state, err := manager.Status(destination)
@@ -191,7 +191,10 @@ func (manager Manager) Clone(ctx context.Context, destination string, progress i
 	} else if !os.IsNotExist(err) {
 		return Result{}, fmt.Errorf("inspect clone destination %s: %w", destination, err)
 	}
-	if err := manager.cloneAtomic(ctx, destination, progress); err != nil {
+	if progress != nil {
+		fmt.Fprintf(progress, "cloning index from %s to %s\n", manager.URL, destination)
+	}
+	if err := manager.cloneAtomic(ctx, destination); err != nil {
 		return Result{}, err
 	}
 	state, err := manager.Status(destination)
@@ -207,7 +210,7 @@ func (manager Manager) Status(destination string) (State, error) {
 	return manager.status(repository, destination)
 }
 
-func (manager Manager) cloneAtomic(ctx context.Context, destination string, progress io.Writer) error {
+func (manager Manager) cloneAtomic(ctx context.Context, destination string) error {
 	absolute, err := filepath.Abs(destination)
 	if err != nil {
 		return err
@@ -230,7 +233,6 @@ func (manager Manager) cloneAtomic(ctx context.Context, destination string, prog
 		URL:           manager.URL,
 		ReferenceName: plumbing.NewBranchReferenceName(manager.Branch),
 		SingleBranch:  true,
-		Progress:      progress,
 	})
 	if err != nil {
 		return fmt.Errorf("clone %s branch %s: %w", manager.URL, manager.Branch, err)

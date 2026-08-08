@@ -6,6 +6,7 @@
 package git
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -58,6 +59,30 @@ func TestManagedCheckoutCloneFetchAndPull(t *testing.T) {
 	}
 	if _, err := CheckoutPull(context.Background(), destination, nil); err == nil || !strings.Contains(err.Error(), "is dirty") {
 		t.Fatalf("dirty pull error = %v", err)
+	}
+}
+
+func TestGitTransportWritesOnlyConciseProgress(t *testing.T) {
+	upstream := fixtureUpstream(t)
+	manager := Manager{URL: upstream, Branch: "main"}
+	destination := filepath.Join(t.TempDir(), "managed")
+	var progress bytes.Buffer
+
+	if _, err := manager.Ensure(context.Background(), destination, &progress); err != nil {
+		t.Fatal(err)
+	}
+	want := "cloning managed index from " + upstream + "\n"
+	if progress.String() != want {
+		t.Fatalf("clone progress = %q, want %q", progress.String(), want)
+	}
+
+	commitFile(t, upstream, "new.yaml", "new: true\n")
+	progress.Reset()
+	if _, err := CheckoutFetch(context.Background(), destination, &progress); err != nil {
+		t.Fatal(err)
+	}
+	if progress.Len() != 0 {
+		t.Fatalf("fetch leaked transport progress: %q", progress.String())
 	}
 }
 

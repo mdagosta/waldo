@@ -1,6 +1,6 @@
 # ADR 0023: Reset unreleased schemas to version 1
 
-- Status: accepted
+- Status: amended
 - Date: 2026-08-05
 
 ## Context
@@ -18,15 +18,17 @@ particular, both directory navigation metadata and corpus manifests use schema
 1, and canonical Parquet records use record schema 1. Their later YAML-primary
 encoding does not change that schema identity.
 
-The existing `waldo-index` checkout is migrated in place. WALDO emits and
-accepts directory schema 1 only; it does not carry a legacy schema-2 reader.
+WALDO emits directory schema 1. Because the public `waldo-index` Git repository
+still contains schema-2 JSON directory indexes, WALDO also accepts that legacy
+directory schema on read. Corpus manifests remain schema 1.
 The formats retain independent schema fields because they can evolve
 independently after release, but their initial version is uniformly 1.
 
 ## Consequences
 
 - Users see one initial version across all format families.
-- Pre-release schema-2 directory indexes must be migrated before use.
+- Pre-release schema-2 directory indexes remain readable but new writes use
+  schema 1.
 - Future incompatible changes increment only the affected format and require
   an ADR, fixtures, and a migration or compatibility policy.
 - Additive fields that follow a format's schema-1 rules do not require a
