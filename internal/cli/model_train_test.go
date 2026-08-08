@@ -44,8 +44,11 @@ func TestModelTrainFormatsOmittedNameDiagnostic(t *testing.T) {
 	if code := Run([]string{"model", "train", path}, &stdout, &stderr); code != 2 {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}
-	want := "waldo: model name is required before index path \"" + path + "\"\n\nUsage:\n  waldo model train <name> [index-path...] [--epochs <n>] [--json]\n"
-	if stderr.String() != want {
-		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
+	wantError := "Error: model name is required before index path \"" + path + "\"\n"
+	if stderr.String() != wantError {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), wantError)
+	}
+	if !strings.Contains(stdout.String(), "Usage:\n  waldo model train <name> [index-path...] [flags]") {
+		t.Fatalf("stdout does not contain Cobra usage: %q", stdout.String())
 	}
 }

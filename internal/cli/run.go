@@ -8,9 +8,7 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -33,24 +31,14 @@ func RunContext(execution context.Context, args []string, stdout, stderr io.Writ
 	}
 	var usage usageError
 	if errors.As(err, &usage) {
-		writeUsageError(stderr, usage.Error())
 		return 2
 	}
-	fmt.Fprintf(stderr, "waldo: %v\n", err)
 	return 1
 }
 
 type usageError struct{ message string }
 
 func (e usageError) Error() string { return e.message }
-
-func writeUsageError(output io.Writer, message string) {
-	if strings.HasPrefix(message, "usage: ") {
-		fmt.Fprintf(output, "Usage:\n  %s\n", strings.TrimPrefix(message, "usage: "))
-		return
-	}
-	fmt.Fprintf(output, "waldo: %s\n", message)
-}
 
 func wrapCobraUsageErrors(command *cobra.Command) {
 	command.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {

@@ -479,8 +479,8 @@ func TestModelTrainRequiresName(t *testing.T) {
 	if code := Run([]string{"model", "train"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("Run() code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "model train <name> [index-path") {
-		t.Fatalf("stderr does not show usage: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "Error: requires at least 1 arg") || !strings.Contains(stdout.String(), "waldo model train <name> [index-path") {
+		t.Fatalf("Cobra error/usage = stderr %q, stdout %q", stderr.String(), stdout.String())
 	}
 }
 
@@ -499,8 +499,8 @@ func TestUnknownCommandSuggestsScopedHelp(t *testing.T) {
 	if code := Run([]string{"lookaside", "explode"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("Run() code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "waldo lookaside --help") {
-		t.Fatalf("stderr does not suggest scoped help: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "unknown command \"explode\" for \"waldo lookaside\"") || !strings.Contains(stdout.String(), "waldo lookaside [flags]") {
+		t.Fatalf("Cobra error/usage = stderr %q, stdout %q", stderr.String(), stdout.String())
 	}
 }
 
