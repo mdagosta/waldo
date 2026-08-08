@@ -32,8 +32,10 @@ are part of the plan identity. A recipe may also raise the default 64 MiB
 indivisible-record ceiling to at most 256 MiB, subject to the plan memory
 budget, without changing the canonical record schema.
 
-Per-record licenses are normalized by WALDO, preserved as raw evidence, and
-partition canonical objects so each shard has one effective license.
+Per-record licenses are normalized by WALDO and preserved as raw evidence.
+Canonical rows retain their effective license, while each shard records the
+sorted set of licenses represented by its rows; license does not force a shard
+boundary.
 Normalization recognizes canonical Creative Commons URLs both alone and
 inside descriptive upstream labels, and maps an exact case-insensitive
 `Public Domain` declaration to `LicenseRef-Public-Domain`. The original value

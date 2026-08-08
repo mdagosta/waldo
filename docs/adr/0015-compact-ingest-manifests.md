@@ -19,12 +19,13 @@ token estimates and name the counter in `converted_by.tokenizer`.
 
 ## Decision
 
-Generated manifests remain schema 1 and follow the existing compact shape:
+Generated manifests use schema 2 while retaining the existing compact shape:
 
-- one high-level source record with one deterministic aggregate acquisition
-  SHA-256;
-- one shard entry containing canonical URL, SHA-256, source name, document
-  count, reference-token count, and encoded bytes;
+- one high-level record per declared source with one deterministic aggregate
+  acquisition SHA-256 and its default license;
+- one shard entry containing canonical URL, SHA-256, represented source and
+  license sets, exact per-license document/token usage, total document count,
+  reference-token count, and encoded bytes;
 - compact conversion and, when applicable, one ingest-recipe collector pin.
 
 Generated text manifests omit `format`, `processing`, `composed_by`, source

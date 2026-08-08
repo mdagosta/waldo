@@ -38,14 +38,18 @@ func ListCorpora(target Target) ([]CorpusInfo, error) {
 				Tokens: manifest.Rollup.Tokens,
 				Bytes:  manifest.Rollup.Bytes,
 			}
-			licenses[effectiveLicense(manifest.License)] = true
+			for _, license := range manifestLicenseList(manifest) {
+				licenses[effectiveLicense(license)] = true
+			}
 		} else {
 			for _, shard := range manifest.Shards {
 				measures.Shards++
 				measures.Docs += shard.Docs
 				measures.Tokens += shard.Tokens
 				measures.Bytes += shard.Bytes
-				licenses[effectiveLicense(manifest.EffectiveLicense(shard))] = true
+				for _, license := range manifest.EffectiveLicenses(shard) {
+					licenses[effectiveLicense(license)] = true
+				}
 			}
 		}
 		licenseList := make([]string, 0, len(licenses))
@@ -76,11 +80,34 @@ func Summarize(target Target) (Totals, error) {
 		totals.Corpora++
 		manifest := corpus.Manifest
 		if manifest.Rollup != nil {
-			add(&totals, manifest.License, manifest.Rollup.Count, manifest.Rollup.Docs, manifest.Rollup.Tokens, manifest.Rollup.Bytes)
+			licenses := manifestLicenseList(manifest)
+			if len(licenses) == 1 {
+				add(&totals, licenses[0], manifest.Rollup.Count, manifest.Rollup.Docs, manifest.Rollup.Tokens, manifest.Rollup.Bytes)
+			} else {
+				totals.Shards += manifest.Rollup.Count
+				totals.Docs += manifest.Rollup.Docs
+				totals.Tokens += manifest.Rollup.Tokens
+				totals.Bytes += manifest.Rollup.Bytes
+				for _, license := range licenses {
+					addLicense(&totals, license, manifest.Rollup.Count, 0, 0, 0)
+				}
+			}
 			return nil
 		}
 		for _, shard := range manifest.Shards {
-			add(&totals, manifest.EffectiveLicense(shard), 1, shard.Docs, shard.Tokens, shard.Bytes)
+			licenses := manifest.EffectiveLicenses(shard)
+			if len(licenses) == 1 {
+				add(&totals, licenses[0], 1, shard.Docs, shard.Tokens, shard.Bytes)
+				continue
+			}
+			totals.Shards++
+			totals.Docs += shard.Docs
+			totals.Tokens += shard.Tokens
+			totals.Bytes += shard.Bytes
+			for _, license := range licenses {
+				usage := shard.LicenseUsage[license]
+				addLicense(&totals, license, 1, usage.Docs, usage.Tokens, usage.Bytes)
+			}
 		}
 		return nil
 	})
@@ -93,12 +120,27 @@ func add(totals *Totals, license string, shards, docs, tokens, bytes int64) {
 	totals.Docs += docs
 	totals.Tokens += tokens
 	totals.Bytes += bytes
+	addLicense(totals, license, shards, docs, tokens, bytes)
+}
+
+func addLicense(totals *Totals, license string, shards, docs, tokens, bytes int64) {
+	license = effectiveLicense(license)
 	licenseTotals := totals.Licenses[license]
 	licenseTotals.Shards += shards
 	licenseTotals.Docs += docs
 	licenseTotals.Tokens += tokens
 	licenseTotals.Bytes += bytes
 	totals.Licenses[license] = licenseTotals
+}
+
+func manifestLicenseList(manifest Manifest) []string {
+	if len(manifest.Licenses) > 0 {
+		return manifest.Licenses
+	}
+	if manifest.License != "" {
+		return []string{manifest.License}
+	}
+	return nil
 }
 
 func effectiveLicense(license string) string {

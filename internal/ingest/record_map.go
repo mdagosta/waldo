@@ -395,7 +395,10 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 	if err != nil {
 		return shard.TextRow{}, err
 	}
-	effective := plan.License
+	projectSource, effective, err := plan.sourceFor(input)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
 	var rawLicense *string
 	if license != "" {
 		effective = waldorecord.NormalizeLicense(license)
@@ -404,7 +407,7 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 	if !input.Profile.LicensePolicy.Allows(effective) {
 		return shard.TextRow{}, fmt.Errorf("%w: %s", errLicensePolicy, effective)
 	}
-	sourceName := plan.Source.Name
+	sourceName := projectSource.Name
 	hash := sha256.Sum256([]byte(text))
 	return shard.TextRow{
 		ContentSHA256: hash, Text: text, Source: source, SourceName: &sourceName,

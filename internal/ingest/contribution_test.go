@@ -75,11 +75,11 @@ func TestDeclarativeProfileIsPartOfConversionAndSourceIdentity(t *testing.T) {
 	changed := base
 	changed.Inputs = append([]PlanInput(nil), base.Inputs...)
 	changed.Inputs[0].Profile.Fields.Text = []string{"content"}
-	baseSource, err := sourceAcquisitionIdentity(base)
+	baseSource, err := sourceAcquisitionIdentity(base, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	changedSource, err := sourceAcquisitionIdentity(changed)
+	changedSource, err := sourceAcquisitionIdentity(changed, "")
 	if err != nil {
 		t.Fatal(err)
 	}

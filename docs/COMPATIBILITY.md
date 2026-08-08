@@ -11,7 +11,7 @@ The binary and the unreleased `waldo-index` use one clean baseline:
 
 - Directory navigation kind `index`, schema 1 or the public index's legacy
   schema 2, read from `index.yaml`, `index.yml`, or `index.json`
-- Manifest kind `manifest`, schema 1, read from `.yaml`, `.yml`, or `.json`
+- Manifest kind `manifest`, schema 1 or 2, read from `.yaml`, `.yml`, or `.json`
 - Existing source, conversion, shard, rollup, and inheritance fields
 - Current Git checkout path semantics
 - Current Parquet shards and legacy shard formats still referenced by a valid
@@ -23,12 +23,14 @@ the existing public JSON index. Other directory schema versions fail closed.
 The acceptance suite proves that the tree's corpus, shard, document, token,
 byte, and license totals remain intact.
 
-Schema-1 `shards` is deliberately polymorphic: readers accept either the
+Schema-1 and schema-2 `shards` are deliberately polymorphic: readers accept either the
 inline array or the documented rollup object. Object-enabled operations verify
 and expand rollup trees; local summaries use their Git-pinned aggregate totals.
 
 YAML is the canonical encoding for new writes. This does not increment the
-schema because the represented fields and meaning are unchanged. Existing
+schema by itself because the represented fields and meaning are unchanged.
+Generated manifests use schema 2 when they need source licenses, corpus and
+shard license sets, or exact per-license shard usage. Existing schema-1
 JSON navigation and manifests remain readable, including the legacy directory
 schema-2 JSON compatibility surface. A touched JSON navigation file is replaced
 explicitly with YAML; WALDO rejects two competing navigation files in one

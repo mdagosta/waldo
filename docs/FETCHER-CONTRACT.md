@@ -126,6 +126,20 @@ exclusive. Physical record cardinality is explicit: `.json` is exactly one
 top-level object per file, `.jsonl` (plain, gzip, or zstd) is one object per
 line, and `.parquet` is one record per row. Top-level JSON arrays are rejected.
 
+Schema 2 is the multi-source form. It retains the top-level corpus title and
+description but moves acquisition, license, input mapping, and steps beneath
+`sources[]`. Every source has a stable `id`, its own metadata and license, and
+one or more acquisition steps. WALDO runs each source in a separate
+`WALDO_FETCH_DIR`, associates every resulting record with that source, and
+packs records from different sources and licenses into the same size-bounded
+Parquet shards.
+
+For raw project trees, one selected UTF-8 file is one canonical text row.
+`source_name` and `license` identify the project, while `meta.source_path`
+preserves the path relative to that project's acquisition directory. Project
+identity is the provenance and train/evaluation grouping boundary; shards do
+not create a project boundary.
+
 ```yaml
 input:
   type: record-map

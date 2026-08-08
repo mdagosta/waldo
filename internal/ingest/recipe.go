@@ -28,6 +28,7 @@ import (
 const (
 	RecipeKind      = "waldo-ingest-recipe"
 	RecipeSchema    = 1
+	RecipeSchemaV2  = 2
 	recipeMaximum   = 1 << 20
 	recipeJournal   = "RECIPE.json"
 	recipeWorkspace = "recipes"
@@ -39,10 +40,24 @@ var recipeStepName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // pipeline. Commands are source-specific external producers; their only output
 // is a WALDO-owned temporary directory.
 type IngestRecipe struct {
-	Kind               string       `json:"kind" yaml:"kind"`
-	Schema             int          `json:"schema" yaml:"schema"`
-	Title              string       `json:"title" yaml:"title"`
-	Description        string       `json:"description,omitempty" yaml:"description,omitempty"`
+	Kind               string              `json:"kind" yaml:"kind"`
+	Schema             int                 `json:"schema" yaml:"schema"`
+	Title              string              `json:"title" yaml:"title"`
+	Description        string              `json:"description,omitempty" yaml:"description,omitempty"`
+	License            string              `json:"license" yaml:"license"`
+	Source             RecipeSource        `json:"source" yaml:"source"`
+	TextColumn         string              `json:"text_column,omitempty" yaml:"text_column,omitempty"`
+	RecordMaximumBytes int64               `json:"record_maximum_bytes,omitempty" yaml:"record_maximum_bytes,omitempty"`
+	Input              InputProfile        `json:"input,omitempty" yaml:"input,omitempty"`
+	Steps              []RecipeStep        `json:"steps" yaml:"steps"`
+	Sources            []RecipeSourceGroup `json:"sources,omitempty" yaml:"sources,omitempty"`
+}
+
+// RecipeSourceGroup describes one independently licensed source tree within a
+// multi-source corpus. WALDO gives every group a private acquisition directory
+// and applies its metadata to every canonical record produced beneath it.
+type RecipeSourceGroup struct {
+	ID                 string       `json:"id" yaml:"id"`
 	License            string       `json:"license" yaml:"license"`
 	Source             RecipeSource `json:"source" yaml:"source"`
 	TextColumn         string       `json:"text_column,omitempty" yaml:"text_column,omitempty"`
@@ -75,11 +90,12 @@ type LoadedRecipe struct {
 }
 
 type ResolvedExecutable struct {
-	Name   string   `json:"name"`
-	Exec   string   `json:"exec"`
-	Path   string   `json:"path"`
-	SHA256 string   `json:"sha256"`
-	Args   []string `json:"args,omitempty"`
+	SourceID string   `json:"source_id,omitempty"`
+	Name     string   `json:"name"`
+	Exec     string   `json:"exec"`
+	Path     string   `json:"path"`
+	SHA256   string   `json:"sha256"`
+	Args     []string `json:"args,omitempty"`
 }
 
 // LoadRecipe recognizes only a small, strictly identified YAML or JSON
@@ -137,53 +153,110 @@ func LoadRecipe(path string) (LoadedRecipe, bool, error) {
 	digest := sha256.Sum256(data)
 	loaded := LoadedRecipe{Recipe: recipe, Path: abs, SHA256: hex.EncodeToString(digest[:])}
 	loaded.Evidence = index.IngestRecipeEvidence{Path: filepath.Base(abs), SHA256: loaded.SHA256}
-	for _, step := range recipe.Steps {
+	appendStep := func(sourceID string, step RecipeStep) error {
 		resolved, err := resolveRecipeExecutable(abs, step)
 		if err != nil {
-			return LoadedRecipe{}, true, err
+			return err
 		}
+		resolved.SourceID = sourceID
+		name := step.Name
+		if sourceID != "" {
+			name = sourceID + "/" + name
+		}
+		resolved.Name = name
 		loaded.Executables = append(loaded.Executables, resolved)
 		loaded.Evidence.Steps = append(loaded.Evidence.Steps, index.RecipeStepEvidence{
-			Name: step.Name, Executable: filepath.ToSlash(relativeEvidencePath(filepath.Dir(abs), resolved.Path)), SHA256: resolved.SHA256,
+			Name: name, Executable: filepath.ToSlash(relativeEvidencePath(filepath.Dir(abs), resolved.Path)), SHA256: resolved.SHA256,
 		})
+		return nil
+	}
+	for _, step := range recipe.Steps {
+		if err := appendStep("", step); err != nil {
+			return LoadedRecipe{}, true, err
+		}
+	}
+	for _, source := range recipe.Sources {
+		for _, step := range source.Steps {
+			if err := appendStep(source.ID, step); err != nil {
+				return LoadedRecipe{}, true, err
+			}
+		}
 	}
 	populateGitEvidence(&loaded)
 	return loaded, true, nil
 }
 
 func (recipe IngestRecipe) Validate() error {
-	if recipe.Kind != RecipeKind || recipe.Schema != RecipeSchema {
+	if recipe.Kind != RecipeKind || (recipe.Schema != RecipeSchema && recipe.Schema != RecipeSchemaV2) {
 		return fmt.Errorf("unsupported ingest recipe identity %q schema %d", recipe.Kind, recipe.Schema)
 	}
-	if strings.TrimSpace(recipe.Title) == "" || strings.TrimSpace(recipe.License) == "" {
-		return fmt.Errorf("title and license are required")
+	if strings.TrimSpace(recipe.Title) == "" {
+		return fmt.Errorf("title is required")
 	}
-	if strings.TrimSpace(recipe.Source.URL) == "" || strings.TrimSpace(recipe.Source.Category) == "" {
+	if recipe.Schema == RecipeSchema {
+		if len(recipe.Sources) != 0 {
+			return fmt.Errorf("sources requires ingest recipe schema 2")
+		}
+		return validateRecipeSource("", recipe.License, recipe.Source, recipe.TextColumn, recipe.RecordMaximumBytes, recipe.Input, recipe.Steps)
+	}
+	if recipe.License != "" || recipe.Source != (RecipeSource{}) || recipe.TextColumn != "" || recipe.RecordMaximumBytes != 0 || recipe.Input.Type != "" || len(recipe.Steps) != 0 {
+		return fmt.Errorf("schema 2 uses sources instead of top-level license, source, input, text_column, record_maximum_bytes, or steps")
+	}
+	if len(recipe.Sources) == 0 {
+		return fmt.Errorf("schema 2 requires at least one source")
+	}
+	seen := map[string]bool{}
+	seenNames := map[string]bool{}
+	for position, source := range recipe.Sources {
+		if !recipeStepName.MatchString(source.ID) || seen[source.ID] {
+			return fmt.Errorf("source %d has invalid or duplicate id %q", position+1, source.ID)
+		}
+		seen[source.ID] = true
+		name := source.Source.Name
+		if name == "" {
+			name = source.ID
+		}
+		if seenNames[name] {
+			return fmt.Errorf("source %d has duplicate name %q", position+1, name)
+		}
+		seenNames[name] = true
+		if err := validateRecipeSource(source.ID, source.License, source.Source, source.TextColumn, source.RecordMaximumBytes, source.Input, source.Steps); err != nil {
+			return fmt.Errorf("source %q: %w", source.ID, err)
+		}
+	}
+	return nil
+}
+
+func validateRecipeSource(label, license string, source RecipeSource, textColumn string, recordMaximum int64, input InputProfile, steps []RecipeStep) error {
+	if strings.TrimSpace(license) == "" {
+		return fmt.Errorf("license is required")
+	}
+	if strings.TrimSpace(source.URL) == "" || strings.TrimSpace(source.Category) == "" {
 		return fmt.Errorf("source url and category are required")
 	}
-	if _, ok := index.CanonicalSourceCategory(recipe.Source.Category); !ok {
-		return fmt.Errorf("unsupported source category %q", recipe.Source.Category)
+	category, ok := index.CanonicalSourceCategory(source.Category)
+	if !ok {
+		return fmt.Errorf("unsupported source category %q", source.Category)
 	}
-	if err := recipe.Input.Validate(); err != nil {
-		return fmt.Errorf("input: %w", err)
-	}
-	if recipe.TextColumn != "" && recipe.Input.Type != "" {
-		return fmt.Errorf("text_column and input profile cannot both be set")
-	}
-	if recipe.RecordMaximumBytes != 0 && (recipe.RecordMaximumBytes < 16<<20 || recipe.RecordMaximumBytes > 256<<20) {
-		return fmt.Errorf("record_maximum_bytes must be between 16777216 and 268435456")
-	}
-	category, _ := index.CanonicalSourceCategory(recipe.Source.Category)
 	switch category {
 	case index.SourcePublicDataset, index.SourcePrivateThirdParty, index.SourceOther:
 	default:
 		return fmt.Errorf("source category %q requires acquisition evidence fields that ingest recipe does not collect yet", category)
 	}
-	if len(recipe.Steps) == 0 {
+	if err := input.Validate(); err != nil {
+		return fmt.Errorf("input: %w", err)
+	}
+	if textColumn != "" && input.Type != "" {
+		return fmt.Errorf("text_column and input profile cannot both be set")
+	}
+	if recordMaximum != 0 && (recordMaximum < 16<<20 || recordMaximum > 256<<20) {
+		return fmt.Errorf("record_maximum_bytes must be between 16777216 and 268435456")
+	}
+	if len(steps) == 0 {
 		return fmt.Errorf("at least one fetcher step is required")
 	}
 	seen := map[string]bool{}
-	for position, step := range recipe.Steps {
+	for position, step := range steps {
 		if !recipeStepName.MatchString(step.Name) || seen[step.Name] {
 			return fmt.Errorf("step %d has invalid or duplicate name %q", position+1, step.Name)
 		}
@@ -200,6 +273,7 @@ func (recipe IngestRecipe) Validate() error {
 			}
 		}
 	}
+	_ = label
 	return nil
 }
 
@@ -289,6 +363,26 @@ type PreparedRecipe struct {
 	Workspace string       `json:"workspace"`
 	Inputs    string       `json:"inputs"`
 	Probe     Probe        `json:"probe"`
+}
+
+func (prepared PreparedRecipe) SourceRequests() []PlanSourceRequest {
+	if prepared.Loaded.Recipe.Schema != RecipeSchemaV2 {
+		return nil
+	}
+	requests := make([]PlanSourceRequest, 0, len(prepared.Loaded.Recipe.Sources))
+	for _, source := range prepared.Loaded.Recipe.Sources {
+		name := source.Source.Name
+		if name == "" {
+			name = source.ID
+		}
+		requests = append(requests, PlanSourceRequest{
+			ID: source.ID, License: source.License,
+			Source:    PlanSource{Name: name, Version: source.Source.Version, URL: source.Source.URL, Category: source.Source.Category, CollectedFrom: source.Source.CollectedFrom, CollectedTo: source.Source.CollectedTo},
+			InputRoot: filepath.Join(prepared.Inputs, source.ID), TextColumn: source.TextColumn,
+			RecordMaximumBytes: source.RecordMaximumBytes, Profile: source.Input,
+		})
+	}
+	return requests
 }
 
 type RecipeUpdateState struct {
@@ -388,6 +482,11 @@ func prepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagin
 	if err := os.MkdirAll(inputs, 0o700); err != nil {
 		return PreparedRecipe{}, err
 	}
+	for _, source := range loaded.Recipe.Sources {
+		if err := os.Mkdir(filepath.Join(inputs, source.ID), 0o700); err != nil {
+			return PreparedRecipe{}, err
+		}
+	}
 	state = recipeState{Kind: "waldo-ingest-recipe-state", Schema: 1, Identity: identity, Status: "preparing"}
 	if err := writeRecipeState(statePath, state); err != nil {
 		return PreparedRecipe{}, err
@@ -403,13 +502,17 @@ func prepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagin
 			return PreparedRecipe{}, err
 		}
 	}
-	environment := recipeEnvironment(inputs, loaded.Path, updatePath)
 	for position, executable := range loaded.Executables {
 		if err := verifyRecipeExecutable(executable); err != nil {
 			return PreparedRecipe{}, err
 		}
 		emitProgress(ctx, ProgressEvent{Phase: "fetch", Status: "started", Input: executable.Name, Sequence: position + 1})
-		if err := runner.Run(ctx, executable.Path, executable.Args, inputs, environment, stdout, stderr); err != nil {
+		executionRoot := inputs
+		if executable.SourceID != "" {
+			executionRoot = filepath.Join(inputs, executable.SourceID)
+		}
+		environment := recipeEnvironment(executionRoot, loaded.Path, updatePath)
+		if err := runner.Run(ctx, executable.Path, executable.Args, executionRoot, environment, stdout, stderr); err != nil {
 			return PreparedRecipe{}, fmt.Errorf("recipe step %q failed: %w", executable.Name, err)
 		}
 		if err := verifyRecipeExecutable(executable); err != nil {

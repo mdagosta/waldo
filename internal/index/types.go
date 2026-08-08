@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	DirectorySchema = 1
-	ManifestSchema  = 1
+	DirectorySchema      = 1
+	ManifestSchema       = 2
+	LegacyManifestSchema = 1
 )
 
 // SupportedDirectorySchema reports whether WALDO can read a directory index
@@ -47,7 +48,8 @@ type Manifest struct {
 	Name         string                `json:"name"`
 	Title        string                `json:"title"`
 	Description  string                `json:"description"`
-	License      string                `json:"license"`
+	License      string                `json:"license,omitempty"`
+	Licenses     []string              `json:"licenses,omitempty"`
 	Format       string                `json:"format,omitempty"`
 	Sources      []Source              `json:"sources"`
 	ConvertedBy  Conversion            `json:"converted_by"`
@@ -107,6 +109,7 @@ type Source struct {
 	Name          string       `json:"name"`
 	Source        string       `json:"source"`
 	Version       string       `json:"version,omitempty"`
+	License       string       `json:"license,omitempty"`
 	URL           string       `json:"url"`
 	Category      string       `json:"category,omitempty"`
 	CollectedFrom string       `json:"collected_from,omitempty"`
@@ -233,17 +236,19 @@ type Conversion struct {
 }
 
 type Shard struct {
-	URL         string      `json:"url"`
-	SHA256      string      `json:"sha256"`
-	Format      string      `json:"format,omitempty"`
-	License     string      `json:"license,omitempty"`
-	Sources     []string    `json:"sources,omitempty"`
-	ConvertedBy *Conversion `json:"converted_by,omitempty"`
-	Docs        int64       `json:"docs"`
-	Tokens      int64       `json:"tokens"`
-	Bytes       int64       `json:"bytes"`
-	RecordsRoot string      `json:"records_root,omitempty"`
-	Modalities  Modalities  `json:"modalities,omitempty"`
+	URL          string              `json:"url"`
+	SHA256       string              `json:"sha256"`
+	Format       string              `json:"format,omitempty"`
+	License      string              `json:"license,omitempty"`
+	Licenses     []string            `json:"licenses,omitempty"`
+	LicenseUsage map[string]Measures `json:"license_usage,omitempty"`
+	Sources      []string            `json:"sources,omitempty"`
+	ConvertedBy  *Conversion         `json:"converted_by,omitempty"`
+	Docs         int64               `json:"docs"`
+	Tokens       int64               `json:"tokens"`
+	Bytes        int64               `json:"bytes"`
+	RecordsRoot  string              `json:"records_root,omitempty"`
+	Modalities   Modalities          `json:"modalities,omitempty"`
 }
 
 // Rollup describes an external submanifest tree. Its aggregate counts are
@@ -292,4 +297,20 @@ func (m Manifest) EffectiveLicense(shard Shard) string {
 		return shard.License
 	}
 	return m.License
+}
+
+func (m Manifest) EffectiveLicenses(shard Shard) []string {
+	if len(shard.Licenses) > 0 {
+		return append([]string(nil), shard.Licenses...)
+	}
+	if shard.License != "" {
+		return []string{shard.License}
+	}
+	if len(m.Licenses) > 0 {
+		return append([]string(nil), m.Licenses...)
+	}
+	if m.License != "" {
+		return []string{m.License}
+	}
+	return nil
 }

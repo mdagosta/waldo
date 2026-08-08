@@ -20,7 +20,9 @@ encoding does not change that schema identity.
 
 WALDO emits directory schema 1. Because the public `waldo-index` Git repository
 still contains schema-2 JSON directory indexes, WALDO also accepts that legacy
-directory schema on read. Corpus manifests remain schema 1.
+directory schema on read. Corpus manifests originally remained schema 1;
+schema 2 was subsequently assigned to multi-source and mixed-license manifest
+facts by ADR 0034.
 The formats retain independent schema fields because they can evolve
 independently after release, but their initial version is uniformly 1.
 

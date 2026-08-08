@@ -64,15 +64,17 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 		}
 		options.Request.Title = loadedRecipe.Recipe.Title
 		options.Request.Description = loadedRecipe.Recipe.Description
-		options.Request.License = loadedRecipe.Recipe.License
-		options.Request.Source = ingest.PlanSource{
-			Name: loadedRecipe.Recipe.Source.Name, Version: loadedRecipe.Recipe.Source.Version,
-			URL: loadedRecipe.Recipe.Source.URL, Category: loadedRecipe.Recipe.Source.Category,
-			CollectedFrom: loadedRecipe.Recipe.Source.CollectedFrom, CollectedTo: loadedRecipe.Recipe.Source.CollectedTo,
+		if loadedRecipe.Recipe.Schema == ingest.RecipeSchema {
+			options.Request.License = loadedRecipe.Recipe.License
+			options.Request.Source = ingest.PlanSource{
+				Name: loadedRecipe.Recipe.Source.Name, Version: loadedRecipe.Recipe.Source.Version,
+				URL: loadedRecipe.Recipe.Source.URL, Category: loadedRecipe.Recipe.Source.Category,
+				CollectedFrom: loadedRecipe.Recipe.Source.CollectedFrom, CollectedTo: loadedRecipe.Recipe.Source.CollectedTo,
+			}
+			options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
+			options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
+			options.Request.Profile = loadedRecipe.Recipe.Input
 		}
-		options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
-		options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
-		options.Request.Profile = loadedRecipe.Recipe.Input
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
 		return fmt.Errorf("direct index update requires --title, --license, --source, and --source-category")
 	}
@@ -129,7 +131,11 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 		probe = result.Probe
 		recipeEvidence := result.Loaded.Evidence
 		options.Request.RecipeEvidence = &recipeEvidence
-		options.Request.InputRoot = result.Inputs
+		if len(result.Loaded.Recipe.Sources) == 0 {
+			options.Request.InputRoot = result.Inputs
+		} else {
+			options.Request.Sources = result.SourceRequests()
+		}
 	} else {
 		probe, err = ingest.ProbePaths(execution, options.Inputs)
 		if err != nil {

@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -58,6 +59,7 @@ type ManifestPin struct {
 	Title        string                      `json:"title"`
 	Description  string                      `json:"description"`
 	License      string                      `json:"license"`
+	LicenseSet   []string                    `json:"license_set,omitempty"`
 	Format       string                      `json:"format"`
 	RecordSchema int                         `json:"record_schema"`
 	ConvertedBy  index.Conversion            `json:"converted_by"`
@@ -70,21 +72,23 @@ type ManifestPin struct {
 }
 
 type ShardPin struct {
-	Manifest          string             `json:"manifest"`
-	SubManifestSHA256 string             `json:"sub_manifest_sha256,omitempty"`
-	URL               string             `json:"url"`
-	SHA256            string             `json:"sha256"`
-	Format            string             `json:"format"`
-	RecordSchema      int                `json:"record_schema"`
-	License           string             `json:"license"`
-	Sources           []string           `json:"sources,omitempty"`
-	ConvertedBy       index.Conversion   `json:"converted_by"`
-	RecordsRoot       string             `json:"records_root,omitempty"`
-	Docs              int64              `json:"docs"`
-	Tokens            int64              `json:"tokens"`
-	Bytes             int64              `json:"bytes"`
-	Modalities        index.Modalities   `json:"modalities,omitempty"`
-	Attestation       *shard.Attestation `json:"attestation,omitempty"`
+	Manifest          string                    `json:"manifest"`
+	SubManifestSHA256 string                    `json:"sub_manifest_sha256,omitempty"`
+	URL               string                    `json:"url"`
+	SHA256            string                    `json:"sha256"`
+	Format            string                    `json:"format"`
+	RecordSchema      int                       `json:"record_schema"`
+	License           string                    `json:"license"`
+	Licenses          []string                  `json:"licenses,omitempty"`
+	LicenseUsage      map[string]index.Measures `json:"license_usage,omitempty"`
+	Sources           []string                  `json:"sources,omitempty"`
+	ConvertedBy       index.Conversion          `json:"converted_by"`
+	RecordsRoot       string                    `json:"records_root,omitempty"`
+	Docs              int64                     `json:"docs"`
+	Tokens            int64                     `json:"tokens"`
+	Bytes             int64                     `json:"bytes"`
+	Modalities        index.Modalities          `json:"modalities,omitempty"`
+	Attestation       *shard.Attestation        `json:"attestation,omitempty"`
 }
 
 // BuildBOM resolves targets from one checkout into immutable manifest and
@@ -147,6 +151,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 		Title:        corpus.Manifest.Title,
 		Description:  corpus.Manifest.Description,
 		License:      corpus.Manifest.License,
+		LicenseSet:   append([]string(nil), corpus.Manifest.Licenses...),
 		Format:       effectiveFormat(corpus.Manifest.Format, ""),
 		RecordSchema: effectiveRecordSchema(corpus.Manifest.RecordSchema),
 		ConvertedBy:  corpus.Manifest.ConvertedBy,
@@ -156,9 +161,11 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 		Licenses:     map[string]index.Measures{},
 	}
 	addShard := func(shard index.Shard, subManifestSHA256 string) {
-		license := corpus.Manifest.EffectiveLicense(shard)
-		if !policy.Allows(license) {
-			return
+		licenses := corpus.Manifest.EffectiveLicenses(shard)
+		for _, license := range licenses {
+			if !policy.Allows(license) {
+				return
+			}
 		}
 		convertedBy := corpus.Manifest.ConvertedBy
 		if shard.ConvertedBy != nil {
@@ -171,7 +178,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 			SHA256:            shard.SHA256,
 			Format:            effectiveFormat(corpus.Manifest.Format, shard.Format),
 			RecordSchema:      effectiveRecordSchema(corpus.Manifest.RecordSchema),
-			License:           license,
+			LicenseUsage:      maps.Clone(shard.LicenseUsage),
 			Sources:           append([]string(nil), shard.Sources...),
 			ConvertedBy:       convertedBy,
 			RecordsRoot:       shard.RecordsRoot,
@@ -179,6 +186,11 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 			Tokens:            shard.Tokens,
 			Bytes:             shard.Bytes,
 			Modalities:        cloneModalities(shard.Modalities),
+		}
+		if len(licenses) == 1 {
+			shardPin.License = licenses[0]
+		} else {
+			shardPin.Licenses = append([]string(nil), licenses...)
 		}
 		bom.Shards = append(bom.Shards, shardPin)
 		addMeasures(&bom.Totals, shardPin)
@@ -324,12 +336,28 @@ func addMeasures(measures *index.Measures, shard ShardPin) {
 }
 
 func addLicenseMeasures(licenses map[string]index.Measures, shard ShardPin) {
-	measures := licenses[shard.License]
-	measures.Shards++
-	measures.Docs += shard.Docs
-	measures.Tokens += shard.Tokens
-	measures.Bytes += shard.Bytes
-	licenses[shard.License] = measures
+	if len(shard.Licenses) <= 1 || len(shard.LicenseUsage) == 0 {
+		license := shard.License
+		if license == "" && len(shard.Licenses) == 1 {
+			license = shard.Licenses[0]
+		}
+		measures := licenses[license]
+		measures.Shards++
+		measures.Docs += shard.Docs
+		measures.Tokens += shard.Tokens
+		measures.Bytes += shard.Bytes
+		licenses[license] = measures
+		return
+	}
+	for _, license := range shard.Licenses {
+		usage := shard.LicenseUsage[license]
+		measures := licenses[license]
+		measures.Shards++
+		measures.Docs += usage.Docs
+		measures.Tokens += usage.Tokens
+		measures.Bytes += usage.Bytes
+		licenses[license] = measures
+	}
 }
 
 func effectiveFormat(manifestFormat, shardFormat string) string {

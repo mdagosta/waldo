@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/openwaldo/waldo/internal/index"
 )
 
 func TestLoadRecipeStrictlyResolvesAndHashesExecutables(t *testing.T) {
@@ -83,6 +85,82 @@ steps: [{name: fetch, exec: ./fetch.sh}]
 	}
 	if loaded.Recipe.Input.Type != ProfileRecordMap || loaded.Recipe.Input.NUL != "space" || len(loaded.Recipe.Input.Fields.Text) != 2 || loaded.Recipe.RecordMaximumBytes != 128<<20 {
 		t.Fatalf("input = %+v", loaded.Recipe.Input)
+	}
+}
+
+func TestMultiSourceRecipeCombinesProjectsAndLicensesInOneShard(t *testing.T) {
+	root := t.TempDir()
+	script := filepath.Join(root, "fetch.sh")
+	writeExecutable(t, script, "#!/bin/sh\n")
+	recipePath := filepath.Join(root, "code.yaml")
+	writeRecipeFixture(t, recipePath, `
+kind: waldo-ingest-recipe
+schema: 2
+title: Open Source Code
+sources:
+  - id: linux
+    license: GPL-2.0-only
+    source: {name: linux, url: https://example.test/linux, category: public-dataset}
+    steps: [{name: fetch, exec: ./fetch.sh}]
+  - id: kubernetes
+    license: Apache-2.0
+    source: {name: kubernetes, url: https://example.test/kubernetes, category: public-dataset}
+    steps: [{name: fetch, exec: ./fetch.sh}]
+`)
+	loaded, found, err := LoadRecipe(recipePath)
+	if err != nil || !found {
+		t.Fatalf("LoadRecipe() found=%v err=%v", found, err)
+	}
+	runner := &fixtureRecipeRunner{}
+	prepared, err := PrepareRecipe(context.Background(), loaded, "code/open-source", t.TempDir(), runner, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(prepared.Probe, PlanRequest{
+		Destination: "code/open-source", Title: loaded.Recipe.Title,
+		Description: "Multiple projects.", Sources: prepared.SourceRequests(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assembly, err := AssembleTextObjects(context.Background(), plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assembly.Objects) != 1 || strings.Join(assembly.Objects[0].Sources, ",") != "kubernetes,linux" || strings.Join(assembly.Objects[0].Licenses, ",") != "Apache-2.0,GPL-2.0-only" {
+		t.Fatalf("assembly = %+v", assembly)
+	}
+	manifest, err := BuildManifest(plan, assembly, "s3://openwaldo/lookaside/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Sources) != 2 || len(manifest.Shards) != 1 || strings.Join(manifest.Shards[0].Sources, ",") != "kubernetes,linux" || strings.Join(manifest.Shards[0].Licenses, ",") != "Apache-2.0,GPL-2.0-only" {
+		t.Fatalf("manifest = %+v", manifest)
+	}
+}
+
+func TestRecipePlanSkipsEmptyTrackedFiles(t *testing.T) {
+	root := t.TempDir()
+	empty := filepath.Join(root, "empty.c")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	content := filepath.Join(root, "content.c")
+	writeFixture(t, content, "int main(void) { return 0; }\n")
+	probe, err := ProbePaths(context.Background(), []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "code/example", Title: "Example", License: "MIT",
+		Source:         PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
+		RecipeEvidence: &index.IngestRecipeEvidence{Path: "example.yaml", SHA256: strings.Repeat("a", 64), Steps: []index.RecipeStepEvidence{{Name: "fetch", Executable: "git.sh", SHA256: strings.Repeat("b", 64)}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Inputs) != 1 || plan.Inputs[0].Artifact.Path != content {
+		t.Fatalf("inputs = %+v", plan.Inputs)
 	}
 }
 

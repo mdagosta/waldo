@@ -97,13 +97,13 @@ writer implementation.
 A shard is homogeneous in:
 
 - logical record schema and kind;
-- effective license;
 - conversion and normalization recipe; and
 - token-counting recipe, when token counts are present.
 
-Homogeneous shards avoid a single sparse schema for unrelated objectives and
-allow repeated shard facts to be asserted and checked in file metadata. They
-do not remove the important per-row source evidence.
+Licenses and project sources may vary by row. The shard footer and manifest
+record their represented sets, and the manifest records exact document and
+token usage by license. Shards remain physical size-bounded packages; per-row
+source evidence provides the logical attribution boundary.
 
 ### Accepted pretraining schema
 

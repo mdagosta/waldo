@@ -50,8 +50,11 @@ func (bom BOM) Validate() error {
 		if !validSHA256(manifest.SHA256) {
 			return fmt.Errorf("manifest %s has invalid sha256 %q", manifest.Path, manifest.SHA256)
 		}
-		if manifest.Name == "" || manifest.Title == "" || manifest.Description == "" || manifest.License == "" || manifest.Format == "" || manifest.RecordSchema <= 0 {
+		if manifest.Name == "" || manifest.Title == "" || manifest.Description == "" || (manifest.License == "") == (len(manifest.LicenseSet) == 0) || manifest.Format == "" || manifest.RecordSchema <= 0 {
 			return fmt.Errorf("manifest %s is missing resolved identity or format fields", manifest.Path)
+		}
+		if len(manifest.LicenseSet) > 0 && (!slices.IsSorted(manifest.LicenseSet) || hasDuplicate(manifest.LicenseSet)) {
+			return fmt.Errorf("manifest %s license set must be sorted and unique", manifest.Path)
 		}
 		if !completeConversion(manifest.ConvertedBy, manifest.RecordSchema) {
 			return fmt.Errorf("manifest %s has incomplete conversion provenance", manifest.Path)
@@ -101,8 +104,11 @@ func (bom BOM) Validate() error {
 		if manifests[shard.Manifest].Path == "" {
 			return fmt.Errorf("shard %d refers to unknown manifest %q", position+1, shard.Manifest)
 		}
-		if shard.URL == "" || !validSHA256(shard.SHA256) || shard.Format == "" || shard.RecordSchema <= 0 || shard.License == "" {
+		if shard.URL == "" || !validSHA256(shard.SHA256) || shard.Format == "" || shard.RecordSchema <= 0 || (shard.License == "") == (len(shard.Licenses) == 0) {
 			return fmt.Errorf("shard %d has incomplete resolved identity", position+1)
+		}
+		if len(shard.Licenses) > 0 && (!slices.IsSorted(shard.Licenses) || hasDuplicate(shard.Licenses)) {
+			return fmt.Errorf("shard %s licenses must be sorted and unique", shard.SHA256[:12])
 		}
 		if !completeConversion(shard.ConvertedBy, shard.RecordSchema) {
 			return fmt.Errorf("shard %s has incomplete conversion provenance", shard.SHA256[:12])
@@ -129,21 +135,65 @@ func (bom BOM) Validate() error {
 			}
 			seenSources[source] = true
 		}
-		if !bom.Policy.Allows(shard.License) {
-			return fmt.Errorf("shard %s license %q violates the BOM policy", shard.SHA256[:12], shard.License)
+		licensesForShard := shard.Licenses
+		if len(licensesForShard) == 0 {
+			licensesForShard = []string{shard.License}
+		}
+		for _, license := range licensesForShard {
+			if !bom.Policy.Allows(license) {
+				return fmt.Errorf("shard %s license %q violates the BOM policy", shard.SHA256[:12], license)
+			}
+		}
+		if len(licensesForShard) > 1 {
+			var docs, tokens int64
+			if len(shard.LicenseUsage) != len(licensesForShard) {
+				return fmt.Errorf("shard %s license usage must cover every represented license", shard.SHA256[:12])
+			}
+			for _, license := range licensesForShard {
+				usage, ok := shard.LicenseUsage[license]
+				if !ok || usage.Docs <= 0 || usage.Tokens < 0 || usage.Shards != 0 || usage.Bytes != 0 {
+					return fmt.Errorf("shard %s has invalid usage for license %q", shard.SHA256[:12], license)
+				}
+				docs += usage.Docs
+				tokens += usage.Tokens
+			}
+			if docs != shard.Docs || tokens != shard.Tokens {
+				return fmt.Errorf("shard %s license usage does not match shard totals", shard.SHA256[:12])
+			}
+		} else if len(shard.LicenseUsage) > 0 {
+			usage, ok := shard.LicenseUsage[licensesForShard[0]]
+			if len(shard.LicenseUsage) != 1 || !ok || usage.Docs != shard.Docs || usage.Tokens != shard.Tokens || usage.Shards != 0 || usage.Bytes != 0 {
+				return fmt.Errorf("shard %s has invalid usage for license %q", shard.SHA256[:12], licensesForShard[0])
+			}
 		}
 		if err := validateShardAttestation(shard); err != nil {
 			return err
 		}
 		measure := index.Measures{Shards: 1, Docs: shard.Docs, Tokens: shard.Tokens, Bytes: shard.Bytes}
 		addMeasure(&calculated, measure)
-		addMeasureMap(licenses, shard.License, measure)
+		if len(licensesForShard) == 1 || len(shard.LicenseUsage) == 0 {
+			addMeasureMap(licenses, licensesForShard[0], measure)
+		} else {
+			for _, license := range licensesForShard {
+				usage := shard.LicenseUsage[license]
+				usage.Shards = 1
+				addMeasureMap(licenses, license, usage)
+			}
+		}
 		manifestMeasure := manifestTotals[shard.Manifest]
 		addMeasure(&manifestMeasure, measure)
 		manifestTotals[shard.Manifest] = manifestMeasure
 		addModalities(manifestModalities[shard.Manifest], shard.Modalities)
 		addModalities(calculatedModalities, shard.Modalities)
-		addMeasureMap(manifestLicenses[shard.Manifest], shard.License, measure)
+		if len(licensesForShard) == 1 || len(shard.LicenseUsage) == 0 {
+			addMeasureMap(manifestLicenses[shard.Manifest], licensesForShard[0], measure)
+		} else {
+			for _, license := range licensesForShard {
+				usage := shard.LicenseUsage[license]
+				usage.Shards = 1
+				addMeasureMap(manifestLicenses[shard.Manifest], license, usage)
+			}
+		}
 	}
 	if calculated != bom.Totals || !maps.Equal(licenses, bom.Licenses) || !maps.Equal(calculatedModalities, bom.Modalities) {
 		return fmt.Errorf("BOM totals or license totals do not match its shards")
@@ -177,7 +227,11 @@ func validateShardAttestation(pin ShardPin) error {
 		if hex.EncodeToString(digest[:]) != attestation.BOMSHA256 {
 			return fmt.Errorf("shard %s embedded BOM digest differs", pin.SHA256[:12])
 		}
-		if attestation.WriterRecipe != attestation.BOM.WriterRecipe || attestation.BOM.RecordSchema != pin.RecordSchema || attestation.BOM.Records != pin.Docs || attestation.BOM.Tokens != pin.Tokens || len(attestation.BOM.Licenses) != 1 || attestation.BOM.Licenses[0] != pin.License {
+		licenses := pin.Licenses
+		if len(licenses) == 0 {
+			licenses = []string{pin.License}
+		}
+		if attestation.WriterRecipe != attestation.BOM.WriterRecipe || attestation.BOM.RecordSchema != pin.RecordSchema || attestation.BOM.Records != pin.Docs || attestation.BOM.Tokens != pin.Tokens || !slices.Equal(attestation.BOM.Licenses, licenses) {
 			return fmt.Errorf("shard %s embedded BOM differs from its corpus pin", pin.SHA256[:12])
 		}
 	case "implicit-v4":

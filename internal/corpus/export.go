@@ -19,17 +19,18 @@ import (
 )
 
 type ExportedFile struct {
-	Path         string `json:"path"`
-	Manifest     string `json:"manifest"`
-	ObjectSHA256 string `json:"object_sha256"`
-	SHA256       string `json:"sha256"`
-	Format       string `json:"format"`
-	License      string `json:"license"`
-	Docs         int64  `json:"docs"`
-	Tokens       int64  `json:"tokens"`
-	ObjectBytes  int64  `json:"object_bytes"`
-	Bytes        int64  `json:"bytes"`
-	Existing     bool   `json:"-"`
+	Path         string   `json:"path"`
+	Manifest     string   `json:"manifest"`
+	ObjectSHA256 string   `json:"object_sha256"`
+	SHA256       string   `json:"sha256"`
+	Format       string   `json:"format"`
+	License      string   `json:"license,omitempty"`
+	Licenses     []string `json:"licenses,omitempty"`
+	Docs         int64    `json:"docs"`
+	Tokens       int64    `json:"tokens"`
+	ObjectBytes  int64    `json:"object_bytes"`
+	Bytes        int64    `json:"bytes"`
+	Existing     bool     `json:"-"`
 }
 
 // ExportNative copies verified materialized objects into a portable directory
@@ -71,7 +72,8 @@ func ExportNative(materialized Materialized, destination string, force bool) ([]
 			Path: relative, Manifest: object.Shard.Manifest,
 			ObjectSHA256: object.Shard.SHA256, SHA256: object.Shard.SHA256,
 			Format: object.Shard.Format, License: object.Shard.License,
-			Docs: object.Shard.Docs, Tokens: object.Shard.Tokens,
+			Licenses: append([]string(nil), object.Shard.Licenses...),
+			Docs:     object.Shard.Docs, Tokens: object.Shard.Tokens,
 			ObjectBytes: object.Shard.Bytes, Bytes: object.Shard.Bytes,
 			Existing: existing,
 		})
@@ -109,7 +111,8 @@ func ExportJSONL(materialized Materialized, destination string, force bool) ([]E
 			Path: relative, Manifest: object.Shard.Manifest,
 			ObjectSHA256: object.Shard.SHA256, SHA256: digest,
 			Format: "jsonl", License: object.Shard.License,
-			Docs: object.Shard.Docs, Tokens: object.Shard.Tokens,
+			Licenses: append([]string(nil), object.Shard.Licenses...),
+			Docs:     object.Shard.Docs, Tokens: object.Shard.Tokens,
 			ObjectBytes: object.Shard.Bytes, Bytes: bytes, Existing: existing,
 		})
 	}

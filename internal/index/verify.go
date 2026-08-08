@@ -133,7 +133,7 @@ func verifyManifest(path string, manifest Manifest) error {
 	if manifest.Kind != "manifest" {
 		return fmt.Errorf("%s: kind is %q, want %q", path, manifest.Kind, "manifest")
 	}
-	if manifest.Schema != ManifestSchema {
+	if manifest.Schema != LegacyManifestSchema && manifest.Schema != ManifestSchema {
 		return fmt.Errorf("%s: unsupported manifest schema %d", path, manifest.Schema)
 	}
 	wantName := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -146,8 +146,14 @@ func verifyManifest(path string, manifest Manifest) error {
 	if manifest.Description == "" {
 		return fmt.Errorf("%s: description is required", path)
 	}
-	if manifest.License == "" {
+	if manifest.Schema == LegacyManifestSchema && manifest.License == "" {
 		return fmt.Errorf("%s: default license is required", path)
+	}
+	if manifest.Schema == ManifestSchema && ((manifest.License == "") == (len(manifest.Licenses) == 0)) {
+		return fmt.Errorf("%s: exactly one of license or licenses is required", path)
+	}
+	if len(manifest.Licenses) > 0 && !sortedUniqueStrings(manifest.Licenses) {
+		return fmt.Errorf("%s: licenses must be sorted, unique, and non-empty", path)
 	}
 	if len(manifest.Sources) == 0 {
 		return fmt.Errorf("%s: at least one source is required", path)
@@ -203,6 +209,33 @@ func verifyManifest(path string, manifest Manifest) error {
 				return fmt.Errorf("%s: shard %s refers to unknown source %q", path, shard.SHA256[:12], name)
 			}
 		}
+		if shard.License != "" && len(shard.Licenses) > 0 {
+			return fmt.Errorf("%s: shard %s has both license and licenses", path, shard.SHA256[:12])
+		}
+		if len(shard.Licenses) > 0 && !sortedUniqueStrings(shard.Licenses) {
+			return fmt.Errorf("%s: shard %s licenses must be sorted, unique, and non-empty", path, shard.SHA256[:12])
+		}
+		licenses := manifest.EffectiveLicenses(shard)
+		if len(licenses) == 0 {
+			return fmt.Errorf("%s: shard %s has no effective license", path, shard.SHA256[:12])
+		}
+		if len(licenses) > 1 {
+			if len(shard.LicenseUsage) != len(licenses) {
+				return fmt.Errorf("%s: shard %s license_usage must cover every represented license", path, shard.SHA256[:12])
+			}
+			var docs, tokens int64
+			for _, license := range licenses {
+				usage, ok := shard.LicenseUsage[license]
+				if !ok || usage.Docs <= 0 || usage.Tokens < 0 || usage.Shards != 0 || usage.Bytes != 0 {
+					return fmt.Errorf("%s: shard %s has invalid license_usage for %q", path, shard.SHA256[:12], license)
+				}
+				docs += usage.Docs
+				tokens += usage.Tokens
+			}
+			if docs != shard.Docs || tokens != shard.Tokens {
+				return fmt.Errorf("%s: shard %s license_usage does not match shard totals", path, shard.SHA256[:12])
+			}
+		}
 		if shard.ConvertedBy != nil && !validConversion(*shard.ConvertedBy) {
 			return fmt.Errorf("%s: shard %s has an incomplete converted_by override", path, shard.SHA256[:12])
 		}
@@ -219,6 +252,18 @@ func verifyManifest(path string, manifest Manifest) error {
 		return fmt.Errorf("%s: %w", path, err)
 	}
 	return nil
+}
+
+func sortedUniqueStrings(values []string) bool {
+	if len(values) == 0 || !sort.StringsAreSorted(values) {
+		return false
+	}
+	for position, value := range values {
+		if value == "" || position > 0 && value == values[position-1] {
+			return false
+		}
+	}
+	return true
 }
 
 func contentHashPath(raw string) (string, bool) {

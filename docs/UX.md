@@ -313,22 +313,23 @@ direct-input arguments are:
 | `--json` | Global option for structured output and progress events. |
 
 The same command accepts a strict YAML or JSON recipe identified by
-`kind: waldo-ingest-recipe` and `schema: 1`:
+`kind: waldo-ingest-recipe` and schema 1 or 2:
 
 ```bash
 waldo index ingest ../waldo-fetchers/recipes/common-pile/foodista.yaml \
   core/common-pile/foodista --dry-run
 ```
 
-An ingest recipe supplies title, description, license, source facts, optional Parquet
-text-column mapping, and an ordered list of `exec` commands and literal
-arguments. Bare command names resolve through `PATH`; commands containing a
+Schema 1 supplies one license, source, input mapping, and ordered command list.
+Schema 2 supplies `sources[]`, each with its own ID, license, source facts,
+mapping, and commands. Bare command names resolve through `PATH`; commands containing a
 path separator resolve explicitly from the recipe file unless absolute. WALDO
 hashes the recipe and every resolved executable before execution, runs each
 command directly without an intervening shell, and rechecks those hashes
-afterward. Commands share a private temporary directory as their working directory and receive its
-absolute path in `WALDO_FETCH_DIR`; they must write only acquired artifacts
-there. `WALDO_INGEST_RECIPE` names the absolute recipe path.
+afterward. Schema-1 commands share a private temporary directory; each
+schema-2 source gets a separate one. Commands receive that directory's absolute
+path in `WALDO_FETCH_DIR` and must write only acquired artifacts there.
+`WALDO_INGEST_RECIPE` names the absolute recipe path.
 
 Recipe input rejects all corpus-metadata flags so the reviewed file completely
 describes the run. `--dry-run` validates the recipe, destination, commands, and
@@ -351,7 +352,7 @@ inventories stay out of Git. Secrets and environment values are never written
 to the manifest.
 
 The canonical Parquet footer carries a subject-`shard` OpenWALDO BOM. It pins
-the ingest plan, schema, writer, tokenizer, license partition, aggregate
+the ingest plan, schema, writer, tokenizer, represented license set, aggregate
 totals, and builder validation claims without adding a synthetic training row.
 `waldo shard bom <path...>` displays that evidence directly. `waldo index
 audit --show-boms <path>` lists every reconciled shard-BOM identity; JSON audit

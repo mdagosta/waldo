@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/index"
@@ -53,23 +54,39 @@ func BuildUpdatedManifest(plan Plan, existing index.Manifest, assembly AssemblyR
 	if updated.RecordSchema == 0 {
 		updated.RecordSchema = fresh.RecordSchema
 	}
-	newSource := fresh.Sources[0]
-	newSource.Name = uniqueSourceName(updated.Sources, newSource)
-	newSource.Source = fresh.Sources[0].Source
-	knownSource := false
-	for _, candidate := range updated.Sources {
-		if candidate.Name == newSource.Name && candidate.SHA256 == newSource.SHA256 {
-			knownSource = true
-			break
+	// Schema-1 shards may inherit the manifest's single default license. Resolve
+	// that inheritance before a multi-license append changes the manifest union.
+	for position := range updated.Shards {
+		shard := &updated.Shards[position]
+		if shard.License != "" || len(shard.Licenses) > 0 {
+			continue
+		}
+		licenses := updated.EffectiveLicenses(*shard)
+		if len(licenses) == 1 {
+			shard.License = licenses[0]
+		} else {
+			shard.Licenses = licenses
 		}
 	}
-	if !knownSource {
-		updated.Sources = append(updated.Sources, newSource)
+	sourceNames := map[string]string{}
+	for _, incoming := range fresh.Sources {
+		resolved := incoming
+		known := false
+		for _, candidate := range updated.Sources {
+			if candidate.Name == incoming.Name && candidate.SHA256 == incoming.SHA256 {
+				resolved.Name, known = candidate.Name, true
+				break
+			}
+		}
+		if !known {
+			resolved.Name = uniqueSourceName(updated.Sources, incoming)
+			updated.Sources = append(updated.Sources, resolved)
+		}
+		sourceNames[incoming.Name] = resolved.Name
 	}
 	for _, shard := range fresh.Shards {
-		shard.Sources = []string{newSource.Name}
-		if updated.License != plan.License {
-			shard.License = plan.License
+		for position, name := range shard.Sources {
+			shard.Sources[position] = sourceNames[name]
 		}
 		if !reflect.DeepEqual(updated.ConvertedBy, fresh.ConvertedBy) {
 			conversion := fresh.ConvertedBy
@@ -77,6 +94,28 @@ func BuildUpdatedManifest(plan Plan, existing index.Manifest, assembly AssemblyR
 		}
 		updated.Shards = append(updated.Shards, shard)
 	}
+	licenses := map[string]bool{}
+	for _, license := range updated.Licenses {
+		licenses[license] = true
+	}
+	if updated.License != "" {
+		licenses[updated.License] = true
+	}
+	for _, license := range fresh.Licenses {
+		licenses[license] = true
+	}
+	if fresh.License != "" {
+		licenses[fresh.License] = true
+	}
+	updated.License, updated.Licenses = "", nil
+	for license := range licenses {
+		updated.Licenses = append(updated.Licenses, license)
+	}
+	sort.Strings(updated.Licenses)
+	if len(updated.Licenses) == 1 {
+		updated.License, updated.Licenses = updated.Licenses[0], nil
+	}
+	updated.Schema = index.ManifestSchema
 	if err := index.ValidateManifest(manifestPath, updated); err != nil {
 		return index.Manifest{}, err
 	}
@@ -93,6 +132,7 @@ func preserveSourceContext(existing, fresh []index.Source) []index.Source {
 			prior.Source = fresh[position].Source
 			prior.URL = fresh[position].URL
 			prior.Category = fresh[position].Category
+			prior.License = fresh[position].License
 			prior.SHA256 = fresh[position].SHA256
 			prior.Files = fresh[position].Files
 			if fresh[position].Version != "" {

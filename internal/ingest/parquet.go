@@ -123,7 +123,11 @@ func readProjectedText(ctx context.Context, input *os.File, planned PlanInput, p
 	rows := parquet.ConvertRowGroup(sourceGroup, conversion).Rows()
 	defer rows.Close()
 	rowBuffer := make([]parquet.Row, 1)
-	sourceName := plan.Source.Name
+	source, license, err := plan.sourceFor(planned)
+	if err != nil {
+		return err
+	}
+	sourceName := source.Name
 	var rowNumber int64
 	for {
 		if err := ctx.Err(); err != nil {
@@ -153,7 +157,7 @@ func readProjectedText(ctx context.Context, input *os.File, planned PlanInput, p
 				Text:          text,
 				Source:        fmt.Sprintf("sha256:%s#row=%d", planned.Artifact.SHA256, rowNumber),
 				SourceName:    &sourceName,
-				License:       plan.License,
+				License:       license,
 			}
 			if err := emit(canonical, int64(len(textBytes))); err != nil {
 				return err

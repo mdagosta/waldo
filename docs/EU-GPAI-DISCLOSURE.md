@@ -291,8 +291,9 @@ and template may be reviewed.
 
 ## Schema evolution
 
-The required changes are additive to schema 1 for both manifests and directory
-indexes:
+Most disclosure fields remain additive. Generated corpus manifests now use
+schema 2 for multi-source and mixed-license facts; directory indexes and the
+OpenWALDO BOM remain schema 1:
 
 - add modality measures to shards and rollups;
 - add source category vocabulary, content/acquisition facts and source usage;
@@ -303,9 +304,9 @@ indexes:
 
 Old manifests remain readable and produce the same existing totals. New writers
 declare `format: "parquet"`, record schema 1, the exact writer recipe, and the additive provenance
-facts. Unknown additive fields continue to be accepted by older readers. Since
-WALDO has not been released, manifest, Parquet record, recipe, and OpenWALDO
-BOM writers remain at schema 1 while these contracts are completed.
+facts. Unknown additive fields continue to be accepted by older readers.
+Parquet records and OpenWALDO BOMs remain at schema 1; ingest recipes support
+schema 1 for a single source and schema 2 for grouped sources.
 
 The remaining disclosure fixtures should cover:
 

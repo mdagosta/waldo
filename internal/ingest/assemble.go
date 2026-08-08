@@ -18,6 +18,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/parquet-go/parquet-go"
@@ -27,14 +28,17 @@ import (
 // object. Path is machine-local staging state; the other fields are durable
 // manifest facts.
 type ObjectResult struct {
-	Path         string `json:"path"`
-	SHA256       string `json:"sha256"`
-	Bytes        int64  `json:"bytes"`
-	Docs         int64  `json:"docs"`
-	Tokens       int64  `json:"tokens"`
-	LogicalBytes int64  `json:"logical_bytes"`
-	RowGroups    int    `json:"row_groups"`
-	License      string `json:"license"`
+	Path         string                    `json:"path"`
+	SHA256       string                    `json:"sha256"`
+	Bytes        int64                     `json:"bytes"`
+	Docs         int64                     `json:"docs"`
+	Tokens       int64                     `json:"tokens"`
+	LogicalBytes int64                     `json:"logical_bytes"`
+	RowGroups    int                       `json:"row_groups"`
+	License      string                    `json:"license"`
+	Licenses     []string                  `json:"licenses,omitempty"`
+	Sources      []string                  `json:"sources,omitempty"`
+	LicenseUsage map[string]index.Measures `json:"license_usage,omitempty"`
 }
 
 type AssemblyResult struct {
@@ -143,8 +147,19 @@ type activeObject struct {
 	tokens          int64
 	logicalBytes    int64
 	rowGroupLogical int64
-	license         string
+	licenses        map[string]bool
+	licenseUsage    map[string]index.Measures
+	sources         map[string]bool
 	lastUsed        int64
+}
+
+func sortedKeys(values map[string]bool) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (assembler *objectAssembler) addBatch(batch TextBatch) error {
@@ -159,7 +174,7 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 		if row.License == "" {
 			return fmt.Errorf("canonical row has no effective license")
 		}
-		active, err := assembler.writerFor(row.License)
+		active, err := assembler.writerFor()
 		if err != nil {
 			return err
 		}
@@ -168,13 +183,21 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 			if err := assembler.flushRowGroup(active); err != nil {
 				return err
 			}
-			active, err = assembler.writerFor(row.License)
+			active, err = assembler.writerFor()
 			if err != nil {
 				return err
 			}
 		}
 		count := int64(assembler.counter.Count(row.Text))
 		row.TokenCount = &count
+		active.licenses[row.License] = true
+		usage := active.licenseUsage[row.License]
+		usage.Docs++
+		usage.Tokens += count
+		active.licenseUsage[row.License] = usage
+		if row.SourceName != nil && *row.SourceName != "" {
+			active.sources[*row.SourceName] = true
+		}
 		if err := shard.ValidateTextRow(row); err != nil {
 			return fmt.Errorf("validate canonical ingest row: %w", err)
 		}
@@ -194,24 +217,11 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 	return nil
 }
 
-const maximumActiveLicenseWriters = 16
-
-func (assembler *objectAssembler) writerFor(license string) (*activeObject, error) {
+func (assembler *objectAssembler) writerFor() (*activeObject, error) {
 	assembler.clock++
-	if active := assembler.active[license]; active != nil {
+	if active := assembler.active[""]; active != nil {
 		active.lastUsed = assembler.clock
 		return active, nil
-	}
-	if len(assembler.active) >= maximumActiveLicenseWriters {
-		var evict *activeObject
-		for _, candidate := range assembler.active {
-			if evict == nil || candidate.lastUsed < evict.lastUsed || (candidate.lastUsed == evict.lastUsed && candidate.license < evict.license) {
-				evict = candidate
-			}
-		}
-		if err := assembler.finishActive(evict); err != nil {
-			return nil, err
-		}
 	}
 	file, err := os.CreateTemp(assembler.directory, ".waldo-shard-*")
 	if err != nil {
@@ -220,9 +230,9 @@ func (assembler *objectAssembler) writerFor(license string) (*activeObject, erro
 	stream := newCountingHashWriter(file)
 	active := &activeObject{
 		path: file.Name(), file: file, stream: stream,
-		writer: shard.NewTextParquetWriter(stream), license: license, lastUsed: assembler.clock,
+		writer: shard.NewTextParquetWriter(stream), licenses: map[string]bool{}, licenseUsage: map[string]index.Measures{}, sources: map[string]bool{}, lastUsed: assembler.clock,
 	}
-	assembler.active[license] = active
+	assembler.active[""] = active
 	return active, nil
 }
 
@@ -246,7 +256,7 @@ func (assembler *objectAssembler) finishActive(active *activeObject) error {
 	if active == nil {
 		return nil
 	}
-	delete(assembler.active, active.license)
+	delete(assembler.active, "")
 	if err := setAggregateMetadata(active, assembler.plan); err != nil {
 		_ = active.writer.Close()
 		_ = active.file.Close()
@@ -268,10 +278,14 @@ func (assembler *objectAssembler) finishActive(active *activeObject) error {
 		return err
 	}
 	digest := hex.EncodeToString(active.stream.hasher.Sum(nil))
+	licenses := sortedKeys(active.licenses)
 	result := ObjectResult{
 		Path: active.path, SHA256: digest, Bytes: active.stream.n,
 		Docs: active.docs, Tokens: active.tokens, LogicalBytes: active.logicalBytes,
-		License: active.license,
+		Licenses: licenses, Sources: sortedKeys(active.sources), LicenseUsage: active.licenseUsage,
+	}
+	if len(licenses) == 1 {
+		result.License = licenses[0]
 	}
 	if result.Bytes > assembler.plan.Writer.CompressedMaximum {
 		_ = os.Remove(active.path)
@@ -318,13 +332,13 @@ func (assembler *objectAssembler) finishActive(active *activeObject) error {
 }
 
 func (assembler *objectAssembler) finishAll() error {
-	licenses := make([]string, 0, len(assembler.active))
-	for license := range assembler.active {
-		licenses = append(licenses, license)
+	keys := make([]string, 0, len(assembler.active))
+	for key := range assembler.active {
+		keys = append(keys, key)
 	}
-	sort.Strings(licenses)
-	for _, license := range licenses {
-		if err := assembler.finishActive(assembler.active[license]); err != nil {
+	sort.Strings(keys)
+	for _, key := range keys {
+		if err := assembler.finishActive(assembler.active[key]); err != nil {
 			return err
 		}
 	}
@@ -335,13 +349,14 @@ func setAggregateMetadata(active *activeObject, plan Plan) error {
 	active.writer.SetKeyValueMetadata("waldo.records", fmt.Sprint(active.docs))
 	active.writer.SetKeyValueMetadata("waldo.tokens", fmt.Sprint(active.tokens))
 	active.writer.SetKeyValueMetadata("waldo.content_bytes", fmt.Sprint(active.logicalBytes))
-	encoded, _ := json.Marshal([]string{active.license})
+	licenses := sortedKeys(active.licenses)
+	encoded, _ := json.Marshal(licenses)
 	active.writer.SetKeyValueMetadata("waldo.licenses", string(encoded))
 	identity, err := plan.Identity()
 	if err != nil {
 		return err
 	}
-	bom, err := shard.EncodeBOM(shard.NewBOM(identity, tokenizer.Default, active.docs, active.tokens, active.logicalBytes, []string{active.license}))
+	bom, err := shard.EncodeBOM(shard.NewBOM(identity, tokenizer.Default, active.docs, active.tokens, active.logicalBytes, licenses))
 	if err != nil {
 		return err
 	}
@@ -413,8 +428,12 @@ func verifyAssembledObject(object ObjectResult) (int, error) {
 	if audited.Records != object.Docs || audited.Tokens != object.Tokens || audited.ContentBytes != object.LogicalBytes {
 		return 0, fmt.Errorf("assembled object audit totals do not match assembly totals")
 	}
-	if len(audited.Licenses) != 1 || audited.Licenses[0] != object.License {
-		return 0, fmt.Errorf("assembled object license partition does not match %q", object.License)
+	expectedLicenses := object.Licenses
+	if len(expectedLicenses) == 0 && object.License != "" {
+		expectedLicenses = []string{object.License}
+	}
+	if !slices.Equal(audited.Licenses, expectedLicenses) {
+		return 0, fmt.Errorf("assembled object licenses do not match %v", expectedLicenses)
 	}
 	return len(parquetFile.RowGroups()), nil
 }

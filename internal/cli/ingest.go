@@ -43,15 +43,17 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		}
 		options.Request.Title = loadedRecipe.Recipe.Title
 		options.Request.Description = loadedRecipe.Recipe.Description
-		options.Request.License = loadedRecipe.Recipe.License
-		options.Request.Source = ingest.PlanSource{
-			Name: loadedRecipe.Recipe.Source.Name, Version: loadedRecipe.Recipe.Source.Version,
-			URL: loadedRecipe.Recipe.Source.URL, Category: loadedRecipe.Recipe.Source.Category,
-			CollectedFrom: loadedRecipe.Recipe.Source.CollectedFrom, CollectedTo: loadedRecipe.Recipe.Source.CollectedTo,
+		if loadedRecipe.Recipe.Schema == ingest.RecipeSchema {
+			options.Request.License = loadedRecipe.Recipe.License
+			options.Request.Source = ingest.PlanSource{
+				Name: loadedRecipe.Recipe.Source.Name, Version: loadedRecipe.Recipe.Source.Version,
+				URL: loadedRecipe.Recipe.Source.URL, Category: loadedRecipe.Recipe.Source.Category,
+				CollectedFrom: loadedRecipe.Recipe.Source.CollectedFrom, CollectedTo: loadedRecipe.Recipe.Source.CollectedTo,
+			}
+			options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
+			options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
+			options.Request.Profile = loadedRecipe.Recipe.Input
 		}
-		options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
-		options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
-		options.Request.Profile = loadedRecipe.Recipe.Input
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
 		return fmt.Errorf("direct index ingest requires --title, --license, --source, and --source-category")
 	}
@@ -140,7 +142,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		probe = result.Probe
 		recipeEvidence := result.Loaded.Evidence
 		options.Request.RecipeEvidence = &recipeEvidence
-		options.Request.InputRoot = result.Inputs
+		if len(result.Loaded.Recipe.Sources) == 0 {
+			options.Request.InputRoot = result.Inputs
+		} else {
+			options.Request.Sources = result.SourceRequests()
+		}
 	} else {
 		probe, err = ingest.ProbePaths(execution, options.Inputs)
 		if err != nil {
@@ -257,8 +263,15 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	fmt.Fprintf(stdout, "  destination  %s\n", plan.Destination)
 	fmt.Fprintf(stdout, "  title        %s\n", plan.Title)
 	fmt.Fprintf(stdout, "  description  %s\n", plan.Description)
-	fmt.Fprintf(stdout, "  license      %s\n", plan.License)
-	fmt.Fprintf(stdout, "  source       %s (%s)\n", plan.Source.Name, plan.Source.Category)
+	if len(plan.Sources) == 0 {
+		fmt.Fprintf(stdout, "  license      %s\n", plan.License)
+		fmt.Fprintf(stdout, "  source       %s (%s)\n", plan.Source.Name, plan.Source.Category)
+	} else {
+		fmt.Fprintf(stdout, "  sources      %d\n", len(plan.Sources))
+		for _, source := range plan.Sources {
+			fmt.Fprintf(stdout, "    %-16s %s  %s\n", source.ID, source.License, source.URL)
+		}
+	}
 	fmt.Fprintf(stdout, "  mode         %s\n", plan.Mode)
 	fmt.Fprintf(stdout, "  memory       %s\n", humanBytes(plan.MemoryBytes))
 	fmt.Fprintf(stdout, "  input        %s files, %s\n", humanInteger(int64(len(plan.Inputs))), humanBytes(probe.Totals.Bytes))
@@ -338,8 +351,15 @@ func writeRecipePreflight(context Context, stdout io.Writer, loaded ingest.Loade
 	fmt.Fprintf(stdout, "  sha256      %s\n", loaded.SHA256)
 	fmt.Fprintf(stdout, "  destination %s\n", destination)
 	fmt.Fprintf(stdout, "  title       %s\n", loaded.Recipe.Title)
-	fmt.Fprintf(stdout, "  license     %s\n", loaded.Recipe.License)
-	fmt.Fprintf(stdout, "  source      %s (%s)\n", loaded.Recipe.Source.URL, loaded.Recipe.Source.Category)
+	if len(loaded.Recipe.Sources) == 0 {
+		fmt.Fprintf(stdout, "  license     %s\n", loaded.Recipe.License)
+		fmt.Fprintf(stdout, "  source      %s (%s)\n", loaded.Recipe.Source.URL, loaded.Recipe.Source.Category)
+	} else {
+		fmt.Fprintf(stdout, "  sources     %d\n", len(loaded.Recipe.Sources))
+		for _, source := range loaded.Recipe.Sources {
+			fmt.Fprintf(stdout, "    %-16s %s  %s\n", source.ID, source.License, source.Source.URL)
+		}
+	}
 	for position, executable := range loaded.Executables {
 		fmt.Fprintf(stdout, "  step %d      %s -> %s (%s)\n", position+1, executable.Name, executable.Path, executable.SHA256[:12])
 	}

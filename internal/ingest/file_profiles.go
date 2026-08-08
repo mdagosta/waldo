@@ -360,7 +360,10 @@ func profiledFileRow(plan Plan, input PlanInput, text, source, date, language, r
 	if source == "" {
 		source = "sha256:" + input.Artifact.SHA256
 	}
-	license := plan.License
+	projectSource, license, err := plan.sourceFor(input)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
 	var licenseRaw *string
 	if rawLicense != "" {
 		license = record.NormalizeLicense(rawLicense)
@@ -369,7 +372,7 @@ func profiledFileRow(plan Plan, input PlanInput, text, source, date, language, r
 	if !input.Profile.LicensePolicy.Allows(license) {
 		return shard.TextRow{}, fmt.Errorf("%w: %s", errLicensePolicy, license)
 	}
-	sourceName := plan.Source.Name
+	sourceName := projectSource.Name
 	digest := sha256.Sum256([]byte(text))
 	return shard.TextRow{
 		ContentSHA256: digest, Text: text, Source: source, SourceName: &sourceName,

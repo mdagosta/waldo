@@ -100,7 +100,7 @@ func TestRecordMapReadsMappedParquetFields(t *testing.T) {
 	}
 }
 
-func TestPerRecordLicensesPartitionObjectsAndManifest(t *testing.T) {
+func TestPerRecordLicensesShareObjectsAndRemainInManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "licenses.jsonl")
 	contents := "{\"text\":\"same\",\"license\":\"CC0-1.0\"}\n{\"text\":\"same\",\"license\":\"CC-BY-4.0\"}\n"
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
@@ -111,24 +111,17 @@ func TestPerRecordLicensesPartitionObjectsAndManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assembly.RetainedDocs != 2 || assembly.DuplicateDocs != 0 || len(assembly.Objects) != 2 {
+	if assembly.RetainedDocs != 2 || assembly.DuplicateDocs != 0 || len(assembly.Objects) != 1 {
 		t.Fatalf("assembly = %+v", assembly)
 	}
-	licenses := map[string]bool{}
-	for _, object := range assembly.Objects {
-		licenses[object.License] = true
-	}
-	if !licenses["CC0-1.0"] || !licenses["CC-BY-4.0"] {
-		t.Fatalf("object licenses = %v", licenses)
+	if got := strings.Join(assembly.Objects[0].Licenses, ","); got != "CC-BY-4.0,CC0-1.0" {
+		t.Fatalf("object licenses = %s", got)
 	}
 	manifest, err := BuildManifest(plan, assembly, "s3://openwaldo/lookaside/v1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, object := range manifest.Shards {
-		licenses[manifest.EffectiveLicense(object)] = true
-	}
-	if !licenses["CC0-1.0"] || !licenses["CC-BY-4.0"] {
+	if got := strings.Join(manifest.Licenses, ","); got != "CC-BY-4.0,CC0-1.0" || len(manifest.Shards) != 1 || strings.Join(manifest.Shards[0].Licenses, ",") != got {
 		t.Fatalf("manifest shards = %+v", manifest.Shards)
 	}
 }

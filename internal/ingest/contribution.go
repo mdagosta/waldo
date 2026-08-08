@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/index"
@@ -22,8 +23,8 @@ import (
 	"github.com/openwaldo/waldo/internal/tokenizer"
 )
 
-// BuildManifest converts a completed assembly into the compact schema-1 shape
-// used by the public index: one source identity and one entry per shard.
+// BuildManifest converts a completed assembly into a compact index manifest:
+// one identity per declared source and one entry per physical shard.
 func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index.Manifest, error) {
 	if err := plan.Validate(); err != nil {
 		return index.Manifest{}, err
@@ -32,41 +33,69 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		return index.Manifest{}, fmt.Errorf("completed assembly and public object base are required")
 	}
 	name := path.Base(plan.Destination)
-	sourceHash, err := sourceAcquisitionIdentity(plan)
-	if err != nil {
-		return index.Manifest{}, err
-	}
 	manifest := index.Manifest{
 		Kind: "manifest", Schema: index.ManifestSchema, Name: name, Title: plan.Title,
-		Description: plan.Description, License: plan.License,
+		Description:  plan.Description,
 		RecordSchema: shard.TextRecordSchema,
-		Sources: []index.Source{{
-			Name: plan.Source.Name, Source: plan.Source.Name, URL: plan.Source.URL,
-			Version: plan.Source.Version, Category: plan.Source.Category,
-			CollectedFrom: plan.Source.CollectedFrom, CollectedTo: plan.Source.CollectedTo,
-			SHA256: sourceHash,
-		}},
 		ConvertedBy: index.Conversion{
 			Tool: "waldo index ingest", Version: "0.1.0-dev",
 			Collector: compactCollector(plan.RecipeEvidence), Profile: conversionProfile(plan),
 			Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default,
 		},
 	}
+	planSources := plan.Sources
+	if len(planSources) == 0 {
+		legacy := plan.Source
+		legacy.License = plan.License
+		planSources = []PlanSource{legacy}
+	}
+	for _, source := range planSources {
+		sourceHash, err := sourceAcquisitionIdentity(plan, source.ID)
+		if err != nil {
+			return index.Manifest{}, err
+		}
+		manifest.Sources = append(manifest.Sources, index.Source{
+			Name: source.Name, Source: source.Name, URL: source.URL, License: source.License,
+			Version: source.Version, Category: source.Category,
+			CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo, SHA256: sourceHash,
+		})
+	}
+	licenseSet := map[string]bool{}
 	for _, object := range assembly.Objects {
-		if object.License == "" {
+		licenses := object.Licenses
+		if len(licenses) == 0 && object.License != "" {
+			licenses = []string{object.License}
+		}
+		if len(licenses) == 0 {
 			return index.Manifest{}, fmt.Errorf("assembled object %s has no effective license", object.SHA256)
+		}
+		for _, license := range licenses {
+			licenseSet[license] = true
 		}
 		objectURL, err := contentAddressedURL(objectBase, object.SHA256)
 		if err != nil {
 			return index.Manifest{}, err
 		}
 		manifest.Shards = append(manifest.Shards, index.Shard{
-			URL: objectURL, SHA256: object.SHA256, Sources: []string{plan.Source.Name},
+			URL: objectURL, SHA256: object.SHA256, Sources: object.Sources,
 			Docs: object.Docs, Tokens: object.Tokens, Bytes: object.Bytes,
+			LicenseUsage: object.LicenseUsage,
 		})
-		if object.License != plan.License {
-			manifest.Shards[len(manifest.Shards)-1].License = object.License
+		if len(licenses) == 1 {
+			manifest.Shards[len(manifest.Shards)-1].License = licenses[0]
+		} else {
+			manifest.Shards[len(manifest.Shards)-1].Licenses = append([]string(nil), licenses...)
 		}
+	}
+	allLicenses := make([]string, 0, len(licenseSet))
+	for license := range licenseSet {
+		allLicenses = append(allLicenses, license)
+	}
+	sort.Strings(allLicenses)
+	if len(allLicenses) == 1 {
+		manifest.License = allLicenses[0]
+	} else {
+		manifest.Licenses = allLicenses
 	}
 	validationPath := filepath.Join(plan.Destination, name+index.YAMLExtension)
 	if err := index.ValidateManifest(validationPath, manifest); err != nil {
@@ -97,7 +126,7 @@ func compactCollector(recipe *index.IngestRecipeEvidence) string {
 	return collector
 }
 
-func sourceAcquisitionIdentity(plan Plan) (string, error) {
+func sourceAcquisitionIdentity(plan Plan, sourceID string) (string, error) {
 	// This is an aggregate identity, not a Git-resident artifact inventory.
 	// Length-prefix every field so concatenated inputs cannot be ambiguous, and
 	// stream into the digest so source count does not imply equivalent memory.
@@ -105,6 +134,9 @@ func sourceAcquisitionIdentity(plan Plan) (string, error) {
 	writeIdentityString(hasher, "waldo-acquisition-identity")
 	writeIdentityString(hasher, "1")
 	for _, input := range plan.Inputs {
+		if input.SourceID != sourceID {
+			continue
+		}
 		writeIdentityString(hasher, input.Artifact.SHA256)
 		writeIdentityInt64(hasher, input.Artifact.Bytes)
 		writeIdentityString(hasher, input.Artifact.Format)

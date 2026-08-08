@@ -137,7 +137,11 @@ func readTextRow(ctx context.Context, plan Plan, input PlanInput, maximum int64)
 	}
 	var contentHash [sha256.Size]byte
 	copy(contentHash[:], hasher.Sum(nil))
-	sourceName := plan.Source.Name
+	source, license, err := plan.sourceFor(input)
+	if err != nil {
+		return shard.TextRow{}, 0, err
+	}
+	sourceName := source.Name
 	var metadata *string
 	if input.SourcePath != "" {
 		encoded, err := json.Marshal(map[string]string{"source_path": input.SourcePath})
@@ -152,7 +156,7 @@ func readTextRow(ctx context.Context, plan Plan, input PlanInput, maximum int64)
 		Text:          text,
 		Source:        "sha256:" + input.Artifact.SHA256,
 		SourceName:    &sourceName,
-		License:       plan.License,
+		License:       license,
 		Meta:          metadata,
 	}, written, nil
 }

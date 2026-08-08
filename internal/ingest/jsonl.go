@@ -93,7 +93,11 @@ func streamJSONLInput(ctx context.Context, plan Plan, input PlanInput, maximum i
 	lineMaximum := maximum + 1<<20
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64<<10), int(lineMaximum))
-	sourceName := plan.Source.Name
+	source, license, err := plan.sourceFor(input)
+	if err != nil {
+		return err
+	}
+	sourceName := source.Name
 	lineNumber := int64(0)
 	documents := int64(0)
 	for scanner.Scan() {
@@ -136,7 +140,7 @@ func streamJSONLInput(ctx context.Context, plan Plan, input PlanInput, maximum i
 			Text:          text,
 			Source:        fmt.Sprintf("sha256:%s#line=%d", input.Artifact.SHA256, lineNumber),
 			SourceName:    &sourceName,
-			License:       plan.License,
+			License:       license,
 		}
 		if err := emit(row, int64(len(text))); err != nil {
 			_ = reader.Close()

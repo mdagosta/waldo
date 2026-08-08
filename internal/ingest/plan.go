@@ -27,6 +27,7 @@ type Plan struct {
 	Description    string                      `json:"description"`
 	License        string                      `json:"license"`
 	Source         PlanSource                  `json:"source"`
+	Sources        []PlanSource                `json:"sources,omitempty"`
 	Mode           string                      `json:"mode"`
 	MemoryBytes    int64                       `json:"memory_bytes"`
 	Writer         WriterPlan                  `json:"writer"`
@@ -42,7 +43,9 @@ type UpdatePlan struct {
 }
 
 type PlanSource struct {
+	ID            string `json:"id,omitempty"`
 	Name          string `json:"name"`
+	License       string `json:"license,omitempty"`
 	Version       string `json:"version,omitempty"`
 	URL           string `json:"url"`
 	Category      string `json:"category"`
@@ -68,6 +71,7 @@ type PlanInput struct {
 	Adapter    string       `json:"adapter"`
 	TextColumn string       `json:"text_column,omitempty"`
 	SourcePath string       `json:"source_path,omitempty"`
+	SourceID   string       `json:"source_id,omitempty"`
 	Profile    InputProfile `json:"profile,omitempty"`
 }
 
@@ -83,32 +87,58 @@ type PlanRequest struct {
 	RecordMaximumBytes int64
 	Profile            InputProfile
 	InputRoot          string
+	Sources            []PlanSourceRequest
 	RecipeEvidence     *index.IngestRecipeEvidence
 	Update             *UpdatePlan
+}
+
+type PlanSourceRequest struct {
+	ID                 string
+	License            string
+	Source             PlanSource
+	InputRoot          string
+	TextColumn         string
+	RecordMaximumBytes int64
+	Profile            InputProfile
 }
 
 func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 	if probe.Kind != "waldo-ingest-probe" || probe.Schema != 1 || len(probe.Artifacts) == 0 {
 		return Plan{}, fmt.Errorf("invalid or empty ingestion probe")
 	}
-	if strings.TrimSpace(request.Destination) == "" || strings.TrimSpace(request.Title) == "" || strings.TrimSpace(request.License) == "" {
-		return Plan{}, fmt.Errorf("destination, title, and license are required")
+	if strings.TrimSpace(request.Destination) == "" || strings.TrimSpace(request.Title) == "" {
+		return Plan{}, fmt.Errorf("destination and title are required")
 	}
-	if request.Source.Name == "" || request.Source.URL == "" || request.Source.Category == "" {
-		return Plan{}, fmt.Errorf("source name, URL, and category are required")
-	}
-	if request.TextColumn != "" && request.Profile.Type != "" {
-		return Plan{}, fmt.Errorf("text column and input profile cannot both be set")
-	}
-	category, ok := index.CanonicalSourceCategory(request.Source.Category)
-	if !ok {
-		return Plan{}, fmt.Errorf("unsupported source category %q", request.Source.Category)
-	}
-	request.Source.Category = category
-	switch category {
-	case index.SourcePublicDataset, index.SourcePrivateThirdParty, index.SourceOther:
-	default:
-		return Plan{}, fmt.Errorf("source category %q requires acquisition evidence fields that index ingest does not collect yet", category)
+	if len(request.Sources) == 0 {
+		if strings.TrimSpace(request.License) == "" {
+			return Plan{}, fmt.Errorf("license is required")
+		}
+		if err := normalizePlanSource(&request.Source); err != nil {
+			return Plan{}, err
+		}
+		if request.TextColumn != "" && request.Profile.Type != "" {
+			return Plan{}, fmt.Errorf("text column and input profile cannot both be set")
+		}
+	} else {
+		seen := map[string]bool{}
+		for position := range request.Sources {
+			source := &request.Sources[position]
+			if !recipeStepName.MatchString(source.ID) || seen[source.ID] {
+				return Plan{}, fmt.Errorf("source %d has invalid or duplicate id %q", position+1, source.ID)
+			}
+			seen[source.ID] = true
+			source.Source.ID = source.ID
+			source.Source.License = record.NormalizeLicense(source.License)
+			if source.Source.License == "" {
+				return Plan{}, fmt.Errorf("source %q license is required", source.ID)
+			}
+			if err := normalizePlanSource(&source.Source); err != nil {
+				return Plan{}, fmt.Errorf("source %q: %w", source.ID, err)
+			}
+			if source.TextColumn != "" && source.Profile.Type != "" {
+				return Plan{}, fmt.Errorf("source %q text column and input profile cannot both be set", source.ID)
+			}
+		}
 	}
 	mode := request.Mode
 	if mode == "" {
@@ -138,16 +168,40 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			Compression: "zstd-level-6",
 		},
 	}
+	for _, source := range request.Sources {
+		plan.Sources = append(plan.Sources, source.Source)
+		if source.RecordMaximumBytes > plan.Writer.RecordMaximumBytes {
+			plan.Writer.RecordMaximumBytes = source.RecordMaximumBytes
+		}
+	}
 	if request.RecordMaximumBytes != 0 {
 		plan.Writer.RecordMaximumBytes = request.RecordMaximumBytes
 	}
 	if plan.Description == "" {
-		plan.Description = "Training corpus acquired from " + request.Source.Name + "."
+		if len(plan.Sources) == 0 {
+			plan.Description = "Training corpus acquired from " + request.Source.Name + "."
+		} else {
+			plan.Description = fmt.Sprintf("Training corpus acquired from %d sources.", len(plan.Sources))
+		}
 	}
 	for _, artifact := range probe.Artifacts {
-		input := PlanInput{Artifact: artifact, Profile: request.Profile}
-		if request.InputRoot != "" {
-			root, err := filepath.Abs(request.InputRoot)
+		// Acquisition recipes may select empty tracked files. They carry no
+		// trainable content, so omit them before adapter selection. Direct input
+		// remains strict and reports the unsupported empty artifact.
+		if artifact.Format == "empty" && request.RecipeEvidence != nil {
+			continue
+		}
+		profile, textColumn, inputRoot, sourceID := request.Profile, request.TextColumn, request.InputRoot, ""
+		if len(request.Sources) > 0 {
+			source, err := sourceRequestForArtifact(request.Sources, artifact.Path)
+			if err != nil {
+				return Plan{}, err
+			}
+			profile, textColumn, inputRoot, sourceID = source.Profile, source.TextColumn, source.InputRoot, source.ID
+		}
+		input := PlanInput{Artifact: artifact, Profile: profile, SourceID: sourceID}
+		if inputRoot != "" {
+			root, err := filepath.Abs(inputRoot)
 			if err != nil {
 				return Plan{}, err
 			}
@@ -190,7 +244,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 				input.Adapter = artifact.Format
 			case "parquet":
 				input.Adapter = "parquet"
-				column, err := chooseTextColumn(artifact, request.TextColumn)
+				column, err := chooseTextColumn(artifact, textColumn)
 				if err != nil {
 					return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
 				}
@@ -203,10 +257,64 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		}
 		plan.Inputs = append(plan.Inputs, input)
 	}
+	if len(request.Sources) > 0 {
+		planned := map[string]int{}
+		for _, input := range plan.Inputs {
+			planned[input.SourceID]++
+		}
+		for _, source := range request.Sources {
+			if planned[source.ID] == 0 {
+				return Plan{}, fmt.Errorf("source %q produced no non-empty supported inputs", source.ID)
+			}
+		}
+	}
 	if err := plan.Validate(); err != nil {
 		return Plan{}, err
 	}
 	return plan, nil
+}
+
+func normalizePlanSource(source *PlanSource) error {
+	if source.Name == "" || source.URL == "" || source.Category == "" {
+		return fmt.Errorf("source name, URL, and category are required")
+	}
+	category, ok := index.CanonicalSourceCategory(source.Category)
+	if !ok {
+		return fmt.Errorf("unsupported source category %q", source.Category)
+	}
+	source.Category = category
+	switch category {
+	case index.SourcePublicDataset, index.SourcePrivateThirdParty, index.SourceOther:
+		return nil
+	default:
+		return fmt.Errorf("source category %q requires acquisition evidence fields that index ingest does not collect yet", category)
+	}
+}
+
+func sourceRequestForArtifact(sources []PlanSourceRequest, artifactPath string) (PlanSourceRequest, error) {
+	for _, source := range sources {
+		root, err := filepath.Abs(source.InputRoot)
+		if err != nil {
+			return PlanSourceRequest{}, err
+		}
+		relative, err := filepath.Rel(root, artifactPath)
+		if err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return source, nil
+		}
+	}
+	return PlanSourceRequest{}, fmt.Errorf("input %s is outside every declared source", artifactPath)
+}
+
+func (plan Plan) sourceFor(input PlanInput) (PlanSource, string, error) {
+	if input.SourceID == "" {
+		return plan.Source, plan.License, nil
+	}
+	for _, source := range plan.Sources {
+		if source.ID == input.SourceID {
+			return source, source.License, nil
+		}
+	}
+	return PlanSource{}, "", fmt.Errorf("input %s references unknown source %q", input.Artifact.Path, input.SourceID)
 }
 
 func chooseTextColumn(artifact Artifact, requested string) (string, error) {
@@ -245,8 +353,21 @@ func (plan Plan) Validate() error {
 	if plan.Destination == "" || plan.Destination == "." || filepath.IsAbs(plan.Destination) || strings.HasPrefix(cleanDestination, "..") || plan.Destination != cleanDestination {
 		return fmt.Errorf("destination must be a relative index path")
 	}
-	if plan.Title == "" || plan.Description == "" || plan.License == "" || plan.Source.Name == "" || plan.Source.URL == "" || plan.Source.Category == "" {
+	if plan.Title == "" || plan.Description == "" {
 		return fmt.Errorf("ingestion plan is missing corpus or source identity")
+	}
+	if len(plan.Sources) == 0 {
+		if plan.License == "" || plan.Source.Name == "" || plan.Source.URL == "" || plan.Source.Category == "" {
+			return fmt.Errorf("ingestion plan is missing corpus or source identity")
+		}
+	} else {
+		seen := map[string]bool{}
+		for _, source := range plan.Sources {
+			if source.ID == "" || seen[source.ID] || source.Name == "" || source.License == "" || source.URL == "" || source.Category == "" {
+				return fmt.Errorf("ingestion plan has an invalid multi-source identity")
+			}
+			seen[source.ID] = true
+		}
 	}
 	if plan.Mode != "streaming" && plan.Mode != "canonical" {
 		return fmt.Errorf("unsupported ingestion mode %q", plan.Mode)
@@ -271,6 +392,9 @@ func (plan Plan) Validate() error {
 			if cleanSource == "." || cleanSource != input.SourcePath || strings.HasPrefix(cleanSource, "../") || filepath.IsAbs(filepath.FromSlash(input.SourcePath)) {
 				return fmt.Errorf("input %s has invalid source path %q", artifact.Path, input.SourcePath)
 			}
+		}
+		if _, license, err := plan.sourceFor(input); err != nil || license == "" {
+			return fmt.Errorf("input %s has invalid source assignment", artifact.Path)
 		}
 		if err := input.Profile.Validate(); err != nil {
 			return fmt.Errorf("input %s: %w", artifact.Path, err)

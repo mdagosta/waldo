@@ -362,7 +362,7 @@ func LoadManifest(path string) (Manifest, error) {
 	if err := decodeMetadata(path, data, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("%s: %w", path, err)
 	}
-	if manifest.Schema != ManifestSchema {
+	if manifest.Schema != LegacyManifestSchema && manifest.Schema != ManifestSchema {
 		return Manifest{}, fmt.Errorf("%s: unsupported manifest schema %d", path, manifest.Schema)
 	}
 	return manifest, nil
