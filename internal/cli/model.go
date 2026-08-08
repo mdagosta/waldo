@@ -485,7 +485,7 @@ func parseModelTrain(args []string) (string, []string, int64, error) {
 		return "", nil, 0, usageError{message: "usage: waldo model train <name> [index-path...] [--epochs <n>] [--json]"}
 	}
 	if len(positionals) == 1 && looksLikeIndexPath(positionals[0]) {
-		return "", nil, 0, usageError{message: fmt.Sprintf("model name is required before index path %q; usage: waldo model train <name> [index-path...] [--epochs <n>] [--json]", positionals[0])}
+		return "", nil, 0, usageError{message: fmt.Sprintf("model name is required before index path %q\n\nUsage:\n  waldo model train <name> [index-path...] [--epochs <n>] [--json]", positionals[0])}
 	}
 	return positionals[0], positionals[1:], epochs, nil
 }

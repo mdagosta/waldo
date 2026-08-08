@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -34,5 +35,17 @@ func TestParseModelTrainDiagnosesOmittedModelName(t *testing.T) {
 	}
 	if _, _, _, err := parseModelTrain([]string{"."}); err == nil || !strings.Contains(err.Error(), "model name is required") {
 		t.Fatalf("dot-path error = %v", err)
+	}
+}
+
+func TestModelTrainFormatsOmittedNameDiagnostic(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	path := "core/common-pile/python-enhancement-proposals/peps"
+	if code := Run([]string{"model", "train", path}, &stdout, &stderr); code != 2 {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
+	}
+	want := "waldo: model name is required before index path \"" + path + "\"\n\nUsage:\n  waldo model train <name> [index-path...] [--epochs <n>] [--json]\n"
+	if stderr.String() != want {
+		t.Fatalf("stderr = %q, want %q", stderr.String(), want)
 	}
 }
