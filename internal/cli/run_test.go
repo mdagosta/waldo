@@ -396,6 +396,37 @@ func TestIndexOwnsCorpusWorkflows(t *testing.T) {
 	}
 }
 
+func TestIndexSummaryTruncatesLongLicenseOnlyInHumanOutput(t *testing.T) {
+	root := fixtureCLIIndex(t)
+	manifestPath := filepath.Join(root, "books", "books.json")
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	longLicense := "LicenseRef-Open-Parliament-Licence---https-www.parliament.uk-site-information-copyright-parliament-open-parliament-licence"
+	data = bytes.Replace(data, []byte("CC0-1.0"), []byte(longLicense), 1)
+	if err := os.WriteFile(manifestPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"index", "summary", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("human summary code = %d, stderr = %q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), longLicense) || !strings.Contains(stdout.String(), "LicenseRef-Open-Parliament-Licence---https-www.…") {
+		t.Fatalf("human summary did not truncate license:\n%s", stdout.String())
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"--json", "index", "summary", root}, &stdout, &stderr); code != 0 {
+		t.Fatalf("JSON summary code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), longLicense) {
+		t.Fatalf("JSON summary lost full license: %s", stdout.String())
+	}
+}
+
 func TestModelOwnsLifecycleCommands(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"model", "--help"}, &stdout, &stderr); code != 0 {

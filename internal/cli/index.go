@@ -165,7 +165,7 @@ func runIndexSummary(context Context, args []string, stdout, stderr io.Writer) e
 			if licenseTotals.Shards == 1 {
 				shardWord = "shard"
 			}
-			fmt.Fprintf(stdout, "  %-48s %12s tokens  %4s %s\n", license, humanCount(licenseTotals.Tokens), humanInteger(licenseTotals.Shards), shardWord)
+			fmt.Fprintf(stdout, "  %-48s %12s tokens  %4s %s\n", truncateDisplay(license, 48), humanCount(licenseTotals.Tokens), humanInteger(licenseTotals.Shards), shardWord)
 		}
 	}
 	return nil
@@ -540,12 +540,16 @@ func licenseSummary(licenses []string) string {
 	case 0:
 		return "(none declared)"
 	case 1:
-		const max = 40
-		if len(licenses[0]) > max {
-			return licenses[0][:max-1] + "…"
-		}
-		return licenses[0]
+		return truncateDisplay(licenses[0], 40)
 	default:
 		return fmt.Sprintf("%d licenses", len(licenses))
 	}
+}
+
+func truncateDisplay(value string, max int) string {
+	runes := []rune(value)
+	if len(runes) <= max {
+		return value
+	}
+	return string(runes[:max-1]) + "…"
 }
