@@ -97,14 +97,11 @@ first such command clones `https://github.com/openwaldo/waldo-index.git` branch
 fetch and fast-forward the selected checkout automatically when safe:
 
 ```bash
-waldo index status
-waldo index fetch
 waldo index pull
 ```
 
-`status`, `fetch`, and `pull` operate on the configured checkout when one is
-set, otherwise on the managed default. `fetch` changes only the tracking
-remote reference. Automatic and explicit pulls accept only a clean
+`pull` operates on the configured checkout when one is set, otherwise on the
+managed default. Automatic and explicit pulls accept only a clean
 fast-forward; they refuse local changes, local-only commits, divergence,
 detached HEAD, or a missing tracking remote. `index verify --offline` is the
 exception: it uses the current local revision without network access.
@@ -157,7 +154,7 @@ checks every level's totals, and then verifies the resolved leaf objects.
 Corpus authoring requires an explicit contributor checkout:
 
 ```bash
-waldo index clone /path/to/waldo-index
+git clone https://github.com/openwaldo/waldo-index.git /path/to/waldo-index
 waldo config set index /path/to/waldo-index
 ```
 
@@ -398,7 +395,7 @@ waldo index export core \
   --format jsonl \
   ~/portable-training-data
 
-# No selection exports the entire resolved index and warns on stderr.
+# No selection exports the entire resolved index.
 waldo index export ~/complete-training-data
 ```
 

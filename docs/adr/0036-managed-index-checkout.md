@@ -27,8 +27,8 @@ synchronization policy is based on Git state, not filesystem location.
 
 The managed checkout is read-only from the corpus-authoring perspective.
 `index init`, `index ingest`, and `index update` reject it. Contributors use an
-explicit checkout, created with `waldo index clone <directory>` or otherwise,
-and select it with `waldo config set index <directory>` or an absolute path.
+explicit Git checkout and select it with `waldo config set index <directory>`
+or an absolute path.
 
 Git transport is implemented in `internal/git` with `go-git`. Fetch updates
 remote references only. Pull derives the current branch's tracking remote and

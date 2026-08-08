@@ -494,7 +494,7 @@ func managedIndexMutationError(action string) error {
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("cannot %s the managed read-only index %s; use `waldo index clone <directory>` and `waldo config set index <directory>` for corpus contributions", action, root)
+	return fmt.Errorf("cannot %s the managed read-only index %s; create a separate Git checkout and select it with `waldo config set index <directory>` for corpus contributions", action, root)
 }
 
 func printManifest(w io.Writer, path string, manifest waldoindex.Manifest) {

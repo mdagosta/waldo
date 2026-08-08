@@ -384,9 +384,14 @@ func TestIndexOwnsCorpusWorkflows(t *testing.T) {
 	if code := Run([]string{"index", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
-	for _, want := range []string{"status", "fetch", "pull", "clone", "list", "show", "summary", "verify", "ingest", "update", "export", "remove"} {
+	for _, want := range []string{"pull", "list", "show", "summary", "verify", "ingest", "update", "export", "remove"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("index help does not contain %q:\n%s", want, stdout.String())
+		}
+	}
+	for _, unwanted := range []string{"status", "fetch", "clone"} {
+		if strings.Contains(stdout.String(), unwanted) {
+			t.Errorf("index help unexpectedly contains %q:\n%s", unwanted, stdout.String())
 		}
 	}
 }

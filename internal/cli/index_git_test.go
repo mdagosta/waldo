@@ -40,11 +40,6 @@ func TestManagedIndexAutoClonesForDefaultRead(t *testing.T) {
 		t.Fatalf("managed clone missing: %v", err)
 	}
 
-	stdout.Reset()
-	stderr.Reset()
-	if code := Run([]string{"--json", "index", "status"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"relation": "current"`) {
-		t.Fatalf("status code output=%q stderr=%q", stdout.String(), stderr.String())
-	}
 	commitFixtureIndexFile(t, upstream, "upstream-note.txt", "updated\n")
 	stdout.Reset()
 	stderr.Reset()
@@ -120,7 +115,7 @@ func TestConfigIndexShowsManagedDefault(t *testing.T) {
 	}
 }
 
-func TestIndexCloneCreatesContributorCheckout(t *testing.T) {
+func TestConfiguredContributorCheckoutRefusesDirtyPull(t *testing.T) {
 	upstream := fixtureGitIndex(t)
 	useTestIndexManager(t, upstream)
 	home := t.TempDir()
@@ -129,25 +124,15 @@ func TestIndexCloneCreatesContributorCheckout(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "contributor")
 
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"index", "clone", destination}, &stdout, &stderr); code != 0 {
-		t.Fatalf("clone code=%d stderr=%q", code, stderr.String())
+	if _, err := indexGitManager.Clone(t.Context(), destination, nil); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "Configure this contributor checkout") {
-		t.Fatalf("clone output = %q", stdout.String())
-	}
-	stdout.Reset()
-	stderr.Reset()
 	if code := Run([]string{"config", "set", "index", destination}, &stdout, &stderr); code != 0 {
 		t.Fatalf("config set code=%d stderr=%q", code, stderr.String())
 	}
 	configuration, err := config.Load()
 	if err != nil || configuration.Index != destination {
 		t.Fatalf("configuration=%+v err=%v", configuration, err)
-	}
-	stdout.Reset()
-	stderr.Reset()
-	if code := Run([]string{"--json", "index", "status"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), destination) {
-		t.Fatalf("configured status code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	if err := os.WriteFile(filepath.Join(destination, "local.txt"), []byte("dirty\n"), 0o644); err != nil {
 		t.Fatal(err)

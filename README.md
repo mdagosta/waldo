@@ -170,14 +170,13 @@ With `index` unset, WALDO uses a managed, read-only checkout at
 `~/.waldo/index`. It clones `openwaldo/waldo-index` on first use. Commands that
 consume an index automatically fetch and fast-forward its tracking branch when
 the checkout is clean and behind. Dirty, ahead, or diverged checkouts fail
-without modification. `waldo index status`, `fetch`, and `pull` remain
-available for inspection and explicit synchronization.
+without modification. `waldo index pull` provides explicit synchronization.
 
 Setting `index` selects a contributor checkout instead. Every relative index
 path—including one beginning with `./`—then resolves beneath it. Absolute paths
 and paths beginning with `~/` explicitly select another checkout. If a
-command's index selection is omitted, WALDO warns on standard error and uses
-the entire resolved index. Synchronization follows the selected checkout's
+command's index selection is omitted, WALDO uses the entire resolved index.
+Synchronization follows the selected checkout's
 current branch and configured tracking remote; it is not chosen by pathname.
 
 For S3 publication:
@@ -240,7 +239,7 @@ and manifest totals.
 Clone and select a writable contributor checkout of the public index:
 
 ```bash
-waldo index clone ./waldo-index
+git clone https://github.com/openwaldo/waldo-index.git ./waldo-index
 waldo config set index ./waldo-index
 waldo config set lookaside file:///tmp/waldo-lookaside
 ```
