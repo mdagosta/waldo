@@ -64,9 +64,23 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	target, err := waldoindex.ResolveDestinationConfigured(configuration.Index, options.Request.Destination)
+	configuredRoot, managedDefault, err := config.EffectiveIndexRoot(configuration)
 	if err != nil {
 		return err
+	}
+	if managedDefault && !explicitIndexPath(options.Request.Destination) {
+		return managedIndexMutationError("ingest into")
+	}
+	target, err := waldoindex.ResolveDestinationConfigured(configuredRoot, options.Request.Destination)
+	if err != nil {
+		return err
+	}
+	managed, err := config.IsManagedIndexPath(target.Root)
+	if err != nil {
+		return err
+	}
+	if managed {
+		return managedIndexMutationError("ingest into")
 	}
 	options.Request.Destination = target.Rel
 	if options.Request.Source.Name == "" {

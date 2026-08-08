@@ -34,11 +34,18 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return usageError{message: strings.Replace(err.Error(), "index ingest", "index update", 1)}
 	}
-	targets, err := resolveIndexArguments([]string{options.Request.Destination})
+	targets, err := resolveIndexArguments(commandContext.Execution, []string{options.Request.Destination}, stderr)
 	if err != nil {
 		return err
 	}
 	target := targets[0]
+	managed, err := config.IsManagedIndexPath(target.Root)
+	if err != nil {
+		return err
+	}
+	if managed {
+		return managedIndexMutationError("update")
+	}
 	corpusTarget, err := resolveSingleUpdateCorpus(target)
 	if err != nil {
 		return err

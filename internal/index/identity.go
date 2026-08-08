@@ -5,11 +5,7 @@
 
 package index
 
-import (
-	"errors"
-	"os/exec"
-	"strings"
-)
+import managedgit "github.com/openwaldo/waldo/internal/git"
 
 type Identity struct {
 	Remote string `json:"remote,omitempty"`
@@ -21,28 +17,13 @@ type Identity struct {
 // still readable outside Git, in which case the empty identity honestly says
 // that no revision pin is available.
 func Identify(root string) Identity {
-	commit, commitErr := gitOutput(root, "rev-parse", "HEAD")
-	if commitErr != nil {
+	repository, err := managedgit.Inspect(root)
+	if err != nil {
 		return Identity{}
 	}
-	remote, _ := gitOutput(root, "config", "--get", "remote.origin.url")
-	status, statusErr := gitOutput(root, "status", "--porcelain", "--untracked-files=normal")
 	return Identity{
-		Remote: remote,
-		Commit: commit,
-		Dirty:  statusErr != nil || status != "",
+		Remote: repository.Remote,
+		Commit: repository.Commit,
+		Dirty:  repository.Dirty,
 	}
-}
-
-func gitOutput(root string, args ...string) (string, error) {
-	commandArgs := append([]string{"-C", root}, args...)
-	output, err := exec.Command("git", commandArgs...).Output()
-	if err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			return "", exit
-		}
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
 }

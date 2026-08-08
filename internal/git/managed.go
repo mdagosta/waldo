@@ -53,6 +53,40 @@ type Result struct {
 	State  State  `json:"state"`
 }
 
+// Repository describes the revision and worktree state of any ordinary local
+// checkout. It is used for provenance without invoking an external command.
+type Repository struct {
+	Root   string
+	Remote string
+	Commit string
+	Dirty  bool
+}
+
+// Inspect discovers and inspects the checkout containing location.
+func Inspect(location string) (Repository, error) {
+	repository, err := git.PlainOpenWithOptions(location, &git.PlainOpenOptions{DetectDotGit: true})
+	if err != nil {
+		return Repository{}, err
+	}
+	worktree, err := repository.Worktree()
+	if err != nil {
+		return Repository{}, err
+	}
+	head, err := repository.Head()
+	if err != nil {
+		return Repository{}, err
+	}
+	status, err := worktree.Status()
+	if err != nil {
+		return Repository{}, err
+	}
+	remoteURL := ""
+	if remote, err := repository.Remote("origin"); err == nil && len(remote.Config().URLs) > 0 {
+		remoteURL = remote.Config().URLs[0]
+	}
+	return Repository{Root: worktree.Filesystem.Root(), Remote: remoteURL, Commit: head.Hash().String(), Dirty: !status.IsClean()}, nil
+}
+
 // Ensure opens an existing managed checkout or atomically clones it when it is
 // absent. It does not contact the network for an existing checkout.
 func (manager Manager) Ensure(ctx context.Context, destination string, progress io.Writer) (Result, error) {

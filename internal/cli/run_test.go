@@ -372,7 +372,7 @@ func TestRootHelpLocksCommandVocabulary(t *testing.T) {
 			t.Errorf("root help does not contain %q:\n%s", want, help)
 		}
 	}
-	for _, unwanted := range []string{"store", "corpus", "fetch"} {
+	for _, unwanted := range []string{"store", "corpus"} {
 		if strings.Contains(help, unwanted) {
 			t.Errorf("root help unexpectedly contains %q:\n%s", unwanted, help)
 		}
@@ -384,7 +384,7 @@ func TestIndexOwnsCorpusWorkflows(t *testing.T) {
 	if code := Run([]string{"index", "--help"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
-	for _, want := range []string{"list", "show", "summary", "verify", "ingest", "update", "export", "remove"} {
+	for _, want := range []string{"status", "fetch", "pull", "clone", "list", "show", "summary", "verify", "ingest", "update", "export", "remove"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("index help does not contain %q:\n%s", want, stdout.String())
 		}
@@ -785,19 +785,6 @@ func TestConfigSetIndexEnablesLogicalIndexPaths(t *testing.T) {
 	stderr.Reset()
 	if code := Run([]string{"index", "summary", "."}, &stdout, &stderr); code != 0 || strings.Contains(stderr.String(), "warning:") {
 		t.Fatalf("explicit root code = %d, stderr = %q", code, stderr.String())
-	}
-}
-
-func TestOmittedIndexPathWarnsForDiscoveredCheckout(t *testing.T) {
-	root := fixtureCLIIndex(t)
-	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
-	t.Chdir(root)
-	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"index", "list"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("list code = %d, stderr = %q", code, stderr.String())
-	}
-	if !strings.Contains(stderr.String(), "warning: no index path specified; using the entire discovered index "+root) {
-		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 

@@ -157,6 +157,13 @@ func TestDefaultLocationsSeparateDurableAndDisposableState(t *testing.T) {
 	if cache != filepath.Join(home, ".waldo", "cache") {
 		t.Fatalf("cache root = %q", cache)
 	}
+	index, managed, err := EffectiveIndexRoot(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if index != filepath.Join(home, ".waldo", "index") || !managed {
+		t.Fatalf("index root = %q managed=%v", index, managed)
+	}
 	if !within(temporaryRoot(), scratch) || !within(temporaryRoot(), staging) {
 		t.Fatalf("temporary defaults are scratch=%q staging=%q, want beneath %q", scratch, staging, temporaryRoot())
 	}

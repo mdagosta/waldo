@@ -36,7 +36,7 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return usageError{message: err.Error()}
 	}
-	targets, err := resolveIndexArgumentsWithWarning(options.Paths, stderr)
+	targets, err := resolveIndexArgumentsWithWarning(context.Execution, options.Paths, stderr)
 	if err != nil {
 		return err
 	}

@@ -167,6 +167,13 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		if err != nil {
 			return usageError{message: fmt.Sprintf("index must name an existing WALDO index checkout: %v", err)}
 		}
+		managed, err := config.IsManagedIndexPath(target.Root)
+		if err != nil {
+			return err
+		}
+		if managed {
+			return usageError{message: "the managed index is already the default; leave index unset or configure a separate contributor checkout"}
+		}
 		configuration.Index = target.Root
 	case "lookaside":
 		if len(values) != 1 {
@@ -382,10 +389,8 @@ func reportConfigMutation(context Context, stdout io.Writer, status, key string)
 func configValue(configuration config.Config, key string) (any, bool, error) {
 	switch key {
 	case "index":
-		if configuration.Index == "" {
-			return nil, false, nil
-		}
-		return configuration.Index, true, nil
+		value, _, err := config.EffectiveIndexRoot(configuration)
+		return value, err == nil, err
 	case "lookaside":
 		if configuration.Lookaside.Publish == nil {
 			return nil, false, nil

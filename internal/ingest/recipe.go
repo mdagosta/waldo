@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 
+	managedgit "github.com/openwaldo/waldo/internal/git"
 	"github.com/openwaldo/waldo/internal/index"
 	"gopkg.in/yaml.v3"
 )
@@ -246,18 +247,18 @@ func relativeEvidencePath(base, path string) string {
 }
 
 func populateGitEvidence(loaded *LoadedRecipe) {
-	root, err := gitOutput(filepath.Dir(loaded.Path), "rev-parse", "--show-toplevel")
-	if err != nil || root == "" {
+	repository, err := managedgit.Inspect(filepath.Dir(loaded.Path))
+	if err != nil || repository.Root == "" {
 		return
 	}
+	root := repository.Root
 	loaded.Evidence.Path = filepath.ToSlash(relativeEvidencePath(root, loaded.Path))
 	for index := range loaded.Evidence.Steps {
 		loaded.Evidence.Steps[index].Executable = evidenceExecutablePath(root, loaded.Executables[index].Path)
 	}
-	loaded.Evidence.Commit, _ = gitOutput(root, "rev-parse", "HEAD")
-	loaded.Evidence.Repository, _ = gitOutput(root, "config", "--get", "remote.origin.url")
-	status, _ := gitOutput(root, "status", "--porcelain", "--untracked-files=normal")
-	loaded.Evidence.Dirty = status != ""
+	loaded.Evidence.Commit = repository.Commit
+	loaded.Evidence.Repository = repository.Remote
+	loaded.Evidence.Dirty = repository.Dirty
 }
 
 func evidenceExecutablePath(root, path string) string {
@@ -266,15 +267,6 @@ func evidenceExecutablePath(root, path string) string {
 		return filepath.ToSlash(relative)
 	}
 	return filepath.ToSlash(path)
-}
-
-func gitOutput(directory string, arguments ...string) (string, error) {
-	command := exec.Command("git", append([]string{"-C", directory}, arguments...)...)
-	output, err := command.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
 }
 
 type CommandRunner interface {

@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/corpus"
+	managedgit "github.com/openwaldo/waldo/internal/git"
 	waldoindex "github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/shard"
@@ -25,6 +27,13 @@ import (
 func runIndexInit(context Context, args []string, stdout, _ io.Writer) error {
 	if len(args) != 1 {
 		return usageError{message: "usage: waldo index init <directory>"}
+	}
+	managed, err := config.IsManagedIndexPath(args[0])
+	if err != nil {
+		return err
+	}
+	if managed {
+		return managedIndexMutationError("initialize")
 	}
 	root, err := waldoindex.Initialize(args[0])
 	if err != nil {
@@ -47,7 +56,7 @@ func runIndexList(context Context, args []string, stdout, stderr io.Writer) erro
 	if len(args) > 1 {
 		return usageError{message: "usage: waldo index list [path]"}
 	}
-	target, err := resolveIndexArgument(args, stderr)
+	target, err := resolveIndexArgument(context.Execution, args, stderr)
 	if err != nil {
 		return err
 	}
@@ -79,7 +88,7 @@ func runIndexShow(context Context, args []string, stdout, stderr io.Writer) erro
 	if len(args) > 1 {
 		return usageError{message: "usage: waldo index show [path]"}
 	}
-	target, err := resolveIndexArgument(args, stderr)
+	target, err := resolveIndexArgument(context.Execution, args, stderr)
 	if err != nil {
 		return err
 	}
@@ -122,7 +131,7 @@ func runIndexSummary(context Context, args []string, stdout, stderr io.Writer) e
 	if len(args) > 1 {
 		return usageError{message: "usage: waldo index summary [path]"}
 	}
-	target, err := resolveIndexArgument(args, stderr)
+	target, err := resolveIndexArgument(context.Execution, args, stderr)
 	if err != nil {
 		return err
 	}
@@ -173,7 +182,7 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 	if len(paths) > 1 {
 		return usageError{message: "usage: waldo index audit [path] [--workers <n>]"}
 	}
-	target, err := resolveIndexArgument(paths, progress)
+	target, err := resolveIndexArgument(context.Execution, paths, progress)
 	if err != nil {
 		return err
 	}
@@ -274,7 +283,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	if path != "" {
 		paths = []string{path}
 	}
-	target, err := resolveIndexArgument(paths, progress)
+	target, err := resolveIndexArgument(context.Execution, paths, progress)
 	if err != nil {
 		return err
 	}
@@ -367,16 +376,16 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	return nil
 }
 
-func resolveIndexArgument(args []string, warnings io.Writer) (waldoindex.Target, error) {
-	targets, err := resolveIndexArgumentsWithWarning(args, warnings)
+func resolveIndexArgument(execution context.Context, args []string, warnings io.Writer) (waldoindex.Target, error) {
+	targets, err := resolveIndexArgumentsWithWarning(execution, args, warnings)
 	if err != nil {
 		return waldoindex.Target{}, err
 	}
 	return targets[0], nil
 }
 
-func resolveIndexArguments(args []string) ([]waldoindex.Target, error) {
-	selection, err := resolveIndexSelection(args)
+func resolveIndexArguments(execution context.Context, args []string, progress io.Writer) ([]waldoindex.Target, error) {
+	selection, err := resolveIndexSelection(execution, args, progress)
 	return selection.Targets, err
 }
 
@@ -384,16 +393,21 @@ type resolvedIndexSelection struct {
 	Targets    []waldoindex.Target
 	Omitted    bool
 	Configured bool
+	Managed    bool
 }
 
-func resolveIndexArgumentsWithWarning(args []string, warnings io.Writer) ([]waldoindex.Target, error) {
-	selection, err := resolveIndexSelection(args)
+var indexGitManager = managedgit.DefaultManager()
+
+func resolveIndexArgumentsWithWarning(execution context.Context, args []string, warnings io.Writer) ([]waldoindex.Target, error) {
+	selection, err := resolveIndexSelection(execution, args, warnings)
 	if err != nil {
 		return nil, err
 	}
 	if selection.Omitted && warnings != nil {
 		source := "discovered"
-		if selection.Configured {
+		if selection.Managed {
+			source = "managed"
+		} else if selection.Configured {
 			source = "configured"
 		}
 		fmt.Fprintf(warnings, "warning: no index path specified; using the entire %s index %s\n", source, selection.Targets[0].Root)
@@ -401,7 +415,7 @@ func resolveIndexArgumentsWithWarning(args []string, warnings io.Writer) ([]wald
 	return selection.Targets, nil
 }
 
-func resolveIndexSelection(args []string) (resolvedIndexSelection, error) {
+func resolveIndexSelection(execution context.Context, args []string, progress io.Writer) (resolvedIndexSelection, error) {
 	configuration, err := config.Load()
 	if err != nil {
 		return resolvedIndexSelection{}, err
@@ -412,7 +426,16 @@ func resolveIndexSelection(args []string) (resolvedIndexSelection, error) {
 		values = []string{""}
 	}
 	targets := make([]waldoindex.Target, 0, len(values))
-	knownRoot := configuration.Index
+	knownRoot, managed, err := config.EffectiveIndexRoot(configuration)
+	if err != nil {
+		return resolvedIndexSelection{}, err
+	}
+	defaultRoot := knownRoot
+	if managed && !explicitIndexPath(values[0]) {
+		if _, err := indexGitManager.Ensure(execution, knownRoot, progress); err != nil {
+			return resolvedIndexSelection{}, err
+		}
+	}
 	for _, value := range values {
 		var target waldoindex.Target
 		if len(targets) == 0 {
@@ -430,7 +453,19 @@ func resolveIndexSelection(args []string) (resolvedIndexSelection, error) {
 		}
 		targets = append(targets, target)
 	}
-	return resolvedIndexSelection{Targets: targets, Omitted: omitted, Configured: configuration.Index != ""}, nil
+	return resolvedIndexSelection{Targets: targets, Omitted: omitted, Configured: configuration.Index != "", Managed: managed && targets[0].Root == defaultRoot}, nil
+}
+
+func explicitIndexPath(value string) bool {
+	return filepath.IsAbs(value) || value == "~" || strings.HasPrefix(value, "~/")
+}
+
+func managedIndexMutationError(action string) error {
+	root, err := config.ManagedIndexRoot()
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("cannot %s the managed read-only index %s; use `waldo index clone <directory>` and `waldo config set index <directory>` for corpus contributions", action, root)
 }
 
 func printManifest(w io.Writer, path string, manifest waldoindex.Manifest) {

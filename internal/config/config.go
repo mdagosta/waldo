@@ -249,6 +249,51 @@ func EffectiveModelRoot(config Config) (string, error) {
 	return filepath.Join(base, "models"), nil
 }
 
+// EffectiveIndexRoot returns the selected index checkout and whether it is
+// WALDO's managed read-only checkout.
+func EffectiveIndexRoot(config Config) (string, bool, error) {
+	if config.Index != "" {
+		absolute, err := filepath.Abs(config.Index)
+		return absolute, false, err
+	}
+	root, err := ManagedIndexRoot()
+	return root, true, err
+}
+
+// ManagedIndexRoot is WALDO's automatically synchronized index checkout.
+func ManagedIndexRoot() (string, error) {
+	base, err := durableRoot()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "index"), nil
+}
+
+// IsManagedIndexPath reports whether path is the reserved managed index or is
+// contained beneath it. It is intentionally lexical as well as symlink-aware
+// when both paths exist.
+func IsManagedIndexPath(path string) (bool, error) {
+	managed, err := ManagedIndexRoot()
+	if err != nil {
+		return false, err
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return false, err
+	}
+	if pathWithin(managed, absolute) {
+		return true, nil
+	}
+	managedResolved, managedErr := filepath.EvalSymlinks(managed)
+	pathResolved, pathErr := filepath.EvalSymlinks(absolute)
+	return managedErr == nil && pathErr == nil && pathWithin(managedResolved, pathResolved), nil
+}
+
+func pathWithin(parent, child string) bool {
+	relative, err := filepath.Rel(filepath.Clean(parent), filepath.Clean(child))
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
 func EffectiveModelBackend(config Config) string {
 	if config.Model.Backend != "" {
 		return config.Model.Backend

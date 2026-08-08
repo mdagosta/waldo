@@ -73,7 +73,7 @@ func runModelComposeForecast(context Context, path string, stdout io.Writer) err
 }
 
 func runModelIndexForecast(context Context, paths []string, stdout, warnings io.Writer) error {
-	targets, err := resolveIndexArgumentsWithWarning(paths, warnings)
+	targets, err := resolveIndexArgumentsWithWarning(context.Execution, paths, warnings)
 	if err != nil {
 		return err
 	}
@@ -622,7 +622,7 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 			if err != nil {
 				return err
 			}
-			targets, err := resolveIndexArguments([]string{parsed.Calibration})
+			targets, err := resolveIndexArguments(context.Execution, []string{parsed.Calibration}, stderr)
 			if err != nil {
 				return fmt.Errorf("calibration: %w", err)
 			}
@@ -1036,7 +1036,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
 		return model.PreparedStage{}, fmt.Errorf("automatic one-pass training currently requires byte@builtin-byte-schema-1 with vocabulary_size 259")
 	}
-	targets, err := resolveIndexArgumentsWithWarning(paths, progress)
+	targets, err := resolveIndexArgumentsWithWarning(context.Execution, paths, progress)
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
@@ -1093,7 +1093,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 }
 
 func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
-	targets, err := resolveIndexArguments(stage.Corpora)
+	targets, err := resolveIndexArguments(context.Execution, stage.Corpora, progress)
 	if err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
 	}
