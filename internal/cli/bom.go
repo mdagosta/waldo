@@ -109,7 +109,7 @@ func runCorpusExportVerify(context Context, args []string, stdout io.Writer) err
 	return nil
 }
 
-type disclosureOptions struct {
+type modelBOMOptions struct {
 	Model           string
 	Output          string
 	Format          string
@@ -118,11 +118,7 @@ type disclosureOptions struct {
 	Force           bool
 }
 
-func runModelDisclosure(context Context, args []string, stdout, stderr io.Writer) error {
-	options, err := cobraModelDisclosureOptions(context, args)
-	if err != nil {
-		return err
-	}
+func runModelEUGPAIBOM(context Context, options modelBOMOptions, stdout, stderr io.Writer) error {
 	if options.Output != "" && !options.Force {
 		if _, err := os.Stat(options.Output); err == nil {
 			return fmt.Errorf("%s already exists; use --force to replace it", options.Output)
@@ -215,19 +211,22 @@ func requireCompleteDisclosure(report disclosure.EUGPAIReport, allowIncomplete b
 	return nil
 }
 
-func cobraModelDisclosureOptions(context Context, args []string) (disclosureOptions, error) {
-	options := disclosureOptions{
+func cobraModelBOMOptions(context Context, args []string) (modelBOMOptions, error) {
+	options := modelBOMOptions{
 		Format: stringOption(context, "format"), Provider: stringOption(context, "provider"),
 		AllowIncomplete: boolOption(context, "allow-incomplete"), Force: boolOption(context, "force"),
 	}
-	if options.Format != "eu-gpai" {
-		return disclosureOptions{}, fmt.Errorf("unsupported disclosure format %q; use eu-gpai", options.Format)
+	if options.Format != "openwaldo" && options.Format != "eu-gpai" {
+		return modelBOMOptions{}, fmt.Errorf("unsupported model BOM format %q; use openwaldo or eu-gpai", options.Format)
 	}
 	if len(args) == 1 && options.Force {
-		return disclosureOptions{}, fmt.Errorf("--force requires an output file")
+		return modelBOMOptions{}, fmt.Errorf("--force requires an output file")
 	}
-	if len(args) == 2 && strings.ToLower(filepath.Ext(args[1])) != ".json" {
-		return disclosureOptions{}, fmt.Errorf("eu-gpai output must use a .json filename; editable document rendering is not implemented yet")
+	if options.Format == "openwaldo" && (options.Provider != "" || options.AllowIncomplete) {
+		return modelBOMOptions{}, fmt.Errorf("--provider and --allow-incomplete apply only to --format eu-gpai")
+	}
+	if options.Format == "eu-gpai" && len(args) == 2 && strings.ToLower(filepath.Ext(args[1])) != ".json" {
+		return modelBOMOptions{}, fmt.Errorf("eu-gpai output must use a .json filename; editable document rendering is not implemented yet")
 	}
 	options.Model = args[0]
 	if len(args) == 2 {

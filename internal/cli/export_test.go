@@ -169,7 +169,7 @@ stages:
 	disclosureOutput := filepath.Join(t.TempDir(), "eu-gpai.json")
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"model", "disclose", "smoke", disclosureOutput, "--format", "eu-gpai"}, &stdout, &stderr); code != 1 {
+	if code := Run([]string{"model", "bom", "smoke", disclosureOutput, "--format", "eu-gpai"}, &stdout, &stderr); code != 1 {
 		t.Fatalf("complete disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "export blocked") {
@@ -180,7 +180,7 @@ stages:
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"model", "disclose", "smoke", disclosureOutput, "--format=eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"model", "bom", "smoke", disclosureOutput, "--format=eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("draft disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	disclosureData, err := os.ReadFile(disclosureOutput)
@@ -192,7 +192,7 @@ stages:
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"model", "disclose", "smoke", "--format", "eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"model", "bom", "smoke", "--format", "eu-gpai", "--allow-incomplete"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("stdout disclosure code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	if !strings.HasPrefix(stdout.String(), "{\n") || !strings.Contains(stdout.String(), `"kind": "waldo-eu-gpai-training-content"`) || !strings.Contains(stdout.String(), `"status": "incomplete-draft"`) {
@@ -361,33 +361,45 @@ func TestParseExportOptionsAllowsWholeIndexSelection(t *testing.T) {
 	}
 }
 
-func TestParseModelDisclosureOptions(t *testing.T) {
-	context, args, err := parseCobraCommand(t, []string{"model", "disclose"}, []string{"smoke", "report.json", "--format=eu-gpai", "--provider", "provider.json", "--allow-incomplete", "--force"})
+func TestParseModelBOMOptions(t *testing.T) {
+	defaultContext, defaultArgs, err := parseCobraCommand(t, []string{"model", "bom"}, []string{"smoke"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	options, err := cobraModelDisclosureOptions(context, args)
+	defaultOptions, err := cobraModelBOMOptions(defaultContext, defaultArgs)
+	if err != nil || defaultOptions.Format != "openwaldo" || defaultOptions.Model != "smoke" {
+		t.Fatalf("default model BOM options = %+v, %v", defaultOptions, err)
+	}
+	context, args, err := parseCobraCommand(t, []string{"model", "bom"}, []string{"smoke", "report.json", "--format=eu-gpai", "--provider", "provider.json", "--allow-incomplete", "--force"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := cobraModelBOMOptions(context, args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if options.Model != "smoke" || options.Output != "report.json" || options.Provider != "provider.json" || !options.AllowIncomplete || !options.Force {
-		t.Fatalf("cobraModelDisclosureOptions() = %+v", options)
+		t.Fatalf("cobraModelBOMOptions() = %+v", options)
 	}
-	context, args, err = parseCobraCommand(t, []string{"model", "disclose"}, []string{"smoke", "report.docx", "--format", "eu-gpai"})
-	if _, err := cobraModelDisclosureOptions(context, args); err == nil || !strings.Contains(err.Error(), ".json") {
+	context, args, err = parseCobraCommand(t, []string{"model", "bom"}, []string{"smoke", "report.docx", "--format", "eu-gpai"})
+	if _, err := cobraModelBOMOptions(context, args); err == nil || !strings.Contains(err.Error(), ".json") {
 		t.Fatalf("document output error = %v", err)
 	}
-	context, args, err = parseCobraCommand(t, []string{"model", "disclose"}, []string{"smoke", "--format", "eu-gpai", "--allow-incomplete"})
+	context, args, err = parseCobraCommand(t, []string{"model", "bom"}, []string{"smoke", "--format", "eu-gpai", "--allow-incomplete"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	stdoutOptions, err := cobraModelDisclosureOptions(context, args)
+	stdoutOptions, err := cobraModelBOMOptions(context, args)
 	if err != nil || stdoutOptions.Model != "smoke" || stdoutOptions.Output != "" || !stdoutOptions.AllowIncomplete {
 		t.Fatalf("stdout parse = %+v, %v", stdoutOptions, err)
 	}
-	context, args, err = parseCobraCommand(t, []string{"model", "disclose"}, []string{"smoke", "--format", "eu-gpai", "--force"})
-	if _, err := cobraModelDisclosureOptions(context, args); err == nil || !strings.Contains(err.Error(), "requires an output file") {
+	context, args, err = parseCobraCommand(t, []string{"model", "bom"}, []string{"smoke", "--format", "eu-gpai", "--force"})
+	if _, err := cobraModelBOMOptions(context, args); err == nil || !strings.Contains(err.Error(), "requires an output file") {
 		t.Fatalf("stdout force error = %v", err)
+	}
+	context, args, err = parseCobraCommand(t, []string{"model", "bom"}, []string{"smoke", "--provider", "provider.json"})
+	if _, err := cobraModelBOMOptions(context, args); err == nil || !strings.Contains(err.Error(), "apply only") {
+		t.Fatalf("OpenWALDO provider error = %v", err)
 	}
 }
 

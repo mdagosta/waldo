@@ -102,7 +102,7 @@ Implemented foundation:
 - Direct index-backed training selections through the verified shard cache
 - Training-stage classification in the compose and run BOM
 - EU GPAI training-content gap analysis and fail-closed
-  `model disclose --format eu-gpai`
+  `model bom --format eu-gpai`
 
 The current GPAI export is a versioned machine-readable mapping and gap report.
 Filling the Commission's official editable Word file remains a separate

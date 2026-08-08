@@ -635,7 +635,7 @@ The model lifecycle also supports a fail-closed EU GPAI mapping:
 
 ```bash
 waldo config set disclosure.provider docs/examples/eu-gpai-provider.json
-waldo model disclose smoke \
+waldo model bom smoke \
   --format eu-gpai
 ```
 

@@ -342,23 +342,34 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 	return nil
 }
 
-func runModelBOM(context Context, args []string, stdout, _ io.Writer) error {
+func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error {
+	options, err := cobraModelBOMOptions(context, args)
+	if err != nil {
+		return err
+	}
+	if options.Format == "eu-gpai" {
+		return runModelEUGPAIBOM(context, options, stdout, stderr)
+	}
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
 	}
-	inspection, err := model.Inspect(root, args[0])
+	inspection, err := model.Inspect(root, options.Model)
 	if err != nil {
 		return err
 	}
-	if len(args) == 1 {
+	if options.Output == "" {
 		return writeJSON(stdout, inspection.BOM)
 	}
-	output, err := filepath.Abs(args[1])
+	output, err := filepath.Abs(options.Output)
 	if err != nil {
 		return err
 	}
-	file, err := os.OpenFile(output, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	flags := os.O_CREATE | os.O_EXCL | os.O_WRONLY
+	if options.Force {
+		flags = os.O_CREATE | os.O_TRUNC | os.O_WRONLY
+	}
+	file, err := os.OpenFile(output, flags, 0o644)
 	if err != nil {
 		return err
 	}

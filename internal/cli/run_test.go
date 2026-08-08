@@ -389,6 +389,16 @@ func TestRootRejectsRemovedBOMCommand(t *testing.T) {
 	}
 }
 
+func TestModelRejectsRemovedDiscloseCommand(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"model", "disclose", "anything"}, &stdout, &stderr); code == 0 {
+		t.Fatalf("removed model disclose command unexpectedly succeeded: stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "unknown command") {
+		t.Fatalf("removed model disclose command error = %q", stderr.String())
+	}
+}
+
 func TestIndexOwnsCorpusWorkflows(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"index", "--help"}, &stdout, &stderr); code != 0 {

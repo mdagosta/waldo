@@ -110,11 +110,11 @@ does not bypass model validation, artifact hashes, real-run selection, format
 compatibility, or signing failures.
 
 For disclosure-only output to standard output or a single JSON file, use
-`waldo model disclose`, not `model export`:
+`waldo model bom --format eu-gpai`, not `model export`:
 
 ```bash
-waldo model disclose small --format eu-gpai
-waldo model disclose small training-content.json --format eu-gpai
+waldo model bom small --format eu-gpai
+waldo model bom small training-content.json --format eu-gpai
 ```
 
 ## BOM layers
