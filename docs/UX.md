@@ -346,7 +346,8 @@ per-record inventory. A recipe-driven run uses the existing
 `converted_by.collector` string to pin repository, commit, and recipe path.
 Dirty or uncommitted recipes are marked and include the recipe SHA-256. The
 manifest has one entry per published Parquet shard containing its URL,
-SHA-256, document count, reference-token estimate, and encoded byte size.
+SHA-256, represented source/license sets, exact per-license document and token
+usage, total document count, reference-token estimate, and encoded byte size.
 Detailed processing prose, command arrays, modality duplication, and input
 inventories stay out of Git. Secrets and environment values are never written
 to the manifest.

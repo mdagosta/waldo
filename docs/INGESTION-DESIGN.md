@@ -298,9 +298,10 @@ an explicit memory budget and measured batch/writer cost, not from CPU count
 alone. The principal controls are batch bytes, open row groups, derive workers,
 active output partitions, and in-flight encoded objects.
 
-Partition routing is normally by record kind and effective license. Active
-writers are capped. Deterministic least-recently-used eviction may close a
-partial shard rather than allowing rare partitions to consume unbounded memory.
+Partition routing is by record kind and writer recipe, not by project or
+license. One bounded active writer packs rows until the physical target size;
+its footer records the represented source and license sets. This prevents rare
+projects or licenses from producing undersized shards.
 
 ### Raw Parquet fast path
 

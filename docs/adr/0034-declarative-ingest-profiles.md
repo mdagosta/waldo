@@ -36,6 +36,10 @@ Per-record licenses are normalized by WALDO and preserved as raw evidence.
 Canonical rows retain their effective license, while each shard records the
 sorted set of licenses represented by its rows; license does not force a shard
 boundary.
+License-policy selection remains fail-closed at the physical boundary: a mixed
+shard is selectable only when every represented license is allowed. Supporting
+partial mixed-shard selection would require an explicit filtered/repacked view,
+not silently altered BOM totals.
 Normalization recognizes canonical Creative Commons URLs both alone and
 inside descriptive upstream labels, and maps an exact case-insensitive
 `Public Domain` declaration to `LicenseRef-Public-Domain`. The original value
