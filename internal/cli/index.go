@@ -193,6 +193,9 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 	if err != nil {
 		return err
 	}
+	if err := validateAuditCacheCapacity(cache, bom.Totals.Bytes); err != nil {
+		return err
+	}
 	fmt.Fprintf(progress, "auditing %s indexed shard references (%s)\n", humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes))
 	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
 		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
@@ -234,6 +237,13 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 	fmt.Fprintln(stdout, "STATUS:         VERIFIED")
 	printShardSummary(stdout, audited)
 	return nil
+}
+
+func validateAuditCacheCapacity(cache *lookaside.Cache, required int64) error {
+	if !cache.Retained() || cache.MaxBytes() <= 0 || cache.MaxBytes() >= required {
+		return nil
+	}
+	return fmt.Errorf("full audit requires %s of simultaneously materialized shards, but lookaside.cache.max-size is %s; use a dedicated WALDO_CONFIG with a cache bound at least as large as the audited selection", humanBytes(required), humanBytes(cache.MaxBytes()))
 }
 
 func runIndexVerifyWithProgress(context Context, args []string, stdout, progress io.Writer) error {

@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/config"
+	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/openwaldo/waldo/internal/tokenizer"
 )
@@ -63,6 +64,26 @@ func TestIndexAuditComparesStreamedShardTotalsWithManifest(t *testing.T) {
 	stderr.Reset()
 	if code := Run([]string{"index", "audit", root}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "audited totals differ") {
 		t.Fatalf("mismatched audit code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+}
+
+func TestIndexAuditRejectsRetainedCacheSmallerThanSelection(t *testing.T) {
+	cache, err := lookaside.NewCache(t.TempDir(), nil, lookaside.WithPersistentStorage(t.TempDir(), 20<<30))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAuditCacheCapacity(cache, 50<<30); err == nil || !strings.Contains(err.Error(), "requires 50.0 GiB") || !strings.Contains(err.Error(), "max-size is 20.0 GiB") {
+		t.Fatalf("validateAuditCacheCapacity() error = %v", err)
+	}
+	if err := validateAuditCacheCapacity(cache, 20<<30); err != nil {
+		t.Fatalf("exact capacity rejected: %v", err)
+	}
+	disposable, err := lookaside.NewCache(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateAuditCacheCapacity(disposable, 50<<30); err != nil {
+		t.Fatalf("disposable cache rejected: %v", err)
 	}
 }
 
