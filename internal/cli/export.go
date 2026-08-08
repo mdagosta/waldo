@@ -28,7 +28,7 @@ type exportOptions struct {
 }
 
 func runIndexExport(context Context, args []string, stdout, stderr io.Writer) error {
-	options, err := parseExportOptions(args)
+	options, err := cobraExportOptions(context, args)
 	if err != nil {
 		return err
 	}
@@ -115,59 +115,26 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	return nil
 }
 
-func parseExportOptions(args []string) (exportOptions, error) {
-	options := exportOptions{Format: "native"}
-	for i := 0; i < len(args); i++ {
-		argument := args[i]
-		switch {
-		case argument == "--license":
-			value, next, err := optionValue(args, i, "--license")
-			if err != nil {
-				return exportOptions{}, err
-			}
-			options.Include, i = append(options.Include, splitComma(value)...), next
-		case strings.HasPrefix(argument, "--license="):
-			options.Include = append(options.Include, splitComma(strings.TrimPrefix(argument, "--license="))...)
-		case argument == "--exclude-license":
-			value, next, err := optionValue(args, i, "--exclude-license")
-			if err != nil {
-				return exportOptions{}, err
-			}
-			options.Exclude, i = append(options.Exclude, splitComma(value)...), next
-		case strings.HasPrefix(argument, "--exclude-license="):
-			options.Exclude = append(options.Exclude, splitComma(strings.TrimPrefix(argument, "--exclude-license="))...)
-		case argument == "--force":
-			options.Force = true
-		case argument == "--format":
-			value, next, err := optionValue(args, i, "--format")
-			if err != nil {
-				return exportOptions{}, err
-			}
-			options.Format, i = value, next
-		case strings.HasPrefix(argument, "--format="):
-			options.Format = strings.TrimPrefix(argument, "--format=")
-		case strings.HasPrefix(argument, "-"):
-			return exportOptions{}, usageError{message: fmt.Sprintf("unknown index export option %q", argument)}
-		default:
-			options.Paths = append(options.Paths, argument)
-		}
-	}
-	if len(options.Paths) < 1 {
+func cobraExportOptions(context Context, args []string) (exportOptions, error) {
+	if len(args) < 1 {
 		return exportOptions{}, usageError{message: "usage: waldo index export [path...] <directory> [--format native|jsonl]"}
 	}
-	options.Output = options.Paths[len(options.Paths)-1]
-	options.Paths = options.Paths[:len(options.Paths)-1]
+	options := exportOptions{
+		Paths:  append([]string(nil), args[:len(args)-1]...),
+		Output: args[len(args)-1],
+		Force:  boolOption(context, "force"),
+		Format: stringOption(context, "format"),
+	}
+	for _, value := range stringArrayOption(context, "license") {
+		options.Include = append(options.Include, splitComma(value)...)
+	}
+	for _, value := range stringArrayOption(context, "exclude-license") {
+		options.Exclude = append(options.Exclude, splitComma(value)...)
+	}
 	if options.Format != "native" && options.Format != "jsonl" {
 		return exportOptions{}, usageError{message: fmt.Sprintf("unsupported export format %q; use native or jsonl", options.Format)}
 	}
 	return options, nil
-}
-
-func optionValue(args []string, index int, name string) (string, int, error) {
-	if index+1 >= len(args) || strings.HasPrefix(args[index+1], "-") {
-		return "", index, usageError{message: name + " requires a value"}
-	}
-	return args[index+1], index + 1, nil
 }
 
 func splitComma(value string) []string {

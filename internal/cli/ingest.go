@@ -28,7 +28,7 @@ var newIngestPublisher = func(ctx context.Context, publish config.Publish) (look
 var ingestRecipeRunner ingest.CommandRunner = ingest.ExecCommandRunner{}
 
 func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) error {
-	options, err := parseIndexIngest(args)
+	options, err := cobraIndexIngestOptions(context, args, "index ingest")
 	if err != nil {
 		return err
 	}
@@ -374,59 +374,31 @@ type indexIngestOptions struct {
 	MetadataOptions []string
 }
 
-func parseIndexIngest(args []string) (indexIngestOptions, error) {
-	var options indexIngestOptions
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		value := func(name string) (string, error) {
-			if i+1 >= len(args) {
-				return "", usageError{message: name + " needs a value"}
-			}
-			i++
-			return args[i], nil
-		}
-		var err error
-		switch arg {
-		case "--dry-run":
-			options.DryRun = true
-		case "--title":
-			options.Request.Title, err = value("--title")
-			options.MetadataOptions = append(options.MetadataOptions, "--title")
-		case "--description":
-			options.Request.Description, err = value("--description")
-			options.MetadataOptions = append(options.MetadataOptions, "--description")
-		case "--license":
-			options.Request.License, err = value("--license")
-			options.MetadataOptions = append(options.MetadataOptions, "--license")
-		case "--source":
-			options.Request.Source.URL, err = value("--source")
-			options.MetadataOptions = append(options.MetadataOptions, "--source")
-		case "--source-name":
-			options.Request.Source.Name, err = value("--source-name")
-			options.MetadataOptions = append(options.MetadataOptions, "--source-name")
-		case "--source-category":
-			options.Request.Source.Category, err = value("--source-category")
-			options.MetadataOptions = append(options.MetadataOptions, "--source-category")
-		case "--text-column":
-			options.Request.TextColumn, err = value("--text-column")
-			options.MetadataOptions = append(options.MetadataOptions, "--text-column")
-		case "--input-profile":
-			options.InputProfile, err = value("--input-profile")
-			options.MetadataOptions = append(options.MetadataOptions, "--input-profile")
-		default:
-			if strings.HasPrefix(arg, "-") {
-				return indexIngestOptions{}, usageError{message: fmt.Sprintf("unknown index ingest option %q", arg)}
-			}
-			options.Inputs = append(options.Inputs, arg)
-		}
-		if err != nil {
-			return indexIngestOptions{}, err
+func cobraIndexIngestOptions(context Context, args []string, commandName string) (indexIngestOptions, error) {
+	if len(args) != 2 {
+		return indexIngestOptions{}, usageError{message: commandName + " requires exactly two positional arguments: <input> <destination>"}
+	}
+	options := indexIngestOptions{
+		Inputs:       []string{args[0]},
+		DryRun:       boolOption(context, "dry-run"),
+		InputProfile: stringOption(context, "input-profile"),
+		Request: ingest.PlanRequest{
+			Title:       stringOption(context, "title"),
+			Description: stringOption(context, "description"),
+			License:     stringOption(context, "license"),
+			TextColumn:  stringOption(context, "text-column"),
+			Destination: args[1],
+			Source: ingest.PlanSource{
+				URL:      stringOption(context, "source"),
+				Name:     stringOption(context, "source-name"),
+				Category: stringOption(context, "source-category"),
+			},
+		},
+	}
+	for _, name := range []string{"title", "description", "license", "source", "source-name", "source-category", "text-column", "input-profile"} {
+		if optionChanged(context, name) {
+			options.MetadataOptions = append(options.MetadataOptions, "--"+name)
 		}
 	}
-	if len(options.Inputs) != 2 {
-		return indexIngestOptions{}, usageError{message: "index ingest requires exactly two positional arguments: <input> <destination>"}
-	}
-	options.Request.Destination = options.Inputs[1]
-	options.Inputs = options.Inputs[:1]
 	return options, nil
 }

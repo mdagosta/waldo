@@ -15,17 +15,23 @@ import (
 )
 
 func TestParseModelChatSupportsOneShotGenerationOptions(t *testing.T) {
-	name, prompt, options, err := parseModelChat([]string{"foo", "hello world", "--max-tokens", "12", "--temperature", "0", "--top-p", "1", "--seed", "9"})
+	context, args, err := parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "hello world", "--max-tokens", "12", "--temperature", "0", "--top-p", "1", "--seed", "9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, prompt, options, err := cobraModelChatOptions(context, args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if name != "foo" || prompt == nil || *prompt != "hello world" || options.MaxTokens != 12 || options.Temperature != 0 || options.TopP != 1 || options.Seed == nil || *options.Seed != 9 {
 		t.Fatalf("name = %q, prompt = %v, options = %+v", name, prompt, options)
 	}
-	if _, _, _, err := parseModelChat([]string{"foo", "--temperature", "-1"}); err == nil {
+	context, args, err = parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "--temperature", "-1"})
+	if _, _, _, err := cobraModelChatOptions(context, args); err == nil {
 		t.Fatal("negative temperature accepted")
 	}
-	if _, _, _, err := parseModelChat([]string{"foo", "--top-p", "NaN"}); err == nil {
+	context, args, err = parseCobraCommand(t, []string{"model", "chat"}, []string{"foo", "--top-p", "NaN"})
+	if _, _, _, err := cobraModelChatOptions(context, args); err == nil {
 		t.Fatal("NaN top-p accepted")
 	}
 }

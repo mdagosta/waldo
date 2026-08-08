@@ -12,29 +12,29 @@ import (
 )
 
 func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
-	name, paths, epochs, err := parseModelTrain([]string{"foo", "core/books", "science/papers"})
+	context, args, err := parseCobraCommand(t, []string{"model", "train"}, []string{"foo", "core/books", "science/papers"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "foo" || epochs != 1 || len(paths) != 2 {
-		t.Fatalf("name = %q, paths = %v, epochs = %d", name, paths, epochs)
+	if args[0] != "foo" || int64Option(context, "epochs") != 1 || len(args[1:]) != 2 {
+		t.Fatalf("args = %v, epochs = %d", args, int64Option(context, "epochs"))
 	}
-	_, _, epochs, err = parseModelTrain([]string{"foo", "core/books", "--epochs", "3"})
-	if err != nil || epochs != 3 {
-		t.Fatalf("epochs = %d, error = %v", epochs, err)
+	context, _, err = parseCobraCommand(t, []string{"model", "train"}, []string{"foo", "core/books", "--epochs", "3"})
+	if err != nil || int64Option(context, "epochs") != 3 {
+		t.Fatalf("epochs = %d, error = %v", int64Option(context, "epochs"), err)
 	}
-	if _, _, _, err := parseModelTrain([]string{"foo", "core/books", "--epochs", "0"}); err == nil {
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"model", "train", "foo", "core/books", "--epochs", "0"}, &stdout, &stderr); code != 2 {
 		t.Fatal("zero epochs accepted")
 	}
 }
 
 func TestParseModelTrainDiagnosesOmittedModelName(t *testing.T) {
-	_, _, _, err := parseModelTrain([]string{"core/common-pile/python-enhancement-proposals/peps"})
-	if err == nil || !strings.Contains(err.Error(), "model name is required before index path") {
-		t.Fatalf("error = %v", err)
-	}
-	if _, _, _, err := parseModelTrain([]string{"."}); err == nil || !strings.Contains(err.Error(), "model name is required") {
-		t.Fatalf("dot-path error = %v", err)
+	for _, path := range []string{"core/common-pile/python-enhancement-proposals/peps", "."} {
+		var stdout, stderr bytes.Buffer
+		if code := Run([]string{"model", "train", path}, &stdout, &stderr); code != 2 || !strings.Contains(stderr.String(), "model name is required") {
+			t.Fatalf("path %q: code = %d, error = %q", path, code, stderr.String())
+		}
 	}
 }
 

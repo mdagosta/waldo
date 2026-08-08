@@ -89,7 +89,7 @@ type bomExportOptions struct {
 }
 
 func runBOMExport(context Context, args []string, stdout, stderr io.Writer) error {
-	options, err := parseBOMExportOptions(args)
+	options, err := cobraBOMExportOptions(context, args)
 	if err != nil {
 		return err
 	}
@@ -185,53 +185,26 @@ func requireCompleteDisclosure(report disclosure.EUGPAIReport, allowIncomplete b
 	return nil
 }
 
-func parseBOMExportOptions(args []string) (bomExportOptions, error) {
-	var options bomExportOptions
-	var positional []string
-	for i := 0; i < len(args); i++ {
-		argument := args[i]
-		switch {
-		case argument == "--format":
-			value, next, err := optionValue(args, i, "--format")
-			if err != nil {
-				return bomExportOptions{}, err
-			}
-			options.Format, i = value, next
-		case strings.HasPrefix(argument, "--format="):
-			options.Format = strings.TrimPrefix(argument, "--format=")
-		case argument == "--provider":
-			value, next, err := optionValue(args, i, "--provider")
-			if err != nil {
-				return bomExportOptions{}, err
-			}
-			options.Provider, i = value, next
-		case strings.HasPrefix(argument, "--provider="):
-			options.Provider = strings.TrimPrefix(argument, "--provider=")
-		case argument == "--allow-incomplete":
-			options.AllowIncomplete = true
-		case argument == "--force":
-			options.Force = true
-		case strings.HasPrefix(argument, "-"):
-			return bomExportOptions{}, usageError{message: fmt.Sprintf("unknown bom export option %q", argument)}
-		default:
-			positional = append(positional, argument)
-		}
+func cobraBOMExportOptions(context Context, args []string) (bomExportOptions, error) {
+	options := bomExportOptions{
+		Format: stringOption(context, "format"), Provider: stringOption(context, "provider"),
+		AllowIncomplete: boolOption(context, "allow-incomplete"), Force: boolOption(context, "force"),
 	}
-	if (len(positional) != 1 && len(positional) != 2) || options.Format == "" {
+	if (len(args) != 1 && len(args) != 2) || options.Format == "" {
 		return bomExportOptions{}, usageError{message: "usage: waldo bom export <model-name-or-path> [output.json] --format eu-gpai [--provider <profile.json>] [--allow-incomplete] [--force]"}
 	}
 	if options.Format != "eu-gpai" {
 		return bomExportOptions{}, usageError{message: fmt.Sprintf("unsupported BOM export format %q; use eu-gpai", options.Format)}
 	}
-	if len(positional) == 1 && options.Force {
+	if len(args) == 1 && options.Force {
 		return bomExportOptions{}, usageError{message: "--force requires an output file"}
 	}
-	if len(positional) == 2 && strings.ToLower(filepath.Ext(positional[1])) != ".json" {
+	if len(args) == 2 && strings.ToLower(filepath.Ext(args[1])) != ".json" {
 		return bomExportOptions{}, usageError{message: "eu-gpai output must use a .json filename; editable document rendering is not implemented yet"}
 	}
-	options.Model = positional[0]
-	if len(positional) == 2 {
-		options.Output = positional[1]
+	options.Model = args[0]
+	if len(args) == 2 {
+		options.Output = args[1]
 	}
 	return options, nil
 }

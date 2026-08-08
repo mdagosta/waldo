@@ -21,18 +21,10 @@ import (
 )
 
 func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Writer) error {
-	rebuild := false
-	filtered := make([]string, 0, len(args))
-	for _, argument := range args {
-		if argument == "--rebuild-shards" {
-			rebuild = true
-			continue
-		}
-		filtered = append(filtered, argument)
-	}
-	options, err := parseIndexIngest(filtered)
+	rebuild := boolOption(commandContext, "rebuild-shards")
+	options, err := cobraIndexIngestOptions(commandContext, args, "index update")
 	if err != nil {
-		return usageError{message: strings.Replace(err.Error(), "index ingest", "index update", 1)}
+		return err
 	}
 	targets, err := resolveIndexArguments(commandContext.Execution, []string{options.Request.Destination}, stderr)
 	if err != nil {

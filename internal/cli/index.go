@@ -176,14 +176,14 @@ func runIndexVerify(context Context, args []string, stdout, stderr io.Writer) er
 }
 
 func runIndexAudit(context Context, args []string, stdout, progress io.Writer) error {
-	paths, auditOptions, err := parseAuditOptions(args, "usage: waldo index audit [path] [--workers <n>]")
+	auditOptions, err := cobraAuditOptions(context)
 	if err != nil {
 		return err
 	}
-	if len(paths) > 1 {
+	if len(args) > 1 {
 		return usageError{message: "usage: waldo index audit [path] [--workers <n>]"}
 	}
-	target, err := resolveIndexArgument(context.Execution, paths, progress)
+	target, err := resolveIndexArgument(context.Execution, args, progress)
 	if err != nil {
 		return err
 	}
@@ -257,34 +257,15 @@ func validateAuditCacheCapacity(cache *lookaside.Cache, required int64) error {
 }
 
 func runIndexVerifyWithProgress(context Context, args []string, stdout, progress io.Writer) error {
-	var path string
-	objects := false
-	offline := false
-	for _, arg := range args {
-		if arg == "--objects" {
-			objects = true
-			continue
-		}
-		if arg == "--offline" {
-			offline = true
-			continue
-		}
-		if strings.HasPrefix(arg, "-") {
-			return usageError{message: fmt.Sprintf("unknown index verify option %q", arg)}
-		}
-		if path != "" {
-			return usageError{message: "usage: waldo index verify [path] [--offline|--objects]"}
-		}
-		path = arg
-	}
+	objects := boolOption(context, "objects")
+	offline := boolOption(context, "offline")
 	if objects && offline {
 		return usageError{message: "--objects and --offline are different verification levels; choose one"}
 	}
-	var paths []string
-	if path != "" {
-		paths = []string{path}
+	if len(args) > 1 {
+		return usageError{message: "usage: waldo index verify [path] [--offline|--objects]"}
 	}
-	target, err := resolveIndexArgumentPolicy(context.Execution, paths, progress, !offline)
+	target, err := resolveIndexArgumentPolicy(context.Execution, args, progress, !offline)
 	if err != nil {
 		return err
 	}

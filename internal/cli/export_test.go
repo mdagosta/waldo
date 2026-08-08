@@ -326,17 +326,25 @@ func assertNoCacheFiles(t *testing.T, root string) {
 }
 
 func TestParseExportOptions(t *testing.T) {
-	options, err := parseExportOptions([]string{"core", "science", "--format=jsonl", "--license", "CC0-*, CC-BY-*", "--exclude-license=CC-BY-NC-*", "--force", "dest"})
+	context, args, err := parseCobraCommand(t, []string{"index", "export"}, []string{"core", "science", "--format=jsonl", "--license", "CC0-*, CC-BY-*", "--exclude-license=CC-BY-NC-*", "--force", "dest"})
+	if err == nil {
+		var options exportOptions
+		options, err = cobraExportOptions(context, args)
+		if err == nil && (len(options.Paths) != 2 || len(options.Include) != 2 || len(options.Exclude) != 1 || options.Output != "dest" || options.Format != "jsonl" || !options.Force) {
+			t.Fatalf("cobraExportOptions() = %+v", options)
+		}
+	}
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(options.Paths) != 2 || len(options.Include) != 2 || len(options.Exclude) != 1 || options.Output != "dest" || options.Format != "jsonl" || !options.Force {
-		t.Fatalf("parseExportOptions() = %+v", options)
 	}
 }
 
 func TestParseExportOptionsAllowsWholeIndexSelection(t *testing.T) {
-	options, err := parseExportOptions([]string{"destination"})
+	context, args, err := parseCobraCommand(t, []string{"index", "export"}, []string{"destination"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := cobraExportOptions(context, args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,29 +354,39 @@ func TestParseExportOptionsAllowsWholeIndexSelection(t *testing.T) {
 }
 
 func TestParseBOMExportOptions(t *testing.T) {
-	options, err := parseBOMExportOptions([]string{"smoke", "report.json", "--format=eu-gpai", "--provider", "provider.json", "--allow-incomplete", "--force"})
+	context, args, err := parseCobraCommand(t, []string{"bom", "export"}, []string{"smoke", "report.json", "--format=eu-gpai", "--provider", "provider.json", "--allow-incomplete", "--force"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, err := cobraBOMExportOptions(context, args)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if options.Model != "smoke" || options.Output != "report.json" || options.Provider != "provider.json" || !options.AllowIncomplete || !options.Force {
 		t.Fatalf("parseBOMExportOptions() = %+v", options)
 	}
-	if _, err := parseBOMExportOptions([]string{"smoke", "report.docx", "--format", "eu-gpai"}); err == nil || !strings.Contains(err.Error(), ".json") {
+	context, args, err = parseCobraCommand(t, []string{"bom", "export"}, []string{"smoke", "report.docx", "--format", "eu-gpai"})
+	if _, err := cobraBOMExportOptions(context, args); err == nil || !strings.Contains(err.Error(), ".json") {
 		t.Fatalf("document output error = %v", err)
 	}
-	stdoutOptions, err := parseBOMExportOptions([]string{"smoke", "--format", "eu-gpai", "--allow-incomplete"})
+	context, args, err = parseCobraCommand(t, []string{"bom", "export"}, []string{"smoke", "--format", "eu-gpai", "--allow-incomplete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdoutOptions, err := cobraBOMExportOptions(context, args)
 	if err != nil || stdoutOptions.Model != "smoke" || stdoutOptions.Output != "" || !stdoutOptions.AllowIncomplete {
 		t.Fatalf("stdout parse = %+v, %v", stdoutOptions, err)
 	}
-	if _, err := parseBOMExportOptions([]string{"smoke", "--format", "eu-gpai", "--force"}); err == nil || !strings.Contains(err.Error(), "requires an output file") {
+	context, args, err = parseCobraCommand(t, []string{"bom", "export"}, []string{"smoke", "--format", "eu-gpai", "--force"})
+	if _, err := cobraBOMExportOptions(context, args); err == nil || !strings.Contains(err.Error(), "requires an output file") {
 		t.Fatalf("stdout force error = %v", err)
 	}
 }
 
 func TestIndexExportRejectsRemovedOutputOption(t *testing.T) {
-	_, err := parseExportOptions([]string{"core", "--output", "dest"})
-	if err == nil || !strings.Contains(err.Error(), "unknown index export option") {
-		t.Fatalf("parseExportOptions error = %v", err)
+	_, _, err := parseCobraCommand(t, []string{"index", "export"}, []string{"core", "--output", "dest"})
+	if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+		t.Fatalf("Cobra parse error = %v", err)
 	}
 }
 

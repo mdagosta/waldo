@@ -164,7 +164,7 @@ func TestIndexIngestRejectsFormerToOption(t *testing.T) {
 		"--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset", "--dry-run",
 	}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "unknown index ingest option") {
+	if code != 2 || !strings.Contains(stderr.String(), "unknown flag: --to") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 }
@@ -182,7 +182,7 @@ func TestIndexIngestRejectsRemovedModeFlags(t *testing.T) {
 			args = append(args, "value")
 		}
 		code := Run(args, &stdout, &stderr)
-		if code != 2 || !strings.Contains(stderr.String(), "unknown index ingest option") {
+		if code != 2 || !strings.Contains(stderr.String(), "unknown flag: "+removed) {
 			t.Fatalf("%s: code = %d, stderr = %q", removed, code, stderr.String())
 		}
 	}
@@ -485,12 +485,12 @@ func TestModelTrainRequiresName(t *testing.T) {
 }
 
 func TestModelTrainAllowsOmittedIndexSelection(t *testing.T) {
-	name, paths, epochs, err := parseModelTrain([]string{"example"})
+	context, args, err := parseCobraCommand(t, []string{"model", "train"}, []string{"example"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "example" || len(paths) != 0 || epochs != 1 {
-		t.Fatalf("parseModelTrain() = name %q paths %v epochs %d", name, paths, epochs)
+	if len(args) != 1 || args[0] != "example" || int64Option(context, "epochs") != 1 {
+		t.Fatalf("args = %v, epochs = %d", args, int64Option(context, "epochs"))
 	}
 }
 
@@ -527,7 +527,7 @@ func TestIndexVerifyAcceptsAbsoluteCorpusDirectory(t *testing.T) {
 func TestRemovedIndexOptionIsRejected(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{"--index", "/tmp/index", "index", "list"}, &stdout, &stderr)
-	if code != 2 || !strings.Contains(stderr.String(), "unknown command") {
+	if code != 2 || !strings.Contains(stderr.String(), "unknown flag: --index") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 }

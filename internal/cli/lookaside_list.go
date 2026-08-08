@@ -41,23 +41,14 @@ type lookasideListTotals struct {
 }
 
 func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer) error {
-	indexArgument := ""
-	showAll := false
-	for _, arg := range args {
-		switch {
-		case arg == "--all":
-			if showAll {
-				return usageError{message: "--all was specified more than once"}
-			}
-			showAll = true
-		case strings.HasPrefix(arg, "-"):
-			return usageError{message: fmt.Sprintf("unknown lookaside list option %q", arg)}
-		case indexArgument != "":
-			return usageError{message: "usage: waldo lookaside list [index-path] [--all] [--json]"}
-		default:
-			indexArgument = arg
-		}
+	if len(args) > 1 {
+		return usageError{message: "usage: waldo lookaside list [index-path] [--all] [--json]"}
 	}
+	indexArgument := ""
+	if len(args) == 1 {
+		indexArgument = args[0]
+	}
+	showAll := boolOption(commandContext, "all")
 	configuration, err := config.Load()
 	if err != nil {
 		return err

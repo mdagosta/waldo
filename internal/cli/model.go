@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -202,10 +201,10 @@ func approximateDuration(seconds int64) string {
 }
 
 func runModelInit(context Context, args []string, stdout, stderr io.Writer) error {
-	name, presetName, err := parseModelInit(args)
-	if err != nil {
-		return err
+	if len(args) != 1 || !optionChanged(context, "preset") || stringOption(context, "preset") == "" {
+		return usageError{message: "usage: waldo model init <name> --preset <preset>"}
 	}
+	name, presetName := args[0], stringOption(context, "preset")
 	preset, err := model.PresetByName(presetName)
 	if err != nil {
 		return usageError{message: err.Error()}
@@ -253,32 +252,6 @@ func runModelPull(context Context, args []string, stdout, stderr io.Writer) erro
 	fmt.Fprintf(stdout, "  origin        %s@%s\n", inspection.Origin.Source.Repository, shortModelHash(inspection.Origin.Source.Revision))
 	fmt.Fprintf(stdout, "  weights       %s\n", humanBytesUint(inspection.Model.Forecast.ParameterBytes))
 	return nil
-}
-
-func parseModelInit(args []string) (string, string, error) {
-	var positionals []string
-	preset := ""
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		switch {
-		case argument == "--preset":
-			value, next, err := optionValue(args, index, "--preset")
-			if err != nil {
-				return "", "", err
-			}
-			preset, index = value, next
-		case strings.HasPrefix(argument, "--preset="):
-			preset = strings.TrimPrefix(argument, "--preset=")
-		case strings.HasPrefix(argument, "-"):
-			return "", "", usageError{message: fmt.Sprintf("unknown model init option %q", argument)}
-		default:
-			positionals = append(positionals, argument)
-		}
-	}
-	if len(positionals) != 1 || preset == "" {
-		return "", "", usageError{message: "usage: waldo model init <name> --preset <preset>"}
-	}
-	return positionals[0], preset, nil
 }
 
 func runModelList(context Context, args []string, stdout, _ io.Writer) error {
@@ -424,10 +397,17 @@ func runModelBOM(context Context, args []string, stdout, _ io.Writer) error {
 }
 
 func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
-	name, paths, epochs, err := parseModelTrain(args)
-	if err != nil {
-		return err
+	if len(args) < 1 {
+		return usageError{message: "usage: waldo model train <name> [index-path...] [--epochs <n>] [--json]"}
 	}
+	if len(args) == 1 && looksLikeIndexPath(args[0]) {
+		return usageError{message: fmt.Sprintf("model name is required before index path %q\n\nUsage:\n  waldo model train <name> [index-path...] [--epochs <n>] [--json]", args[0])}
+	}
+	epochs := int64Option(context, "epochs")
+	if epochs < 1 || epochs > 1_000_000 {
+		return usageError{message: "--epochs must be an integer in 1..1000000"}
+	}
+	name, paths := args[0], args[1:]
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
@@ -458,47 +438,15 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	return writeModelMutationResult(context, stdout, result, "trained")
 }
 
-func parseModelTrain(args []string) (string, []string, int64, error) {
-	epochs := int64(1)
-	var positionals []string
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		switch {
-		case argument == "--epochs":
-			value, next, err := optionValue(args, index, "--epochs")
-			if err != nil {
-				return "", nil, 0, err
-			}
-			parsed, err := strconv.ParseInt(value, 10, 64)
-			if err != nil || parsed < 1 || parsed > 1_000_000 {
-				return "", nil, 0, usageError{message: "--epochs must be an integer in 1..1000000"}
-			}
-			epochs = parsed
-			index = next
-		case strings.HasPrefix(argument, "-"):
-			return "", nil, 0, usageError{message: fmt.Sprintf("unknown model train option %q", argument)}
-		default:
-			positionals = append(positionals, argument)
-		}
-	}
-	if len(positionals) < 1 {
-		return "", nil, 0, usageError{message: "usage: waldo model train <name> [index-path...] [--epochs <n>] [--json]"}
-	}
-	if len(positionals) == 1 && looksLikeIndexPath(positionals[0]) {
-		return "", nil, 0, usageError{message: fmt.Sprintf("model name is required before index path %q\n\nUsage:\n  waldo model train <name> [index-path...] [--epochs <n>] [--json]", positionals[0])}
-	}
-	return positionals[0], positionals[1:], epochs, nil
-}
-
 func looksLikeIndexPath(value string) bool {
 	return value == "." || value == ".." || value == "~" || strings.ContainsAny(value, `/\\`)
 }
 
 func runModelCompose(context Context, args []string, stdout, stderr io.Writer) error {
-	name, path, replace, err := parseModelCompose(args)
-	if err != nil {
-		return err
+	if len(args) != 2 {
+		return usageError{message: "usage: waldo model compose <name> <compose-file> [--replace] [--json]"}
 	}
+	name, path, replace := args[0], args[1], boolOption(context, "replace")
 	compose, composePath, err := model.LoadCompose(path)
 	if err != nil {
 		return err
@@ -548,27 +496,8 @@ func runModelCompose(context Context, args []string, stdout, stderr io.Writer) e
 	return writeModelMutationResult(context, stdout, result, "composed")
 }
 
-func parseModelCompose(args []string) (string, string, bool, error) {
-	var positionals []string
-	replace := false
-	for _, argument := range args {
-		switch {
-		case argument == "--replace":
-			replace = true
-		case strings.HasPrefix(argument, "-"):
-			return "", "", false, usageError{message: fmt.Sprintf("unknown model compose option %q", argument)}
-		default:
-			positionals = append(positionals, argument)
-		}
-	}
-	if len(positionals) != 2 {
-		return "", "", false, usageError{message: "usage: waldo model compose <name> <compose-file> [--replace] [--json]"}
-	}
-	return positionals[0], positionals[1], replace, nil
-}
-
 func runModelExport(context Context, args []string, stdout, stderr io.Writer) error {
-	parsed, err := parseModelExport(args)
+	parsed, err := cobraModelExportOptions(context, args)
 	if err != nil {
 		return err
 	}
@@ -720,44 +649,15 @@ type modelExportOptions struct {
 	AllowIncomplete bool
 }
 
-func parseModelExport(args []string) (modelExportOptions, error) {
-	result := modelExportOptions{Format: "waldo"}
-	var positionals []string
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		switch {
-		case argument == "--format" || argument == "--quant" || argument == "--calibration":
-			value, next, err := optionValue(args, index, argument)
-			if err != nil {
-				return modelExportOptions{}, err
-			}
-			switch argument {
-			case "--format":
-				result.Format = value
-			case "--quant":
-				result.Quant = value
-			case "--calibration":
-				result.Calibration = value
-			}
-			index = next
-		case strings.HasPrefix(argument, "--format="):
-			result.Format = strings.TrimPrefix(argument, "--format=")
-		case strings.HasPrefix(argument, "--quant="):
-			result.Quant = strings.TrimPrefix(argument, "--quant=")
-		case strings.HasPrefix(argument, "--calibration="):
-			result.Calibration = strings.TrimPrefix(argument, "--calibration=")
-		case argument == "--allow-incomplete":
-			result.AllowIncomplete = true
-		case strings.HasPrefix(argument, "-"):
-			return modelExportOptions{}, usageError{message: fmt.Sprintf("unknown model export option %q", argument)}
-		default:
-			positionals = append(positionals, argument)
-		}
-	}
-	if len(positionals) != 2 {
+func cobraModelExportOptions(context Context, args []string) (modelExportOptions, error) {
+	if len(args) != 2 {
 		return modelExportOptions{}, usageError{message: "usage: waldo model export <name> <directory> [--format waldo|huggingface|mlx|gguf|ollama] [--quant 2|3|4|5|6|8] [--calibration <index-path>] [--allow-incomplete] [--json]"}
 	}
-	result.Name, result.Destination = positionals[0], positionals[1]
+	result := modelExportOptions{
+		Name: args[0], Destination: args[1],
+		Format: stringOption(context, "format"), Quant: stringOption(context, "quant"),
+		Calibration: stringOption(context, "calibration"), AllowIncomplete: boolOption(context, "allow-incomplete"),
+	}
 	if result.Format != "waldo" && result.Format != "huggingface" && result.Format != "mlx" && result.Format != "gguf" && result.Format != "ollama" {
 		return modelExportOptions{}, usageError{message: fmt.Sprintf("model export format %q is not implemented; use waldo, huggingface, mlx, gguf, or ollama", result.Format)}
 	}
@@ -803,7 +703,7 @@ var modelChatInput io.Reader = os.Stdin
 var modelChatTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
 
 func runModelChat(context Context, args []string, stdout, stderr io.Writer) error {
-	name, prompt, options, err := parseModelChat(args)
+	name, prompt, options, err := cobraModelChatOptions(context, args)
 	if err != nil {
 		return err
 	}
@@ -847,52 +747,22 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	return errors.Join(chatErr, opened.Session.Close())
 }
 
-func parseModelChat(args []string) (string, *string, inference.Options, error) {
-	options := inference.Options{MaxTokens: 256, Temperature: 0.8, TopP: 0.95}
-	var positionals []string
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		var value string
-		var err error
-		switch argument {
-		case "--max-tokens", "--temperature", "--top-p", "--seed":
-			value, index, err = optionValue(args, index, argument)
-			if err != nil {
-				return "", nil, options, err
-			}
-		default:
-			if strings.HasPrefix(argument, "-") {
-				return "", nil, options, usageError{message: fmt.Sprintf("unknown model chat option %q", argument)}
-			}
-			positionals = append(positionals, argument)
-			continue
-		}
-		switch argument {
-		case "--max-tokens":
-			options.MaxTokens, err = strconv.Atoi(value)
-		case "--temperature":
-			options.Temperature, err = strconv.ParseFloat(value, 64)
-		case "--top-p":
-			options.TopP, err = strconv.ParseFloat(value, 64)
-		case "--seed":
-			seed, parseErr := strconv.ParseUint(value, 10, 64)
-			err = parseErr
-			options.Seed = &seed
-		}
-		if err != nil {
-			return "", nil, options, usageError{message: fmt.Sprintf("invalid %s value %q", argument, value)}
-		}
+func cobraModelChatOptions(context Context, args []string) (string, *string, inference.Options, error) {
+	options := inference.Options{MaxTokens: intOption(context, "max-tokens"), Temperature: float64Option(context, "temperature"), TopP: float64Option(context, "top-p")}
+	if optionChanged(context, "seed") {
+		seed := uint64Option(context, "seed")
+		options.Seed = &seed
 	}
-	if len(positionals) < 1 || len(positionals) > 2 {
+	if len(args) < 1 || len(args) > 2 {
 		return "", nil, options, usageError{message: "usage: waldo model chat <name> [prompt] [--max-tokens <n>] [--temperature <n>] [--top-p <n>] [--seed <n>] [--json]"}
 	}
 	if err := options.Validate(); err != nil {
 		return "", nil, options, usageError{message: err.Error()}
 	}
-	if len(positionals) == 2 {
-		return positionals[0], &positionals[1], options, nil
+	if len(args) == 2 {
+		return args[0], &args[1], options, nil
 	}
-	return positionals[0], nil, options, nil
+	return args[0], nil, options, nil
 }
 
 func runOneShotChat(context Context, opened inference.Opened, prompt string, options inference.Options, stdout io.Writer) error {

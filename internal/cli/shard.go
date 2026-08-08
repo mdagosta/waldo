@@ -8,8 +8,6 @@ package cli
 import (
 	"fmt"
 	"io"
-	"strconv"
-	"strings"
 	"text/tabwriter"
 
 	"github.com/openwaldo/waldo/internal/shard"
@@ -35,14 +33,14 @@ func runShardSummary(context Context, args []string, stdout, _ io.Writer) error 
 }
 
 func runShardAudit(context Context, args []string, stdout, progress io.Writer) error {
-	paths, options, err := parseAuditOptions(args, "usage: waldo shard audit <path...> [--workers <n>]")
+	options, err := cobraAuditOptions(context)
 	if err != nil {
 		return err
 	}
-	if len(paths) == 0 {
+	if len(args) == 0 {
 		return usageError{message: "usage: waldo shard audit <path...> [--workers <n>]"}
 	}
-	paths, err = shard.ResolvePaths(paths)
+	paths, err := shard.ResolvePaths(args)
 	if err != nil {
 		return err
 	}
@@ -62,33 +60,12 @@ func runShardAudit(context Context, args []string, stdout, progress io.Writer) e
 	return nil
 }
 
-func parseAuditOptions(args []string, usage string) ([]string, shard.AuditOptions, error) {
-	var paths []string
-	var options shard.AuditOptions
-	for index := 0; index < len(args); index++ {
-		argument := args[index]
-		value := ""
-		if argument == "--workers" {
-			index++
-			if index == len(args) {
-				return nil, options, usageError{message: usage}
-			}
-			value = args[index]
-		} else if strings.HasPrefix(argument, "--workers=") {
-			value = strings.TrimPrefix(argument, "--workers=")
-		} else if strings.HasPrefix(argument, "-") {
-			return nil, options, usageError{message: fmt.Sprintf("unknown audit option %q", argument)}
-		} else {
-			paths = append(paths, argument)
-			continue
-		}
-		workers, err := strconv.Atoi(value)
-		if err != nil || workers < 1 || workers > 32 {
-			return nil, options, usageError{message: "--workers must be an integer from 1 to 32"}
-		}
-		options.Workers = workers
+func cobraAuditOptions(context Context) (shard.AuditOptions, error) {
+	workers := intOption(context, "workers")
+	if workers < 0 || workers > 32 || (optionChanged(context, "workers") && workers == 0) {
+		return shard.AuditOptions{}, usageError{message: "--workers must be an integer from 1 to 32"}
 	}
-	return paths, options, nil
+	return shard.AuditOptions{Workers: workers}, nil
 }
 
 func auditProgressPrinter(output io.Writer) func(shard.AuditProgress) {
