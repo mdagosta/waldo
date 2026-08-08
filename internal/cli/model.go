@@ -971,12 +971,15 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 		paths = append(paths, object.Path)
 		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes})
 	}
-	audited, err := shard.Audit(context.Execution, paths)
+	audited, err := shard.VerifyWithOptions(context.Execution, paths, shard.AuditOptions{})
 	if err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s shard audit: %w", stage.Name, err)
 	}
 	if audited.Records != bom.Totals.Docs || audited.Tokens != bom.Totals.Tokens || audited.EncodedBytes != bom.Totals.Bytes {
 		return model.PreparedStage{}, fmt.Errorf("stage %s audited totals differ from index manifests", stage.Name)
+	}
+	if err := corpus.AttachShardAttestations(&bom, materialized.Objects); err != nil {
+		return model.PreparedStage{}, fmt.Errorf("stage %s shard BOM evidence: %w", stage.Name, err)
 	}
 	return model.PrepareStage(stage, bom, inputs)
 }

@@ -8,10 +8,49 @@ package cli
 import (
 	"fmt"
 	"io"
+	"path/filepath"
 	"text/tabwriter"
 
 	"github.com/openwaldo/waldo/internal/shard"
 )
+
+type shardBOMInspection struct {
+	Path        string            `json:"path"`
+	Attestation shard.Attestation `json:"attestation"`
+}
+
+func runShardBOM(context Context, args []string, stdout, _ io.Writer) error {
+	paths, err := shard.ResolvePaths(args)
+	if err != nil {
+		return err
+	}
+	inspections := make([]shardBOMInspection, 0, len(paths))
+	for _, path := range paths {
+		attestation, err := shard.InspectAttestation(path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		inspections = append(inspections, shardBOMInspection{Path: path, Attestation: attestation})
+	}
+	if context.JSON {
+		return writeJSON(stdout, inspections)
+	}
+	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "SHARD\tSTATUS\tBOM SHA256\tPLAN SHA256\tRECORDS\tTOKENS")
+	for _, inspection := range inspections {
+		bomHash, plan, records, tokens := "--", "--", "--", "--"
+		if inspection.Attestation.BOMSHA256 != "" {
+			bomHash = inspection.Attestation.BOMSHA256[:12]
+		}
+		if inspection.Attestation.BOM != nil {
+			plan = inspection.Attestation.BOM.PlanSHA256[:12]
+			records = humanInteger(inspection.Attestation.BOM.Records)
+			tokens = humanInteger(inspection.Attestation.BOM.Tokens)
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n", filepath.Base(inspection.Path), inspection.Attestation.Status, bomHash, plan, records, tokens)
+	}
+	return table.Flush()
+}
 
 func runShardSummary(context Context, args []string, stdout, _ io.Writer) error {
 	paths, err := shard.ResolvePaths(args)

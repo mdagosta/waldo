@@ -153,6 +153,10 @@ for required in PLAN.json MODEL.json MODEL-BOM.json; do
 done
 run_count=$(find "$models/smoke/runs" -type f -name RUN.json -print | wc -l | tr -d ' ')
 [ "$run_count" -eq 1 ] || { echo "found $run_count run records, want 1" >&2; exit 1; }
+run_bom=$(find "$models/smoke/runs" -type f -name RUN-BOM.json -print -quit)
+[ -n "$run_bom" ] || { echo "missing training run BOM" >&2; exit 1; }
+grep -Eq '"attestation"[[:space:]]*:' "$run_bom" || { echo "run BOM omitted shard attestation evidence" >&2; exit 1; }
+grep -Eq '"status"[[:space:]]*:[[:space:]]*"embedded"' "$run_bom" || { echo "run BOM omitted embedded shard BOM status" >&2; exit 1; }
 artifact_count=$(find "$models/smoke/runs" -type f -name fake-model.json -print | wc -l | tr -d ' ')
 [ "$artifact_count" -eq 1 ] || { echo "found $artifact_count fake artifacts, want 1" >&2; exit 1; }
 checkpoint_count=$(find "$models/smoke/runs" -type f -name 'step-*.json' -print | wc -l | tr -d ' ')

@@ -7,6 +7,8 @@ package shard
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -43,6 +45,16 @@ type Validation struct {
 	ContentHashes     bool `json:"content_hashes"`
 	TokenCounts       bool `json:"token_counts"`
 	ExactLicenseDedup bool `json:"exact_license_partition_dedup"`
+}
+
+// Attestation describes the provenance evidence discoverable in one shard.
+// Embedded BOMs are hashed independently so higher-level BOMs can pin the
+// evidence without confusing it with the enclosing Parquet object hash.
+type Attestation struct {
+	Status       string `json:"status"`
+	WriterRecipe string `json:"writer_recipe,omitempty"`
+	BOMSHA256    string `json:"bom_sha256,omitempty"`
+	BOM          *BOM   `json:"bom,omitempty"`
 }
 
 func NewBOM(planSHA256, tokenizer string, records, tokens, contentBytes int64, licenses []string) BOM {
@@ -111,6 +123,38 @@ func ReadBOM(file *parquet.File) (BOM, error) {
 		return BOM{}, err
 	}
 	return bom, nil
+}
+
+func InspectAttestation(path string) (Attestation, error) {
+	file, parquetFile, _, err := openShard(path)
+	if err != nil {
+		return Attestation{}, err
+	}
+	defer file.Close()
+	recipe, _ := parquetFile.Lookup("waldo.recipe")
+	switch recipe {
+	case TextWriterRecipe:
+		if _, err := verifyAttestedOne(path); err != nil {
+			return Attestation{}, err
+		}
+		bom, err := ReadBOM(parquetFile)
+		if err != nil {
+			return Attestation{}, err
+		}
+		encoded, err := json.Marshal(bom)
+		if err != nil {
+			return Attestation{}, err
+		}
+		digest := sha256.Sum256(encoded)
+		return Attestation{Status: "embedded", WriterRecipe: recipe, BOMSHA256: hex.EncodeToString(digest[:]), BOM: &bom}, nil
+	case FormerTextRecipe:
+		if _, err := verifyAttestedOne(path); err != nil {
+			return Attestation{}, err
+		}
+		return Attestation{Status: "implicit-v4", WriterRecipe: recipe}, nil
+	default:
+		return Attestation{Status: "unattested", WriterRecipe: recipe}, nil
+	}
 }
 
 func validDigest(value string) bool {

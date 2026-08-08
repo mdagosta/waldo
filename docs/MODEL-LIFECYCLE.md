@@ -305,8 +305,10 @@ stages complete and the replacement is atomically published.
 - `PLAN.json` content-identifies the immutable architecture and local model
   name plus any external origin BOM. Adding training does not change model
   identity.
-- `RUN-BOM.json` embeds the resolved corpus OpenWALDO BOM and pins architecture,
-  backend, objective, parameters, and execution environment before launch.
+- `RUN-BOM.json` embeds the verified corpus OpenWALDO BOM, including each
+  embedded shard BOM and its independent SHA-256 (or explicit legacy/deep
+  validation status), and pins architecture, backend, objective, parameters,
+  and execution environment before launch.
 - `RUN.json` moves atomically through `planned`, `running`, and exactly one of
   `complete`, `failed`, or `interrupted`. It separates verified partial
   progress from a complete observation and records every resume attempt.
@@ -316,6 +318,8 @@ stages complete and the replacement is atomically published.
   from the directory containing `MODEL-BOM.json` in a managed model, or
   `BOM.json` in a model export. Paths are portable and never contain a
   machine-specific model root.
+  Those run-BOM hashes transitively pin every shard BOM without duplicating
+  the full shard evidence in the aggregate model document.
   `current_run_id` selects the newest complete, non-simulated run containing
   real weight artifacts; earlier simulated and real runs remain visible as
   provenance. Before such a run exists, `current_origin_sha256` selects the

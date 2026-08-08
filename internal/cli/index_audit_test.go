@@ -67,7 +67,7 @@ func TestIndexAuditComparesStreamedShardTotalsWithManifest(t *testing.T) {
 	writeAuditManifest(t, root, objectPath, objectDigest, int64(encoded.Len()), tokens+1)
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"index", "audit", root}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "audited totals differ") {
+	if code := Run([]string{"index", "audit", root}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "embedded BOM differs from its corpus pin") {
 		t.Fatalf("mismatched audit code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 }

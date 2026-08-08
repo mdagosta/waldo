@@ -50,7 +50,9 @@ file hash.
   Every entry is self-contained: object identity, format, record schema,
   license, source references, conversion recipe, containing submanifest when
   applicable, optional record Merkle root, modality measures, and declared
-  measures.
+  measures. After object validation, `attestation` pins the embedded shard BOM
+  and its SHA-256; writer-v4 and deep-validated legacy shards record their
+  explicit validation status without inventing an embedded BOM.
 - `totals`, `modalities`, and `licenses` are exact sums of the selected shards,
   not estimates.
 

@@ -6,12 +6,16 @@
 package corpus
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/index"
+	waldoshard "github.com/openwaldo/waldo/internal/shard"
 )
 
 // Validate checks the internally provable claims in an OpenWALDO BOM. It does
@@ -128,6 +132,9 @@ func (bom BOM) Validate() error {
 		if !bom.Policy.Allows(shard.License) {
 			return fmt.Errorf("shard %s license %q violates the BOM policy", shard.SHA256[:12], shard.License)
 		}
+		if err := validateShardAttestation(shard); err != nil {
+			return err
+		}
 		measure := index.Measures{Shards: 1, Docs: shard.Docs, Tokens: shard.Tokens, Bytes: shard.Bytes}
 		addMeasure(&calculated, measure)
 		addMeasureMap(licenses, shard.License, measure)
@@ -145,6 +152,44 @@ func (bom BOM) Validate() error {
 		if manifest.Totals != manifestTotals[path] || !maps.Equal(manifest.Licenses, manifestLicenses[path]) || !maps.Equal(manifest.Modalities, manifestModalities[path]) {
 			return fmt.Errorf("manifest %s totals do not match its selected shards", path)
 		}
+	}
+	return nil
+}
+
+func validateShardAttestation(pin ShardPin) error {
+	if pin.Attestation == nil {
+		return nil
+	}
+	attestation := pin.Attestation
+	switch attestation.Status {
+	case "embedded":
+		if attestation.BOM == nil || !validSHA256(attestation.BOMSHA256) {
+			return fmt.Errorf("shard %s has incomplete embedded BOM evidence", pin.SHA256[:12])
+		}
+		if err := attestation.BOM.Validate(); err != nil {
+			return fmt.Errorf("shard %s embedded BOM: %w", pin.SHA256[:12], err)
+		}
+		encoded, err := json.Marshal(attestation.BOM)
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256(encoded)
+		if hex.EncodeToString(digest[:]) != attestation.BOMSHA256 {
+			return fmt.Errorf("shard %s embedded BOM digest differs", pin.SHA256[:12])
+		}
+		if attestation.WriterRecipe != attestation.BOM.WriterRecipe || attestation.BOM.RecordSchema != pin.RecordSchema || attestation.BOM.Records != pin.Docs || attestation.BOM.Tokens != pin.Tokens || len(attestation.BOM.Licenses) != 1 || attestation.BOM.Licenses[0] != pin.License {
+			return fmt.Errorf("shard %s embedded BOM differs from its corpus pin", pin.SHA256[:12])
+		}
+	case "implicit-v4":
+		if attestation.WriterRecipe != waldoshard.FormerTextRecipe || attestation.BOM != nil || attestation.BOMSHA256 != "" {
+			return fmt.Errorf("shard %s has invalid implicit-v4 evidence", pin.SHA256[:12])
+		}
+	case "deep-validated":
+		if attestation.BOM != nil || attestation.BOMSHA256 != "" {
+			return fmt.Errorf("shard %s has invalid deep-validation evidence", pin.SHA256[:12])
+		}
+	default:
+		return fmt.Errorf("shard %s has unsupported attestation status %q", pin.SHA256[:12], attestation.Status)
 	}
 	return nil
 }

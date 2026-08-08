@@ -350,9 +350,12 @@ to the manifest.
 The canonical Parquet footer carries a subject-`shard` OpenWALDO BOM. It pins
 the ingest plan, schema, writer, tokenizer, license partition, aggregate
 totals, and builder validation claims without adding a synthetic training row.
+`waldo shard bom <path...>` displays that evidence directly. `waldo index
+audit --show-boms <path>` lists every reconciled shard-BOM identity; JSON audit
+output includes the verified corpus BOM with its per-shard attestations.
 Recipe-driven ingestion excludes bounded malformed, empty, or unmappable
-records and WALDO prints a prominent warning with counts by reason before presenting the
-contribution for review.
+records and WALDO prints a prominent warning with counts by reason before
+presenting the contribution for review.
 
 ### Update an existing corpus
 

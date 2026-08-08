@@ -40,6 +40,43 @@ func TestSummaryUsesTinyFooterAggregatesAndAuditChecksRecords(t *testing.T) {
 	}
 }
 
+func TestInspectEmbeddedShardBOM(t *testing.T) {
+	text := "embedded BOM fixture"
+	tokens := tokenCount(t, text)
+	path := filepath.Join(t.TempDir(), "attested.parquet")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := NewTextParquetWriter(file)
+	if _, err := writer.Write([]TextRow{validTextRow(text, tokens)}); err != nil {
+		t.Fatal(err)
+	}
+	writer.SetKeyValueMetadata("waldo.records", "1")
+	writer.SetKeyValueMetadata("waldo.tokens", strconv.FormatInt(tokens, 10))
+	writer.SetKeyValueMetadata("waldo.content_bytes", strconv.Itoa(len(text)))
+	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
+	bom := NewBOM(strings.Repeat("a", 64), tokenizer.Default, 1, tokens, int64(len(text)), []string{"CC0-1.0"})
+	encoded, err := EncodeBOM(bom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer.SetKeyValueMetadata(BOMMetadataKey, encoded)
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	attestation, err := InspectAttestation(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attestation.Status != "embedded" || attestation.BOMSHA256 == "" || attestation.BOM == nil || attestation.BOM.PlanSHA256 != strings.Repeat("a", 64) {
+		t.Fatalf("attestation = %+v", attestation)
+	}
+}
+
 func TestAuditRejectsInvalidCanonicalRecordsAndFooters(t *testing.T) {
 	text := "audited text"
 	correctTokens := tokenCount(t, text)

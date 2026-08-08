@@ -18,6 +18,7 @@ import (
 	"github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/record"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 const BOMSchema = 1
@@ -69,20 +70,21 @@ type ManifestPin struct {
 }
 
 type ShardPin struct {
-	Manifest          string           `json:"manifest"`
-	SubManifestSHA256 string           `json:"sub_manifest_sha256,omitempty"`
-	URL               string           `json:"url"`
-	SHA256            string           `json:"sha256"`
-	Format            string           `json:"format"`
-	RecordSchema      int              `json:"record_schema"`
-	License           string           `json:"license"`
-	Sources           []string         `json:"sources,omitempty"`
-	ConvertedBy       index.Conversion `json:"converted_by"`
-	RecordsRoot       string           `json:"records_root,omitempty"`
-	Docs              int64            `json:"docs"`
-	Tokens            int64            `json:"tokens"`
-	Bytes             int64            `json:"bytes"`
-	Modalities        index.Modalities `json:"modalities,omitempty"`
+	Manifest          string             `json:"manifest"`
+	SubManifestSHA256 string             `json:"sub_manifest_sha256,omitempty"`
+	URL               string             `json:"url"`
+	SHA256            string             `json:"sha256"`
+	Format            string             `json:"format"`
+	RecordSchema      int                `json:"record_schema"`
+	License           string             `json:"license"`
+	Sources           []string           `json:"sources,omitempty"`
+	ConvertedBy       index.Conversion   `json:"converted_by"`
+	RecordsRoot       string             `json:"records_root,omitempty"`
+	Docs              int64              `json:"docs"`
+	Tokens            int64              `json:"tokens"`
+	Bytes             int64              `json:"bytes"`
+	Modalities        index.Modalities   `json:"modalities,omitempty"`
+	Attestation       *shard.Attestation `json:"attestation,omitempty"`
 }
 
 // BuildBOM resolves targets from one checkout into immutable manifest and

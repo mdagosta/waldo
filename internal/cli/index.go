@@ -215,8 +215,11 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 		}
 		auditOptions.Progress = auditProgressPrinter(progress)
 		audited, err = shard.AuditWithOptions(context.Execution, unique, auditOptions)
+		if err == nil {
+			err = corpus.AttachShardAttestations(&bom, materialized.Objects)
+		}
 	} else {
-		audited, err = verifyAuditStream(context.Execution, bom, cache, progress)
+		audited, err = verifyAuditStream(context.Execution, &bom, cache, progress)
 	}
 	if err != nil {
 		return err
@@ -234,18 +237,20 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 			Path          string                  `json:"path"`
 			Verification  waldoindex.Verification `json:"verification"`
 			Summary       shard.Summary           `json:"summary"`
+			BOM           corpus.BOM              `json:"bom"`
 			ScratchPurged lookaside.Stats         `json:"scratch_purged"`
-		}{"verified", target.Rel, verification, audited, purged})
+		}{"verified", target.Rel, verification, audited, bom, purged})
 	}
 	fmt.Fprintln(stdout, "STATUS:         VERIFIED")
 	printShardSummary(stdout, audited)
+	printShardBOMEvidence(stdout, bom, boolOption(context, "show-boms"))
 	return nil
 }
 
 // verifyAuditStream bounds disk use to the retained cache policy by verifying
 // each content-addressed object immediately after Fetch. Unlike a deep audit,
 // the attestation path never requires the entire corpus to coexist locally.
-func verifyAuditStream(ctx context.Context, bom corpus.BOM, cache *lookaside.Cache, progress io.Writer) (shard.Summary, error) {
+func verifyAuditStream(ctx context.Context, bom *corpus.BOM, cache *lookaside.Cache, progress io.Writer) (shard.Summary, error) {
 	seen := make(map[string]int64)
 	totalUnique := 0
 	for _, pin := range bom.Shards {
@@ -275,6 +280,9 @@ func verifyAuditStream(ctx context.Context, bom corpus.BOM, cache *lookaside.Cac
 		if err != nil {
 			return shard.Summary{}, fmt.Errorf("%s shard %s: %w", pin.Manifest, pin.SHA256[:12], err)
 		}
+		if err := corpus.AttachShardAttestation(bom, corpus.MaterializedObject{Shard: pin, Path: path}); err != nil {
+			return shard.Summary{}, err
+		}
 		total.Shards += one.Shards
 		total.Attested += one.Attested
 		total.DeepScanned += one.DeepScanned
@@ -302,7 +310,49 @@ func verifyAuditStream(ctx context.Context, bom corpus.BOM, cache *lookaside.Cac
 	}
 	sort.Strings(total.Licenses)
 	sort.Strings(total.Recipes)
+	if err := bom.Validate(); err != nil {
+		return shard.Summary{}, err
+	}
 	return total, nil
+}
+
+func printShardBOMEvidence(output io.Writer, bom corpus.BOM, details bool) {
+	embedded, implicit, deep := int64(0), int64(0), int64(0)
+	for _, pin := range bom.Shards {
+		if pin.Attestation == nil {
+			continue
+		}
+		switch pin.Attestation.Status {
+		case "embedded":
+			embedded++
+		case "implicit-v4":
+			implicit++
+		case "deep-validated":
+			deep++
+		}
+	}
+	fmt.Fprintf(output, "SHARD BOMS:     %s embedded, %s implicit-v4, %s deep-validated\n", humanInteger(embedded), humanInteger(implicit), humanInteger(deep))
+	if !details {
+		return
+	}
+	table := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(table, "SHARD\tSTATUS\tBOM SHA256\tPLAN SHA256")
+	seen := map[string]bool{}
+	for _, pin := range bom.Shards {
+		if seen[pin.SHA256] || pin.Attestation == nil {
+			continue
+		}
+		seen[pin.SHA256] = true
+		bomHash, plan := "--", "--"
+		if pin.Attestation.BOMSHA256 != "" {
+			bomHash = pin.Attestation.BOMSHA256[:12]
+		}
+		if pin.Attestation.BOM != nil {
+			plan = pin.Attestation.BOM.PlanSHA256[:12]
+		}
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", pin.SHA256[:12], pin.Attestation.Status, bomHash, plan)
+	}
+	_ = table.Flush()
 }
 
 func validateAuditCacheCapacity(cache *lookaside.Cache, required int64) error {

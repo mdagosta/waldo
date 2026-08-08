@@ -34,9 +34,14 @@ publication.
 `waldo index audit` uses scalable attestation verification by default:
 
 1. resolve and validate the corpus BOM;
-2. materialize each unique shard through the hash-verifying lookaside cache;
+2. stream each unique shard through the bounded, hash-verifying lookaside cache;
 3. validate its physical schema, footer aggregates, and embedded shard BOM;
 4. reconcile those totals with the resolved corpus BOM.
+
+Successful validation attaches the shard BOM and its independent SHA-256 to
+the resolved corpus BOM. Training run BOMs embed that enriched corpus BOM, and
+the aggregate model BOM pins each run BOM by SHA-256. `waldo shard bom` and
+`waldo index audit --show-boms` expose the same evidence for review.
 
 Writer v4 is accepted as an implicit ingestion attestation because that exact
 writer path performed a complete post-write record audit before publication.
