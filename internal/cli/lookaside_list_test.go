@@ -98,6 +98,9 @@ func TestLookasideListJSONWithoutIndex(t *testing.T) {
 	if code := Run([]string{"lookaside", "list", "--json"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("code=%d stderr=%q", code, stderr.String())
 	}
+	if strings.Contains(stderr.String(), "no index path specified") {
+		t.Fatalf("lookaside inventory emitted an index warning: %q", stderr.String())
+	}
 	var result struct {
 		Objects []struct {
 			Name     string    `json:"name"`

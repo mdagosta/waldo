@@ -36,7 +36,7 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return usageError{message: err.Error()}
 	}
-	targets, err := resolveIndexArguments(options.Paths)
+	targets, err := resolveIndexArgumentsWithWarning(options.Paths, stderr)
 	if err != nil {
 		return err
 	}
@@ -152,8 +152,8 @@ func parseExportOptions(args []string) (exportOptions, error) {
 			options.Paths = append(options.Paths, argument)
 		}
 	}
-	if len(options.Paths) < 2 {
-		return exportOptions{}, usageError{message: "usage: waldo index export <path...> <directory> [--format native|jsonl]"}
+	if len(options.Paths) < 1 {
+		return exportOptions{}, usageError{message: "usage: waldo index export [path...] <directory> [--format native|jsonl]"}
 	}
 	options.Output = options.Paths[len(options.Paths)-1]
 	options.Paths = options.Paths[:len(options.Paths)-1]

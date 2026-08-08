@@ -108,6 +108,39 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	}
 }
 
+func TestIndexIngestResolvesRelativeDestinationAgainstConfiguredIndex(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "document.txt")
+	if err := os.WriteFile(input, []byte("Training text.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := emptyCLIIndex(t)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Index: root}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"--json", "index", "ingest", input, "./core/example",
+		"--title", "Example", "--license", "CC0-1.0",
+		"--source", "https://example.test/data", "--source-category", "public-dataset", "--dry-run",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
+	}
+	var output struct {
+		Plan struct {
+			Destination string `json:"destination"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Plan.Destination != "core/example" {
+		t.Fatalf("destination = %q", output.Plan.Destination)
+	}
+}
+
 func TestIndexInitCreatesInspectableEmptyIndex(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "index")
 	var stdout, stderr bytes.Buffer
@@ -405,13 +438,23 @@ func TestFlagRichHelpExplainsRetainedOptions(t *testing.T) {
 	}
 }
 
-func TestModelTrainRequiresNameAndIndexPath(t *testing.T) {
+func TestModelTrainRequiresName(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"model", "train"}, &stdout, &stderr); code != 2 {
 		t.Fatalf("Run() code = %d, want 2", code)
 	}
-	if !strings.Contains(stderr.String(), "model train <name> <index-path") {
+	if !strings.Contains(stderr.String(), "model train <name> [index-path") {
 		t.Fatalf("stderr does not show usage: %q", stderr.String())
+	}
+}
+
+func TestModelTrainAllowsOmittedIndexSelection(t *testing.T) {
+	name, paths, epochs, err := parseModelTrain([]string{"example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "example" || len(paths) != 0 || epochs != 1 {
+		t.Fatalf("parseModelTrain() = name %q paths %v epochs %d", name, paths, epochs)
 	}
 }
 
@@ -724,11 +767,37 @@ func TestConfigSetIndexEnablesLogicalIndexPaths(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"index", "summary", "books"}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"index", "summary", "./books"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("summary code = %d, stderr = %q", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "tokens   2") {
 		t.Fatalf("summary = %q", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"--json", "index", "summary"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("whole summary code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "warning: no index path specified; using the entire configured index "+root) || !json.Valid(stdout.Bytes()) {
+		t.Fatalf("whole summary stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"index", "summary", "."}, &stdout, &stderr); code != 0 || strings.Contains(stderr.String(), "warning:") {
+		t.Fatalf("explicit root code = %d, stderr = %q", code, stderr.String())
+	}
+}
+
+func TestOmittedIndexPathWarnsForDiscoveredCheckout(t *testing.T) {
+	root := fixtureCLIIndex(t)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	t.Chdir(root)
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"index", "list"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("list code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "warning: no index path specified; using the entire discovered index "+root) {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 

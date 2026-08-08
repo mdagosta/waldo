@@ -43,11 +43,11 @@ func runIndexInit(context Context, args []string, stdout, _ io.Writer) error {
 	return nil
 }
 
-func runIndexList(context Context, args []string, stdout, _ io.Writer) error {
+func runIndexList(context Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 1 {
 		return usageError{message: "usage: waldo index list [path]"}
 	}
-	target, err := resolveIndexArgument(context, args)
+	target, err := resolveIndexArgument(args, stderr)
 	if err != nil {
 		return err
 	}
@@ -75,11 +75,11 @@ func runIndexList(context Context, args []string, stdout, _ io.Writer) error {
 	return table.Flush()
 }
 
-func runIndexShow(context Context, args []string, stdout, _ io.Writer) error {
+func runIndexShow(context Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 1 {
 		return usageError{message: "usage: waldo index show [path]"}
 	}
-	target, err := resolveIndexArgument(context, args)
+	target, err := resolveIndexArgument(args, stderr)
 	if err != nil {
 		return err
 	}
@@ -118,11 +118,11 @@ func runIndexShow(context Context, args []string, stdout, _ io.Writer) error {
 	return nil
 }
 
-func runIndexSummary(context Context, args []string, stdout, _ io.Writer) error {
+func runIndexSummary(context Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) > 1 {
 		return usageError{message: "usage: waldo index summary [path]"}
 	}
-	target, err := resolveIndexArgument(context, args)
+	target, err := resolveIndexArgument(args, stderr)
 	if err != nil {
 		return err
 	}
@@ -173,7 +173,7 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 	if len(paths) > 1 {
 		return usageError{message: "usage: waldo index audit [path] [--workers <n>]"}
 	}
-	target, err := resolveIndexArgument(context, paths)
+	target, err := resolveIndexArgument(paths, progress)
 	if err != nil {
 		return err
 	}
@@ -274,7 +274,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	if path != "" {
 		paths = []string{path}
 	}
-	target, err := resolveIndexArgument(context, paths)
+	target, err := resolveIndexArgument(paths, progress)
 	if err != nil {
 		return err
 	}
@@ -367,8 +367,8 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	return nil
 }
 
-func resolveIndexArgument(context Context, args []string) (waldoindex.Target, error) {
-	targets, err := resolveIndexArguments(args)
+func resolveIndexArgument(args []string, warnings io.Writer) (waldoindex.Target, error) {
+	targets, err := resolveIndexArgumentsWithWarning(args, warnings)
 	if err != nil {
 		return waldoindex.Target{}, err
 	}
@@ -376,11 +376,38 @@ func resolveIndexArgument(context Context, args []string) (waldoindex.Target, er
 }
 
 func resolveIndexArguments(args []string) ([]waldoindex.Target, error) {
-	configuration, err := config.Load()
+	selection, err := resolveIndexSelection(args)
+	return selection.Targets, err
+}
+
+type resolvedIndexSelection struct {
+	Targets    []waldoindex.Target
+	Omitted    bool
+	Configured bool
+}
+
+func resolveIndexArgumentsWithWarning(args []string, warnings io.Writer) ([]waldoindex.Target, error) {
+	selection, err := resolveIndexSelection(args)
 	if err != nil {
 		return nil, err
 	}
+	if selection.Omitted && warnings != nil {
+		source := "discovered"
+		if selection.Configured {
+			source = "configured"
+		}
+		fmt.Fprintf(warnings, "warning: no index path specified; using the entire %s index %s\n", source, selection.Targets[0].Root)
+	}
+	return selection.Targets, nil
+}
+
+func resolveIndexSelection(args []string) (resolvedIndexSelection, error) {
+	configuration, err := config.Load()
+	if err != nil {
+		return resolvedIndexSelection{}, err
+	}
 	values := args
+	omitted := len(values) == 0
 	if len(values) == 0 {
 		values = []string{""}
 	}
@@ -394,16 +421,16 @@ func resolveIndexArguments(args []string) ([]waldoindex.Target, error) {
 			target, err = waldoindex.Resolve(knownRoot, value)
 		}
 		if err != nil {
-			return nil, err
+			return resolvedIndexSelection{}, err
 		}
 		if len(targets) == 0 {
 			knownRoot = target.Root
 		} else if target.Root != targets[0].Root {
-			return nil, fmt.Errorf("index targets span different checkouts: %s and %s", targets[0].Root, target.Root)
+			return resolvedIndexSelection{}, fmt.Errorf("index targets span different checkouts: %s and %s", targets[0].Root, target.Root)
 		}
 		targets = append(targets, target)
 	}
-	return targets, nil
+	return resolvedIndexSelection{Targets: targets, Omitted: omitted, Configured: configuration.Index != ""}, nil
 }
 
 func printManifest(w io.Writer, path string, manifest waldoindex.Manifest) {

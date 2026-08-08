@@ -60,7 +60,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			return fmt.Errorf("load input profile: %w", err)
 		}
 	}
-	target, err := waldoindex.ResolveDestination(options.Request.Destination)
+	configuration, err := config.Load()
+	if err != nil {
+		return err
+	}
+	target, err := waldoindex.ResolveDestinationConfigured(configuration.Index, options.Request.Destination)
 	if err != nil {
 		return err
 	}
@@ -71,12 +75,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if isRecipe && options.DryRun {
 		return writeRecipePreflight(context, stdout, loadedRecipe, target.Rel)
 	}
-	var configuration config.Config
 	if !options.DryRun {
-		configuration, err = config.Load()
-		if err != nil {
-			return err
-		}
 		if configuration.Lookaside.Publish == nil {
 			return usageError{message: "index ingest needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`"}
 		}

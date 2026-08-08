@@ -335,6 +335,16 @@ func TestParseExportOptions(t *testing.T) {
 	}
 }
 
+func TestParseExportOptionsAllowsWholeIndexSelection(t *testing.T) {
+	options, err := parseExportOptions([]string{"destination"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if options.Output != "destination" || len(options.Paths) != 0 {
+		t.Fatalf("parseExportOptions() = %+v", options)
+	}
+}
+
 func TestParseBOMExportOptions(t *testing.T) {
 	options, err := parseBOMExportOptions([]string{"smoke", "report.json", "--format=eu-gpai", "--provider", "provider.json", "--allow-incomplete", "--force"})
 	if err != nil {

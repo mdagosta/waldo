@@ -85,6 +85,38 @@ func TestResolveDiscoversCheckoutFromAbsoluteTargets(t *testing.T) {
 	}
 }
 
+func TestResolveConfiguredTreatsEveryRelativePathAsIndexRelative(t *testing.T) {
+	root := fixtureIndex(t)
+	t.Chdir(t.TempDir())
+	for _, test := range []struct {
+		path string
+		rel  string
+	}{
+		{path: "alpha", rel: "alpha"},
+		{path: "./alpha", rel: "alpha"},
+		{path: ".", rel: ""},
+	} {
+		target, err := ResolveConfigured(root, test.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target.Root != root || target.Rel != test.rel {
+			t.Errorf("ResolveConfigured(%q) = root %q rel %q, want root %q rel %q", test.path, target.Root, target.Rel, root, test.rel)
+		}
+	}
+	if _, err := ResolveConfigured(root, "../outside"); err == nil || !strings.Contains(err.Error(), "outside index checkout") {
+		t.Fatalf("ResolveConfigured() escape error = %v", err)
+	}
+	other := fixtureIndex(t)
+	target, err := ResolveConfigured(root, filepath.Join(other, "alpha"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Root != other || target.Rel != "alpha" {
+		t.Fatalf("absolute override = %+v", target)
+	}
+}
+
 func TestResolveDestinationNormalizesProspectiveAbsolutePath(t *testing.T) {
 	root := fixtureIndex(t)
 	target, err := ResolveDestination(filepath.Join(root, "alpha", "new", "corpus"))
@@ -93,6 +125,21 @@ func TestResolveDestinationNormalizesProspectiveAbsolutePath(t *testing.T) {
 	}
 	if target.Root != root || target.Rel != "alpha/new/corpus" || target.Abs != filepath.Join(root, "alpha", "new", "corpus") {
 		t.Fatalf("ResolveDestination() = %+v", target)
+	}
+}
+
+func TestResolveDestinationConfiguredUsesConfiguredCheckout(t *testing.T) {
+	root := fixtureIndex(t)
+	t.Chdir(t.TempDir())
+	target, err := ResolveDestinationConfigured(root, "./alpha/new/corpus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Root != root || target.Rel != "alpha/new/corpus" || target.Abs != filepath.Join(root, "alpha", "new", "corpus") {
+		t.Fatalf("ResolveDestinationConfigured() = %+v", target)
+	}
+	if _, err := ResolveDestinationConfigured(root, "../outside"); err == nil || !strings.Contains(err.Error(), "beneath checkout") {
+		t.Fatalf("ResolveDestinationConfigured() escape error = %v", err)
 	}
 }
 

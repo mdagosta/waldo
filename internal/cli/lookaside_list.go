@@ -77,7 +77,7 @@ func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer
 	references := map[string][]string{}
 	indexPath := ""
 	if indexArgument != "" {
-		target, err := resolveIndexArgument(commandContext, []string{indexArgument})
+		target, err := resolveIndexArgument([]string{indexArgument}, nil)
 		if err != nil {
 			return err
 		}

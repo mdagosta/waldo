@@ -47,7 +47,7 @@ func TestModelForecastAcceptsConfiguredMultipleIndexPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--json", "model", "forecast", "books", "books/books.json"}, &stdout, &stderr)
+	code := Run([]string{"--json", "model", "forecast", "./books", "books/books.json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}
@@ -65,6 +65,15 @@ func TestModelForecastAcceptsConfiguredMultipleIndexPaths(t *testing.T) {
 	}
 	if output.Tokens != 2 || output.Preset != "10m" || output.Parameters == 0 || len(output.Paths) != 2 || len(output.Forecast.Configurations) == 0 {
 		t.Fatalf("output = %+v", output)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = Run([]string{"--json", "model", "forecast"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("whole-index forecast code = %d, stderr = %q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "warning: no index path specified; using the entire configured index "+root) {
+		t.Fatalf("whole-index forecast stderr = %q", stderr.String())
 	}
 
 	stdout.Reset()

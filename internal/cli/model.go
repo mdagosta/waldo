@@ -36,10 +36,7 @@ import (
 	"golang.org/x/term"
 )
 
-func runModelForecast(context Context, args []string, stdout, _ io.Writer) error {
-	if len(args) == 0 {
-		return usageError{message: "usage: waldo model forecast <compose.yaml> | <index-path...> [--json]"}
-	}
+func runModelForecast(context Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 1 {
 		isCompose, err := model.IsComposeFile(args[0])
 		if err != nil {
@@ -49,7 +46,7 @@ func runModelForecast(context Context, args []string, stdout, _ io.Writer) error
 			return runModelComposeForecast(context, args[0], stdout)
 		}
 	}
-	return runModelIndexForecast(context, args, stdout)
+	return runModelIndexForecast(context, args, stdout, stderr)
 }
 
 func runModelComposeForecast(context Context, path string, stdout io.Writer) error {
@@ -75,8 +72,8 @@ func runModelComposeForecast(context Context, path string, stdout io.Writer) err
 	return nil
 }
 
-func runModelIndexForecast(context Context, paths []string, stdout io.Writer) error {
-	targets, err := resolveIndexArguments(paths)
+func runModelIndexForecast(context Context, paths []string, stdout, warnings io.Writer) error {
+	targets, err := resolveIndexArgumentsWithWarning(paths, warnings)
 	if err != nil {
 		return err
 	}
@@ -484,8 +481,8 @@ func parseModelTrain(args []string) (string, []string, int64, error) {
 			positionals = append(positionals, argument)
 		}
 	}
-	if len(positionals) < 2 {
-		return "", nil, 0, usageError{message: "usage: waldo model train <name> <index-path...> [--epochs <n>] [--json]"}
+	if len(positionals) < 1 {
+		return "", nil, 0, usageError{message: "usage: waldo model train <name> [index-path...] [--epochs <n>] [--json]"}
 	}
 	return positionals[0], positionals[1:], epochs, nil
 }
@@ -1039,7 +1036,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
 		return model.PreparedStage{}, fmt.Errorf("automatic one-pass training currently requires byte@builtin-byte-schema-1 with vocabulary_size 259")
 	}
-	targets, err := resolveIndexArguments(paths)
+	targets, err := resolveIndexArgumentsWithWarning(paths, progress)
 	if err != nil {
 		return model.PreparedStage{}, err
 	}

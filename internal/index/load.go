@@ -66,11 +66,16 @@ func Resolve(knownRoot, target string) (Target, error) {
 	return within(root, target)
 }
 
-// ResolveConfigured gives explicit filesystem paths precedence over a machine
-// default while resolving logical or omitted paths against that default.
+// ResolveConfigured gives explicit absolute filesystem paths precedence over a
+// machine default. Every relative path, including ./ paths, is confined to the
+// configured checkout when one exists.
 func ResolveConfigured(configuredRoot, target string) (Target, error) {
-	if target != "" && isFilesystemPath(target) {
-		return Resolve("", target)
+	expanded, err := expandUser(target)
+	if err != nil {
+		return Target{}, err
+	}
+	if target != "" && filepath.IsAbs(expanded) {
+		return Resolve("", expanded)
 	}
 	return Resolve(configuredRoot, target)
 }
@@ -79,6 +84,12 @@ func ResolveConfigured(configuredRoot, target string) (Target, error) {
 // destination. Unlike Resolve, the leaf need not exist yet; its nearest
 // existing ancestor must be inside an index checkout.
 func ResolveDestination(target string) (Target, error) {
+	return ResolveDestinationConfigured("", target)
+}
+
+// ResolveDestinationConfigured resolves relative prospective destinations
+// beneath a configured checkout while preserving absolute-path discovery.
+func ResolveDestinationConfigured(configuredRoot, target string) (Target, error) {
 	if strings.TrimSpace(target) == "" {
 		return Target{}, fmt.Errorf("index destination is required")
 	}
@@ -86,8 +97,14 @@ func ResolveDestination(target string) (Target, error) {
 	if err != nil {
 		return Target{}, err
 	}
-	var abs string
-	if isFilesystemPath(expanded) {
+	var abs, root string
+	if configuredRoot != "" && !filepath.IsAbs(expanded) {
+		root, err = findRoot(configuredRoot)
+		if err != nil {
+			return Target{}, fmt.Errorf("index checkout %s: %w", configuredRoot, err)
+		}
+		abs = filepath.Join(root, filepath.FromSlash(expanded))
+	} else if isFilesystemPath(expanded) {
 		abs, err = filepath.Abs(expanded)
 		if err != nil {
 			return Target{}, err
@@ -117,9 +134,11 @@ func ResolveDestination(target string) (Target, error) {
 		}
 		ancestor = parent
 	}
-	root, err := findRoot(ancestor)
-	if err != nil {
-		return Target{}, fmt.Errorf("index destination %s: %w", target, err)
+	if root == "" {
+		root, err = findRoot(ancestor)
+		if err != nil {
+			return Target{}, fmt.Errorf("index destination %s: %w", target, err)
+		}
 	}
 	rel, err := filepath.Rel(root, abs)
 	if err != nil {
