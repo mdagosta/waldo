@@ -34,6 +34,11 @@ Owns the Git metadata tree and its meaning:
 
 The index never reads model state and never runs a trainer.
 
+WALDO maintains the default public metadata checkout at `~/.waldo/index`.
+That checkout is read-only to authoring workflows: Git synchronization may
+clone, fetch, or cleanly fast-forward it, while ingestion and corpus update
+require an explicit contributor checkout.
+
 ### Record and license
 
 Own the canonical document schema, record identity, license normalization, and
@@ -154,6 +159,7 @@ recorded as observations rather than replaced by projected corpus totals.
 cmd/waldo/          process entry point
 internal/cli/       parsing, help, and presentation
 internal/config/    machine-local transport and execution preferences
+internal/git/       Go-native checkout inspection and synchronization
 internal/canon/     canonical JSON primitives shared by durable formats
 internal/index/     metadata schemas, tree, resolver, verification
 internal/record/    document schema and canonical representation
@@ -165,7 +171,7 @@ internal/corpus/    ingestion, selection, OpenWALDO BOMs, export
 internal/provenance/BOM types and verification
 internal/model/     model lifecycle and composes
 internal/training/  backend interface and adapters
-internal/platform/  narrow OS, Git, and process adapters when needed
+internal/platform/  narrow OS and process adapters when needed
 ```
 
 This is a map, not a requirement to create empty packages. Packages are added
@@ -179,7 +185,8 @@ with the first vertical slice that needs them.
 - File writes that establish state use temporary files plus atomic rename.
 - Large-object operations stream; corpus size must not imply equivalent memory
   use.
-- Network access is explicit in the command and injectable in tests.
+- Network access is explicit in the command and injectable in tests, except
+  for the documented first-use clone of the managed default index.
 - Deterministic formats use golden-byte tests on Linux and macOS.
 - Errors retain the relevant path, hash, source, or run identifier.
 - Configuration contains machine preferences, never corpus meaning.

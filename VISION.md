@@ -46,6 +46,7 @@ future capabilities and must never be implied by the baseline BOM.
 ## Scope of the first useful release
 
 - Read and verify the existing `waldo-index` format.
+- Clone and explicitly fast-forward a managed default index checkout.
 - Inspect and summarize an index checkout.
 - Select corpora and materialize hash-verified shards through a local cache.
 - Export native Parquet or canonical interchange data with a corpus BOM.
@@ -57,7 +58,7 @@ future capabilities and must never be implied by the baseline BOM.
 
 ## Explicitly deferred
 
-- A remote index API or centrally managed index checkout.
+- A remote index API beyond the managed public Git checkout.
 - Automated pull-request creation.
 - Fetcher implementations in this repository.
 - SFT, preference optimization, and frontier-scale orchestration.

@@ -166,12 +166,16 @@ waldo config set lookaside file:///tmp/waldo-lookaside
 waldo config set model.backend auto
 ```
 
-Once `index` is configured, every relative index path—including one beginning
-with `./`—resolves beneath that checkout. Absolute paths and paths beginning
-with `~/` explicitly select another checkout. If a command's index selection
-is omitted, WALDO warns on standard error and uses the entire configured
-index. Without this setting, WALDO discovers an enclosing checkout from the
-current directory.
+With `index` unset, WALDO uses a managed, read-only checkout at
+`~/.waldo/index`. It clones `openwaldo/waldo-index` on first use. Ordinary read
+commands retain that exact revision; use `waldo index fetch`, `waldo index
+status`, and `waldo index pull` to inspect and apply upstream changes.
+
+Setting `index` selects a contributor checkout instead. Every relative index
+path—including one beginning with `./`—then resolves beneath it. Absolute paths
+and paths beginning with `~/` explicitly select another checkout. If a
+command's index selection is omitted, WALDO warns on standard error and uses
+the entire resolved index.
 
 For S3 publication:
 
@@ -190,6 +194,7 @@ login exists.
 
 Durable defaults are intentionally conservative:
 
+- managed read-only index: `~/.waldo/index`;
 - models: `~/.waldo/models`;
 - retained verified-object cache: `~/.waldo/cache`, bounded to 20 GiB; and
 - partial downloads and ingestion recovery: user-scoped directories beneath
@@ -229,17 +234,19 @@ and manifest totals.
 
 ## Ingest a corpus
 
-Create a new schema-1 index when needed:
+Clone and select a writable contributor checkout of the public index:
 
 ```bash
-waldo index init ./waldo-index
+waldo index clone ./waldo-index
 waldo config set index ./waldo-index
 waldo config set lookaside file:///tmp/waldo-lookaside
 ```
 
+`~/.waldo/index` is reserved for WALDO-managed reads. `index init`, `index
+ingest`, and `index update` refuse to modify it. `waldo index init` remains
+available for creating a separate new schema-1 index.
+
 The `file://` lookaside is useful for local development and testing.
-`waldo index init` writes the smallest valid index but deliberately leaves Git
-initialization and the first commit to the user.
 
 Direct ingestion accepts files or recursively scanned directories. WALDO can
 probe text, Markdown, plain/gzip/zstd JSONL, and raw Parquet without using an
@@ -295,7 +302,7 @@ waldo index export core/books science/papers ./training-jsonl \
   --format jsonl \
   --exclude-license 'LicenseRef-*'
 
-# With no selection, export the entire configured index (and warn).
+# With no selection, export the entire resolved index (and warn).
 waldo index export ./complete-index-export
 
 waldo bom show ./books-export
@@ -327,7 +334,7 @@ waldo lookaside verify
 
 Unlike corpus-consuming commands, argumentless `lookaside list` is an
 unfiltered storage inventory and does not select or warn about an index. Use
-`waldo lookaside list .` to filter against the entire configured index. With
+`waldo lookaside list .` to filter against the entire resolved index. With
 an index path, `lookaside list` normally shows only matching objects;
 `--all` adds unmatched objects without claiming they are unreachable from every
 other index or BOM. Destructive cleanup is intentionally explicit:
@@ -347,7 +354,7 @@ and sorts approximate runtime from slowest to fastest:
 ```bash
 waldo model forecast ./model.yaml
 waldo model forecast core/books science/papers
-waldo model forecast # entire configured index, with a warning
+waldo model forecast # entire resolved index, with a warning
 ```
 
 Initialize an immutable architecture and train it directly on recursive index
@@ -356,7 +363,7 @@ selections:
 ```bash
 waldo model init small --preset 10m
 waldo model train small core/books --epochs 1
-waldo model train small --epochs 1 # entire configured index, with a warning
+waldo model train small --epochs 1 # entire resolved index, with a warning
 waldo model summary small
 waldo model bom small
 ```

@@ -10,11 +10,12 @@ changes it.
    implementation phase.
 2. Keep the common path short. Put destructive and operational commands behind
    explicit nouns and verbs.
-3. Resolve relative index paths beneath the checkout set by `waldo config set
-   index`. Without that setting, discover the enclosing checkout by walking
-   upward from the current directory like Git. Absolute and `~/` paths
-   explicitly discover another checkout. When a corpus-consuming command
-   omits its selection, warn and use the entire resolved index.
+3. Resolve relative index paths beneath the contributor checkout set by `waldo
+   config set index`, or the managed read-only `~/.waldo/index` checkout when
+   unset. Clone that managed checkout on first use, but update it only through
+   explicit synchronization commands. Absolute and `~/` paths explicitly
+   discover another checkout. When a corpus-consuming command omits its
+   selection, warn and use the entire resolved index.
 4. Show a human-readable result by default and offer `--json` wherever output
    is useful to automation.
 5. Perform a preflight before moving large data or starting paid compute.
@@ -28,6 +29,10 @@ changes it.
 waldo
 ├── index
 │   ├── init
+│   ├── status
+│   ├── fetch
+│   ├── pull
+│   ├── clone
 │   ├── list
 │   ├── show
 │   ├── summary
@@ -83,6 +88,22 @@ named by that file; they populate private temporary input space and stop.
 
 ## Primary journeys
 
+### Use the managed public index
+
+With no configuration, read and model workflows use `~/.waldo/index`. The
+first such command clones `https://github.com/openwaldo/waldo-index.git` branch
+`main` through WALDO's built-in Go Git client. Reads never pull implicitly:
+
+```bash
+waldo index status
+waldo index fetch
+waldo index pull
+```
+
+`fetch` changes only `origin/main`. `pull` accepts only a clean fast-forward;
+it refuses local changes, local-only commits, divergence, another branch, or
+another origin.
+
 ### Initialize an empty index
 
 ```bash
@@ -91,7 +112,8 @@ waldo index init /path/to/new-waldo-index
 
 The destination must be new or empty. WALDO writes only the root schema-1
 `index.yaml`; it does not initialize Git, configure a lookaside, or create a
-corpus. Those remain separate, visible actions.
+corpus. It also refuses the reserved managed checkout path. Those remain
+separate, visible actions.
 
 ### Inspect and verify an index
 
@@ -126,6 +148,15 @@ rollup-backed corpus it also expands the content-addressed submanifest tree,
 checks every level's totals, and then verifies the resolved leaf objects.
 
 ### Add a corpus
+
+Corpus authoring requires an explicit contributor checkout:
+
+```bash
+waldo index clone /path/to/waldo-index
+waldo config set index /path/to/waldo-index
+```
+
+The managed `~/.waldo/index` checkout is never an ingest or update target.
 
 ```bash
 waldo index ingest ~/data/books core/books \
@@ -401,6 +432,7 @@ Default locations keep durable state and disposable work clearly separated:
 ```text
 ~/.waldo/models       durable model artifacts and their BOMs
 ~/.waldo/cache        retained, verified lookaside objects
+~/.waldo/index        managed read-only public index checkout
 <system temp>/waldo-<user>/scratch  partial object downloads
 <system temp>/waldo-<user>/ingest   resumable ingestion working state
 ```
@@ -432,7 +464,7 @@ hashes, timestamps, inventory context, missing references, and totals.
 
 Unlike corpus-consuming commands, argumentless `lookaside list` remains an
 unfiltered object inventory and emits no whole-index warning. Pass `.` to
-filter it against the entire configured index.
+filter it against the entire resolved index.
 
 Canonical objects are recognized by a trailing
 `<sha[0:2]>/<sha[2:4]>/<sha256>` path at any bucket prefix. With no index path,
@@ -457,7 +489,7 @@ Configuration keys are positional and intentionally limited:
 
 | Key | Purpose |
 | --- | --- |
-| `index` | Default local index checkout for logical model and index paths. |
+| `index` | Contributor checkout override; default is managed `~/.waldo/index`. |
 | `lookaside` | Writable `s3://` production or `file://` test lookaside. |
 | `lookaside.region` | AWS region when it cannot be inferred. |
 | `lookaside.workers` | Concurrent completed-shard uploads, from 1 through 32. |
@@ -486,7 +518,7 @@ waldo model init smoke --preset 10m
 waldo model pull llama-base huggingface://organization/model@main
 waldo model train smoke core/books
 waldo model train smoke core/books --epochs 3
-waldo model train smoke # entire configured index, with a warning
+waldo model train smoke # entire resolved index, with a warning
 waldo model compose smoke configs/smoke.yaml
 ```
 
@@ -610,9 +642,9 @@ semantics, format conversions, disclosure requirements, and signing contract.
 The final spelling will be validated while implementing the first commands,
 but these semantics should be consistent:
 
-- Index locations are positional. Absolute paths, `./`/`../` paths, corpus
-  directories, and manifest paths discover their enclosing checkout; omitted
-  paths discover from the current directory.
+- Index locations are positional. Relative and omitted paths use the configured
+  contributor checkout or managed default; absolute and `~/` paths explicitly
+  discover another checkout.
 - `--json` emits stable machine-readable output.
 - `--quiet` suppresses progress but not errors or final machine output.
 - `--dry-run` performs resolution and preflight without mutation.
