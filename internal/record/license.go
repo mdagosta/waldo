@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-var creativeCommonsURL = regexp.MustCompile(`(?i)^https?://creativecommons\.org/(?:licenses/([a-z-]+)/([0-9.]+)|publicdomain/zero/([0-9.]+))/?(?:legalcode/?)?(?:[?#].*)?$`)
+var creativeCommonsURL = regexp.MustCompile(`(?i)https?://creativecommons\.org/(?:licenses/([a-z-]+)/([0-9.]+)|publicdomain/zero/([0-9.]+))/?(?:legalcode/?)?(?:[?#][^[:space:]]*)?`)
 var creativeCommonsName = regexp.MustCompile(`(?i)^CC[ _-]*(BY(?:[ _-]*(?:NC|ND|SA)){0,2}|ZERO|0)[ _-]*([0-9]+(?:\.[0-9]+)?)$`)
 
 // NormalizeLicense canonicalizes recognized Creative Commons identifiers.
@@ -23,6 +23,9 @@ func NormalizeLicense(raw string) string {
 			return "CC0-" + match[3]
 		}
 		return "CC-" + strings.ToUpper(match[1]) + "-" + match[2]
+	}
+	if strings.EqualFold(value, "Public Domain") {
+		return "LicenseRef-Public-Domain"
 	}
 	if match := creativeCommonsName.FindStringSubmatch(value); match != nil {
 		name := strings.ToUpper(strings.NewReplacer(" ", "-", "_", "-").Replace(match[1]))

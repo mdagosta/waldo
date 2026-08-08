@@ -34,6 +34,10 @@ budget, without changing the canonical record schema.
 
 Per-record licenses are normalized by WALDO, preserved as raw evidence, and
 partition canonical objects so each shard has one effective license.
+Normalization recognizes canonical Creative Commons URLs both alone and
+inside descriptive upstream labels, and maps an exact case-insensitive
+`Public Domain` declaration to `LicenseRef-Public-Domain`. The original value
+remains in `license_raw`.
 
 ## Consequences
 
