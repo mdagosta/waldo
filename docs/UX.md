@@ -12,10 +12,11 @@ changes it.
    explicit nouns and verbs.
 3. Resolve relative index paths beneath the contributor checkout set by `waldo
    config set index`, or the managed read-only `~/.waldo/index` checkout when
-   unset. Clone that managed checkout on first use, but update it only through
-   explicit synchronization commands. Absolute and `~/` paths explicitly
-   discover another checkout. When a corpus-consuming command omits its
-   selection, warn and use the entire resolved index.
+   unset. Clone that managed checkout on first use. Before use, automatically
+   fast-forward any selected Git checkout only when it is clean and behind its
+   tracking branch. Absolute and `~/` paths explicitly discover another
+   checkout. When a corpus-consuming command omits its selection, warn and use
+   the entire resolved index.
 4. Show a human-readable result by default and offer `--json` wherever output
    is useful to automation.
 5. Perform a preflight before moving large data or starting paid compute.
@@ -92,7 +93,8 @@ named by that file; they populate private temporary input space and stop.
 
 With no configuration, read and model workflows use `~/.waldo/index`. The
 first such command clones `https://github.com/openwaldo/waldo-index.git` branch
-`main` through WALDO's built-in Go Git client. Reads never pull implicitly:
+`main` through WALDO's built-in Go Git client. Index-consuming commands then
+fetch and fast-forward the selected checkout automatically when safe:
 
 ```bash
 waldo index status
@@ -100,9 +102,12 @@ waldo index fetch
 waldo index pull
 ```
 
-`fetch` changes only `origin/main`. `pull` accepts only a clean fast-forward;
-it refuses local changes, local-only commits, divergence, another branch, or
-another origin.
+`status`, `fetch`, and `pull` operate on the configured checkout when one is
+set, otherwise on the managed default. `fetch` changes only the tracking
+remote reference. Automatic and explicit pulls accept only a clean
+fast-forward; they refuse local changes, local-only commits, divergence,
+detached HEAD, or a missing tracking remote. `index verify --offline` is the
+exception: it uses the current local revision without network access.
 
 ### Initialize an empty index
 

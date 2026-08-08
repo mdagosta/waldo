@@ -167,15 +167,18 @@ waldo config set model.backend auto
 ```
 
 With `index` unset, WALDO uses a managed, read-only checkout at
-`~/.waldo/index`. It clones `openwaldo/waldo-index` on first use. Ordinary read
-commands retain that exact revision; use `waldo index fetch`, `waldo index
-status`, and `waldo index pull` to inspect and apply upstream changes.
+`~/.waldo/index`. It clones `openwaldo/waldo-index` on first use. Commands that
+consume an index automatically fetch and fast-forward its tracking branch when
+the checkout is clean and behind. Dirty, ahead, or diverged checkouts fail
+without modification. `waldo index status`, `fetch`, and `pull` remain
+available for inspection and explicit synchronization.
 
 Setting `index` selects a contributor checkout instead. Every relative index
 path—including one beginning with `./`—then resolves beneath it. Absolute paths
 and paths beginning with `~/` explicitly select another checkout. If a
 command's index selection is omitted, WALDO warns on standard error and uses
-the entire resolved index.
+the entire resolved index. Synchronization follows the selected checkout's
+current branch and configured tracking remote; it is not chosen by pathname.
 
 For S3 publication:
 

@@ -19,9 +19,11 @@ WALDO must not depend on an installed `git` executable for this workflow.
 
 When `config.index` is unset, WALDO uses `~/.waldo/index` as its managed index
 checkout. The first read workflow that needs it clones
-`https://github.com/openwaldo/waldo-index.git`, branch `main`. Subsequent
-network synchronization is explicit through `waldo index fetch` and `waldo
-index pull`; ordinary reads do not silently change the selected revision.
+`https://github.com/openwaldo/waldo-index.git`, branch `main`. Commands that
+consume an index automatically fetch and fast-forward the selected checkout
+when it is clean and behind its configured tracking branch. This applies to a
+configured or explicitly supplied checkout as well as the managed default;
+synchronization policy is based on Git state, not filesystem location.
 
 The managed checkout is read-only from the corpus-authoring perspective.
 `index init`, `index ingest`, and `index update` reject it. Contributors use an
@@ -29,13 +31,13 @@ explicit checkout, created with `waldo index clone <directory>` or otherwise,
 and select it with `waldo config set index <directory>` or an absolute path.
 
 Git transport is implemented in `internal/git` with `go-git`. Fetch updates
-remote references only. Pull requires a clean `main` worktree and performs
-only a fast-forward to `origin/main`; it refuses local commits, divergence,
-unexpected remotes, and unexpected branches.
+remote references only. Pull derives the current branch's tracking remote and
+performs only a clean fast-forward; it refuses dirty worktrees, local commits,
+divergence, detached HEAD, and missing tracking configuration.
 
 ## Consequences
 
-The normal read workflow works without prior configuration, while network
-revision changes remain visible and user-requested. The lookaside object cache
-and managed Git index remain distinct concepts. Contributor checkouts retain
-ordinary Git behavior and are never synchronized implicitly by WALDO.
+The normal read workflow works without prior configuration and normally uses
+the latest clean fast-forward revision. Every BOM still pins the exact commit
+used. The lookaside object cache and managed Git index remain distinct
+concepts. WALDO never overwrites contributor changes or resolves divergence.

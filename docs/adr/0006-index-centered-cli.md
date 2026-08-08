@@ -1,6 +1,6 @@
 # ADR 0006: Use an index-centered CLI
 
-- Status: accepted
+- Status: accepted; path-default details superseded by ADR 0036
 - Date: 2026-08-04
 
 ## Context
@@ -23,6 +23,10 @@ upward like Git, and recursive commands begin at that positional target. When
 the path is omitted, discovery starts at the current directory. A prospective
 ingestion destination may be absolute even though the durable plan records
 only its checkout-relative path.
+
+ADR 0036 later replaces current-directory default discovery with a managed
+default checkout and configured-relative resolution. The index-centered
+command organization remains unchanged.
 
 Retain corpus as an internal domain and as terminology for the data itself. CLI
 organization follows the user's mental model, not the package graph.

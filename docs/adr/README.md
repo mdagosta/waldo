@@ -39,3 +39,4 @@ logs.
 - [0033: Separate corpus append from authoritative recipe rebuilds](0033-corpus-update-modes.md)
 - [0034: Keep ingest profiles corpus-neutral](0034-declarative-ingest-profiles.md)
 - [0035: Store interactive S3 credentials under the WALDO home](0035-local-s3-credentials.md)
+- [0036: Use a managed default index checkout](0036-managed-index-checkout.md)

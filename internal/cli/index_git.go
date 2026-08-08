@@ -18,45 +18,64 @@ func runIndexStatus(context Context, args []string, stdout, stderr io.Writer) er
 	if len(args) != 0 {
 		return usageError{message: "usage: waldo index status"}
 	}
-	root, err := config.ManagedIndexRoot()
+	root, label, err := selectedIndexCheckout(context, stderr)
 	if err != nil {
 		return err
 	}
-	result, err := indexGitManager.Ensure(context.Execution, root, stderr)
+	state, err := managedgit.CheckoutStatus(root)
 	if err != nil {
 		return err
 	}
-	return writeIndexGitResult(context, stdout, result, "managed index")
+	return writeIndexGitResult(context, stdout, managedgit.Result{Action: "status", State: state}, label)
 }
 
 func runIndexFetch(context Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		return usageError{message: "usage: waldo index fetch"}
 	}
-	root, err := config.ManagedIndexRoot()
+	root, label, err := selectedIndexCheckout(context, stderr)
 	if err != nil {
 		return err
 	}
-	result, err := indexGitManager.Fetch(context.Execution, root, stderr)
+	result, err := managedgit.CheckoutFetch(context.Execution, root, stderr)
 	if err != nil {
 		return err
 	}
-	return writeIndexGitResult(context, stdout, result, "managed index")
+	return writeIndexGitResult(context, stdout, result, label)
 }
 
 func runIndexPull(context Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) != 0 {
 		return usageError{message: "usage: waldo index pull"}
 	}
-	root, err := config.ManagedIndexRoot()
+	root, label, err := selectedIndexCheckout(context, stderr)
 	if err != nil {
 		return err
 	}
-	result, err := indexGitManager.Pull(context.Execution, root, stderr)
+	result, err := managedgit.CheckoutPull(context.Execution, root, stderr)
 	if err != nil {
 		return err
 	}
-	return writeIndexGitResult(context, stdout, result, "managed index")
+	return writeIndexGitResult(context, stdout, result, label)
+}
+
+func selectedIndexCheckout(context Context, progress io.Writer) (string, string, error) {
+	configuration, err := config.Load()
+	if err != nil {
+		return "", "", err
+	}
+	root, managed, err := config.EffectiveIndexRoot(configuration)
+	if err != nil {
+		return "", "", err
+	}
+	label := "configured index"
+	if managed {
+		label = "managed index"
+		if _, err := indexGitManager.Ensure(context.Execution, root, progress); err != nil {
+			return "", "", err
+		}
+	}
+	return root, label, nil
 }
 
 func runIndexClone(context Context, args []string, stdout, stderr io.Writer) error {
@@ -99,7 +118,8 @@ func writeIndexGitResult(context Context, stdout io.Writer, result managedgit.Re
 	}
 	fmt.Fprintf(stdout, "%s %s\n", label, result.Action)
 	fmt.Fprintf(stdout, "  path      %s\n", state.Path)
-	fmt.Fprintf(stdout, "  upstream  %s (%s)\n", state.Remote, state.Branch)
+	fmt.Fprintf(stdout, "  upstream  %s (%s/%s)\n", state.Remote, state.RemoteName, state.UpstreamBranch)
+	fmt.Fprintf(stdout, "  branch    %s\n", state.Branch)
 	fmt.Fprintf(stdout, "  revision  %s\n", commit)
 	fmt.Fprintf(stdout, "  relation  %s\n", state.Relation)
 	fmt.Fprintf(stdout, "  worktree  %s\n", map[bool]string{true: "modified", false: "clean"}[state.Dirty])

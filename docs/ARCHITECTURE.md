@@ -35,8 +35,10 @@ Owns the Git metadata tree and its meaning:
 The index never reads model state and never runs a trainer.
 
 WALDO maintains the default public metadata checkout at `~/.waldo/index`.
-That checkout is read-only to authoring workflows: Git synchronization may
-clone, fetch, or cleanly fast-forward it, while ingestion and corpus update
+That checkout is read-only to authoring workflows. Synchronization operates on
+the selected checkout—configured, explicitly supplied, or managed default—and
+derives its current branch and tracking remote from Git metadata. It may
+fast-forward only a clean, behind checkout. Ingestion and corpus update still
 require an explicit contributor checkout.
 
 ### Record and license

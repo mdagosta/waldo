@@ -31,7 +31,7 @@ func TestManagedCheckoutCloneFetchAndPull(t *testing.T) {
 	}
 
 	commitFile(t, upstream, "science/index.yaml", "kind: index\nschema: 1\nname: science\n")
-	result, err = manager.Fetch(context.Background(), destination, nil)
+	result, err = CheckoutFetch(context.Background(), destination, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestManagedCheckoutCloneFetchAndPull(t *testing.T) {
 		t.Fatalf("fetch changed worktree: %v", err)
 	}
 
-	result, err = manager.Pull(context.Background(), destination, nil)
+	result, err = CheckoutPull(context.Background(), destination, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestManagedCheckoutCloneFetchAndPull(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(destination, "local.txt"), []byte("local\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := manager.Pull(context.Background(), destination, nil); err == nil || !strings.Contains(err.Error(), "local changes") {
+	if _, err := CheckoutPull(context.Background(), destination, nil); err == nil || !strings.Contains(err.Error(), "is dirty") {
 		t.Fatalf("dirty pull error = %v", err)
 	}
 }
@@ -67,6 +67,52 @@ func TestCloneRefusesExistingDestination(t *testing.T) {
 	destination := t.TempDir()
 	if _, err := manager.Clone(context.Background(), destination, nil); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("clone error = %v", err)
+	}
+}
+
+func TestCheckoutPullRefusesDirtyAheadAndDiverged(t *testing.T) {
+	upstream := fixtureUpstream(t)
+	manager := Manager{URL: upstream, Branch: "main"}
+	dirty := filepath.Join(t.TempDir(), "dirty")
+	if _, err := manager.Clone(context.Background(), dirty, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirty, "local.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckoutPull(context.Background(), dirty, nil); err == nil || !strings.Contains(err.Error(), "is dirty") {
+		t.Fatalf("dirty checkout pull error = %v", err)
+	}
+
+	ahead := filepath.Join(t.TempDir(), "ahead")
+	if _, err := manager.Clone(context.Background(), ahead, nil); err != nil {
+		t.Fatal(err)
+	}
+	commitFile(t, ahead, "local.yaml", "local: true\n")
+	if _, err := CheckoutPull(context.Background(), ahead, nil); err == nil || !strings.Contains(err.Error(), "is ahead") {
+		t.Fatalf("ahead checkout pull error = %v", err)
+	}
+
+	commitFile(t, upstream, "remote.yaml", "remote: true\n")
+	if _, err := CheckoutPull(context.Background(), ahead, nil); err == nil || !strings.Contains(err.Error(), "is diverged") {
+		t.Fatalf("diverged checkout pull error = %v", err)
+	}
+}
+
+func TestCheckoutPullFastForwardsConfiguredTrackingBranch(t *testing.T) {
+	upstream := fixtureUpstream(t)
+	manager := Manager{URL: upstream, Branch: "main"}
+	destination := filepath.Join(t.TempDir(), "configured")
+	if _, err := manager.Clone(context.Background(), destination, nil); err != nil {
+		t.Fatal(err)
+	}
+	commitFile(t, upstream, "new.yaml", "new: true\n")
+	result, err := CheckoutPull(context.Background(), destination, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "updated" || result.State.Relation != "current" {
+		t.Fatalf("checkout pull = %+v", result)
 	}
 }
 

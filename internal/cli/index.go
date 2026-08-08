@@ -8,6 +8,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -283,7 +284,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	if path != "" {
 		paths = []string{path}
 	}
-	target, err := resolveIndexArgument(context.Execution, paths, progress)
+	target, err := resolveIndexArgumentPolicy(context.Execution, paths, progress, !offline)
 	if err != nil {
 		return err
 	}
@@ -377,7 +378,11 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 }
 
 func resolveIndexArgument(execution context.Context, args []string, warnings io.Writer) (waldoindex.Target, error) {
-	targets, err := resolveIndexArgumentsWithWarning(execution, args, warnings)
+	return resolveIndexArgumentPolicy(execution, args, warnings, true)
+}
+
+func resolveIndexArgumentPolicy(execution context.Context, args []string, warnings io.Writer, refresh bool) (waldoindex.Target, error) {
+	targets, err := resolveIndexArgumentsWithWarningPolicy(execution, args, warnings, refresh)
 	if err != nil {
 		return waldoindex.Target{}, err
 	}
@@ -385,7 +390,7 @@ func resolveIndexArgument(execution context.Context, args []string, warnings io.
 }
 
 func resolveIndexArguments(execution context.Context, args []string, progress io.Writer) ([]waldoindex.Target, error) {
-	selection, err := resolveIndexSelection(execution, args, progress)
+	selection, err := resolveIndexSelection(execution, args, progress, true)
 	return selection.Targets, err
 }
 
@@ -399,7 +404,11 @@ type resolvedIndexSelection struct {
 var indexGitManager = managedgit.DefaultManager()
 
 func resolveIndexArgumentsWithWarning(execution context.Context, args []string, warnings io.Writer) ([]waldoindex.Target, error) {
-	selection, err := resolveIndexSelection(execution, args, warnings)
+	return resolveIndexArgumentsWithWarningPolicy(execution, args, warnings, true)
+}
+
+func resolveIndexArgumentsWithWarningPolicy(execution context.Context, args []string, warnings io.Writer, refresh bool) ([]waldoindex.Target, error) {
+	selection, err := resolveIndexSelection(execution, args, warnings, refresh)
 	if err != nil {
 		return nil, err
 	}
@@ -415,7 +424,7 @@ func resolveIndexArgumentsWithWarning(execution context.Context, args []string, 
 	return selection.Targets, nil
 }
 
-func resolveIndexSelection(execution context.Context, args []string, progress io.Writer) (resolvedIndexSelection, error) {
+func resolveIndexSelection(execution context.Context, args []string, progress io.Writer, refresh bool) (resolvedIndexSelection, error) {
 	configuration, err := config.Load()
 	if err != nil {
 		return resolvedIndexSelection{}, err
@@ -431,8 +440,19 @@ func resolveIndexSelection(execution context.Context, args []string, progress io
 		return resolvedIndexSelection{}, err
 	}
 	defaultRoot := knownRoot
-	if managed && !explicitIndexPath(values[0]) {
-		if _, err := indexGitManager.Ensure(execution, knownRoot, progress); err != nil {
+	explicit := explicitIndexPath(values[0])
+	if managed && !explicit && refresh {
+		ensured, err := indexGitManager.Ensure(execution, knownRoot, progress)
+		if err != nil {
+			return resolvedIndexSelection{}, err
+		}
+		if ensured.Action != "cloned" {
+			if err := refreshIndexCheckout(execution, knownRoot, progress); err != nil {
+				return resolvedIndexSelection{}, err
+			}
+		}
+	} else if !explicit && refresh {
+		if err := refreshIndexCheckout(execution, knownRoot, progress); err != nil {
 			return resolvedIndexSelection{}, err
 		}
 	}
@@ -440,6 +460,11 @@ func resolveIndexSelection(execution context.Context, args []string, progress io
 		var target waldoindex.Target
 		if len(targets) == 0 {
 			target, err = waldoindex.ResolveConfigured(knownRoot, value)
+			if err == nil && explicit && refresh {
+				if err = refreshIndexCheckout(execution, target.Root, progress); err == nil {
+					target, err = waldoindex.ResolveConfigured(knownRoot, value)
+				}
+			}
 		} else {
 			target, err = waldoindex.Resolve(knownRoot, value)
 		}
@@ -454,6 +479,24 @@ func resolveIndexSelection(execution context.Context, args []string, progress io
 		targets = append(targets, target)
 	}
 	return resolvedIndexSelection{Targets: targets, Omitted: omitted, Configured: configuration.Index != "", Managed: managed && targets[0].Root == defaultRoot}, nil
+}
+
+func refreshIndexCheckout(execution context.Context, root string, progress io.Writer) error {
+	result, err := managedgit.CheckoutPull(execution, root, progress)
+	if errors.Is(err, managedgit.ErrNotRepository) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("refresh index checkout %s: %w", root, err)
+	}
+	if result.Action == "updated" && progress != nil {
+		commit := result.State.Commit
+		if len(commit) > 12 {
+			commit = commit[:12]
+		}
+		fmt.Fprintf(progress, "updated index checkout %s to %s\n", root, commit)
+	}
+	return nil
 }
 
 func explicitIndexPath(value string) bool {

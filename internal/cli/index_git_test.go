@@ -45,6 +45,27 @@ func TestManagedIndexAutoClonesForDefaultRead(t *testing.T) {
 	if code := Run([]string{"--json", "index", "status"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), `"relation": "current"`) {
 		t.Fatalf("status code output=%q stderr=%q", stdout.String(), stderr.String())
 	}
+	commitFixtureIndexFile(t, upstream, "upstream-note.txt", "updated\n")
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"index", "list"}, &stdout, &stderr); code != 0 || !strings.Contains(stderr.String(), "updated index checkout "+managed) {
+		t.Fatalf("auto pull code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	state, err := managedgit.CheckoutStatus(managed)
+	if err != nil || state.Relation != "current" {
+		t.Fatalf("managed state=%+v err=%v", state, err)
+	}
+	currentCommit := state.Commit
+	commitFixtureIndexFile(t, upstream, "offline-note.txt", "not fetched\n")
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"index", "verify", "--offline"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("offline verify code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	state, err = managedgit.CheckoutStatus(managed)
+	if err != nil || state.Commit != currentCommit {
+		t.Fatalf("offline verify changed checkout: state=%+v err=%v", state, err)
+	}
 }
 
 func TestManagedIndexRejectsAuthoring(t *testing.T) {
@@ -123,6 +144,24 @@ func TestIndexCloneCreatesContributorCheckout(t *testing.T) {
 	if err != nil || configuration.Index != destination {
 		t.Fatalf("configuration=%+v err=%v", configuration, err)
 	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"--json", "index", "status"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), destination) {
+		t.Fatalf("configured status code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if err := os.WriteFile(filepath.Join(destination, "local.txt"), []byte("dirty\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"index", "list"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "is dirty") {
+		t.Fatalf("dirty automatic pull code=%d stderr=%q", code, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"index", "pull"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "is dirty") {
+		t.Fatalf("dirty explicit pull code=%d stderr=%q", code, stderr.String())
+	}
 }
 
 func fixtureGitIndex(t *testing.T) string {
@@ -151,4 +190,23 @@ func useTestIndexManager(t *testing.T, upstream string) {
 	previous := indexGitManager
 	indexGitManager = managedgit.Manager{URL: upstream, Branch: "main"}
 	t.Cleanup(func() { indexGitManager = previous })
+}
+
+func commitFixtureIndexFile(t *testing.T, root, name, contents string) {
+	t.Helper()
+	writeCLIFile(t, filepath.Join(root, filepath.FromSlash(name)), contents)
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worktree.Add(filepath.ToSlash(name)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worktree.Commit("update", &git.CommitOptions{Author: &object.Signature{Name: "WALDO Test", Email: "test@example.invalid", When: time.Unix(2, 0).UTC()}}); err != nil {
+		t.Fatal(err)
+	}
 }
