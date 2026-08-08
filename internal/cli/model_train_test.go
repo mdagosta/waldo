@@ -5,7 +5,10 @@
 
 package cli
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
 	name, paths, epochs, err := parseModelTrain([]string{"foo", "core/books", "science/papers"})
@@ -21,5 +24,15 @@ func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
 	}
 	if _, _, _, err := parseModelTrain([]string{"foo", "core/books", "--epochs", "0"}); err == nil {
 		t.Fatal("zero epochs accepted")
+	}
+}
+
+func TestParseModelTrainDiagnosesOmittedModelName(t *testing.T) {
+	_, _, _, err := parseModelTrain([]string{"core/common-pile/python-enhancement-proposals/peps"})
+	if err == nil || !strings.Contains(err.Error(), "model name is required before index path") {
+		t.Fatalf("error = %v", err)
+	}
+	if _, _, _, err := parseModelTrain([]string{"."}); err == nil || !strings.Contains(err.Error(), "model name is required") {
+		t.Fatalf("dot-path error = %v", err)
 	}
 }
