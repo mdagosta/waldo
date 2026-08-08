@@ -121,6 +121,11 @@ do not remove the important per-row source evidence.
 | `token_count` | signed 64-bit integer | no | count from the shard's explicitly named counting recipe |
 | `meta` | UTF-8 string containing canonical JSON | no | source-specific evidence not promoted to a core column |
 
+For recipe-driven whole-file text and Markdown inputs, `meta.source_path`
+preserves the validated acquisition-relative path. This keeps file-level
+attribution after temporary recipe output is purged without expanding the Git
+manifest into a per-file inventory.
+
 Null means absent. Empty strings and zero values must not be overloaded as
 absence. `content_sha256` is binary in the physical schema to avoid storing a
 64-byte hexadecimal rendering in every row; user-facing JSON renders it as

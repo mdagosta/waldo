@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -137,12 +138,22 @@ func readTextRow(ctx context.Context, plan Plan, input PlanInput, maximum int64)
 	var contentHash [sha256.Size]byte
 	copy(contentHash[:], hasher.Sum(nil))
 	sourceName := plan.Source.Name
+	var metadata *string
+	if input.SourcePath != "" {
+		encoded, err := json.Marshal(map[string]string{"source_path": input.SourcePath})
+		if err != nil {
+			return shard.TextRow{}, 0, fmt.Errorf("encode source path metadata: %w", err)
+		}
+		value := string(encoded)
+		metadata = &value
+	}
 	return shard.TextRow{
 		ContentSHA256: contentHash,
 		Text:          text,
 		Source:        "sha256:" + input.Artifact.SHA256,
 		SourceName:    &sourceName,
 		License:       plan.License,
+		Meta:          metadata,
 	}, written, nil
 }
 

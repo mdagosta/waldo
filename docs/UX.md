@@ -200,6 +200,9 @@ exact Parquet writer recipe. A reviewed ingest recipe may raise the record
 maximum as high as 256 MiB, still bounded by half the plan memory budget.
 Execution re-hashes each file before emitting it. A larger file is never
 silently split, truncated, repaired, or rendered from Markdown.
+Recipe-driven text and Markdown rows also retain their validated path relative
+to the acquisition directory as `meta.source_path`; direct local ingestion
+does not invent a relative root when none was declared.
 
 JSONL ingestion projects one top-level string field named `text` per nonblank
 line. Plain `.jsonl`, gzip, and zstd inputs stream through bounded decoding;

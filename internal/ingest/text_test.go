@@ -7,9 +7,12 @@ package ingest
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 func TestStreamTextBatchesPreservesFilesAndBoundsBatches(t *testing.T) {
@@ -24,7 +27,8 @@ func TestStreamTextBatchesPreservesFilesAndBoundsBatches(t *testing.T) {
 	}
 	plan, err := NewPlan(probe, PlanRequest{
 		Destination: "core/example", Title: "Example", License: "CC0-1.0",
-		Source: PlanSource{Name: "fixture", URL: "https://example.test/data", Category: "public-dataset"},
+		Source:    PlanSource{Name: "fixture", URL: "https://example.test/data", Category: "public-dataset"},
+		InputRoot: directory,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -48,6 +52,39 @@ func TestStreamTextBatchesPreservesFilesAndBoundsBatches(t *testing.T) {
 	}
 	if batches[0].Rows[0].SourceName == nil || *batches[0].Rows[0].SourceName != "fixture" {
 		t.Fatalf("source name = %v", batches[0].Rows[0].SourceName)
+	}
+	if batches[0].Rows[0].Meta == nil {
+		t.Fatal("recipe-relative source path metadata is absent")
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal([]byte(*batches[0].Rows[0].Meta), &metadata); err != nil || metadata["source_path"] != "a.md" {
+		t.Fatalf("source path metadata = %v, err = %v", metadata, err)
+	}
+}
+
+func TestStreamTextBatchesLeavesDirectInputMetadataAbsent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.txt")
+	writeFixture(t, path, "direct input")
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "core/example", Title: "Example", License: "CC0-1.0",
+		Source: PlanSource{Name: "fixture", URL: "https://example.test/data", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row shard.TextRow
+	if err := StreamTextBatches(context.Background(), plan, func(batch TextBatch) error {
+		row = batch.Rows[0]
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if row.Meta != nil {
+		t.Fatalf("direct input unexpectedly gained metadata: %q", *row.Meta)
 	}
 }
 

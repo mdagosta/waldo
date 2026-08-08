@@ -41,3 +41,4 @@ logs.
 - [0035: Store interactive S3 credentials under the WALDO home](0035-local-s3-credentials.md)
 - [0036: Use a managed default index checkout](0036-managed-index-checkout.md)
 - [0037: Embed ingest attestations in canonical shards](0037-embedded-shard-bom.md)
+- [0038: Preserve recipe-relative paths for file records](0038-preserve-recipe-source-paths.md)
