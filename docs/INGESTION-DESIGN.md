@@ -352,8 +352,8 @@ There are two useful modes, and the CLI and recipe must name which one ran.
 
 #### Streaming mode
 
-Streaming mode is the normal direct-conversion path. It preserves the pinned
-artifact and row order from the acquisition record. A disk-backed hash set can
+Streaming mode is the normal direct-conversion path. It preserves the artifact
+and row order pinned in the ingestion plan. A disk-backed hash set can
 perform exact global content deduplication while retaining the first occurrence;
 only hashes and evidence pointers require scratch storage, not a second copy of
 the corpus. Shards rotate in that stable order.

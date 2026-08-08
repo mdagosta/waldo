@@ -1,5 +1,9 @@
 # Fetcher and local acquisition contract
 
+The normative, deliberately short definition of what WALDO accepts from a
+local or fetched source directory is [Source directory contract](SOURCE-DIRECTORY.md).
+This document defines the broader acquisition and execution responsibilities.
+
 Fetchers are source-specific shell scripts maintained in a separate repository.
 They are not WALDO commands, Go packages, runtime plugins, or part of this
 repository's release. They download upstream material into a supplied local
@@ -17,8 +21,8 @@ indexed corpus and its OpenWALDO BOM into a local directory.
 
 - Source-specific URLs, APIs, pagination, retries, and resumability
 - Downloading upstream artifacts without silently changing their contents
-- Stable artifact ordering
-- SHA-256 and byte size of every acquired artifact
+- Deterministic output paths
+- Verification of declared upstream checksums or immutable revisions
 - Acquisition time and upstream revision where available
 - Acquisition start/end time and the underlying content period when known
 - The upstream's raw license declaration or evidence location, without mapping
@@ -32,7 +36,6 @@ indexed corpus and its OpenWALDO BOM into a local directory.
   access/opt-out protocols, and domain-level acquired content-byte totals
 - For user data, the collecting service/product and interaction type
 - For synthetic data, generator model identity and lineage where available
-- An atomic, versioned acquisition record beside the local bytes
 
 ## WALDO owns
 
@@ -49,16 +52,14 @@ indexed corpus and its OpenWALDO BOM into a local directory.
 - Manifest generation and index mutation
 - Provenance and compatibility validation
 
-## Local output shapes
+## Local output shape
 
-The contract may describe:
-
-1. Raw acquired artifacts plus an acquisition record
-2. A normalized, sorted deposit optimized for large columnar upstreams
-
-A deposit carries documents and faithfully copied upstream evidence. It does
-not carry WALDO's conclusions about canonical licenses, document hashes,
-languages, or token counts.
+A fetcher produces only a directory satisfying the
+[source directory contract](SOURCE-DIRECTORY.md). It may contain faithfully
+copied raw artifacts or a normalized JSONL/Parquet deposit, but no sidecar
+acquisition manifest. Shared acquisition facts belong in the recipe; per-record
+upstream evidence belongs in the records. WALDO independently orders, hashes,
+and probes every resulting file.
 
 The local acquisition must retain enough evidence for the source and corpus
 manifests to support the EU GPAI training-content projection described in
@@ -76,7 +77,8 @@ do not make a legal-compliance determination.
   to the recipe file unless absolute.
 - WALDO resolves each command to a regular executable, pins and hashes that
   resolved file, and runs it in declaration order without an intervening shell.
-- All steps share a WALDO-owned temporary working directory, also exposed as
+- Schema-1 steps share one WALDO-owned temporary working directory. Each
+  schema-2 source has its own. The current directory is also exposed as
   `WALDO_FETCH_DIR`. `WALDO_INGEST_RECIPE` identifies the recipe being run.
 - Network, pagination, authentication, retries, and source-specific behavior
   remain inside the scripts. WALDO inherits the invoking environment but never

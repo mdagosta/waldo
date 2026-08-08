@@ -575,6 +575,7 @@ repository policy remain visible.
 - [CLI and UX contract](docs/UX.md)
 - [Architecture and domain boundaries](docs/ARCHITECTURE.md)
 - [Ingestion and canonical Parquet](docs/INGESTION-DESIGN.md)
+- [Source directory contract](docs/SOURCE-DIRECTORY.md)
 - [Fetcher and ingest-recipe contract](docs/FETCHER-CONTRACT.md)
 - [Corpus OpenWALDO BOM](docs/OPENWALDO-BOM.md)
 - [Model lifecycle and training](docs/MODEL-LIFECYCLE.md)
