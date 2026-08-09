@@ -342,10 +342,11 @@ until the compose completes.
   Resume attempts append to the same file with a new attempt number.
 - `model summary` snapshots this durable state for a deterministic, read-only
   health assessment. `model advisor` is an interactive assistant grounded in
-  the saved compose, run history, and refreshed telemetry. It can propose a
-  follow-up compose, but WALDO validates the proposal and asks before updating
-  the separate advisor draft. It does not send weights or training records or
-  alter the source model.
+  the saved compose, run history, refreshed telemetry, and a compact inventory
+  of every corpus in the configured index. It can propose a follow-up compose,
+  but WALDO validates all corpus paths against that index and asks before
+  updating the separate advisor draft. It does not send weights, training
+  records, or corpus text or alter the source model.
 - `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, backend and
   simulation identity, observation hashes, and artifact hashes. Its
   `path_base` is `model-root`: every `run_bom` and artifact `path` resolves

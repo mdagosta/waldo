@@ -390,10 +390,12 @@ waldo config set ai.api-key "$API_KEY"
 waldo model advisor small
 ```
 
-The advisor asks before writing any proposed compose to
-`<name>-advisor.yaml`; it never edits the immutable compose stored with the
-model. Local status remains available without any provider through `model
-summary`.
+The advisor also receives a compact inventory of every corpus in the
+configured index, including paths, titles, sizes, token/document totals, and
+licenses, so it can recommend and validate broader corpus mixtures. It asks
+before writing any proposed compose to `<name>-advisor.yaml`; it never edits
+the immutable compose stored with the model. Local status remains available
+without any provider through `model summary`.
 Anthropic model overrides use Messages API IDs such as `claude-sonnet-5` or
 `claude-opus-5`; Claude Code shorthand names such as `sonnet` and `opus` are
 not API model IDs.

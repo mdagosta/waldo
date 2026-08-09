@@ -633,11 +633,13 @@ and explicit action from the latest durable run state and telemetry.
 
 `waldo model advisor <name>` starts an interactive chat grounded in the
 model's normalized compose, run history, and freshly read telemetry. It can
-explain status, diagnose a run, or propose a follow-up experiment. WALDO
-validates every proposed compose and corpus reference, shows its changes, and
-asks before updating `<name>-advisor.yaml`. It never changes the immutable
-source model, or sends the API key, model weights, or corpus text. `--provider`
-and `--model` can override the configured AI backend.
+explain status, diagnose a run, or propose a follow-up experiment. A compact
+inventory of all configured index corpora supplies their paths, titles,
+descriptions, measures, and licenses. WALDO validates every proposed corpus
+against that index, shows the changes, and asks before updating
+`<name>-advisor.yaml`. It never changes the immutable source model, or sends
+the API key, model weights, or corpus text. `--provider` and `--model` can
+override the configured AI backend.
 
 The model BOM is a portable inventory rooted at the model directory. A
 pulled model selects its verified origin until a later real run supersedes

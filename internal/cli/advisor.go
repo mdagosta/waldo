@@ -21,6 +21,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	waldoai "github.com/openwaldo/waldo/internal/ai"
 	"github.com/openwaldo/waldo/internal/config"
+	waldoindex "github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/model"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -51,6 +52,12 @@ type advisorReply struct {
 	Reply   string         `json:"reply"`
 	Changes []string       `json:"changes,omitempty"`
 	Compose *model.Compose `json:"compose,omitempty"`
+}
+
+type advisorIndexEvidence struct {
+	Path    string                  `json:"path"`
+	Totals  waldoindex.Totals       `json:"totals"`
+	Corpora []waldoindex.CorpusInfo `json:"corpora"`
 }
 
 func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Writer) error {
@@ -89,6 +96,11 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 	if err != nil {
 		return err
 	}
+	indexEvidence, err := currentAdvisorIndex(configuration)
+	if err != nil {
+		return err
+	}
+	allowedCorpora := advisorAllowedCorpora(report.Compose, indexEvidence.Corpora)
 	draftPath, err := filepath.Abs(name + "-advisor.yaml")
 	if err != nil {
 		return err
@@ -109,7 +121,7 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 		return statErr
 	}
 
-	fmt.Fprintf(stdout, "Advisor: loaded model %s (%s). Ask about its training, configuration, or a next experiment.\n", name, report.State)
+	fmt.Fprintf(stdout, "Advisor: loaded model %s (%s) and %d indexed corpora. Ask about its training, configuration, or a next experiment.\n", name, report.State, len(indexEvidence.Corpora))
 	fmt.Fprintln(stdout, "Advisor: type quit to exit. I will ask before writing any compose change.")
 	reader := bufio.NewReader(modelAdvisorInput)
 	var history []advisorTurn
@@ -134,7 +146,7 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 			return err
 		}
 		history = append(history, advisorTurn{Role: "user", Content: question})
-		prompt := advisorChatPrompt(report, draft, history)
+		prompt := advisorChatPrompt(report, draft, indexEvidence, history)
 		var answer advisorReply
 		for attempt := 1; attempt <= 2; attempt++ {
 			fmt.Fprintf(stderr, "Advisor: thinking with %s/%s...\n", selected.Provider, selected.Model)
@@ -142,7 +154,7 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 			if askErr != nil {
 				return askErr
 			}
-			answer, err = parseAdvisorReply(response, report.Compose)
+			answer, err = parseAdvisorReply(response, report.Compose, allowedCorpora)
 			if err == nil {
 				break
 			}
@@ -189,16 +201,52 @@ func currentAdvisorEvidence(root, name string) (model.Advice, error) {
 	return model.BuildAdvice(inspection, time.Now())
 }
 
-func advisorChatPrompt(report model.Advice, draft *model.Compose, history []advisorTurn) string {
+func currentAdvisorIndex(configuration config.Config) (advisorIndexEvidence, error) {
+	root, _, err := config.EffectiveIndexRoot(configuration)
+	if err != nil {
+		return advisorIndexEvidence{}, err
+	}
+	target, err := waldoindex.ResolveConfigured(root, "")
+	if err != nil {
+		return advisorIndexEvidence{}, fmt.Errorf("resolve configured training index: %w", err)
+	}
+	corpora, err := waldoindex.ListCorpora(target)
+	if err != nil {
+		return advisorIndexEvidence{}, fmt.Errorf("list configured training corpora: %w", err)
+	}
+	totals, err := waldoindex.Summarize(target)
+	if err != nil {
+		return advisorIndexEvidence{}, fmt.Errorf("summarize configured training index: %w", err)
+	}
+	return advisorIndexEvidence{Path: target.Rel, Totals: totals, Corpora: corpora}, nil
+}
+
+func advisorAllowedCorpora(original *model.Compose, corpora []waldoindex.CorpusInfo) map[string]bool {
+	allowed := make(map[string]bool, len(corpora))
+	for _, corpus := range corpora {
+		allowed[corpus.Path] = true
+	}
+	if original != nil {
+		for _, stage := range original.Stages {
+			for _, corpus := range stage.Corpora {
+				allowed[corpus] = true
+			}
+		}
+	}
+	return allowed
+}
+
+func advisorChatPrompt(report model.Advice, draft *model.Compose, indexEvidence advisorIndexEvidence, history []advisorTurn) string {
 	evidence, _ := json.MarshalIndent(report, "", "  ")
 	draftJSON, _ := json.MarshalIndent(draft, "", "  ")
+	indexJSON, _ := json.MarshalIndent(indexEvidence, "", "  ")
 	if len(history) > 12 {
 		history = history[len(history)-12:]
 	}
 	historyJSON, _ := json.MarshalIndent(history, "", "  ")
 	return `You are WALDO's conversational model advisor. Answer the operator's latest message directly and concisely using the supplied model evidence, current telemetry, saved compose, and conversation. Distinguish observed facts from recommendations. You may explain the model, assess a running job, diagnose a failure, or design a practical next experiment. Format reply as concise Markdown: use short paragraphs and, when presenting several facts, descriptive headings and bullet lists. Do not return one dense paragraph.
 
-If the operator asks you to modify or create the next compose, return a complete proposed schema-1 waldo-model-compose in "compose" and list concise "changes". Otherwise omit both fields. Never claim a file was changed; WALDO asks the operator for confirmation and performs the write. Never modify the running model. Do not invent corpus paths or introduce paths absent from the saved compose. If there is no saved compose, explain that compose editing is unavailable.
+If the operator asks you to modify or create the next compose, return a complete proposed schema-1 waldo-model-compose in "compose" and list concise "changes". Otherwise omit both fields. Never claim a file was changed; WALDO asks the operator for confirmation and performs the write. Never modify the running model. You may add corpus paths listed in the configured training index below, but must not invent paths. Consider corpus size, content, and license when recommending a mix. If there is no saved compose, explain that compose editing is unavailable.
 
 Return exactly one JSON object: {"reply":"plain conversational response","changes":["change"],"compose":{...}}. Omit changes and compose when no edit is proposed. Do not use Markdown fences or add other keys.
 
@@ -208,11 +256,14 @@ Current WALDO evidence:
 Current editable compose draft (null means unavailable):
 ` + string(draftJSON) + `
 
+Configured training corpus index:
+` + string(indexJSON) + `
+
 Conversation:
 ` + string(historyJSON)
 }
 
-func parseAdvisorReply(response string, original *model.Compose) (advisorReply, error) {
+func parseAdvisorReply(response string, original *model.Compose, allowedCorpora map[string]bool) (advisorReply, error) {
 	start, end := strings.IndexByte(response, '{'), strings.LastIndexByte(response, '}')
 	if start < 0 || end < start {
 		return advisorReply{}, fmt.Errorf("response does not contain a JSON object")
@@ -241,16 +292,10 @@ func parseAdvisorReply(response string, original *model.Compose) (advisorReply, 
 	if err := reply.Compose.Validate(); err != nil {
 		return advisorReply{}, fmt.Errorf("validate proposed compose: %w", err)
 	}
-	allowed := map[string]bool{}
-	for _, stage := range original.Stages {
-		for _, corpus := range stage.Corpora {
-			allowed[corpus] = true
-		}
-	}
 	for _, stage := range reply.Compose.Stages {
 		for _, corpus := range stage.Corpora {
-			if !allowed[corpus] {
-				return advisorReply{}, fmt.Errorf("proposed compose introduces undeclared corpus %q", corpus)
+			if !allowedCorpora[corpus] {
+				return advisorReply{}, fmt.Errorf("proposed compose introduces corpus %q that is not in the configured index", corpus)
 			}
 		}
 	}

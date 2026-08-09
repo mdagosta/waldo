@@ -13,13 +13,15 @@ import (
 	"strings"
 	"testing"
 
+	waldoindex "github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
 func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.T) {
 	original := advisorTestCompose()
-	plain, err := parseAdvisorReply(`{"reply":"The held-out loss is improving."}`, &original)
+	allowed := advisorAllowedCorpora(&original, []waldoindex.CorpusInfo{{Path: "core/code"}})
+	plain, err := parseAdvisorReply(`{"reply":"The held-out loss is improving."}`, &original, allowed)
 	if err != nil || plain.Reply == "" || plain.Compose != nil {
 		t.Fatalf("plain reply = %+v, err = %v", plain, err)
 	}
@@ -28,7 +30,7 @@ func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parseAdvisorReply(string(encoded), &original)
+	parsed, err := parseAdvisorReply(string(encoded), &original, allowed)
 	if err != nil || parsed.Compose == nil {
 		t.Fatalf("proposal = %+v, err = %v", parsed, err)
 	}
@@ -39,8 +41,18 @@ func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseAdvisorReply(string(encoded), &original); err == nil || !strings.Contains(err.Error(), "introduces undeclared corpus") {
+	if _, err := parseAdvisorReply(string(encoded), &original, allowed); err == nil || !strings.Contains(err.Error(), "not in the configured index") {
 		t.Fatalf("corpus boundary error = %v", err)
+	}
+	indexed := advisorTestCompose()
+	indexed.Stages[0].Corpora = []string{"core/code"}
+	proposed.Compose = &indexed
+	encoded, err = json.Marshal(proposed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseAdvisorReply(string(encoded), &original, allowed); err != nil {
+		t.Fatalf("indexed corpus proposal was rejected: %v", err)
 	}
 }
 
