@@ -261,22 +261,17 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			case "text", "markdown":
 				input.Adapter = artifact.Format
 			case "parquet":
-				if artifact.Parquet == nil {
+				if textColumn == "" {
 					recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
 					input.Adapter = "opaque-base64"
+					input.Artifact.Evidence = append(input.Artifact.Evidence, "opaque-fallback:undeclared-parquet-schema")
 				} else {
 					column, err := chooseTextColumn(artifact, textColumn)
 					if err != nil {
-						if textColumn != "" {
-							return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
-						}
-						recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
-						input.Adapter = "opaque-base64"
-						input.Artifact.Evidence = append(input.Artifact.Evidence, "opaque-fallback:unmapped-parquet")
-					} else {
-						input.Adapter = "parquet"
-						input.TextColumn = column
+						return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
 					}
+					input.Adapter = "parquet"
+					input.TextColumn = column
 				}
 			case "jsonl":
 				if artifact.Compression == "" {

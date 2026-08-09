@@ -108,7 +108,7 @@ func TestNewPlanPinsMappingsAndIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	request := PlanRequest{
-		Destination: "core/example", Title: "Example", License: "CC0-1.0",
+		Destination: "core/example", Title: "Example", License: "CC0-1.0", TextColumn: "text",
 		Source: PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
 	}
 	plan, err := NewPlan(probe, request)

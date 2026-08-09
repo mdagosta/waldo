@@ -170,7 +170,7 @@ func TestStreamCanonicalTextBatchesRoutesMixedInputsInPlanOrder(t *testing.T) {
 	}
 	plan, err := NewPlan(probe, PlanRequest{
 		Destination: "core/example", Title: "Example", License: "CC-BY-4.0",
-		Source: PlanSource{Name: "fixture", URL: "https://example.test/raw", Category: "public-dataset"},
+		Source: PlanSource{Name: "fixture", URL: "https://example.test/raw", Category: "public-dataset"}, TextColumn: "text",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func parquetFixturePlan(t *testing.T, path string) Plan {
 	}
 	plan, err := NewPlan(probe, PlanRequest{
 		Destination: "core/example", Title: "Example", License: "CC-BY-4.0",
-		Source: PlanSource{Name: "fixture", URL: "https://example.test/raw", Category: "public-dataset"},
+		Source: PlanSource{Name: "fixture", URL: "https://example.test/raw", Category: "public-dataset"}, TextColumn: "text",
 	})
 	if err != nil {
 		t.Fatal(err)
