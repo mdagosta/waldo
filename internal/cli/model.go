@@ -875,10 +875,11 @@ func configuredModelBuilder(commandContext Context, progress io.Writer) (model.B
 		if event.Stage != "" {
 			label += "/" + event.Stage
 		}
+		message := modelProgressMessage(event)
 		if event.State != "" {
-			fmt.Fprintf(progress, "%-22s %-11s %s\n", label, event.State, event.Message)
+			fmt.Fprintf(progress, "%-22s %-11s %s\n", label, event.State, message)
 		} else {
-			fmt.Fprintf(progress, "%-22s %s\n", label, event.Message)
+			fmt.Fprintf(progress, "%-22s %s\n", label, message)
 		}
 	}}
 	backend := config.EffectiveModelBackend(configuration)
@@ -893,6 +894,32 @@ func configuredModelBuilder(commandContext Context, progress io.Writer) (model.B
 		return selection, err
 	})
 	return builder, nil
+}
+
+func modelProgressMessage(event model.Progress) string {
+	if event.Training == nil || event.Training.Kind != "progress" || event.Training.Step <= 1 || event.Training.ETASeconds <= 0 {
+		return event.Message
+	}
+	return fmt.Sprintf("%s, ETA %s", event.Message, compactDuration(event.Training.ETASeconds))
+}
+
+func compactDuration(seconds int64) string {
+	days := seconds / (24 * 60 * 60)
+	seconds %= 24 * 60 * 60
+	hours := seconds / (60 * 60)
+	seconds %= 60 * 60
+	minutes := seconds / 60
+	seconds %= 60
+	switch {
+	case days > 0:
+		return fmt.Sprintf("%dd %dh", days, hours)
+	case hours > 0:
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	case minutes > 0:
+		return fmt.Sprintf("%dm %ds", minutes, seconds)
+	default:
+		return fmt.Sprintf("%ds", seconds)
+	}
 }
 
 func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, epochs int64, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {

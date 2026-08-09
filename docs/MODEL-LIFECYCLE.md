@@ -394,6 +394,8 @@ record order. An embedded worker communicates through schema-1 NDJSON: a begin
 frame, record frames from a shuffle bounded by both record count and retained
 bytes, an end frame, then typed progress,
 checkpoint, evaluation, completion, or error output frames.
+Human-readable training progress includes a remaining-time ETA after the
+startup sample; JSON progress exposes the underlying `eta_seconds` value.
 
 The MLX, PyTorch, and TorchTitan adapters embed their worker source in the
 WALDO binary while using the machine's explicit Python framework runtime. They

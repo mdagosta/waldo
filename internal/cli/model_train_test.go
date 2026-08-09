@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
@@ -36,6 +38,20 @@ func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"model", "train", "foo", "core/books", "--epochs", "0"}, &stdout, &stderr); code != 1 {
 		t.Fatal("zero epochs accepted")
+	}
+}
+
+func TestModelProgressMessageIncludesStableETA(t *testing.T) {
+	event := model.Progress{
+		Phase: "training", Message: "step 319/31984, loss 3.7461, 146497 tokens/s",
+		Training: &training.Event{Kind: "progress", Step: 319, ETASeconds: 3661},
+	}
+	if got := modelProgressMessage(event); got != event.Message+", ETA 1h 1m" {
+		t.Fatalf("progress message = %q", got)
+	}
+	event.Training.Step = 1
+	if got := modelProgressMessage(event); got != event.Message {
+		t.Fatalf("startup progress message = %q", got)
 	}
 }
 
