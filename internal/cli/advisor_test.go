@@ -6,8 +6,8 @@
 package cli
 
 import (
-	"bufio"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,48 +16,63 @@ import (
 	"github.com/openwaldo/waldo/internal/training"
 )
 
-func TestAdvisorProposalValidatesComposeAndCorpusBoundary(t *testing.T) {
+func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.T) {
 	original := advisorTestCompose()
-	proposal := advisorProposal{Assessment: "test one change", Changes: []string{"increase steps"}, Compose: original}
-	encoded, err := json.Marshal(proposal)
+	plain, err := parseAdvisorReply(`{"reply":"The held-out loss is improving."}`, &original)
+	if err != nil || plain.Reply == "" || plain.Compose != nil {
+		t.Fatalf("plain reply = %+v, err = %v", plain, err)
+	}
+	proposed := advisorReply{Reply: "Try a slightly longer run.", Changes: []string{"increase steps"}, Compose: &original}
+	encoded, err := json.Marshal(proposed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parseAdvisorProposal(string(encoded), original)
-	if err != nil || parsed.Assessment != proposal.Assessment {
+	parsed, err := parseAdvisorReply(string(encoded), &original)
+	if err != nil || parsed.Compose == nil {
 		t.Fatalf("proposal = %+v, err = %v", parsed, err)
 	}
-	proposal.Compose = advisorTestCompose()
-	proposal.Compose.Stages[0].Corpora = []string{"invented/corpus"}
-	encoded, err = json.Marshal(proposal)
+	bad := advisorTestCompose()
+	bad.Stages[0].Corpora = []string{"invented/corpus"}
+	proposed.Compose = &bad
+	encoded, err = json.Marshal(proposed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseAdvisorProposal(string(encoded), original); err == nil || !strings.Contains(err.Error(), "introduces undeclared corpus") {
+	if _, err := parseAdvisorReply(string(encoded), &original); err == nil || !strings.Contains(err.Error(), "introduces undeclared corpus") {
 		t.Fatalf("corpus boundary error = %v", err)
 	}
 }
 
-func TestAdvisorComposeNeverOverwrites(t *testing.T) {
+func TestAdvisorDraftUpdatesAtomicallyAfterConfirmation(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "candidate.yaml")
-	if _, err := writeAdvisorCompose(path, advisorTestCompose()); err != nil {
+	first := advisorTestCompose()
+	if err := writeAdvisorDraft(path, first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := writeAdvisorCompose(path, advisorTestCompose()); err == nil || !strings.Contains(err.Error(), "already exists") {
-		t.Fatalf("overwrite error = %v", err)
+	second := advisorTestCompose()
+	second.Stages[0].Parameters.Steps = 3
+	if err := writeAdvisorDraft(path, second); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _, err := model.LoadCompose(path)
+	if err != nil || loaded.Stages[0].Parameters.Steps != 3 {
+		t.Fatalf("draft = %+v, err = %v", loaded, err)
+	}
+	if mode := fileMode(t, path); mode != 0o644 {
+		t.Fatalf("draft mode = %o", mode)
+	}
+	if !advisorConfirmed("yes\n") || !advisorConfirmed("Y") || advisorConfirmed("no") || advisorConfirmed("") {
+		t.Fatal("confirmation parsing is incorrect")
 	}
 }
 
-func TestAdvisorQuestionUsesAnswerAndDefault(t *testing.T) {
-	var output strings.Builder
-	answer, err := advisorQuestion(bufio.NewReader(strings.NewReader("better completion\n")), &output, "Goal? ", "")
-	if err != nil || answer != "better completion" || output.String() != "Goal? " {
-		t.Fatalf("answer = %q, output = %q, err = %v", answer, output.String(), err)
+func fileMode(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
 	}
-	answer, err = advisorQuestion(bufio.NewReader(strings.NewReader("\n")), &output, "Budget? ", "same budget")
-	if err != nil || answer != "same budget" {
-		t.Fatalf("default answer = %q, err = %v", answer, err)
-	}
+	return info.Mode().Perm()
 }
 
 func advisorTestCompose() model.Compose {

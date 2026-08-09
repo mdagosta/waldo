@@ -631,14 +631,13 @@ waldo model bom smoke
 `waldo model summary <name>` includes a local, deterministic health assessment
 and explicit action from the latest durable run state and telemetry.
 
-`waldo model advisor <name>` asks interactive questions about the next model's
-goal, hardware/time budget, and improvement priority. It sends the normalized
-compose and compact model/run evidence to the configured OpenAI or Anthropic
-provider, validates the returned schema and corpus references, and writes a
-new `<name>-advisor.yaml` without changing the source model or replacing an
-existing file. Non-interactive use requires `--goal`; `--budget`, `--priority`,
-`--output`, `--provider`, and `--model` are optional. It never sends the API
-key, model weights, or corpus text.
+`waldo model advisor <name>` starts an interactive chat grounded in the
+model's normalized compose, run history, and freshly read telemetry. It can
+explain status, diagnose a run, or propose a follow-up experiment. WALDO
+validates every proposed compose and corpus reference, shows its changes, and
+asks before updating `<name>-advisor.yaml`. It never changes the immutable
+source model, or sends the API key, model weights, or corpus text. `--provider`
+and `--model` can override the configured AI backend.
 
 The model BOM is a portable inventory rooted at the model directory. A
 pulled model selects its verified origin until a later real run supersedes

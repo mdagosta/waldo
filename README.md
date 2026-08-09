@@ -380,11 +380,9 @@ checkpoints, and artifact hashes.
 
 `model summary` evaluates the latest run and its `TELEMETRY.csv` locally, then
 reports whether to let it run, inspect it, stop it, fix it, or review a
-completed result. `model advisor` is a separate design workflow for models
-created from a compose. It asks about the next model's goal, compute budget,
-and improvement priority, sends the saved compose and compact evidence to the
-configured provider, validates the result, and writes a new compose without
-changing the source model:
+completed result. `model advisor` starts a conversational assistant grounded
+in the model's saved compose, runs, and current telemetry. It can explain the
+model, assess a live run, and propose a next experiment:
 
 ```bash
 waldo config set ai.provider openai
@@ -392,9 +390,10 @@ waldo config set ai.api-key "$API_KEY"
 waldo model advisor small
 ```
 
-For scripts, provide `--goal`, with optional `--budget`, `--priority`, and
-`--output`. Local status remains available without any provider through
-`model summary`.
+The advisor asks before writing any proposed compose to
+`<name>-advisor.yaml`; it never edits the immutable compose stored with the
+model. Local status remains available without any provider through `model
+summary`.
 Anthropic model overrides use Messages API IDs such as `claude-sonnet-5` or
 `claude-opus-5`; Claude Code shorthand names such as `sonnet` and `opus` are
 not API model IDs.

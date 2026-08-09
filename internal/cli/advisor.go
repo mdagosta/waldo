@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -30,48 +31,29 @@ var modelAdvisorAsk = func(ctx context.Context, selection waldoai.Selection, pro
 	return (waldoai.Client{}).Ask(ctx, selection, prompt)
 }
 
-type advisorAnswers struct {
-	Goal     string `json:"goal"`
-	Budget   string `json:"budget"`
-	Priority string `json:"priority"`
+type advisorTurn struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
-type advisorProposal struct {
-	Assessment string        `json:"assessment"`
-	Changes    []string      `json:"changes"`
-	Compose    model.Compose `json:"compose"`
-}
-
-type advisorOutput struct {
-	SourceModel string          `json:"source_model"`
-	Provider    string          `json:"provider"`
-	AIModel     string          `json:"ai_model"`
-	Output      string          `json:"output"`
-	Answers     advisorAnswers  `json:"answers"`
-	Proposal    advisorProposal `json:"proposal"`
+type advisorReply struct {
+	Reply   string         `json:"reply"`
+	Changes []string       `json:"changes,omitempty"`
+	Compose *model.Compose `json:"compose,omitempty"`
 }
 
 func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Writer) error {
+	if commandContext.JSON {
+		return fmt.Errorf("model advisor is an interactive chat and does not support --json")
+	}
+	if !modelAdvisorTerminal() {
+		return fmt.Errorf("model advisor requires an interactive terminal")
+	}
 	configuration, err := config.Load()
 	if err != nil {
 		return err
 	}
 	root, err := config.EffectiveModelRoot(configuration)
-	if err != nil {
-		return err
-	}
-	inspection, err := model.Inspect(root, args[0])
-	if err != nil {
-		return err
-	}
-	report, err := model.BuildAdvice(inspection, time.Now())
-	if err != nil {
-		return err
-	}
-	if report.Compose == nil {
-		return fmt.Errorf("model %q has no saved compose to revise", args[0])
-	}
-	answers, err := collectAdvisorAnswers(commandContext, stderr)
 	if err != nil {
 		return err
 	}
@@ -91,125 +73,160 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 		return fmt.Errorf("model advisor requires ai.provider openai or anthropic and a corresponding API key")
 	}
 
-	prompt := advisorPrompt(report, answers)
-	var proposal advisorProposal
-	for attempt := 1; attempt <= 2; attempt++ {
-		if !commandContext.JSON {
-			fmt.Fprintf(stderr, "ai/advisor             contacting %s/%s (attempt %d/2)\n", selected.Provider, selected.Model, attempt)
-		}
-		response, askErr := modelAdvisorAsk(commandContext.Execution, selected, prompt)
-		if askErr != nil {
-			return askErr
-		}
-		proposal, err = parseAdvisorProposal(response, *report.Compose)
-		if err == nil {
-			break
-		}
-		if attempt == 2 {
-			return fmt.Errorf("AI advisor did not produce a valid compose after two attempts: %w", err)
-		}
-		prompt += "\n\nYour previous response was invalid: " + err.Error() + "\nReturn a corrected JSON object only. Previous response:\n" + truncateAdvisorResponse(response)
-	}
-	outputPath := stringOption(commandContext, "output")
-	if outputPath == "" {
-		outputPath = args[0] + "-advisor.yaml"
-	}
-	absolute, err := writeAdvisorCompose(outputPath, proposal.Compose)
+	name := args[0]
+	report, err := currentAdvisorEvidence(root, name)
 	if err != nil {
 		return err
 	}
-	result := advisorOutput{SourceModel: args[0], Provider: selected.Provider, AIModel: selected.Model, Output: absolute, Answers: answers, Proposal: proposal}
-	if commandContext.JSON {
-		return writeJSON(stdout, result)
+	draftPath, err := filepath.Abs(name + "-advisor.yaml")
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(stdout, "ASSESSMENT: %s\n", proposal.Assessment)
-	if len(proposal.Changes) > 0 {
-		fmt.Fprintln(stdout, "CHANGES:")
-		for _, change := range proposal.Changes {
-			fmt.Fprintf(stdout, "  - %s\n", change)
+	var draft *model.Compose
+	if report.Compose != nil {
+		copy := *report.Compose
+		draft = &copy
+	}
+	if _, statErr := os.Stat(draftPath); statErr == nil {
+		loaded, _, loadErr := model.LoadCompose(draftPath)
+		if loadErr != nil {
+			return fmt.Errorf("load advisor draft: %w", loadErr)
 		}
+		draft = &loaded
+		fmt.Fprintf(stdout, "Advisor: loaded existing draft %s\n", draftPath)
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
 	}
-	fmt.Fprintf(stdout, "COMPOSE:    %s\n", absolute)
-	fmt.Fprintf(stdout, "TEST WITH:  waldo model compose %s-advisor %s\n", args[0], absolute)
-	return nil
-}
 
-func collectAdvisorAnswers(commandContext Context, output io.Writer) (advisorAnswers, error) {
-	answers := advisorAnswers{
-		Goal: strings.TrimSpace(stringOption(commandContext, "goal")), Budget: strings.TrimSpace(stringOption(commandContext, "budget")),
-		Priority: strings.TrimSpace(stringOption(commandContext, "priority")),
-	}
-	interactive := !commandContext.JSON && modelAdvisorTerminal()
-	if !interactive && answers.Goal == "" {
-		return advisorAnswers{}, fmt.Errorf("model advisor requires --goal outside an interactive terminal")
-	}
+	fmt.Fprintf(stdout, "Advisor: loaded model %s (%s). Ask about its training, configuration, or a next experiment.\n", name, report.State)
+	fmt.Fprintln(stdout, "Advisor: type quit to exit. I will ask before writing any compose change.")
 	reader := bufio.NewReader(modelAdvisorInput)
-	var err error
-	if interactive && answers.Goal == "" {
-		answers.Goal, err = advisorQuestion(reader, output, "What should the next model be able to do? ", "")
+	var history []advisorTurn
+	for {
+		fmt.Fprint(stdout, "You: ")
+		question, readErr := reader.ReadString('\n')
+		if readErr != nil && readErr != io.EOF {
+			return readErr
+		}
+		question = strings.TrimSpace(question)
+		if question == "" {
+			if readErr == io.EOF {
+				return nil
+			}
+			continue
+		}
+		if question == "quit" || question == "exit" || question == "/quit" {
+			return nil
+		}
+		report, err = currentAdvisorEvidence(root, name)
 		if err != nil {
-			return advisorAnswers{}, err
+			return err
+		}
+		history = append(history, advisorTurn{Role: "user", Content: question})
+		prompt := advisorChatPrompt(report, draft, history)
+		var answer advisorReply
+		for attempt := 1; attempt <= 2; attempt++ {
+			fmt.Fprintf(stderr, "Advisor: thinking with %s/%s...\n", selected.Provider, selected.Model)
+			response, askErr := modelAdvisorAsk(commandContext.Execution, selected, prompt)
+			if askErr != nil {
+				return askErr
+			}
+			answer, err = parseAdvisorReply(response, report.Compose)
+			if err == nil {
+				break
+			}
+			if attempt == 2 {
+				return fmt.Errorf("AI advisor did not return a valid response: %w", err)
+			}
+			prompt += "\n\nYour response was invalid: " + err.Error() + "\nReturn corrected JSON only."
+		}
+		fmt.Fprintf(stdout, "Advisor: %s\n", answer.Reply)
+		history = append(history, advisorTurn{Role: "assistant", Content: answer.Reply})
+		if answer.Compose != nil {
+			printAdvisorChanges(stdout, answer.Changes)
+			fmt.Fprintf(stdout, "Advisor: apply these changes to %s? [y/N] ", draftPath)
+			confirmation, confirmErr := reader.ReadString('\n')
+			if confirmErr != nil && confirmErr != io.EOF {
+				return confirmErr
+			}
+			if advisorConfirmed(confirmation) {
+				if err := writeAdvisorDraft(draftPath, *answer.Compose); err != nil {
+					return err
+				}
+				copy := *answer.Compose
+				draft = &copy
+				fmt.Fprintf(stdout, "Advisor: updated %s\n", draftPath)
+				history = append(history, advisorTurn{Role: "system", Content: "The operator approved and WALDO wrote the proposed compose draft."})
+			} else {
+				fmt.Fprintln(stdout, "Advisor: compose unchanged.")
+				history = append(history, advisorTurn{Role: "system", Content: "The operator declined the proposed compose change."})
+			}
+		}
+		if readErr == io.EOF {
+			return nil
 		}
 	}
-	if interactive && answers.Budget == "" {
-		answers.Budget, err = advisorQuestion(reader, output, "What hardware and training-time budget should it fit? ", "same hardware and duration as the current compose")
-		if err != nil {
-			return advisorAnswers{}, err
-		}
-	}
-	if interactive && answers.Priority == "" {
-		answers.Priority, err = advisorQuestion(reader, output, "What should improve first? ", "held-out quality and useful behavior")
-		if err != nil {
-			return advisorAnswers{}, err
-		}
-	}
-	if answers.Budget == "" {
-		answers.Budget = "same hardware and duration as the current compose"
-	}
-	if answers.Priority == "" {
-		answers.Priority = "held-out quality and useful behavior"
-	}
-	return answers, nil
 }
 
-func advisorQuestion(reader *bufio.Reader, output io.Writer, question, defaultValue string) (string, error) {
-	fmt.Fprint(output, question)
-	value, err := reader.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", err
+func currentAdvisorEvidence(root, name string) (model.Advice, error) {
+	inspection, err := model.Inspect(root, name)
+	if err != nil {
+		return model.Advice{}, err
 	}
-	value = strings.TrimSpace(value)
-	if value == "" {
-		value = defaultValue
-	}
-	if value == "" {
-		return "", fmt.Errorf("an answer is required")
-	}
-	return value, nil
+	return model.BuildAdvice(inspection, time.Now())
 }
 
-func advisorPrompt(report model.Advice, answers advisorAnswers) string {
+func advisorChatPrompt(report model.Advice, draft *model.Compose, history []advisorTurn) string {
 	evidence, _ := json.MarshalIndent(report, "", "  ")
-	constraints, _ := json.MarshalIndent(answers, "", "  ")
-	return "You are the WALDO model advisor. Design one practical follow-up experiment from the saved compose and observed training evidence. Respect the operator's goal and budget. Use only corpus paths already present in the source compose. Do not modify the running model. Return exactly one JSON object with keys assessment (string), changes (array of concise strings), and compose (a complete schema-1 waldo-model-compose object). Do not use Markdown fences or add other keys. The compose must be internally consistent and immediately testable by `waldo model compose`. Prefer the smallest experiment that tests your hypothesis.\n\nOperator answers:\n" + string(constraints) + "\n\nWALDO evidence:\n" + string(evidence)
+	draftJSON, _ := json.MarshalIndent(draft, "", "  ")
+	if len(history) > 12 {
+		history = history[len(history)-12:]
+	}
+	historyJSON, _ := json.MarshalIndent(history, "", "  ")
+	return `You are WALDO's conversational model advisor. Answer the operator's latest message directly and concisely using the supplied model evidence, current telemetry, saved compose, and conversation. Distinguish observed facts from recommendations. You may explain the model, assess a running job, diagnose a failure, or design a practical next experiment.
+
+If the operator asks you to modify or create the next compose, return a complete proposed schema-1 waldo-model-compose in "compose" and list concise "changes". Otherwise omit both fields. Never claim a file was changed; WALDO asks the operator for confirmation and performs the write. Never modify the running model. Do not invent corpus paths or introduce paths absent from the saved compose. If there is no saved compose, explain that compose editing is unavailable.
+
+Return exactly one JSON object: {"reply":"plain conversational response","changes":["change"],"compose":{...}}. Omit changes and compose when no edit is proposed. Do not use Markdown fences or add other keys.
+
+Current WALDO evidence:
+` + string(evidence) + `
+
+Current editable compose draft (null means unavailable):
+` + string(draftJSON) + `
+
+Conversation:
+` + string(historyJSON)
 }
 
-func parseAdvisorProposal(response string, original model.Compose) (advisorProposal, error) {
+func parseAdvisorReply(response string, original *model.Compose) (advisorReply, error) {
 	start, end := strings.IndexByte(response, '{'), strings.LastIndexByte(response, '}')
 	if start < 0 || end < start {
-		return advisorProposal{}, fmt.Errorf("response does not contain a JSON object")
+		return advisorReply{}, fmt.Errorf("response does not contain a JSON object")
 	}
 	decoder := json.NewDecoder(bytes.NewReader([]byte(response[start : end+1])))
 	decoder.DisallowUnknownFields()
-	var proposal advisorProposal
-	if err := decoder.Decode(&proposal); err != nil {
-		return advisorProposal{}, fmt.Errorf("decode proposal: %w", err)
+	var reply advisorReply
+	if err := decoder.Decode(&reply); err != nil {
+		return advisorReply{}, fmt.Errorf("decode response: %w", err)
 	}
-	if strings.TrimSpace(proposal.Assessment) == "" || len(proposal.Changes) == 0 {
-		return advisorProposal{}, fmt.Errorf("proposal requires an assessment and at least one declared change")
+	if strings.TrimSpace(reply.Reply) == "" {
+		return advisorReply{}, fmt.Errorf("response requires reply text")
 	}
-	if err := proposal.Compose.Validate(); err != nil {
-		return advisorProposal{}, fmt.Errorf("validate proposed compose: %w", err)
+	if reply.Compose == nil {
+		if len(reply.Changes) != 0 {
+			return advisorReply{}, fmt.Errorf("changes require a proposed compose")
+		}
+		return reply, nil
+	}
+	if original == nil {
+		return advisorReply{}, fmt.Errorf("model has no saved compose to revise")
+	}
+	if len(reply.Changes) == 0 {
+		return advisorReply{}, fmt.Errorf("proposed compose requires at least one declared change")
+	}
+	if err := reply.Compose.Validate(); err != nil {
+		return advisorReply{}, fmt.Errorf("validate proposed compose: %w", err)
 	}
 	allowed := map[string]bool{}
 	for _, stage := range original.Stages {
@@ -217,56 +234,61 @@ func parseAdvisorProposal(response string, original model.Compose) (advisorPropo
 			allowed[corpus] = true
 		}
 	}
-	for _, stage := range proposal.Compose.Stages {
+	for _, stage := range reply.Compose.Stages {
 		for _, corpus := range stage.Corpora {
 			if !allowed[corpus] {
-				return advisorProposal{}, fmt.Errorf("proposed compose introduces undeclared corpus %q", corpus)
+				return advisorReply{}, fmt.Errorf("proposed compose introduces undeclared corpus %q", corpus)
 			}
 		}
 	}
-	return proposal, nil
+	return reply, nil
 }
 
-func writeAdvisorCompose(path string, compose model.Compose) (string, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
+func printAdvisorChanges(output io.Writer, changes []string) {
+	fmt.Fprintln(output, "Advisor: proposed compose changes:")
+	for _, change := range changes {
+		fmt.Fprintf(output, "  - %s\n", change)
 	}
+}
+
+func advisorConfirmed(value string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	return value == "y" || value == "yes"
+}
+
+func writeAdvisorDraft(path string, compose model.Compose) error {
 	data, err := yaml.Marshal(compose)
 	if err != nil {
-		return "", err
+		return err
 	}
-	file, err := os.OpenFile(absolute, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	directory := filepath.Dir(path)
+	temporary, err := os.CreateTemp(directory, ".waldo-advisor-*.yaml")
 	if err != nil {
-		if os.IsExist(err) {
-			return "", fmt.Errorf("advisor output %s already exists; choose another --output path", absolute)
-		}
-		return "", err
+		return err
 	}
-	written := false
+	temporaryPath := temporary.Name()
+	committed := false
 	defer func() {
-		_ = file.Close()
-		if !written {
-			_ = os.Remove(absolute)
+		_ = temporary.Close()
+		if !committed {
+			_ = os.Remove(temporaryPath)
 		}
 	}()
-	if _, err := file.Write(data); err != nil {
-		return "", err
+	if err := temporary.Chmod(0o644); err != nil {
+		return err
 	}
-	if err := file.Sync(); err != nil {
-		return "", err
+	if _, err := temporary.Write(data); err != nil {
+		return err
 	}
-	if err := file.Close(); err != nil {
-		return "", err
+	if err := temporary.Sync(); err != nil {
+		return err
 	}
-	written = true
-	return absolute, nil
-}
-
-func truncateAdvisorResponse(response string) string {
-	const limit = 16 * 1024
-	if len(response) <= limit {
-		return response
+	if err := temporary.Close(); err != nil {
+		return err
 	}
-	return response[:limit]
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }

@@ -341,11 +341,11 @@ until the compose completes.
   loss, held-out loss and perplexity, throughput, ETA, and the human message.
   Resume attempts append to the same file with a new attempt number.
 - `model summary` snapshots this durable state for a deterministic, read-only
-  health assessment. `model advisor` separately asks the operator about a
-  follow-up experiment, sends the saved compose and compact assessment to the
-  configured AI provider, validates its response, and writes a new compose.
-  It does not send weights or training records, alter the source model, or
-  overwrite an existing compose file.
+  health assessment. `model advisor` is an interactive assistant grounded in
+  the saved compose, run history, and refreshed telemetry. It can propose a
+  follow-up compose, but WALDO validates the proposal and asks before updating
+  the separate advisor draft. It does not send weights or training records or
+  alter the source model.
 - `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, backend and
   simulation identity, observation hashes, and artifact hashes. Its
   `path_base` is `model-root`: every `run_bom` and artifact `path` resolves

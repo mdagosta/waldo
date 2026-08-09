@@ -179,22 +179,39 @@ stages:
 		t.Fatal(err)
 	}
 	advisorCompose.Stages[0].Parameters.Steps = 3
-	proposal, err := json.Marshal(advisorProposal{Assessment: "A slightly longer run tests continued improvement.", Changes: []string{"increase steps from 2 to 3"}, Compose: advisorCompose})
+	proposal, err := json.Marshal(advisorReply{Reply: "A slightly longer run tests continued improvement.", Changes: []string{"increase steps from 2 to 3"}, Compose: &advisorCompose})
 	if err != nil {
 		t.Fatal(err)
 	}
 	previousAdvisorAsk := modelAdvisorAsk
+	previousAdvisorInput := modelAdvisorInput
+	previousAdvisorTerminal := modelAdvisorTerminal
 	modelAdvisorAsk = func(context.Context, waldoai.Selection, string) (string, error) { return string(proposal), nil }
-	t.Cleanup(func() { modelAdvisorAsk = previousAdvisorAsk })
+	modelAdvisorInput = strings.NewReader("How should I improve it?\nyes\nquit\n")
+	modelAdvisorTerminal = func() bool { return true }
+	t.Cleanup(func() {
+		modelAdvisorAsk = previousAdvisorAsk
+		modelAdvisorInput = previousAdvisorInput
+		modelAdvisorTerminal = previousAdvisorTerminal
+	})
 	t.Setenv("ANTHROPIC_API_KEY", "test-key")
-	advisorPath := filepath.Join(t.TempDir(), "smoke-advisor.yaml")
+	advisorDirectory := t.TempDir()
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(advisorDirectory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(workingDirectory) })
+	advisorPath := filepath.Join(advisorDirectory, "smoke-advisor.yaml")
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"model", "advisor", "smoke", "--provider", "anthropic", "--model", "claude-sonnet-5", "--goal", "improve continuation quality", "--budget", "same machine for one minute", "--priority", "held-out loss", "--output", advisorPath}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"model", "advisor", "smoke", "--provider", "anthropic", "--model", "claude-sonnet-5"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("model advisor code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	generated, _, err := model.LoadCompose(advisorPath)
-	if err != nil || generated.Stages[0].Parameters.Steps != 3 || !strings.Contains(stdout.String(), "TEST WITH:") || !strings.Contains(stderr.String(), "contacting anthropic/claude-sonnet-5") {
+	if err != nil || generated.Stages[0].Parameters.Steps != 3 || !strings.Contains(stdout.String(), "updated ") || !strings.Contains(stderr.String(), "thinking with anthropic/claude-sonnet-5") {
 		t.Fatalf("generated advisor compose = %+v, err = %v, stdout = %q, stderr = %q", generated, err, stdout.String(), stderr.String())
 	}
 	for _, name := range []string{"PLAN.json", "MODEL.json", "MODEL-BOM.json"} {
