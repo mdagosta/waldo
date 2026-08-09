@@ -24,3 +24,13 @@ func TestIngestExclusionWarningIsProminent(t *testing.T) {
 		t.Fatalf("warning = %q", message)
 	}
 }
+
+func TestIngestTextFallbackWarningSaysContentIsRetained(t *testing.T) {
+	plan := ingest.Plan{TextFallbacks: []ingest.TextFallback{{DetectedFormat: "html", Adapter: "text", Artifacts: 3, Bytes: 4096}}}
+	var output bytes.Buffer
+	emitIngestFallbackWarning(&output, plan, false)
+	message := output.String()
+	if !strings.Contains(message, "WARNING: WALDO INGESTING 3 HTML ARTIFACTS") || !strings.Contains(message, "CONTENT IS RETAINED") {
+		t.Fatalf("warning = %q", message)
+	}
+}

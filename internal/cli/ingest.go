@@ -153,6 +153,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	emitIngestFallbackWarning(stderr, plan, context.JSON)
 	identity, err := plan.Identity()
 	if err != nil {
 		return err
@@ -314,6 +315,21 @@ func emitIngestExclusionWarning(output io.Writer, assembly ingest.AssemblyResult
 	fmt.Fprintf(output, "\nWARNING: WALDO EXCLUDED %s RECORDS DURING INGESTION (%s).\n", humanInteger(assembly.RejectedDocs), detail)
 	fmt.Fprintln(output, "WARNING: EXCLUDED RECORDS ARE NOT PRESENT IN THE PUBLISHED SHARDS; REVIEW THE SOURCE POLICY AND COUNTS BEFORE COMMITTING.")
 	fmt.Fprintln(output)
+}
+
+func emitIngestFallbackWarning(output io.Writer, plan ingest.Plan, jsonOutput bool) {
+	for _, fallback := range plan.TextFallbacks {
+		representation := "RAW TEXT"
+		if fallback.Adapter == "opaque-base64" {
+			representation = "LOSSLESS BASE64 TEXT"
+		}
+		message := fmt.Sprintf("WALDO INGESTING %s %s ARTIFACTS (%s) AS %s; CONTENT IS RETAINED", humanInteger(fallback.Artifacts), strings.ToUpper(fallback.DetectedFormat), humanBytes(fallback.Bytes), representation)
+		if jsonOutput {
+			_ = json.NewEncoder(output).Encode(ingest.ProgressEvent{Phase: "plan", Status: "warning", Message: message})
+			continue
+		}
+		fmt.Fprintf(output, "WARNING: %s.\n", message)
+	}
 }
 
 type recipeJSONLogWriter struct {

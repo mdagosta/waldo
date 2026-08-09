@@ -32,8 +32,16 @@ type Plan struct {
 	MemoryBytes    int64                       `json:"memory_bytes"`
 	Writer         WriterPlan                  `json:"writer"`
 	Inputs         []PlanInput                 `json:"inputs"`
+	TextFallbacks  []TextFallback              `json:"text_fallbacks,omitempty"`
 	RecipeEvidence *index.IngestRecipeEvidence `json:"ingest_recipe,omitempty"`
 	Update         *UpdatePlan                 `json:"update,omitempty"`
+}
+
+type TextFallback struct {
+	DetectedFormat string `json:"detected_format"`
+	Adapter        string `json:"adapter"`
+	Artifacts      int64  `json:"artifacts"`
+	Bytes          int64  `json:"bytes"`
 }
 
 type UpdatePlan struct {
@@ -205,6 +213,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			sourceCode = contentIncludesSourceCode(source.Source.Content)
 		}
 		if sourceCode && artifact.Format == "json" {
+			recordTextFallback(&plan, artifact.Format, "text", artifact.Bytes)
 			artifact.Format = "text"
 			artifact.Evidence = append(artifact.Evidence, "source-code-context")
 		}
@@ -252,16 +261,27 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			case "text", "markdown":
 				input.Adapter = artifact.Format
 			case "parquet":
-				input.Adapter = "parquet"
-				column, err := chooseTextColumn(artifact, textColumn)
-				if err != nil {
-					return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
+				if artifact.Parquet == nil {
+					recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
+					input.Adapter = "opaque-base64"
+				} else {
+					input.Adapter = "parquet"
+					column, err := chooseTextColumn(artifact, textColumn)
+					if err != nil {
+						return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
+					}
+					input.TextColumn = column
 				}
-				input.TextColumn = column
 			case "jsonl":
 				input.Adapter = "jsonl"
+			case "json", "html", "xml", "warc":
+				recordTextFallback(&plan, artifact.Format, "text", artifact.Bytes)
+				input.Artifact.Format = "text"
+				input.Artifact.Evidence = append(input.Artifact.Evidence, "raw-text-fallback:"+artifact.Format)
+				input.Adapter = "text"
 			default:
-				return Plan{}, fmt.Errorf("%s: detected format %q has no enabled adapter", artifact.Path, artifact.Format)
+				recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
+				input.Adapter = "opaque-base64"
 			}
 		}
 		plan.Inputs = append(plan.Inputs, input)
@@ -281,6 +301,17 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		return Plan{}, err
 	}
 	return plan, nil
+}
+
+func recordTextFallback(plan *Plan, format, adapter string, bytes int64) {
+	for position := range plan.TextFallbacks {
+		if plan.TextFallbacks[position].DetectedFormat == format && plan.TextFallbacks[position].Adapter == adapter {
+			plan.TextFallbacks[position].Artifacts++
+			plan.TextFallbacks[position].Bytes += bytes
+			return
+		}
+	}
+	plan.TextFallbacks = append(plan.TextFallbacks, TextFallback{DetectedFormat: format, Adapter: adapter, Artifacts: 1, Bytes: bytes})
 }
 
 func contentIncludesSourceCode(content *index.Content) bool {
@@ -406,6 +437,11 @@ func (plan Plan) Validate() error {
 	if plan.MemoryBytes < 256<<20 || plan.Writer.CompressedTarget <= 0 || plan.Writer.CompressedMaximum < plan.Writer.CompressedTarget || plan.Writer.RowGroupLogicalBytes <= 0 || plan.Writer.PageBytes <= 0 || plan.Writer.AdapterBatchBytes <= 0 || plan.Writer.RecordMaximumBytes < plan.Writer.AdapterBatchBytes || plan.Writer.RecordMaximumBytes > plan.MemoryBytes/2 {
 		return fmt.Errorf("ingestion plan has invalid resource or writer limits")
 	}
+	for _, fallback := range plan.TextFallbacks {
+		if fallback.DetectedFormat == "" || (fallback.Adapter != "text" && fallback.Adapter != "opaque-base64") || fallback.Artifacts <= 0 || fallback.Bytes < 0 {
+			return fmt.Errorf("ingestion plan has invalid text fallback counts")
+		}
+	}
 	previous := ""
 	for _, input := range plan.Inputs {
 		artifact := input.Artifact
@@ -443,6 +479,10 @@ func (plan Plan) Validate() error {
 		case "jsonl":
 			if artifact.Format != "jsonl" || input.TextColumn != "" || (artifact.Compression != "" && artifact.Compression != "gzip" && artifact.Compression != "zstd") {
 				return fmt.Errorf("input %s has an inconsistent JSONL adapter", artifact.Path)
+			}
+		case "opaque-base64":
+			if input.TextColumn != "" {
+				return fmt.Errorf("input %s has an inconsistent opaque adapter", artifact.Path)
 			}
 		case ProfileBoundedText:
 			if artifact.Format != "text" || input.Profile.Type != ProfileBoundedText {

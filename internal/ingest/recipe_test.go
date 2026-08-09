@@ -287,6 +287,30 @@ func TestSourceCodeRecipeTreatsJSONArrayJavaScriptAsText(t *testing.T) {
 	if got := plan.Inputs[0]; got.Adapter != "text" || got.Artifact.Format != "text" || !slices.Contains(got.Artifact.Evidence, "source-code-context") {
 		t.Fatalf("planned input = %+v", got)
 	}
+	if len(plan.TextFallbacks) != 1 || plan.TextFallbacks[0].DetectedFormat != "json" || plan.TextFallbacks[0].Adapter != "text" || plan.TextFallbacks[0].Artifacts != 1 {
+		t.Fatalf("text fallbacks = %+v", plan.TextFallbacks)
+	}
+}
+
+func TestRecipeUsesRawTextFallbackForTextualFormats(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "page.html")
+	writeFixture(t, path, "<!doctype html><html><body>training text</body></html>")
+	probe, err := ProbePaths(context.Background(), []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "web/example", Title: "Example", License: "CC0-1.0",
+		Source:         PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
+		RecipeEvidence: &index.IngestRecipeEvidence{Path: "example.yaml", SHA256: strings.Repeat("a", 64), Steps: []index.RecipeStepEvidence{{Name: "fetch", Executable: "fetch.sh", SHA256: strings.Repeat("b", 64)}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Inputs[0].Adapter != "text" || plan.Inputs[0].Artifact.Format != "text" || len(plan.TextFallbacks) != 1 || plan.TextFallbacks[0].DetectedFormat != "html" || plan.TextFallbacks[0].Adapter != "text" {
+		t.Fatalf("plan = %+v", plan)
+	}
 }
 
 func TestRecipePlanSkipsEmptyTrackedFiles(t *testing.T) {
