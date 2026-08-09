@@ -28,6 +28,10 @@ type nullableParquetFixture struct {
 	Text *string `parquet:"text"`
 }
 
+type unmappedParquetFixture struct {
+	File int64 `parquet:"file"`
+}
+
 func TestStreamParquetTextBatchesProjectsDirectlyIntoCanonicalWriter(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "raw.parquet")
 	if err := parquet.WriteFile(path, []rawParquetFixture{
@@ -110,6 +114,45 @@ func TestPlanRejectsNestedParquetTextMapping(t *testing.T) {
 	artifact := Artifact{Parquet: &ParquetInfo{Columns: []string{"payload.text"}}}
 	if _, err := chooseTextColumn(artifact, "payload.text"); err == nil {
 		t.Fatal("expected nested mapping rejection")
+	}
+}
+
+func TestDefaultParquetWithoutTextColumnFallsBackLosslessly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.parquet")
+	if err := parquet.WriteFile(path, []unmappedParquetFixture{{File: 42}}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "code/example", Title: "Code", License: "Apache-2.0",
+		Source: PlanSource{Name: "example", URL: "https://example.test/code", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Inputs[0].Adapter != "opaque-base64" || len(plan.TextFallbacks) != 1 || plan.TextFallbacks[0].Adapter != "opaque-base64" {
+		t.Fatalf("plan = %+v", plan)
+	}
+}
+
+func TestExplicitParquetTextColumnRemainsStrict(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file.parquet")
+	if err := parquet.WriteFile(path, []unmappedParquetFixture{{File: 42}}); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = NewPlan(probe, PlanRequest{
+		Destination: "code/example", Title: "Code", License: "Apache-2.0", TextColumn: "text",
+		Source: PlanSource{Name: "example", URL: "https://example.test/code", Category: "public-dataset"},
+	})
+	if err == nil {
+		t.Fatal("expected explicit missing text column rejection")
 	}
 }
 

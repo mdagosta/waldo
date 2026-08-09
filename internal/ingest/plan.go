@@ -265,15 +265,30 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 					recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
 					input.Adapter = "opaque-base64"
 				} else {
-					input.Adapter = "parquet"
 					column, err := chooseTextColumn(artifact, textColumn)
 					if err != nil {
-						return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
+						if textColumn != "" {
+							return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
+						}
+						recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
+						input.Adapter = "opaque-base64"
+						input.Artifact.Evidence = append(input.Artifact.Evidence, "opaque-fallback:unmapped-parquet")
+					} else {
+						input.Adapter = "parquet"
+						input.TextColumn = column
 					}
-					input.TextColumn = column
 				}
 			case "jsonl":
-				input.Adapter = "jsonl"
+				if artifact.Compression == "" {
+					recordTextFallback(&plan, artifact.Format, "text", artifact.Bytes)
+					input.Artifact.Format = "text"
+					input.Artifact.Evidence = append(input.Artifact.Evidence, "raw-text-fallback:jsonl")
+					input.Adapter = "text"
+				} else {
+					recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
+					input.Adapter = "opaque-base64"
+					input.Artifact.Evidence = append(input.Artifact.Evidence, "opaque-fallback:compressed-jsonl")
+				}
 			case "json", "html", "xml", "warc":
 				recordTextFallback(&plan, artifact.Format, "text", artifact.Bytes)
 				input.Artifact.Format = "text"

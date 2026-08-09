@@ -37,7 +37,8 @@ func TestCompressedJSONLStreamsThroughCanonicalAdapter(t *testing.T) {
 			}
 			plan, err := NewPlan(probe, PlanRequest{
 				Destination: "core/jsonl", Title: "JSONL", License: "CC0-1.0",
-				Source: PlanSource{Name: "jsonl", URL: "https://example.test/data", Category: "public-dataset"},
+				Source:  PlanSource{Name: "jsonl", URL: "https://example.test/data", Category: "public-dataset"},
+				Profile: InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"text"}}},
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -68,7 +69,8 @@ func TestCompressedJSONLAssemblesDocumentAndTokenCounts(t *testing.T) {
 	}
 	plan, err := NewPlan(probe, PlanRequest{
 		Destination: "core/jsonl", Title: "JSONL", License: "CC0-1.0",
-		Source: PlanSource{Name: "jsonl", URL: "https://example.test/data", Category: "public-dataset"},
+		Source:  PlanSource{Name: "jsonl", URL: "https://example.test/data", Category: "public-dataset"},
+		Profile: InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"text"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -128,13 +130,51 @@ func TestCompressedJSONLRejectsMissingText(t *testing.T) {
 	}
 	plan, err := NewPlan(probe, PlanRequest{
 		Destination: "core/jsonl", Title: "JSONL", License: "CC0-1.0",
-		Source: PlanSource{Name: "jsonl", URL: "https://example.test/data", Category: "public-dataset"},
+		Source:  PlanSource{Name: "jsonl", URL: "https://example.test/data", Category: "public-dataset"},
+		Profile: InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"text"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := StreamCanonicalTextBatches(context.Background(), plan, func(TextBatch) error { return nil }); err == nil {
 		t.Fatal("JSONL without text was accepted")
+	}
+}
+
+func TestDefaultJSONLRetainsUnmappedLinesAsRawText(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "solidity.dict")
+	contents := "\"function()\"\n\"constructor()\"\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Artifacts[0].Format != "jsonl" {
+		t.Fatalf("artifact = %+v", probe.Artifacts[0])
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "code/example", Title: "Code", License: "Apache-2.0",
+		Source: PlanSource{Name: "example", URL: "https://example.test/code", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Inputs[0].Adapter != "text" || plan.Inputs[0].Artifact.Format != "text" {
+		t.Fatalf("plan = %+v", plan)
+	}
+	var text string
+	if err := StreamCanonicalTextBatches(context.Background(), plan, func(batch TextBatch) error {
+		for _, row := range batch.Rows {
+			text += row.Text
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if text != contents {
+		t.Fatalf("text = %q, want %q", text, contents)
 	}
 }
 
