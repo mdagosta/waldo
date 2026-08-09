@@ -459,19 +459,6 @@ func runModelCompose(context Context, args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
-	root, err := configuredModelRoot()
-	if err != nil {
-		return err
-	}
-	if !replace {
-		exists, err := model.Exists(root, name)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return fmt.Errorf("model %q already exists; use --replace to recreate it", name)
-		}
-	}
 	builder, err := configuredModelBuilder(context, stderr)
 	if err != nil {
 		return err
