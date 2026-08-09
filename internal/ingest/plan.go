@@ -204,9 +204,9 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			profile, textColumn, inputRoot, sourceID = source.Profile, source.TextColumn, source.InputRoot, source.ID
 			sourceCode = contentIncludesSourceCode(source.Source.Content)
 		}
-		if sourceCode && artifact.Format == "json" && sourceCodeExtension(artifact.Path) {
+		if sourceCode && artifact.Format == "json" {
 			artifact.Format = "text"
-			artifact.Evidence = append(artifact.Evidence, "source-code-extension:"+strings.ToLower(filepath.Ext(artifact.Path)))
+			artifact.Evidence = append(artifact.Evidence, "source-code-context")
 		}
 		input := PlanInput{Artifact: artifact, Profile: profile, SourceID: sourceID}
 		if inputRoot != "" {
@@ -293,15 +293,6 @@ func contentIncludesSourceCode(content *index.Content) bool {
 		}
 	}
 	return false
-}
-
-func sourceCodeExtension(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".js", ".jsx", ".ts", ".tsx":
-		return true
-	default:
-		return false
-	}
 }
 
 func normalizePlanSource(source *PlanSource) error {

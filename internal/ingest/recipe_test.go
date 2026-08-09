@@ -284,7 +284,7 @@ func TestSourceCodeRecipeTreatsJSONArrayJavaScriptAsText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := plan.Inputs[0]; got.Adapter != "text" || got.Artifact.Format != "text" || !slices.Contains(got.Artifact.Evidence, "source-code-extension:.js") {
+	if got := plan.Inputs[0]; got.Adapter != "text" || got.Artifact.Format != "text" || !slices.Contains(got.Artifact.Evidence, "source-code-context") {
 		t.Fatalf("planned input = %+v", got)
 	}
 }
