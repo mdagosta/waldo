@@ -715,11 +715,11 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	if _, err := os.Stat(destination); os.IsNotExist(err) {
 		if compose.Base == nil {
 			if _, err := builder.Initialize(name, compose.Architecture); err != nil {
-				rollbackCompose(destination, workspace, backup, target != nil)
+				finishFailedCompose(destination, workspace, backup, target != nil)
 				return Inspection{}, err
 			}
 		} else if _, err := builder.initializeFromOrigin(name, compose, *base); err != nil {
-			rollbackCompose(destination, workspace, backup, target != nil)
+			finishFailedCompose(destination, workspace, backup, target != nil)
 			return Inspection{}, err
 		}
 	} else if err != nil {
@@ -767,7 +767,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 				continue
 			}
 			if staged.Runs[index].State != RunInterrupted {
-				rollbackCompose(destination, workspace, backup, target != nil)
+				finishFailedCompose(destination, workspace, backup, target != nil)
 				return Inspection{}, fmt.Errorf("compose stage %s ended %s and cannot be resumed", stage.Stage.Name, staged.Runs[index].State)
 			}
 		}
@@ -775,7 +775,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				builder.report(Progress{Phase: "compose", Message: fmt.Sprintf("retained transaction %s; repeat the exact command to resume", transactionID[:12])})
 			} else {
-				rollbackCompose(destination, workspace, backup, target != nil)
+				finishFailedCompose(destination, workspace, backup, target != nil)
 			}
 			return Inspection{}, err
 		}
@@ -830,9 +830,13 @@ func findComposeTransaction(root string, requested composeTransaction) (string, 
 	return "", nil, nil
 }
 
-func rollbackCompose(destination, workspace, backup string, replaced bool) {
-	_ = os.RemoveAll(destination)
+// finishFailedCompose never removes a newly published model. A failed new
+// compose remains in the managed model root for inspection and explicit
+// removal. A failed --replace restores the previously established model;
+// only its uncommitted replacement candidate is discarded.
+func finishFailedCompose(destination, workspace, backup string, replaced bool) {
 	if replaced {
+		_ = os.RemoveAll(destination)
 		_ = os.Rename(backup, destination)
 	}
 	_ = os.RemoveAll(workspace)

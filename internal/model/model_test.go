@@ -385,6 +385,29 @@ func TestComposeReplacementIsTransactional(t *testing.T) {
 	}
 }
 
+func TestFailedNewComposeRemainsListed(t *testing.T) {
+	root := t.TempDir()
+	compose := validCompose()
+	stage := preparedFixture(t, compose.Stages[0])
+	backend := backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+		return training.Observation{}, errors.New("trainer failed")
+	})
+	builder := Builder{Root: root, NewID: func() (string, error) { return "failed0001", nil }, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})}
+	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false); err == nil {
+		t.Fatal("failed compose succeeded")
+	}
+	inspection, err := Inspect(root, "smoke")
+	if err != nil || len(inspection.Runs) != 1 || inspection.Runs[0].State != RunFailed {
+		t.Fatalf("failed compose model = %+v, err = %v", inspection, err)
+	}
+	listed, err := List(root, nil)
+	if err != nil || len(listed) != 1 || listed[0].Name != "smoke" || listed[0].State != string(RunFailed) {
+		t.Fatalf("failed compose listing = %+v, err = %v", listed, err)
+	}
+}
+
 func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	root := t.TempDir()
 	compose := validCompose()

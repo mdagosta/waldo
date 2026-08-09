@@ -331,6 +331,11 @@ until the compose completes.
 - `RUN.json` moves atomically through `planned`, `running`, and exactly one of
   `complete`, `failed`, or `interrupted`. It separates verified partial
   progress from a complete observation and records every resume attempt.
+- Once a model is published beneath `model.root`, failed and interrupted work
+  remains visible and inspectable. WALDO removes or supersedes a managed model
+  only through explicit `model rm` or a successfully committed `--replace`;
+  a failed replacement restores the original model rather than adopting its
+  incomplete candidate.
 - `TELEMETRY.csv` is an append-only, spreadsheet-ready event and scalar time
   series. Its stable columns record UTC observation time, attempt-relative
   elapsed time, run and stage identity, event and state, optimizer progress,
