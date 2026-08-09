@@ -637,7 +637,7 @@ explain status, diagnose a run, or propose a follow-up experiment. A compact
 inventory of all configured index corpora supplies their paths, titles,
 descriptions, measures, and licenses. WALDO validates every proposed corpus
 against that index, shows the changes, and asks before updating
-`<name>-advisor.yaml`. When the requested model does not exist, the same chat
+`0000-<name>-advisor.yaml`. When the requested model does not exist, the same chat
 gathers its purpose, corpus, scale, hardware/time budget, context, evaluation,
 and licensing requirements. It generates a complete compose, confirms the
 write, and separately confirms before starting the build. It never changes an
@@ -662,8 +662,9 @@ waldo model continue smoke
 The advisor never silently overwrites an existing working compose. It offers
 new revision versus update, and defaults to a new numbered working file when
 the architecture or base changes or the current draft is already represented
-in the model's archived compose history. Later sessions rediscover the newest
-numbered advisor draft in the current directory.
+in the model's archived compose history. Names use the sortable
+`NNNN-<compose-name>.yaml` form. Later sessions rediscover the newest numbered
+advisor draft in the current directory.
 
 The command succeeds only while a durable interrupted compose transaction is
 retained. It selects the latest archived compose and uses the normal verified

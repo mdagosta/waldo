@@ -204,7 +204,7 @@ stages:
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(workingDirectory) })
-	advisorPath := filepath.Join(advisorDirectory, "smoke-advisor.yaml")
+	advisorPath := filepath.Join(advisorDirectory, "0000-smoke-advisor.yaml")
 	stdout.Reset()
 	stderr.Reset()
 	if code := Run([]string{"model", "advisor", "smoke", "--provider", "anthropic", "--model", "claude-sonnet-5"}, &stdout, &stderr); code != 0 {

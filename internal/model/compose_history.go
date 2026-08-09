@@ -22,6 +22,7 @@ import (
 const ComposeHistoryDirectory = "composes"
 
 var composeHistoryName = regexp.MustCompile(`^(\d{4})-(.+)\.yaml$`)
+var sourceComposeOrdinal = regexp.MustCompile(`^[0-9]{4}-(.+)$`)
 var composeSlugInvalid = regexp.MustCompile(`[^a-z0-9._-]+`)
 
 // ArchiveCompose preserves each distinct compose in ordered, human-readable
@@ -93,6 +94,9 @@ func composeSlug(sourceName string) string {
 	name := strings.ToLower(strings.TrimSpace(filepath.Base(sourceName)))
 	for _, extension := range []string{".yaml", ".yml", ".json"} {
 		name = strings.TrimSuffix(name, extension)
+	}
+	if match := sourceComposeOrdinal.FindStringSubmatch(name); match != nil {
+		name = match[1]
 	}
 	name = strings.Trim(composeSlugInvalid.ReplaceAllString(name, "-"), "-._")
 	if name == "" {

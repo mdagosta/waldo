@@ -504,6 +504,12 @@ func TestComposeHistoryOrdersDistinctRecipes(t *testing.T) {
 	if err != nil || latest != path {
 		t.Fatalf("latest archive = %q, err = %v", latest, err)
 	}
+	third := validCompose()
+	third.Stages[0].Parameters.Steps += 2
+	path, err = ArchiveCompose(modelPath, third, "0042-third.yaml")
+	if err != nil || filepath.Base(path) != "0002-third.yaml" {
+		t.Fatalf("prefixed source archive = %q, err = %v", path, err)
+	}
 }
 
 func TestComposeCancellationDuringPreflightRemainsListed(t *testing.T) {

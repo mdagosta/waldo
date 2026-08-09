@@ -13,7 +13,9 @@ Advisor edits never silently overwrite an existing working compose. WALDO
 offers a new numbered working revision or an in-place draft update. New
 revision is the default when architecture or base changes, or when the current
 draft is already present in archived model history. Archived files themselves
-are immutable.
+are immutable. Both working and archived revisions put the four-digit ordinal
+first so files remain ordered even when contributors choose different compose
+names.
 
 `waldo model continue <name>` is authorized only by a retained durable compose
 transaction. It loads the latest archived compose, with legacy `COMPOSE.json`

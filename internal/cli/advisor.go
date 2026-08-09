@@ -105,7 +105,8 @@ type synchronizedWriter struct {
 	value io.Writer
 }
 
-var advisorDraftNumber = regexp.MustCompile(`^(.*)-([0-9]{4})\.yaml$`)
+var advisorDraftNumber = regexp.MustCompile(`^([0-9]{4})-(.+)\.yaml$`)
+var legacyAdvisorDraftNumber = regexp.MustCompile(`^(.*)-([0-9]{4})\.yaml$`)
 
 func (writer synchronizedWriter) Write(data []byte) (int, error) {
 	writer.mutex.Lock()
@@ -778,12 +779,13 @@ func advisorConfirmed(value string) bool {
 }
 
 func latestAdvisorDraftPath(name string) (string, bool, error) {
-	base, err := filepath.Abs(name + "-advisor.yaml")
+	stem := name + "-advisor"
+	base, err := filepath.Abs("0000-" + stem + ".yaml")
 	if err != nil {
 		return "", false, err
 	}
 	directory := filepath.Dir(base)
-	prefix := strings.TrimSuffix(filepath.Base(base), ".yaml")
+	legacyBase := stem + ".yaml"
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		return "", false, err
@@ -795,12 +797,12 @@ func latestAdvisorDraftPath(name string) (string, bool, error) {
 		}
 		candidate := entry.Name()
 		ordinal := -1
-		if candidate == prefix+".yaml" {
+		if candidate == legacyBase {
 			ordinal = 0
-		} else if strings.HasPrefix(candidate, prefix+"-") {
-			if match := advisorDraftNumber.FindStringSubmatch(candidate); match != nil {
-				ordinal, _ = strconv.Atoi(match[2])
-			}
+		} else if match := advisorDraftNumber.FindStringSubmatch(candidate); match != nil && match[2] == stem {
+			ordinal, _ = strconv.Atoi(match[1])
+		} else if match := legacyAdvisorDraftNumber.FindStringSubmatch(candidate); match != nil && match[1] == stem {
+			ordinal, _ = strconv.Atoi(match[2])
 		}
 		if ordinal > bestOrdinal {
 			best, bestOrdinal = candidate, ordinal
@@ -854,11 +856,18 @@ func selectAdvisorDraftPath(reader *bufio.Reader, output io.Writer, root, name, 
 func nextAdvisorDraftPath(currentPath string) (string, error) {
 	directory, filename := filepath.Dir(currentPath), filepath.Base(currentPath)
 	stem := strings.TrimSuffix(filename, filepath.Ext(filename))
+	start := 0
 	if match := advisorDraftNumber.FindStringSubmatch(filename); match != nil {
+		stem = match[2]
+		ordinal, _ := strconv.Atoi(match[1])
+		start = ordinal + 1
+	} else if match := legacyAdvisorDraftNumber.FindStringSubmatch(filename); match != nil {
 		stem = match[1]
+		ordinal, _ := strconv.Atoi(match[2])
+		start = ordinal + 1
 	}
-	for ordinal := 1; ordinal <= 9999; ordinal++ {
-		path := filepath.Join(directory, fmt.Sprintf("%s-%04d.yaml", stem, ordinal))
+	for ordinal := start; ordinal <= 9999; ordinal++ {
+		path := filepath.Join(directory, fmt.Sprintf("%04d-%s.yaml", ordinal, stem))
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			return path, nil
 		} else if err != nil {

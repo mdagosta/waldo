@@ -395,7 +395,7 @@ configured index, including paths, titles, sizes, token/document totals, and
 licenses, so it can recommend and validate broader corpus mixtures. If `small`
 does not exist, the advisor interviews you about the intended model, data,
 hardware, runtime, context, evaluation, and license constraints. It then asks
-before writing `<name>-advisor.yaml` and asks again before starting training.
+before writing `0000-<name>-advisor.yaml` and asks again before starting training.
 For an existing model it never edits the immutable compose stored with the
 model. `waldo model advisor` remains a compatibility form, and local status
 remains available without any provider through `model summary`.
@@ -415,7 +415,7 @@ waldo model continue small
 ```
 
 When an advisor draft already exists, WALDO offers to create a new numbered
-working file instead of updating it. A new file is the default when the model
+working file such as `0001-<name>-advisor.yaml` instead of updating it. A new file is the default when the model
 architecture or base changes, or when the current draft matches an archived
 compose that has already been used.
 

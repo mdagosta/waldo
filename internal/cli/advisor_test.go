@@ -125,7 +125,7 @@ func TestAdvisorStructuralOrArchivedChangeDefaultsToNewCompose(t *testing.T) {
 	structural.Architecture.Layers++
 	var output strings.Builder
 	selected, err := selectAdvisorDraftPath(bufio.NewReader(strings.NewReader("\n")), &output, root, "babble", currentPath, &current, structural)
-	if err != nil || filepath.Base(selected) != "babble-advisor-0001.yaml" || !strings.Contains(output.String(), "[Y/n]") {
+	if err != nil || filepath.Base(selected) != "0000-babble-advisor.yaml" || !strings.Contains(output.String(), "[Y/n]") {
 		t.Fatalf("structural selection = %q, output = %q, err = %v", selected, output.String(), err)
 	}
 
@@ -140,12 +140,24 @@ func TestAdvisorStructuralOrArchivedChangeDefaultsToNewCompose(t *testing.T) {
 	nonstructural.Stages[0].Parameters.Steps++
 	output.Reset()
 	selected, err = selectAdvisorDraftPath(bufio.NewReader(strings.NewReader("\n")), &output, root, "babble", currentPath, &current, nonstructural)
-	if err != nil || filepath.Base(selected) != "babble-advisor-0001.yaml" || !strings.Contains(output.String(), "[Y/n]") {
+	if err != nil || filepath.Base(selected) != "0000-babble-advisor.yaml" || !strings.Contains(output.String(), "[Y/n]") {
 		t.Fatalf("archived selection = %q, output = %q, err = %v", selected, output.String(), err)
 	}
 	selected, err = selectAdvisorDraftPath(bufio.NewReader(strings.NewReader("no\n")), &output, root, "babble", currentPath, &current, nonstructural)
 	if err != nil || selected != currentPath {
 		t.Fatalf("explicit update selection = %q, err = %v", selected, err)
+	}
+}
+
+func TestAdvisorDraftRevisionKeepsSortablePrefix(t *testing.T) {
+	directory := t.TempDir()
+	current := filepath.Join(directory, "0007-experiment.yaml")
+	if err := os.WriteFile(current, []byte("reserved"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	next, err := nextAdvisorDraftPath(current)
+	if err != nil || filepath.Base(next) != "0008-experiment.yaml" {
+		t.Fatalf("next draft = %q, err = %v", next, err)
 	}
 }
 
