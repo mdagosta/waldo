@@ -25,6 +25,7 @@ type Config struct {
 	Lookaside  Lookaside  `json:"lookaside,omitempty"`
 	Ingest     Ingest     `json:"ingest,omitempty"`
 	Model      Model      `json:"model,omitempty"`
+	Advice     Advice     `json:"advice,omitempty"`
 	Disclosure Disclosure `json:"disclosure,omitempty"`
 	Signing    Signing    `json:"signing,omitempty"`
 }
@@ -45,6 +46,13 @@ type Ingest struct {
 type Model struct {
 	Root    string `json:"root,omitempty"`
 	Backend string `json:"backend,omitempty"`
+}
+
+type Advice struct {
+	Provider     string `json:"provider,omitempty"`
+	Model        string `json:"model,omitempty"`
+	OpenAIKey    string `json:"openai_api_key,omitempty"`
+	AnthropicKey string `json:"anthropic_api_key,omitempty"`
 }
 
 type Lookaside struct {
@@ -106,6 +114,9 @@ func Load() (Config, error) {
 	if err := validateModelBackend(config.Model.Backend); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
+	if err := validateAdvice(config.Advice); err != nil {
+		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
 	if err := validateSigning(config.Signing); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
@@ -125,6 +136,9 @@ func Save(config Config) error {
 		return fmt.Errorf("lookaside cache maximum must not be negative")
 	}
 	if err := validateModelBackend(config.Model.Backend); err != nil {
+		return err
+	}
+	if err := validateAdvice(config.Advice); err != nil {
 		return err
 	}
 	if err := validateSigning(config.Signing); err != nil {
@@ -170,6 +184,13 @@ func Save(config Config) error {
 		return err
 	}
 	committed = true
+	return nil
+}
+
+func validateAdvice(value Advice) error {
+	if value.Provider != "" && value.Provider != "auto" && value.Provider != "openai" && value.Provider != "anthropic" && value.Provider != "deterministic" && value.Provider != "local" {
+		return fmt.Errorf("advice provider must be auto, openai, anthropic, deterministic, or local")
+	}
 	return nil
 }
 
