@@ -19,12 +19,12 @@ func TestReferenceComposesFormCapabilityLadder(t *testing.T) {
 		stages     int
 		minCorpora int
 	}{
-		{file: "babble.yaml", stages: 1, minCorpora: 4},
-		{file: "reader.yaml", stages: 1, minCorpora: 4},
-		{file: "writer.yaml", stages: 1, minCorpora: 2},
-		{file: "knowledge.yaml", stages: 1, minCorpora: 4},
-		{file: "generalist.yaml", stages: 1, minCorpora: 5},
-		{file: "assistant.yaml", stages: 2, minCorpora: 5},
+		{file: "0000-babble.yaml", stages: 1, minCorpora: 4},
+		{file: "0001-reader.yaml", stages: 1, minCorpora: 4},
+		{file: "0002-writer.yaml", stages: 1, minCorpora: 2},
+		{file: "0003-knowledge.yaml", stages: 1, minCorpora: 4},
+		{file: "0004-generalist.yaml", stages: 1, minCorpora: 5},
+		{file: "0005-assistant.yaml", stages: 2, minCorpora: 5},
 	}
 	var previousParameters uint64
 	var previousTokens int64
@@ -50,7 +50,7 @@ func TestReferenceComposesFormCapabilityLadder(t *testing.T) {
 			previousParameters, previousTokens = forecast.ApproximateParameters, forecast.PlannedTokens
 		})
 	}
-	assistant, _, err := model.LoadCompose("assistant.yaml")
+	assistant, _, err := model.LoadCompose("0005-assistant.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
