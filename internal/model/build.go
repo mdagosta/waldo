@@ -725,6 +725,19 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	} else if err != nil {
 		return Inspection{}, err
 	}
+	composePath := filepath.Join(destination, "COMPOSE.json")
+	if data, err := os.ReadFile(composePath); err == nil {
+		var persisted Compose
+		if err := json.Unmarshal(data, &persisted); err != nil || !reflect.DeepEqual(persisted, compose) {
+			return Inspection{}, fmt.Errorf("composing model %s has a different persisted compose", destination)
+		}
+	} else if os.IsNotExist(err) {
+		if err := writeJSONAtomic(composePath, compose); err != nil {
+			return Inspection{}, fmt.Errorf("persist model compose: %w", err)
+		}
+	} else {
+		return Inspection{}, err
+	}
 	staged, err := Inspect(builder.Root, name)
 	if err != nil {
 		return Inspection{}, fmt.Errorf("inspect composing model %s: %w", destination, err)
