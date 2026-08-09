@@ -1,0 +1,35 @@
+# Approximately 24 hours on one catalog NVIDIA H200 SXM.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 2048
+  vocabulary_size: 259
+  hidden_size: 1024
+  intermediate_size: 2816
+  layers: 24
+  attention_heads: 16
+  key_value_heads: 4
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - core/books
+      - core/common-pile/wikimedia
+    parameters:
+      profile: causal-pretrain-v1
+      steps: 247883
+      batch_size: 32
+      sequence_length: 2048
+      learning_rate: 0.0003
+      seed: 42
+      warmup_steps: 2479
+      checkpoint_every: 24788
+      evaluate_every: 24788
+

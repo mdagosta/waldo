@@ -1,0 +1,34 @@
+# Approximately 1 hour on the catalog M4 Max 40-core GPU; slower Macs and
+# locally observed throughput may make this a several-hour run.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 512
+  vocabulary_size: 259
+  hidden_size: 384
+  intermediate_size: 1024
+  layers: 6
+  attention_heads: 6
+  key_value_heads: 2
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - core/books/gutenberg
+    parameters:
+      profile: causal-pretrain-v1
+      steps: 31984
+      batch_size: 64
+      sequence_length: 512
+      learning_rate: 0.0003
+      seed: 42
+      warmup_steps: 320
+      checkpoint_every: 3198
+      evaluate_every: 3198
