@@ -15,8 +15,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
+	"sync"
 
 	"github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/shard"
@@ -96,11 +98,7 @@ func AssembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 			return AssemblyResult{}, fmt.Errorf("seed existing corpus identities: %w", err)
 		}
 	}
-	counter, err := tokenizer.Get(tokenizer.Default)
-	if err != nil {
-		return AssemblyResult{}, fmt.Errorf("load reference tokenizer: %w", err)
-	}
-	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory, sink: sink, counter: counter}
+	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory, sink: sink}
 	err = StreamCanonicalTextBatches(ctx, plan, func(batch TextBatch) error {
 		unique, err := dedup.filter(batch)
 		if err != nil || len(unique.Rows) == 0 {
@@ -135,7 +133,7 @@ type objectAssembler struct {
 	clock     int64
 	results   []ObjectResult
 	sink      func(ObjectResult) error
-	counter   tokenizer.Counter
+	counters  []tokenizer.Counter
 }
 
 type activeObject struct {
@@ -166,6 +164,10 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 	if assembler.active == nil {
 		assembler.active = map[string]*activeObject{}
 	}
+	counts, err := assembler.countTokens(batch.Rows)
+	if err != nil {
+		return err
+	}
 	for position := range batch.Rows {
 		if err := assembler.ctx.Err(); err != nil {
 			return err
@@ -188,7 +190,7 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 				return err
 			}
 		}
-		count := int64(assembler.counter.Count(row.Text))
+		count := counts[position]
 		row.TokenCount = &count
 		active.licenses[row.License] = true
 		usage := active.licenseUsage[row.License]
@@ -215,6 +217,42 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 		}
 	}
 	return nil
+}
+
+func (assembler *objectAssembler) countTokens(rows []shard.TextRow) ([]int64, error) {
+	if len(rows) == 0 {
+		return nil, nil
+	}
+	workers := min(len(rows), runtime.GOMAXPROCS(0))
+	for len(assembler.counters) < workers {
+		var counter tokenizer.Counter
+		var err error
+		if len(assembler.counters) == 0 {
+			counter, err = tokenizer.Get(tokenizer.Default)
+		} else {
+			counter, err = tokenizer.New(tokenizer.Default)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("load reference tokenizer worker %d: %w", len(assembler.counters)+1, err)
+		}
+		assembler.counters = append(assembler.counters, counter)
+	}
+	counts := make([]int64, len(rows))
+	var group sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		start := worker * len(rows) / workers
+		end := (worker + 1) * len(rows) / workers
+		counter := assembler.counters[worker]
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for position := start; position < end; position++ {
+				counts[position] = int64(counter.Count(rows[position].Text))
+			}
+		}()
+	}
+	group.Wait()
+	return counts, nil
 }
 
 func (assembler *objectAssembler) writerFor() (*activeObject, error) {

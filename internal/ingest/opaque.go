@@ -36,14 +36,14 @@ func StreamOpaqueTextBatches(ctx context.Context, plan Plan, consume func(TextBa
 		if input.Adapter != "opaque-base64" {
 			return fmt.Errorf("input %s requires the %s adapter, not the opaque adapter", input.Artifact.Path, input.Adapter)
 		}
-		if err := streamOpaqueInput(ctx, plan, input, consume); err != nil {
+		if err := streamOpaqueInput(ctx, plan, input, plan.Writer.AdapterBatchBytes, consume); err != nil {
 			return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
 		}
 	}
 	return nil
 }
 
-func streamOpaqueInput(ctx context.Context, plan Plan, input PlanInput, consume func(TextBatch) error) error {
+func streamOpaqueInput(ctx context.Context, plan Plan, input PlanInput, batchMaximum int64, consume func(TextBatch) error) error {
 	file, err := os.Open(input.Artifact.Path)
 	if err != nil {
 		return err
@@ -61,6 +61,17 @@ func streamOpaqueInput(ctx context.Context, plan Plan, input PlanInput, consume 
 	buffer := make([]byte, opaqueChunkBytes)
 	originalHash := sha256.New()
 	var readBytes int64
+	batch := TextBatch{}
+	flush := func() error {
+		if len(batch.Rows) == 0 {
+			return nil
+		}
+		if err := consume(batch); err != nil {
+			return err
+		}
+		batch = TextBatch{}
+		return nil
+	}
 	for chunk := int64(0); chunk < chunks; chunk++ {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -84,13 +95,25 @@ func streamOpaqueInput(ctx context.Context, plan Plan, input PlanInput, consume 
 		}
 		metadataText := string(metadata)
 		sourceName := source.Name
-		batch := TextBatch{Rows: []shard.TextRow{{
+		row := shard.TextRow{
 			ContentSHA256: contentHash, Text: text, Source: "sha256:" + input.Artifact.SHA256,
 			SourceName: &sourceName, License: license, Meta: &metadataText,
-		}}, LogicalBytes: int64(len(text))}
-		if err := consume(batch); err != nil {
-			return err
 		}
+		if len(batch.Rows) > 0 && batch.LogicalBytes+int64(len(text)) > batchMaximum {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+		batch.Rows = append(batch.Rows, row)
+		batch.LogicalBytes += int64(len(text))
+		if batch.LogicalBytes >= batchMaximum {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := flush(); err != nil {
+		return err
 	}
 	after, err := file.Stat()
 	if err != nil {

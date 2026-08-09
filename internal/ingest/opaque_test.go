@@ -75,7 +75,9 @@ func TestOpaqueFallbackChunksLargeArtifactsIntoBoundedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	var rows []string
+	batches := 0
 	if err := StreamOpaqueTextBatches(context.Background(), plan, func(batch TextBatch) error {
+		batches++
 		for _, row := range batch.Rows {
 			rows = append(rows, row.Text)
 		}
@@ -83,8 +85,8 @@ func TestOpaqueFallbackChunksLargeArtifactsIntoBoundedRows(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 3 {
-		t.Fatalf("rows = %d, want 3", len(rows))
+	if batches != 1 || len(rows) != 3 {
+		t.Fatalf("batches/rows = %d/%d, want 1/3", batches, len(rows))
 	}
 	var decoded []byte
 	for _, row := range rows {

@@ -92,7 +92,7 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 			}
 			if !valid {
 				emitOpaqueTextFallback(ctx, input)
-				if err := streamOpaqueInput(ctx, plan, input, consume); err != nil {
+				if err := streamOpaqueInput(ctx, plan, input, batchMaximum, consume); err != nil {
 					return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
 				}
 				continue
@@ -109,7 +109,7 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 					return err
 				}
 				emitOpaqueTextFallback(ctx, input)
-				if err := streamOpaqueInput(ctx, plan, input, consume); err != nil {
+				if err := streamOpaqueInput(ctx, plan, input, batchMaximum, consume); err != nil {
 					return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
 				}
 				continue
