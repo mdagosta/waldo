@@ -115,6 +115,19 @@ func TestExecuteAssemblyRefusesChangedPlan(t *testing.T) {
 	}
 }
 
+func TestPublicationObjectsForAssemblyDropsStaleObjects(t *testing.T) {
+	current := []ObjectResult{{SHA256: fmt.Sprintf("%064x", 1)}, {SHA256: fmt.Sprintf("%064x", 2)}}
+	published := []PublicationObject{
+		{Sequence: 99, SHA256: fmt.Sprintf("%064x", 3)},
+		{Sequence: 1, SHA256: current[0].SHA256},
+		{Sequence: 2, SHA256: current[1].SHA256},
+	}
+	filtered := publicationObjectsForAssembly(published, current)
+	if len(filtered) != 2 || filtered[0].SHA256 != current[0].SHA256 || filtered[1].SHA256 != current[1].SHA256 {
+		t.Fatalf("filtered publication = %+v", filtered)
+	}
+}
+
 func TestExecuteAssemblyRefusesCorruptCheckpoint(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "input.txt")
 	writeFixture(t, input, "durable")

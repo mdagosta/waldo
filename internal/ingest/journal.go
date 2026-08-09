@@ -254,6 +254,12 @@ func ExecutePublicationWithSeed(ctx context.Context, plan Plan, stagingDirectory
 	if assemblyErr != nil {
 		return AssemblyResult{}, PublicationResult{}, assemblyErr
 	}
+	// A resumed journal may contain verified objects from an older assembly
+	// produced by a previous adapter implementation. Keep only objects that
+	// belong to the assembly completed by this execution. The current objects
+	// were all published and verified above; stale lookaside objects remain
+	// harmlessly content-addressed and are never removed here.
+	publication.Objects = publicationObjectsForAssembly(publication.Objects, assembly.Objects)
 	slices.SortFunc(publication.Objects, func(a, b PublicationObject) int { return a.Sequence - b.Sequence })
 	if len(publication.Objects) != len(assembly.Objects) {
 		return AssemblyResult{}, PublicationResult{}, fmt.Errorf("published %d objects for %d assembled objects", len(publication.Objects), len(assembly.Objects))
@@ -263,6 +269,20 @@ func ExecutePublicationWithSeed(ctx context.Context, plan Plan, stagingDirectory
 		return AssemblyResult{}, PublicationResult{}, err
 	}
 	return assembly, publication, nil
+}
+
+func publicationObjectsForAssembly(published []PublicationObject, assembled []ObjectResult) []PublicationObject {
+	wanted := make(map[string]struct{}, len(assembled))
+	for _, object := range assembled {
+		wanted[object.SHA256] = struct{}{}
+	}
+	filtered := published[:0]
+	for _, object := range published {
+		if _, ok := wanted[object.SHA256]; ok {
+			filtered = append(filtered, object)
+		}
+	}
+	return filtered
 }
 
 func upsertPublicationObject(objects []PublicationObject, entry PublicationObject) []PublicationObject {

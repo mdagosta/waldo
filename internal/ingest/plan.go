@@ -68,6 +68,7 @@ type WriterPlan struct {
 	Format               string `json:"format"`
 	RecordSchema         int    `json:"record_schema"`
 	Recipe               string `json:"recipe"`
+	AdapterRecipe        string `json:"adapter_recipe"`
 	CompressedTarget     int64  `json:"compressed_target_bytes"`
 	CompressedMaximum    int64  `json:"compressed_maximum_bytes"`
 	RowGroupLogicalBytes int64  `json:"row_group_logical_bytes"`
@@ -173,6 +174,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		Update:         request.Update,
 		Writer: WriterPlan{
 			Format: "parquet", RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
+			AdapterRecipe:    "canonical-adapters-2",
 			CompressedTarget: 256 << 20, CompressedMaximum: 512 << 20,
 			RowGroupLogicalBytes: 64 << 20, PageBytes: 1 << 20,
 			AdapterBatchBytes: 16 << 20, RecordMaximumBytes: 64 << 20,
@@ -406,7 +408,7 @@ func chooseTextColumn(artifact Artifact, requested string) (string, error) {
 }
 
 func (plan Plan) Validate() error {
-	if plan.Kind != "waldo-ingest-plan" || plan.Schema != 1 || plan.Writer.Format != "parquet" || plan.Writer.RecordSchema != shard.TextRecordSchema || plan.Writer.Recipe != shard.TextWriterRecipe {
+	if plan.Kind != "waldo-ingest-plan" || plan.Schema != 1 || plan.Writer.Format != "parquet" || plan.Writer.RecordSchema != shard.TextRecordSchema || plan.Writer.Recipe != shard.TextWriterRecipe || plan.Writer.AdapterRecipe != "canonical-adapters-2" {
 		return fmt.Errorf("unsupported ingestion plan identity or writer")
 	}
 	cleanDestination := filepath.ToSlash(filepath.Clean(plan.Destination))
