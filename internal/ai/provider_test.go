@@ -5,7 +5,20 @@
 
 package ai
 
-import "testing"
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+)
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return function(request)
+}
 
 func TestSelectPrefersOpenAIAndHonorsOverride(t *testing.T) {
 	environment := map[string]string{"OPENAI_API_KEY": "openai-secret", "ANTHROPIC_API_KEY": "anthropic-secret"}
@@ -55,5 +68,38 @@ func TestSelectDoesNotInferProviderFromConfiguredKey(t *testing.T) {
 	_, err := Select("auto", "", Credentials{APIKey: "stored-key"}, func(string) string { return "" })
 	if err == nil || err.Error() != "ai.provider must be openai or anthropic when ai.api-key is set" {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestClientAsksOpenAI(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Authorization") != "Bearer secret" {
+			t.Errorf("authorization = %q", request.Header.Get("Authorization"))
+		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		if body["model"] != "test-model" || body["input"] != "evidence" || body["store"] != false {
+			t.Errorf("body = %+v", body)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"output":[{"content":[{"type":"output_text","text":"let it run"}]}]}`))}, nil
+	})}
+	response, err := (Client{HTTP: httpClient, OpenAIURL: "https://openai.example/v1/responses"}).Ask(context.Background(), Selection{Provider: ProviderOpenAI, Model: "test-model", Key: "secret"}, "evidence")
+	if err != nil || response != "let it run" {
+		t.Fatalf("response = %q, err = %v", response, err)
+	}
+}
+
+func TestClientAsksAnthropic(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("X-Api-Key") != "secret" || request.Header.Get("Anthropic-Version") != "2023-06-01" {
+			t.Errorf("headers = %+v", request.Header)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"content":[{"type":"text","text":"inspect the loss"}]}`))}, nil
+	})}
+	response, err := (Client{HTTP: httpClient, AnthropicURL: "https://anthropic.example/v1/messages"}).Ask(context.Background(), Selection{Provider: ProviderAnthropic, Model: "test-model", Key: "secret"}, "evidence")
+	if err != nil || response != "inspect the loss" {
+		t.Fatalf("response = %q, err = %v", response, err)
 	}
 }

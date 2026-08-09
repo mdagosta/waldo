@@ -171,6 +171,14 @@ stages:
 	if !strings.Contains(stdout.String(), "complete") || !strings.Contains(stdout.String(), "simulated") {
 		t.Fatalf("model summary stdout = %q", stdout.String())
 	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"model", "advise", "smoke", "Should I extend training?", "--provider", "deterministic"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("model advise code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "ACTION:        complete") || !strings.Contains(stdout.String(), "saved compose defines 1 training stage") {
+		t.Fatalf("model advise stdout = %q", stdout.String())
+	}
 	for _, name := range []string{"PLAN.json", "MODEL.json", "MODEL-BOM.json"} {
 		if _, err := os.Stat(filepath.Join(models, "smoke", name)); err != nil {
 			t.Fatal(err)

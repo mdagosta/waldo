@@ -367,6 +367,7 @@ waldo model init small --preset 10m
 waldo model train small core/books --epochs 1
 waldo model train small --epochs 1 # entire resolved index, with a warning
 waldo model summary small
+waldo model advise small
 waldo model bom small
 ```
 
@@ -377,6 +378,20 @@ shard structure, attestations, and declared totals before training. The default
 is one epoch. Every run has an append-only planned/running/terminal lifecycle
 and records backend identity, environment, observed consumption, losses,
 checkpoints, and artifact hashes.
+
+`model advise` is read-only. It evaluates the latest run and its
+`TELEMETRY.csv` locally, then reports whether to let it run, inspect it, stop
+it, fix it, or review a completed result. When `ai.provider` and `ai.api-key`
+are configured (or a provider-specific environment key is present), WALDO
+also sends the saved compose and compact training evidence to that provider:
+
+```bash
+waldo config set ai.provider openai
+waldo config set ai.api-key "$API_KEY"
+waldo model advise small "Should I change the learning rate?"
+```
+
+Use `--provider deterministic` to keep advice entirely local.
 
 For a reusable architecture and ordered multi-stage plan, use a strict YAML or
 JSON model compose:

@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -118,7 +119,7 @@ func (client Client) request(ctx context.Context, url string, body any, headers 
 	}
 	httpClient := client.HTTP
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Timeout: 2 * time.Minute}
 	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
