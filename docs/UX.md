@@ -629,7 +629,10 @@ waldo model bom smoke
 ```
 
 `waldo model summary <name>` includes a local, deterministic health assessment
-and explicit action from the latest durable run state and telemetry.
+and explicit action from the latest durable run state and telemetry. Summary,
+forecast, list, and advisor views expose the architecture's derived approximate
+parameter count; compact tables abbreviate it while detailed views also show
+the exact count.
 
 `waldo advisor <name>` starts an interactive chat grounded in the
 model's normalized compose, run history, and freshly read telemetry. It can

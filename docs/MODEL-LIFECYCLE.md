@@ -399,11 +399,16 @@ waldo model forecast core/books science/papers
 A compose supplies exact architecture and training budgets. Direct index paths
 resolve a deduplicated selection, recommend the largest model rung supported by
 roughly 20 tokens per parameter, and forecast one pass. Forecast creates no
-model or run state.
+model or run state. Human forecasts report the derived approximate parameter
+count in both compact and exact form; JSON exposes the same value as
+`approximate_parameters`.
 
 Only configurations that fit are shown, from slowest to fastest:
 
 ```text
+PARAMETERS:  9.5M (9,543,210)
+TOKENS:      1.0B
+
 GPUS  MFR     ACCELERATOR                    MEMORY/GPU  APPROX. TIME
    1  Apple   M4 Max 40-core GPU                 128 GB       48 days
    8  NVIDIA  H100 SXM                           80 GB       44 hours

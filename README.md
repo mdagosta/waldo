@@ -351,7 +351,8 @@ There is no index-free garbage collector and no prefix, glob, or URL deletion.
 
 Forecasting accepts a strict model compose or one or more index paths. It shows
 only configurations that fit, names exact Apple, NVIDIA, or AMD accelerators,
-and sorts approximate runtime from slowest to fastest:
+sorts approximate runtime from slowest to fastest, and reports the derived
+approximate parameter count in compact and exact form:
 
 ```bash
 waldo model forecast ./model.yaml

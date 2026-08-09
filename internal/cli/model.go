@@ -68,6 +68,7 @@ func runModelComposeForecast(context Context, path string, stdout io.Writer) err
 			Forecast model.ResourceForecast `json:"forecast"`
 		}{Compose: composePath, Forecast: report})
 	}
+	fmt.Fprintf(stdout, "COMPOSE:     %s\n", composePath)
 	writeModelForecast(stdout, report)
 	return nil
 }
@@ -112,15 +113,17 @@ func runModelIndexForecast(context Context, paths []string, stdout, warnings io.
 			Forecast   model.ResourceForecast `json:"forecast"`
 		}{Index: bom.Index, Paths: bom.Paths, Preset: preset.Name, Parameters: parameters.ApproximateParameters, Tokens: bom.Totals.Tokens, Budget: "one-pass", Forecast: report})
 	}
-	fmt.Fprintf(stdout, "MODEL:       %s (%s parameters)\n", preset.Name, humanCount(int64(parameters.ApproximateParameters)))
-	fmt.Fprintf(stdout, "TOKENS:      %s\n", humanCount(bom.Totals.Tokens))
+	fmt.Fprintf(stdout, "MODEL:       %s\n", preset.Name)
 	fmt.Fprintln(stdout, "BUDGET:      one pass")
-	fmt.Fprintln(stdout)
 	writeModelForecast(stdout, report)
 	return nil
 }
 
 func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
+	fmt.Fprintf(stdout, "PARAMETERS:  %s\n", humanModelParameters(report.ApproximateParameters))
+	fmt.Fprintf(stdout, "TOKENS:      %s\n", humanCount(report.PlannedTokens))
+	fmt.Fprintln(stdout)
+
 	type row struct {
 		manufacturer string
 		accelerator  string
@@ -314,7 +317,7 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 	fmt.Fprintf(stdout, "STATE:         %s\n", state)
 	fmt.Fprintf(stdout, "MODEL ID:      %s\n", shortModelHash(inspection.Model.ID))
 	fmt.Fprintf(stdout, "CREATED:       %s\n", inspection.Model.Created)
-	fmt.Fprintf(stdout, "PARAMETERS:    %s\n", humanIntegerUint(inspection.Model.Forecast.ApproximateParameters))
+	fmt.Fprintf(stdout, "PARAMETERS:    %s\n", humanModelParameters(inspection.Model.Forecast.ApproximateParameters))
 	fmt.Fprintf(stdout, "WEIGHTS:       %s\n", humanBytesUint(inspection.Model.Forecast.ParameterBytes))
 	fmt.Fprintf(stdout, "RUNS:          %s\n", humanInteger(int64(len(inspection.Model.Runs))))
 	fmt.Fprintf(stdout, "TOKENS:        %s\n", humanCount(consumed))
@@ -1155,6 +1158,18 @@ func humanIntegerUint(value uint64) string {
 		return humanInteger(int64(value))
 	}
 	return fmt.Sprintf("%d", value)
+}
+
+func humanModelParameters(value uint64) string {
+	exact := humanIntegerUint(value)
+	if value > uint64(math.MaxInt64) {
+		return exact
+	}
+	compact := humanCount(int64(value))
+	if compact == exact {
+		return exact
+	}
+	return fmt.Sprintf("%s (%s)", compact, exact)
 }
 
 func humanBytesUint(value uint64) string {
