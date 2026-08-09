@@ -194,12 +194,12 @@ WALDO configuration, manifests, output, or shell history. AWS environment,
 shared-file, and workload-role credentials remain available when no WALDO
 login exists.
 
-Durable defaults are intentionally conservative:
+Default locations are intentionally conservative:
 
 - managed read-only index: `~/.waldo/index`;
 - models: `~/.waldo/models`;
-- retained verified-object cache: `~/.waldo/cache`, bounded to 20 GiB; and
-- partial downloads and ingestion recovery: user-scoped directories beneath
+- retained verified-object cache, bounded to 20 GiB; partial downloads; and
+  ingestion recovery: separate user-scoped directories beneath
   the operating system's temporary directory.
 
 All locations are discoverable with `waldo config get` and configurable with

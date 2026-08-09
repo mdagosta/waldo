@@ -18,7 +18,8 @@ waldo config set model.root /fast-disk/waldo-models
 waldo config set lookaside.cache /fast-disk/waldo-cache
 ```
 
-Defaults are `~/.waldo/models` and `~/.waldo/cache`.
+Defaults are `~/.waldo/models` and a user-scoped lookaside cache beneath the
+operating system's temporary directory.
 `model.backend` defaults to `auto`. On macOS it selects MLX and requires Apple
 Silicon. On Linux it probes Python environments in deterministic order,
 preferring an installed TorchTitan and then an installed PyTorch. It never

@@ -217,11 +217,7 @@ func EffectiveCacheRoot(config Config) (string, error) {
 	if config.Lookaside.Cache != "" {
 		return filepath.Abs(config.Lookaside.Cache)
 	}
-	base, err := durableRoot()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(base, "cache"), nil
+	return filepath.Join(temporaryRoot(), "cache"), nil
 }
 
 func EffectiveCacheMaxBytes(config Config) int64 {

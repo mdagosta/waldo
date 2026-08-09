@@ -464,12 +464,12 @@ checking size and SHA-256, then atomically admits the object to the cache.
 `lookaside status` reports both locations and `lookaside verify` scrubs every
 retained object.
 
-Default locations keep durable state and disposable work clearly separated:
+Default locations keep durable state and temporary working data clearly separated:
 
 ```text
 ~/.waldo/models       durable model artifacts and their BOMs
-~/.waldo/cache        retained, verified lookaside objects
 ~/.waldo/index        managed read-only public index checkout
+<system temp>/waldo-<user>/cache    retained, verified lookaside objects
 <system temp>/waldo-<user>/scratch  partial object downloads
 <system temp>/waldo-<user>/ingest   resumable ingestion working state
 ```
@@ -531,7 +531,7 @@ Configuration keys are positional and intentionally limited:
 | `lookaside.region` | AWS region when it cannot be inferred. |
 | `lookaside.workers` | Concurrent completed-shard uploads, from 1 through 32. |
 | `lookaside.mirrors` | Complete ordered list of read fallbacks. |
-| `lookaside.cache` | Retained verified-object cache directory; default `~/.waldo/cache`. |
+| `lookaside.cache` | Retained verified-object cache directory; default beneath system temporary storage. |
 | `lookaside.cache.max-size` | LRU retention bound; default 20 GiB. |
 | `lookaside.scratch` | Disposable partial-download directory beneath system temporary storage. |
 | `ingest.staging` | Ingestion scratch and recovery directory beneath system temporary storage. |
