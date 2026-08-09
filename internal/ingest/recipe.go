@@ -433,14 +433,22 @@ func RecipeIdentity(loaded LoadedRecipe, destination string) string {
 // share one WALDO-owned working directory and contractually stop after
 // populating it; the resulting regular files are independently probed.
 func PrepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagingBase string, runner CommandRunner, stdout, stderr io.Writer) (PreparedRecipe, error) {
-	return prepareRecipe(ctx, loaded, destination, stagingBase, nil, runner, stdout, stderr)
+	return PrepareRecipeWithWorkers(ctx, loaded, destination, stagingBase, 0, runner, stdout, stderr)
+}
+
+func PrepareRecipeWithWorkers(ctx context.Context, loaded LoadedRecipe, destination, stagingBase string, workers int, runner CommandRunner, stdout, stderr io.Writer) (PreparedRecipe, error) {
+	return prepareRecipe(ctx, loaded, destination, stagingBase, nil, workers, runner, stdout, stderr)
 }
 
 func PrepareRecipeUpdate(ctx context.Context, loaded LoadedRecipe, destination, stagingBase string, update RecipeUpdateState, runner CommandRunner, stdout, stderr io.Writer) (PreparedRecipe, error) {
-	return prepareRecipe(ctx, loaded, destination+"@"+update.ManifestSHA256, stagingBase, &update, runner, stdout, stderr)
+	return PrepareRecipeUpdateWithWorkers(ctx, loaded, destination, stagingBase, update, 0, runner, stdout, stderr)
 }
 
-func prepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagingBase string, update *RecipeUpdateState, runner CommandRunner, stdout, stderr io.Writer) (PreparedRecipe, error) {
+func PrepareRecipeUpdateWithWorkers(ctx context.Context, loaded LoadedRecipe, destination, stagingBase string, update RecipeUpdateState, workers int, runner CommandRunner, stdout, stderr io.Writer) (PreparedRecipe, error) {
+	return prepareRecipe(ctx, loaded, destination+"@"+update.ManifestSHA256, stagingBase, &update, workers, runner, stdout, stderr)
+}
+
+func prepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagingBase string, update *RecipeUpdateState, workers int, runner CommandRunner, stdout, stderr io.Writer) (PreparedRecipe, error) {
 	if runner == nil {
 		return PreparedRecipe{}, fmt.Errorf("recipe command runner is required")
 	}
@@ -463,7 +471,7 @@ func prepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagin
 		if state.Probe == nil {
 			return PreparedRecipe{}, fmt.Errorf("prepared recipe workspace has no input probe")
 		}
-		observed, err := ProbePaths(ctx, []string{inputs})
+		observed, err := ProbePathsWithWorkers(ctx, []string{inputs}, workers)
 		if err != nil {
 			return PreparedRecipe{}, err
 		}
@@ -539,7 +547,7 @@ func prepareRecipe(ctx context.Context, loaded LoadedRecipe, destination, stagin
 	if hex.EncodeToString(recipeDigest[:]) != loaded.SHA256 {
 		return PreparedRecipe{}, fmt.Errorf("ingest recipe %s changed while its steps ran", loaded.Path)
 	}
-	probe, err := ProbePaths(ctx, []string{inputs})
+	probe, err := ProbePathsWithWorkers(ctx, []string{inputs}, workers)
 	if err != nil {
 		return PreparedRecipe{}, fmt.Errorf("probe recipe output: %w", err)
 	}

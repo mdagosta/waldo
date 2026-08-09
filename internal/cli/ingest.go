@@ -63,6 +63,10 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	workers := options.Workers
+	if workers == 0 && configuration.Lookaside.Publish != nil {
+		workers = configuration.Lookaside.Publish.Workers
+	}
 	configuredRoot, managedDefault, err := config.EffectiveIndexRoot(configuration)
 	if err != nil {
 		return err
@@ -130,7 +134,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		if context.JSON {
 			recipeOutput = &recipeJSONLogWriter{output: stderr}
 		}
-		result, err := ingest.PrepareRecipe(execution, loadedRecipe, target.Rel, stagingBase, ingestRecipeRunner, recipeOutput, recipeOutput)
+		result, err := ingest.PrepareRecipeWithWorkers(execution, loadedRecipe, target.Rel, stagingBase, workers, ingestRecipeRunner, recipeOutput, recipeOutput)
 		if err != nil {
 			return err
 		}
@@ -144,7 +148,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			options.Request.Sources = result.SourceRequests()
 		}
 	} else {
-		probe, err = ingest.ProbePaths(execution, options.Inputs)
+		probe, err = ingest.ProbePathsWithWorkers(execution, options.Inputs, workers)
 		if err != nil {
 			return err
 		}
@@ -183,10 +187,6 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		publisher, err := newIngestPublisher(execution, *publish)
 		if err != nil {
 			return err
-		}
-		workers := options.Workers
-		if workers == 0 {
-			workers = publish.Workers
 		}
 		assembly, publication, err := ingest.ExecutePublication(execution, plan, staging, publisher, workers)
 		if err != nil {

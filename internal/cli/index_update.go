@@ -99,6 +99,10 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 			return fmt.Errorf("index update needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`")
 		}
 	}
+	workers := options.Workers
+	if workers == 0 && configuration.Lookaside.Publish != nil {
+		workers = configuration.Lookaside.Publish.Workers
+	}
 	execution := ingest.WithProgress(commandContext.Execution, ingestProgressReporter(stderr, commandContext.JSON))
 	var probe ingest.Probe
 	var prepared *ingest.PreparedRecipe
@@ -119,7 +123,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 			recipeOutput = &recipeJSONLogWriter{output: stderr}
 		}
 		state := recipeUpdateState(mode, corpusTarget.Path, manifestHash, corpusTarget.Manifest)
-		result, err := ingest.PrepareRecipeUpdate(execution, loadedRecipe, logicalDestination, stagingBase, state, ingestRecipeRunner, recipeOutput, recipeOutput)
+		result, err := ingest.PrepareRecipeUpdateWithWorkers(execution, loadedRecipe, logicalDestination, stagingBase, state, workers, ingestRecipeRunner, recipeOutput, recipeOutput)
 		if err != nil {
 			return err
 		}
@@ -133,7 +137,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 			options.Request.Sources = result.SourceRequests()
 		}
 	} else {
-		probe, err = ingest.ProbePaths(execution, options.Inputs)
+		probe, err = ingest.ProbePathsWithWorkers(execution, options.Inputs, workers)
 		if err != nil {
 			return err
 		}
@@ -178,10 +182,6 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 		if err != nil {
 			return err
 		}
-	}
-	workers := options.Workers
-	if workers == 0 {
-		workers = configuration.Lookaside.Publish.Workers
 	}
 	assembly, publication, err := ingest.ExecutePublicationWithSeed(execution, plan, staging, publisher, workers, seed)
 	if err != nil {

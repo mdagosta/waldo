@@ -19,8 +19,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/parquet-go/parquet-go"
@@ -62,6 +64,10 @@ type ParquetInfo struct {
 // artifact in a bounded buffer and returns artifacts in absolute path order.
 // Symlinks are rejected so a recorded plan cannot silently change its target.
 func ProbePaths(ctx context.Context, roots []string) (Probe, error) {
+	return ProbePathsWithWorkers(ctx, roots, 0)
+}
+
+func ProbePathsWithWorkers(ctx context.Context, roots []string, workers int) (Probe, error) {
 	if len(roots) == 0 {
 		return Probe{}, fmt.Errorf("at least one input path is required")
 	}
@@ -69,20 +75,61 @@ func ProbePaths(ctx context.Context, roots []string) (Probe, error) {
 	if err != nil {
 		return Probe{}, err
 	}
-	result := Probe{Kind: "waldo-ingest-probe", Schema: 1}
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return Probe{}, err
+	if workers <= 0 {
+		workers = min(runtime.GOMAXPROCS(0), 32)
+	}
+	workers = min(workers, len(paths))
+	artifacts := make([]Artifact, len(paths))
+	jobs := make(chan int)
+	probeContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var group sync.WaitGroup
+	var firstErr error
+	var errorMutex sync.Mutex
+	for worker := 0; worker < workers; worker++ {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for position := range jobs {
+				path := paths[position]
+				emitProgress(ctx, ProgressEvent{Phase: "input", Status: "probing", Input: path})
+				artifact, err := probeFile(probeContext, path)
+				if err != nil {
+					errorMutex.Lock()
+					if firstErr == nil {
+						firstErr = fmt.Errorf("probe %s: %w", path, err)
+						cancel()
+					}
+					errorMutex.Unlock()
+					continue
+				}
+				artifacts[position] = artifact
+				emitProgress(ctx, ProgressEvent{Phase: "input", Status: "detected", Input: path, Adapter: artifact.Format, Bytes: artifact.Bytes})
+			}
+		}()
+	}
+	for position := range paths {
+		select {
+		case jobs <- position:
+		case <-probeContext.Done():
+			break
 		}
-		emitProgress(ctx, ProgressEvent{Phase: "input", Status: "probing", Input: path})
-		artifact, err := probeFile(ctx, path)
-		if err != nil {
-			return Probe{}, fmt.Errorf("probe %s: %w", path, err)
+		if probeContext.Err() != nil {
+			break
 		}
-		result.Artifacts = append(result.Artifacts, artifact)
+	}
+	close(jobs)
+	group.Wait()
+	if firstErr != nil {
+		return Probe{}, firstErr
+	}
+	if err := ctx.Err(); err != nil {
+		return Probe{}, err
+	}
+	result := Probe{Kind: "waldo-ingest-probe", Schema: 1, Artifacts: artifacts}
+	for _, artifact := range artifacts {
 		result.Totals.Artifacts++
 		result.Totals.Bytes += artifact.Bytes
-		emitProgress(ctx, ProgressEvent{Phase: "input", Status: "detected", Input: path, Adapter: artifact.Format, Bytes: artifact.Bytes})
 	}
 	if len(result.Artifacts) == 0 {
 		return Probe{}, fmt.Errorf("input paths contain no regular files")
