@@ -1,5 +1,4 @@
-# Approximately 1 hour on the catalog M4 Max 40-core GPU; slower Macs and
-# locally observed throughput may make this a several-hour run.
+# First rung: learn enough mixed prose to produce recognizable continuations.
 kind: waldo-model-compose
 schema: 1
 architecture:
@@ -22,6 +21,9 @@ stages:
     objective: causal-language-modeling
     corpora:
       - core/books/gutenberg
+      - core/common-pile/foodista
+      - core/common-pile/public-domain-review
+      - core/common-pile/python-enhancement-proposals/peps
     parameters:
       profile: causal-pretrain-v1
       steps: 31984

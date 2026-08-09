@@ -1,14 +1,14 @@
-# Approximately 2 hours on one catalog NVIDIA H200 SXM.
+# Fourth rung: broaden factual and technical completion across reference text.
 kind: waldo-model-compose
 schema: 1
 architecture:
   family: decoder-transformer
   context_tokens: 2048
   vocabulary_size: 259
-  hidden_size: 768
-  intermediate_size: 2048
-  layers: 12
-  attention_heads: 12
+  hidden_size: 1024
+  intermediate_size: 2816
+  layers: 24
+  attention_heads: 16
   key_value_heads: 4
   tie_embeddings: true
   parameter_dtype: bfloat16
@@ -20,15 +20,17 @@ stages:
     type: pre-training
     objective: causal-language-modeling
     corpora:
-      - core/books/gutenberg
+      - core/books
+      - core/common-pile/wikimedia
+      - core/common-pile/python-enhancement-proposals/peps
+      - science/plos
     parameters:
       profile: causal-pretrain-v1
-      steps: 36947
-      batch_size: 64
+      steps: 123942
+      batch_size: 32
       sequence_length: 2048
       learning_rate: 0.0003
       seed: 42
-      warmup_steps: 369
-      checkpoint_every: 3695
-      evaluate_every: 3695
-
+      warmup_steps: 1239
+      checkpoint_every: 12394
+      evaluate_every: 12394

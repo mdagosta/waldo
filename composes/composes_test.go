@@ -6,30 +6,36 @@
 package composes_test
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/model"
 )
 
-func TestReferenceComposeForecasts(t *testing.T) {
+func TestReferenceComposesFormCapabilityLadder(t *testing.T) {
 	tests := []struct {
-		file        string
-		accelerator string
-		hours       int64
+		file       string
+		stages     int
+		minCorpora int
 	}{
-		{file: "babble-mac.yaml", accelerator: "M4 Max 40-core GPU", hours: 1},
-		{file: "h200-02h.yaml", accelerator: "H200 SXM", hours: 2},
-		{file: "h200-06h.yaml", accelerator: "H200 SXM", hours: 6},
-		{file: "h200-12h.yaml", accelerator: "H200 SXM", hours: 12},
-		{file: "h200-24h.yaml", accelerator: "H200 SXM", hours: 24},
-		{file: "h200-48h.yaml", accelerator: "H200 SXM", hours: 48},
+		{file: "babble.yaml", stages: 1, minCorpora: 4},
+		{file: "reader.yaml", stages: 1, minCorpora: 4},
+		{file: "writer.yaml", stages: 1, minCorpora: 2},
+		{file: "knowledge.yaml", stages: 1, minCorpora: 4},
+		{file: "generalist.yaml", stages: 1, minCorpora: 5},
+		{file: "assistant.yaml", stages: 2, minCorpora: 5},
 	}
+	var previousParameters uint64
+	var previousTokens int64
 	for _, test := range tests {
 		t.Run(test.file, func(t *testing.T) {
 			compose, _, err := model.LoadCompose(filepath.Join(".", test.file))
 			if err != nil {
 				t.Fatal(err)
+			}
+			if len(compose.Stages) != test.stages || len(compose.Stages[0].Corpora) < test.minCorpora {
+				t.Fatalf("compose stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
 			}
 			if compose.Architecture.Tokenizer.Name != "byte" || compose.Architecture.Tokenizer.Revision != "builtin-byte-schema-1" || compose.Architecture.VocabularySize != 259 {
 				t.Fatalf("compose does not use the executable byte tokenizer: %+v", compose.Architecture.Tokenizer)
@@ -38,20 +44,25 @@ func TestReferenceComposeForecasts(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := test.hours * 60 * 60
-			found := false
-			for _, configuration := range forecast.Configurations {
-				if configuration.Accelerator != test.accelerator || configuration.GPUs != 1 {
-					continue
-				}
-				found = true
-				if difference := configuration.ApproximateSeconds - want; difference < -1 || difference > 1 {
-					t.Fatalf("forecast is %d seconds, want approximately %d", configuration.ApproximateSeconds, want)
-				}
+			if forecast.ApproximateParameters < previousParameters || forecast.PlannedTokens <= previousTokens {
+				t.Fatalf("ladder regressed from %d parameters/%d tokens to %d/%d", previousParameters, previousTokens, forecast.ApproximateParameters, forecast.PlannedTokens)
 			}
-			if !found {
-				t.Fatalf("forecast omitted 1x %s", test.accelerator)
-			}
+			previousParameters, previousTokens = forecast.ApproximateParameters, forecast.PlannedTokens
 		})
+	}
+	assistant, _, err := model.LoadCompose("assistant.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assistant.Stages[1].Type != "fine-tuning" || assistant.Stages[1].Corpora[0] != "post-train/sft" {
+		t.Fatalf("assistant dialogue stage = %+v", assistant.Stages[1])
+	}
+}
+
+func TestReferenceComposesDoNotEncodeHardwareInNames(t *testing.T) {
+	for _, legacy := range []string{"babble-mac.yaml", "h200-02h.yaml", "h200-06h.yaml", "h200-12h.yaml", "h200-24h.yaml", "h200-48h.yaml"} {
+		if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+			t.Fatalf("hardware-specific compose %s still exists", legacy)
+		}
 	}
 }

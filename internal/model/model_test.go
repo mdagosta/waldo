@@ -435,7 +435,7 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 		}, nil
 	})
 	ids := 0
-	builder := Builder{Root: root, ComposeName: "babble-mac.yaml", NewID: func() (string, error) {
+	builder := Builder{Root: root, ComposeName: "babble.yaml", NewID: func() (string, error) {
 		ids++
 		return "compose0001", nil
 	}, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
@@ -448,7 +448,7 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 		t.Fatalf("pending compose = %v, err = %v", pending, err)
 	}
 	latest, err := LatestComposePath(filepath.Join(root, "smoke"))
-	if err != nil || filepath.Base(latest) != "0000-babble-mac.yaml" {
+	if err != nil || filepath.Base(latest) != "0000-babble.yaml" {
 		t.Fatalf("latest compose = %q, err = %v", latest, err)
 	}
 	interrupted, err := Inspect(root, "smoke")

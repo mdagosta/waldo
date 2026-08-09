@@ -1,4 +1,4 @@
-# Approximately 6 hours on one catalog NVIDIA H200 SXM.
+# Third rung: maintain topic and structure across longer prose.
 kind: waldo-model-compose
 schema: 1
 architecture:
@@ -20,15 +20,15 @@ stages:
     type: pre-training
     objective: causal-language-modeling
     corpora:
-      - core/books/gutenberg
+      - core/books
+      - core/common-pile/wikimedia
     parameters:
       profile: causal-pretrain-v1
-      steps: 61971
+      steps: 75000
       batch_size: 32
       sequence_length: 2048
       learning_rate: 0.0003
       seed: 42
-      warmup_steps: 620
-      checkpoint_every: 6197
-      evaluate_every: 6197
-
+      warmup_steps: 750
+      checkpoint_every: 7500
+      evaluate_every: 7500

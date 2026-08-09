@@ -433,9 +433,10 @@ JSON model compose:
 waldo model compose composed-small ./model.yaml
 ```
 
-Runnable [reference composes](composes/README.md) range from a small
-Mac-friendly babble model through 2, 6, 12, 24, and 48 hour single-H200
-training budgets.
+Runnable [reference composes](composes/README.md) form a capability ladder from
+mixed-corpus babble, through coherent reading, writing, knowledge, and
+generalist experiments, to a dialogue-tuned assistant. Hardware and runtime
+remain forecast results rather than compose identities.
 
 Portable composes name architecture, corpora, objectives, and training
 parameters—not MLX, PyTorch, or a host path. Machine-local `model.backend=auto`
