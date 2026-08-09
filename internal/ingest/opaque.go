@@ -18,7 +18,10 @@ import (
 	"github.com/openwaldo/waldo/internal/shard"
 )
 
-const opaqueChunkBytes = 8 << 20
+// Base64 has long unbroken symbol runs which can make tokenizer work grow
+// pathologically for multi-megabyte rows. Keep the lossless representation
+// ordered and complete while bounding the cost of each canonical row.
+const opaqueChunkBytes = 256 << 10
 
 // StreamOpaqueTextBatches losslessly represents arbitrary acquired bytes in
 // canonical text shards until a native adapter and shard representation exist.

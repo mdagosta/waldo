@@ -53,3 +53,52 @@ func TestOpaqueFallbackLosslesslyRetainsUnknownBytes(t *testing.T) {
 		t.Fatalf("decoded bytes = %x, want %x", decoded, original)
 	}
 }
+
+func TestOpaqueFallbackChunksLargeArtifactsIntoBoundedRows(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "asset.bin")
+	original := make([]byte, opaqueChunkBytes*2+17)
+	for position := range original {
+		original[position] = byte(position % 251)
+	}
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "mixed/example", Title: "Mixed", License: "CC0-1.0",
+		Source: PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []string
+	if err := StreamOpaqueTextBatches(context.Background(), plan, func(batch TextBatch) error {
+		for _, row := range batch.Rows {
+			rows = append(rows, row.Text)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("rows = %d, want 3", len(rows))
+	}
+	var decoded []byte
+	for _, row := range rows {
+		parts := strings.SplitN(row, "\n\n", 2)
+		if len(parts) != 2 {
+			t.Fatalf("opaque row = %q", row)
+		}
+		chunk, err := base64.StdEncoding.DecodeString(parts[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded = append(decoded, chunk...)
+	}
+	if string(decoded) != string(original) {
+		t.Fatalf("decoded bytes = %d, want %d", len(decoded), len(original))
+	}
+}
