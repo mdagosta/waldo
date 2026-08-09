@@ -7,6 +7,7 @@ package ingest
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -142,6 +143,89 @@ func TestStreamTextBatchesChunksOversizedFilesLosslessly(t *testing.T) {
 	if rows < 2 || rebuilt.String() != contents {
 		t.Fatalf("rows=%d rebuilt=%q", rows, rebuilt.String())
 	}
+}
+
+func TestStreamTextBatchesFallsBackLosslesslyWhenProbeMissesNUL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "MediaController.java")
+	original := append([]byte(strings.Repeat("a", probeBytes+1)), 0)
+	original = append(original, []byte("still retained")...)
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "code/example", Title: "Example", License: "Apache-2.0",
+		Source: PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Inputs[0].Adapter != "text" {
+		t.Fatalf("adapter = %q", plan.Inputs[0].Adapter)
+	}
+	var rows []shard.TextRow
+	if err := streamTextBatches(context.Background(), plan, 1<<20, 1<<20, func(batch TextBatch) error {
+		rows = append(rows, batch.Rows...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if decoded := decodeOpaqueRows(t, rows); string(decoded) != string(original) {
+		t.Fatalf("decoded bytes = %d, want %d", len(decoded), len(original))
+	}
+}
+
+func TestOversizedTextWithLateNULFallsBackBeforeEmittingTextChunks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.java")
+	original := append([]byte(strings.Repeat("b", probeBytes+1)), 0)
+	original = append(original, []byte("tail")...)
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "code/example", Title: "Example", License: "Apache-2.0",
+		Source: PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []shard.TextRow
+	if err := streamTextBatches(context.Background(), plan, 17, 17, func(batch TextBatch) error {
+		rows = append(rows, batch.Rows...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if decoded := decodeOpaqueRows(t, rows); string(decoded) != string(original) {
+		t.Fatalf("decoded bytes = %d, want %d", len(decoded), len(original))
+	}
+}
+
+func decodeOpaqueRows(t *testing.T, rows []shard.TextRow) []byte {
+	t.Helper()
+	if len(rows) == 0 {
+		t.Fatal("opaque fallback emitted no rows")
+	}
+	var decoded []byte
+	for _, row := range rows {
+		parts := strings.SplitN(row.Text, "\n\n", 2)
+		if len(parts) != 2 || !strings.HasPrefix(parts[0], "WALDO_OPAQUE_BINARY_V1") {
+			t.Fatalf("row is not an opaque representation: %q", row.Text)
+		}
+		chunk, err := base64.StdEncoding.DecodeString(parts[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded = append(decoded, chunk...)
+	}
+	return decoded
 }
 
 func writeFixture(t *testing.T, path, content string) {

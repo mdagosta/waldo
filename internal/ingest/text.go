@@ -6,10 +6,12 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,6 +37,8 @@ const (
 	RejectionMapping   = "mapping"
 	RejectionLicense   = "license-policy"
 )
+
+var errTextRequiresOpaqueFallback = errors.New("text input requires lossless opaque fallback")
 
 func rejectionBatch(reason string) TextBatch {
 	return TextBatch{RejectedDocs: 1, Rejections: map[string]int64{reason: 1}}
@@ -82,6 +86,17 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 			if err := flush(); err != nil {
 				return err
 			}
+			valid, err := isNULFreeUTF8File(ctx, input.Artifact.Path)
+			if err != nil {
+				return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
+			}
+			if !valid {
+				emitOpaqueTextFallback(ctx, input)
+				if err := streamOpaqueInput(ctx, plan, input, consume); err != nil {
+					return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
+				}
+				continue
+			}
 			if err := streamLargeTextInput(ctx, plan, input, min(batchMaximum, recordMaximum), consume); err != nil {
 				return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
 			}
@@ -89,6 +104,16 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 		}
 		row, size, err := readTextRow(ctx, plan, input, recordMaximum)
 		if err != nil {
+			if errors.Is(err, errTextRequiresOpaqueFallback) {
+				if err := flush(); err != nil {
+					return err
+				}
+				emitOpaqueTextFallback(ctx, input)
+				if err := streamOpaqueInput(ctx, plan, input, consume); err != nil {
+					return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
+				}
+				continue
+			}
 			return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
 		}
 		if len(batch.Rows) > 0 && batch.LogicalBytes+size > batchMaximum {
@@ -105,6 +130,47 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 		}
 	}
 	return flush()
+}
+
+func emitOpaqueTextFallback(ctx context.Context, input PlanInput) {
+	emitProgress(ctx, ProgressEvent{
+		Phase: "convert", Status: "warning", Input: input.Artifact.Path, Adapter: "opaque-base64",
+		TotalBytes: input.Artifact.Bytes, Message: "text probe did not cover non-UTF-8 or NUL bytes; retaining the complete artifact losslessly",
+	})
+}
+
+func isNULFreeUTF8File(ctx context.Context, path string) (bool, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer file.Close()
+	buffer := make([]byte, (1<<20)+utf8.UTFMax)
+	carried := 0
+	for {
+		count, readErr := file.Read(buffer[carried:])
+		data := buffer[:carried+count]
+		if bytes.IndexByte(data, 0) >= 0 {
+			return false, nil
+		}
+		if readErr == io.EOF {
+			return utf8.Valid(data), nil
+		}
+		if readErr != nil {
+			return false, readErr
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		cut := len(data)
+		for trim := 0; trim < utf8.UTFMax && cut >= 0 && !utf8.Valid(data[:cut]); trim++ {
+			cut--
+		}
+		if cut < 0 || !utf8.Valid(data[:cut]) {
+			return false, nil
+		}
+		carried = copy(buffer, data[cut:])
+	}
 }
 
 func streamLargeTextInput(ctx context.Context, plan Plan, input PlanInput, chunkMaximum int64, consume func(TextBatch) error) error {
@@ -154,6 +220,9 @@ func streamLargeTextInput(ctx context.Context, plan Plan, input PlanInput, chunk
 			data = data[:cut]
 		} else if !utf8.Valid(data) {
 			return fmt.Errorf("record is not UTF-8")
+		}
+		if bytes.IndexByte(data, 0) >= 0 {
+			return fmt.Errorf("record is not NUL-free UTF-8")
 		}
 		text := string(data)
 		contentHash := sha256.Sum256(data)
@@ -217,7 +286,7 @@ func readTextRow(ctx context.Context, plan Plan, input PlanInput, maximum int64)
 	}
 	text := content.String()
 	if !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
-		return shard.TextRow{}, 0, fmt.Errorf("record is not NUL-free UTF-8")
+		return shard.TextRow{}, 0, fmt.Errorf("%w: record is not NUL-free UTF-8", errTextRequiresOpaqueFallback)
 	}
 	var contentHash [sha256.Size]byte
 	copy(contentHash[:], hasher.Sum(nil))
