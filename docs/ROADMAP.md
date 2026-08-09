@@ -187,6 +187,9 @@ the same files independently of an index checkout.
   a new model when the requested name does not exist. Draft writes and new
   builds require separate confirmations. A future `--monitor` mode will repeat
   local health analysis during a live run.
+- Ordered per-model compose archives, strict `model continue` transaction
+  resume, durable advisor chat history, and asynchronous checkpoint-boundary AI
+  monitoring. **Implemented.**
 - Atomic weight, optimizer, runtime-random-state checkpoints and exact
   same-run resume after direct-training interruption. **Implemented for MLX,
   PyTorch, and single-node TorchTitan, including durable content-identified

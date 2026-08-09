@@ -399,6 +399,24 @@ before writing `<name>-advisor.yaml` and asks again before starting training.
 For an existing model it never edits the immutable compose stored with the
 model. `waldo model advisor` remains a compatibility form, and local status
 remains available without any provider through `model summary`.
+
+Advisor conversations are retained in `advisor/CHAT.jsonl`. During an
+advisor-started build, checkpoint events queue non-blocking AI assessments;
+training never waits for the provider. Later sessions receive the recent chat,
+complete run summary, and ordered compose history.
+
+Every compose used by a model is preserved as
+`composes/0000-<compose-name>.yaml`, `0001-<compose-name>.yaml`, and so on.
+`COMPOSE.json` remains the canonical compatibility record. Resume an
+interrupted compose without repeating its path:
+
+```bash
+waldo model continue small
+```
+
+`continue` only resumes a retained interrupted compose transaction from its
+latest verified checkpoint. Completed, failed, and ordinary untrained models
+are rejected.
 Anthropic model overrides use Messages API IDs such as `claude-sonnet-5` or
 `claude-opus-5`; Claude Code shorthand names such as `sonnet` and `opus` are
 not API model IDs.

@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/glamour"
@@ -61,6 +62,52 @@ type advisorIndexEvidence struct {
 	Corpora []waldoindex.CorpusInfo `json:"corpora"`
 }
 
+type advisorChatRecord struct {
+	Kind        string `json:"kind"`
+	Schema      int    `json:"schema"`
+	ObservedUTC string `json:"observed_utc"`
+	Session     string `json:"session"`
+	Role        string `json:"role"`
+	Category    string `json:"category"`
+	Provider    string `json:"provider,omitempty"`
+	AIModel     string `json:"ai_model,omitempty"`
+	Content     string `json:"content"`
+}
+
+type advisorTranscript struct {
+	mutex           sync.Mutex
+	root, name      string
+	provider, model string
+	session         string
+	pending         []advisorChatRecord
+	history         []advisorTurn
+}
+
+type advisorBuildSummary struct {
+	Ordinal    int            `json:"ordinal"`
+	Stage      string         `json:"stage"`
+	State      model.RunState `json:"state"`
+	Started    string         `json:"started_utc,omitempty"`
+	Finished   string         `json:"finished_utc,omitempty"`
+	Attempts   int            `json:"attempts"`
+	ResumeStep int64          `json:"resume_step,omitempty"`
+	Steps      int64          `json:"steps,omitempty"`
+	Tokens     int64          `json:"tokens,omitempty"`
+	FinalLoss  *float64       `json:"final_loss,omitempty"`
+	Error      string         `json:"error,omitempty"`
+}
+
+type synchronizedWriter struct {
+	mutex *sync.Mutex
+	value io.Writer
+}
+
+func (writer synchronizedWriter) Write(data []byte) (int, error) {
+	writer.mutex.Lock()
+	defer writer.mutex.Unlock()
+	return writer.value.Write(data)
+}
+
 func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Writer) error {
 	if commandContext.JSON {
 		return fmt.Errorf("model advisor is an interactive chat and does not support --json")
@@ -93,6 +140,10 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 	}
 
 	name := args[0]
+	transcript, err := newAdvisorTranscript(root, name, selected)
+	if err != nil {
+		return err
+	}
 	exists, err := model.Exists(root, name)
 	if err != nil {
 		return err
@@ -143,7 +194,6 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 	}
 	fmt.Fprintln(stdout, "Advisor: type quit to exit. I will ask before writing any compose change.")
 	reader := bufio.NewReader(modelAdvisorInput)
-	var history []advisorTurn
 	for {
 		fmt.Fprint(stdout, "You: ")
 		question, readErr := reader.ReadString('\n')
@@ -167,8 +217,18 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 			}
 			report = &value
 		}
-		history = append(history, advisorTurn{Role: "user", Content: question})
-		prompt := advisorChatPrompt(name, creating, report, draft, indexEvidence, history)
+		if err := transcript.Record("user", "chat", question); err != nil {
+			return err
+		}
+		var buildHistory []advisorBuildSummary
+		var composeHistory []string
+		if !creating {
+			buildHistory, composeHistory, err = currentAdvisorBuildHistory(root, name)
+			if err != nil {
+				return err
+			}
+		}
+		prompt := advisorChatPrompt(name, creating, report, draft, indexEvidence, buildHistory, composeHistory, transcript.History())
 		var answer advisorReply
 		for attempt := 1; attempt <= 2; attempt++ {
 			fmt.Fprintf(stderr, "Advisor: thinking with %s/%s...\n", selected.Provider, selected.Model)
@@ -188,7 +248,9 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 		if err := renderAdvisorReply(stdout, answer.Reply); err != nil {
 			return err
 		}
-		history = append(history, advisorTurn{Role: "assistant", Content: answer.Reply})
+		if err := transcript.Record("assistant", "chat", answer.Reply); err != nil {
+			return err
+		}
 		if answer.Compose != nil {
 			printAdvisorChanges(stdout, answer.Changes)
 			fmt.Fprintf(stdout, "Advisor: apply these changes to %s? [y/N] ", draftPath)
@@ -203,20 +265,26 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 				copy := *answer.Compose
 				draft = &copy
 				fmt.Fprintf(stdout, "Advisor: updated %s\n", draftPath)
-				history = append(history, advisorTurn{Role: "system", Content: "The operator approved and WALDO wrote the proposed compose draft."})
+				if err := transcript.Record("system", "compose", "The operator approved and WALDO wrote the proposed compose draft."); err != nil {
+					return err
+				}
 				if creating {
 					build, buildErr := confirmAdvisorBuild(reader, stdout, name, draftPath)
 					if buildErr != nil {
 						return buildErr
 					}
 					if build {
-						return runModelCompose(commandContext, []string{name, draftPath}, stdout, stderr)
+						return runAdvisorBuild(commandContext, name, draftPath, selected, indexEvidence, transcript, stdout, stderr)
 					}
-					history = append(history, advisorTurn{Role: "system", Content: "The compose draft was saved, but the operator declined to start training."})
+					if err := transcript.Record("system", "build", "The compose draft was saved, but the operator declined to start training."); err != nil {
+						return err
+					}
 				}
 			} else {
 				fmt.Fprintln(stdout, "Advisor: compose unchanged.")
-				history = append(history, advisorTurn{Role: "system", Content: "The operator declined the proposed compose change."})
+				if err := transcript.Record("system", "compose", "The operator declined the proposed compose change."); err != nil {
+					return err
+				}
 			}
 		} else if creating && answer.Build {
 			if draft == nil {
@@ -227,7 +295,7 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 				return buildErr
 			}
 			if build {
-				return runModelCompose(commandContext, []string{name, draftPath}, stdout, stderr)
+				return runAdvisorBuild(commandContext, name, draftPath, selected, indexEvidence, transcript, stdout, stderr)
 			}
 		}
 		if readErr == io.EOF {
@@ -242,6 +310,144 @@ func currentAdvisorEvidence(root, name string) (model.Advice, error) {
 		return model.Advice{}, err
 	}
 	return model.BuildAdvice(inspection, time.Now())
+}
+
+func newAdvisorTranscript(root, name string, selected waldoai.Selection) (*advisorTranscript, error) {
+	transcript := &advisorTranscript{
+		root: root, name: name, provider: selected.Provider, model: selected.Model,
+		session: fmt.Sprintf("%d", time.Now().UTC().UnixNano()),
+	}
+	file, err := os.Open(filepath.Join(root, name, "advisor", "CHAT.jsonl"))
+	if errors.Is(err, os.ErrNotExist) {
+		return transcript, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var record advisorChatRecord
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			return nil, fmt.Errorf("read advisor chat history: %w", err)
+		}
+		if record.Kind != "waldo-advisor-chat" || record.Schema != 1 || record.Role == "" || record.Content == "" {
+			return nil, fmt.Errorf("advisor chat history contains an invalid record")
+		}
+		transcript.history = append(transcript.history, advisorTurn{Role: record.Role, Content: record.Content})
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if len(transcript.history) > 24 {
+		transcript.history = transcript.history[len(transcript.history)-24:]
+	}
+	return transcript, nil
+}
+
+func (transcript *advisorTranscript) Record(role, category, content string) error {
+	transcript.mutex.Lock()
+	defer transcript.mutex.Unlock()
+	record := advisorChatRecord{
+		Kind: "waldo-advisor-chat", Schema: 1, ObservedUTC: time.Now().UTC().Format(time.RFC3339Nano),
+		Session: transcript.session, Role: role, Category: category, Provider: transcript.provider,
+		AIModel: transcript.model, Content: strings.TrimSpace(content),
+	}
+	transcript.pending = append(transcript.pending, record)
+	transcript.history = append(transcript.history, advisorTurn{Role: role, Content: record.Content})
+	if len(transcript.history) > 24 {
+		transcript.history = transcript.history[len(transcript.history)-24:]
+	}
+	return transcript.flushLocked()
+}
+
+func (transcript *advisorTranscript) History() []advisorTurn {
+	transcript.mutex.Lock()
+	defer transcript.mutex.Unlock()
+	return append([]advisorTurn(nil), transcript.history...)
+}
+
+func (transcript *advisorTranscript) Flush() error {
+	transcript.mutex.Lock()
+	defer transcript.mutex.Unlock()
+	return transcript.flushLocked()
+}
+
+func (transcript *advisorTranscript) flushLocked() error {
+	if len(transcript.pending) == 0 {
+		return nil
+	}
+	modelPath := filepath.Join(transcript.root, transcript.name)
+	if _, err := os.Stat(filepath.Join(modelPath, "MODEL.json")); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	directory := filepath.Join(modelPath, "advisor")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(filepath.Join(directory, "CHAT.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	for _, record := range transcript.pending {
+		encoded, err := json.Marshal(record)
+		if err != nil {
+			_ = file.Close()
+			return err
+		}
+		if _, err := file.Write(append(encoded, '\n')); err != nil {
+			_ = file.Close()
+			return err
+		}
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	transcript.pending = nil
+	return nil
+}
+
+func currentAdvisorBuildHistory(root, name string) ([]advisorBuildSummary, []string, error) {
+	inspection, err := model.Inspect(root, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	history := make([]advisorBuildSummary, 0, len(inspection.Runs))
+	for index, run := range inspection.Runs {
+		pin := inspection.Model.Runs[index]
+		summary := advisorBuildSummary{
+			Ordinal: pin.Ordinal, Stage: pin.Stage, State: run.State, Started: run.Started,
+			Finished: run.Finished, Attempts: len(run.Attempts), Error: run.Error,
+		}
+		if pin.Resume != nil {
+			summary.ResumeStep = pin.Resume.Step
+		}
+		if run.Progress != nil {
+			summary.Steps, summary.Tokens, summary.FinalLoss = run.Progress.Steps, run.Progress.ConsumedTokens, run.Progress.LastLoss
+		}
+		if run.Observation != nil {
+			summary.Steps, summary.Tokens, summary.FinalLoss = run.Observation.Steps, run.Observation.ConsumedTokens, run.Observation.FinalLoss
+		}
+		history = append(history, summary)
+	}
+	entries, err := os.ReadDir(filepath.Join(inspection.Path, model.ComposeHistoryDirectory))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, nil, err
+	}
+	var composes []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".yaml") {
+			composes = append(composes, entry.Name())
+		}
+	}
+	return history, composes, nil
 }
 
 func currentAdvisorIndex(configuration config.Config) (advisorIndexEvidence, error) {
@@ -279,10 +485,12 @@ func advisorAllowedCorpora(original *model.Compose, corpora []waldoindex.CorpusI
 	return allowed
 }
 
-func advisorChatPrompt(name string, creating bool, report *model.Advice, draft *model.Compose, indexEvidence advisorIndexEvidence, history []advisorTurn) string {
+func advisorChatPrompt(name string, creating bool, report *model.Advice, draft *model.Compose, indexEvidence advisorIndexEvidence, buildHistory []advisorBuildSummary, composeHistory []string, history []advisorTurn) string {
 	evidence, _ := json.MarshalIndent(report, "", "  ")
 	draftJSON, _ := json.MarshalIndent(draft, "", "  ")
 	indexJSON, _ := json.MarshalIndent(indexEvidence, "", "  ")
+	buildJSON, _ := json.MarshalIndent(buildHistory, "", "  ")
+	composeHistoryJSON, _ := json.MarshalIndent(composeHistory, "", "  ")
 	referenceJSON, _ := json.MarshalIndent(advisorComposeReference(indexEvidence.Corpora), "", "  ")
 	if len(history) > 12 {
 		history = history[len(history)-12:]
@@ -316,6 +524,12 @@ Valid compose shape reference (schema example only, not a recommendation):
 ` + string(referenceJSON) + `
 
 Current executable backends require tokenizer byte@builtin-byte-schema-1 with vocabulary_size 259. Architecture hidden_size must be divisible by attention_heads, attention_heads by key_value_heads, and every sequence_length must not exceed context_tokens. Training stages use type pre-training, fine-tuning, alignment, or other; the currently supported objective is causal-language-modeling. Set positive steps, batch_size, sequence_length, and learning_rate. Use checkpoint_every and evaluate_every appropriate to the run length.
+
+Durable build history:
+` + string(buildJSON) + `
+
+Archived compose history (oldest to newest):
+` + string(composeHistoryJSON) + `
 
 Conversation:
 ` + string(historyJSON)
@@ -400,6 +614,132 @@ func confirmAdvisorBuild(reader *bufio.Reader, output io.Writer, name, composePa
 	return true, nil
 }
 
+type advisorCheckpointMonitor struct {
+	ctx        context.Context
+	root       string
+	name       string
+	selection  waldoai.Selection
+	index      advisorIndexEvidence
+	transcript *advisorTranscript
+	output     io.Writer
+	warnings   io.Writer
+	events     chan model.Progress
+	done       chan struct{}
+}
+
+func newAdvisorCheckpointMonitor(ctx context.Context, root, name string, selection waldoai.Selection, index advisorIndexEvidence, transcript *advisorTranscript, output, warnings io.Writer) *advisorCheckpointMonitor {
+	monitor := &advisorCheckpointMonitor{
+		ctx: ctx, root: root, name: name, selection: selection, index: index,
+		transcript: transcript, output: output, warnings: warnings,
+		events: make(chan model.Progress, 1), done: make(chan struct{}),
+	}
+	go monitor.run()
+	return monitor
+}
+
+func (monitor *advisorCheckpointMonitor) Observe(event model.Progress) {
+	_ = monitor.transcript.Flush()
+	if event.Training == nil || event.Training.Kind != "checkpoint" {
+		return
+	}
+	select {
+	case monitor.events <- event:
+	default:
+		select {
+		case <-monitor.events:
+		default:
+		}
+		select {
+		case monitor.events <- event:
+		default:
+		}
+	}
+}
+
+func (monitor *advisorCheckpointMonitor) Close() {
+	close(monitor.events)
+	<-monitor.done
+}
+
+func (monitor *advisorCheckpointMonitor) run() {
+	defer close(monitor.done)
+	for event := range monitor.events {
+		report, err := currentAdvisorEvidence(monitor.root, monitor.name)
+		if err != nil {
+			fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor: %v\n", err)
+			continue
+		}
+		buildHistory, composeHistory, err := currentAdvisorBuildHistory(monitor.root, monitor.name)
+		if err != nil {
+			fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor: %v\n", err)
+			continue
+		}
+		prompt := advisorMonitorPrompt(report, event, monitor.index, buildHistory, composeHistory, monitor.transcript.History())
+		response, err := modelAdvisorAsk(monitor.ctx, monitor.selection, prompt)
+		if err != nil {
+			if monitor.ctx.Err() == nil {
+				fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor: %v\n", err)
+			}
+			continue
+		}
+		allowed := advisorAllowedCorpora(report.Compose, monitor.index.Corpora)
+		answer, err := parseAdvisorReply(response, report.Compose, allowed, false)
+		if err != nil {
+			fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor returned invalid advice: %v\n", err)
+			continue
+		}
+		if answer.Compose != nil || answer.Build || len(answer.Changes) != 0 {
+			fmt.Fprintln(monitor.warnings, "warning: advisor checkpoint monitor attempted an interactive action; ignoring it")
+			continue
+		}
+		if err := monitor.transcript.Record("assistant", "checkpoint-monitor", answer.Reply); err != nil {
+			fmt.Fprintf(monitor.warnings, "warning: persist advisor checkpoint monitor: %v\n", err)
+		}
+		if err := renderAdvisorMarkdown(monitor.output, fmt.Sprintf("Advisor monitor · step %d", event.Training.Step), answer.Reply); err != nil {
+			fmt.Fprintf(monitor.warnings, "warning: render advisor checkpoint monitor: %v\n", err)
+		}
+	}
+}
+
+func advisorMonitorPrompt(report model.Advice, event model.Progress, index advisorIndexEvidence, buildHistory []advisorBuildSummary, composeHistory []string, history []advisorTurn) string {
+	payload, _ := json.MarshalIndent(struct {
+		Checkpoint     model.Progress        `json:"checkpoint"`
+		Model          model.Advice          `json:"model"`
+		Index          advisorIndexEvidence  `json:"index"`
+		BuildHistory   []advisorBuildSummary `json:"build_history"`
+		ComposeHistory []string              `json:"compose_history"`
+		ChatHistory    []advisorTurn         `json:"chat_history"`
+	}{event, report, index, buildHistory, composeHistory, history}, "", "  ")
+	return "You are monitoring a WALDO training build at a durable checkpoint. Give a concise Markdown assessment of progress, loss and held-out-loss trends, throughput, ETA, and any actionable concern. Recommend let-run unless evidence supports inspect or stop. Do not propose or modify a compose in checkpoint monitoring. Return exactly one JSON object with only a reply string: {\"reply\":\"Markdown assessment\"}.\n\nEvidence:\n" + string(payload)
+}
+
+func runAdvisorBuild(commandContext Context, name, composePath string, selected waldoai.Selection, index advisorIndexEvidence, transcript *advisorTranscript, stdout, stderr io.Writer) error {
+	if err := transcript.Record("system", "build", fmt.Sprintf("Starting model %s from %s.", name, filepath.Base(composePath))); err != nil {
+		return err
+	}
+	var outputMutex sync.Mutex
+	lockedOutput := synchronizedWriter{mutex: &outputMutex, value: stdout}
+	lockedProgress := synchronizedWriter{mutex: &outputMutex, value: stderr}
+	root, err := configuredModelRoot()
+	if err != nil {
+		return err
+	}
+	monitor := newAdvisorCheckpointMonitor(commandContext.Execution, root, name, selected, index, transcript, lockedOutput, lockedProgress)
+	buildContext := commandContext
+	buildContext.Progress = monitor.Observe
+	buildErr := runModelCompose(buildContext, []string{name, composePath}, lockedOutput, lockedProgress)
+	monitor.Close()
+	result := "Build completed."
+	if buildErr != nil {
+		result = "Build ended: " + buildErr.Error()
+	}
+	if err := transcript.Record("system", "build", result); err != nil && buildErr == nil {
+		return err
+	}
+	_ = transcript.Flush()
+	return buildErr
+}
+
 func printAdvisorChanges(output io.Writer, changes []string) {
 	fmt.Fprintln(output, "Advisor: proposed compose changes:")
 	for _, change := range changes {
@@ -408,11 +748,15 @@ func printAdvisorChanges(output io.Writer, changes []string) {
 }
 
 func renderAdvisorReply(output io.Writer, markdown string) error {
+	return renderAdvisorMarkdown(output, "Advisor", markdown)
+}
+
+func renderAdvisorMarkdown(output io.Writer, title, markdown string) error {
 	renderer, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(modelAdvisorWidth()))
 	if err != nil {
 		return fmt.Errorf("initialize advisor Markdown renderer: %w", err)
 	}
-	rendered, err := renderer.Render("## Advisor\n\n" + strings.TrimSpace(markdown) + "\n")
+	rendered, err := renderer.Render("## " + title + "\n\n" + strings.TrimSpace(markdown) + "\n")
 	if err != nil {
 		return fmt.Errorf("render advisor response: %w", err)
 	}

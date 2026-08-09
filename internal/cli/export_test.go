@@ -223,7 +223,12 @@ stages:
 	if err != nil {
 		t.Fatal(err)
 	}
-	modelAdvisorAsk = func(context.Context, waldoai.Selection, string) (string, error) { return string(newProposal), nil }
+	modelAdvisorAsk = func(_ context.Context, _ waldoai.Selection, prompt string) (string, error) {
+		if strings.Contains(prompt, "monitoring a WALDO training build") {
+			return `{"reply":"Checkpoint is healthy; let the run continue."}`, nil
+		}
+		return string(newProposal), nil
+	}
 	modelAdvisorInput = strings.NewReader("Make a tiny test model for this machine.\nyes\nyes\n")
 	stdout.Reset()
 	stderr.Reset()
@@ -232,6 +237,25 @@ stages:
 	}
 	if exists, err := model.Exists(models, "fresh"); err != nil || !exists || !strings.Contains(stdout.String(), "composed model fresh") {
 		t.Fatalf("new advisor model exists = %v, err = %v, stdout = %q", exists, err, stdout.String())
+	}
+	for _, path := range []string{
+		filepath.Join(models, "smoke", "composes", "0000-smoke.yaml"),
+		filepath.Join(models, "fresh", "composes", "0000-fresh-advisor.yaml"),
+		filepath.Join(models, "smoke", "advisor", "CHAT.jsonl"),
+		filepath.Join(models, "fresh", "advisor", "CHAT.jsonl"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("durable advisor/build history %s: %v", path, err)
+		}
+	}
+	chat, err := os.ReadFile(filepath.Join(models, "fresh", "advisor", "CHAT.jsonl"))
+	if err != nil || !bytes.Contains(chat, []byte(`"category":"build"`)) || !bytes.Contains(chat, []byte(`"category":"checkpoint-monitor"`)) {
+		t.Fatalf("fresh advisor chat = %s, err = %v", chat, err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"model", "continue", "smoke"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "no interrupted compose") {
+		t.Fatalf("completed continue code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 	for _, name := range []string{"PLAN.json", "MODEL.json", "MODEL-BOM.json"} {
 		if _, err := os.Stat(filepath.Join(models, "smoke", name)); err != nil {

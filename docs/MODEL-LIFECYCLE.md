@@ -349,6 +349,18 @@ until the compose completes.
   it interviews the operator, creates a validated compose, and separately asks
   before starting the build. It does not send weights, training records, or
   corpus text or alter an existing source model.
+- Every distinct compose is archived as ordered YAML beneath `composes/`, using
+  `0000-<name>.yaml`, `0001-<name>.yaml`, and so on. `COMPOSE.json` remains the
+  canonical compatibility record. Exact transaction resume deduplicates the
+  archive rather than recording the same compose twice.
+- `model continue <name>` is valid only when `.waldo-compose` retains an
+  interrupted transaction for that model. It loads the latest archived compose
+  (falling back to legacy `COMPOSE.json`) and enters the normal transaction and
+  verified-checkpoint resume path.
+- Advisor sessions append schema-1 JSONL records to `advisor/CHAT.jsonl`.
+  Advisor-started builds enqueue provider analysis at checkpoint boundaries;
+  provider latency does not block training. Completed assessments are persisted
+  and included with compact run and compose history in later chats.
 - `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, backend and
   simulation identity, observation hashes, and artifact hashes. Its
   `path_base` is `model-root`: every `run_bom` and artifact `path` resolves

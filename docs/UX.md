@@ -645,6 +645,24 @@ immutable source model, or sends the API key, model weights, or corpus text.
 `waldo model advisor` is a compatibility form; `--provider` and `--model` can
 override the configured AI backend.
 
+Advisor chat is append-only in `model.root/<name>/advisor/CHAT.jsonl`. An
+advisor-started build queues an assessment at each durable checkpoint without
+blocking training on API latency. Completed assessments appear in the terminal
+and become part of later advisor context alongside compact run history.
+
+Each distinct compose is archived as
+`model.root/<name>/composes/NNNN-<compose-name>.yaml`. Repeating an identical
+interrupted compose does not create a duplicate. Resume needs only the model
+name:
+
+```bash
+waldo model continue smoke
+```
+
+The command succeeds only while a durable interrupted compose transaction is
+retained. It selects the latest archived compose and uses the normal verified
+checkpoint path. It never repeats a completed run.
+
 The model BOM is a portable inventory rooted at the model directory. A
 pulled model selects its verified origin until a later real run supersedes
 it. Artifact paths include the complete run directory, label simulated output
