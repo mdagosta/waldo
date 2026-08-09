@@ -3,7 +3,7 @@
 // Copyright (c) 2026 Gregory M. Kurtzer
 // SPDX-License-Identifier: Apache-2.0
 
-package advice
+package ai
 
 import "testing"
 

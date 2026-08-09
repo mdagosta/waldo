@@ -537,6 +537,10 @@ Configuration keys are positional and intentionally limited:
 | `ingest.staging` | Ingestion scratch and recovery directory beneath system temporary storage. |
 | `model.root` | Durable local model, run, BOM, and artifact directory; default `~/.waldo/models`. |
 | `model.backend` | `auto` (default), or explicit `mlx`, `torchtitan`, `pytorch`, or development-only `fake`. |
+| `ai.provider` | General AI preference: `auto`, `openai`, `anthropic`, `deterministic`, or reserved `local`. |
+| `ai.model` | Optional provider model override used by AI-powered features. |
+| `ai.openai-api-key` | Stored OpenAI credential; output reports only `(set)`. |
+| `ai.anthropic-api-key` | Stored Anthropic credential; output reports only `(set)`. |
 
 `waldo config get` lists every supported key and its effective or unset value.
 Passing a prefix such as `lookaside` narrows the list to matching keys;

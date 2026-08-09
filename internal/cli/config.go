@@ -30,10 +30,10 @@ var configKeys = []string{
 	"ingest.staging",
 	"model.root",
 	"model.backend",
-	"advice.provider",
-	"advice.model",
-	"advice.openai-api-key",
-	"advice.anthropic-api-key",
+	"ai.provider",
+	"ai.model",
+	"ai.openai-api-key",
+	"ai.anthropic-api-key",
 	"disclosure.provider",
 	"signing.method",
 	"signing.key",
@@ -255,29 +255,29 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 			return fmt.Errorf("model.backend must be auto, mlx, torchtitan, pytorch, or fake")
 		}
 		configuration.Model.Backend = values[0]
-	case "advice.provider":
+	case "ai.provider":
 		if len(values) != 1 {
 			return oneConfigValue(key)
 		}
 		if values[0] != "auto" && values[0] != "openai" && values[0] != "anthropic" && values[0] != "deterministic" && values[0] != "local" {
-			return fmt.Errorf("advice.provider must be auto, openai, anthropic, deterministic, or local")
+			return fmt.Errorf("ai.provider must be auto, openai, anthropic, deterministic, or local")
 		}
-		configuration.Advice.Provider = values[0]
-	case "advice.model":
+		configuration.AI.Provider = values[0]
+	case "ai.model":
 		if len(values) != 1 {
 			return oneConfigValue(key)
 		}
-		configuration.Advice.Model = values[0]
-	case "advice.openai-api-key":
+		configuration.AI.Model = values[0]
+	case "ai.openai-api-key":
 		if len(values) != 1 {
 			return oneConfigValue(key)
 		}
-		configuration.Advice.OpenAIKey = values[0]
-	case "advice.anthropic-api-key":
+		configuration.AI.OpenAIKey = values[0]
+	case "ai.anthropic-api-key":
 		if len(values) != 1 {
 			return oneConfigValue(key)
 		}
-		configuration.Advice.AnthropicKey = values[0]
+		configuration.AI.AnthropicKey = values[0]
 	case "disclosure.provider":
 		if len(values) != 1 {
 			return oneConfigValue(key)
@@ -358,14 +358,14 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.Model.Root = ""
 	case "model.backend":
 		configuration.Model.Backend = ""
-	case "advice.provider":
-		configuration.Advice.Provider = ""
-	case "advice.model":
-		configuration.Advice.Model = ""
-	case "advice.openai-api-key":
-		configuration.Advice.OpenAIKey = ""
-	case "advice.anthropic-api-key":
-		configuration.Advice.AnthropicKey = ""
+	case "ai.provider":
+		configuration.AI.Provider = ""
+	case "ai.model":
+		configuration.AI.Model = ""
+	case "ai.openai-api-key":
+		configuration.AI.OpenAIKey = ""
+	case "ai.anthropic-api-key":
+		configuration.AI.AnthropicKey = ""
 	case "disclosure.provider":
 		configuration.Disclosure.Provider = ""
 	case "signing.method":
@@ -450,24 +450,24 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 		return value, err == nil, err
 	case "model.backend":
 		return config.EffectiveModelBackend(configuration), true, nil
-	case "advice.provider":
-		value := configuration.Advice.Provider
+	case "ai.provider":
+		value := configuration.AI.Provider
 		if value == "" {
 			value = "auto"
 		}
 		return value, true, nil
-	case "advice.model":
-		if configuration.Advice.Model == "" {
+	case "ai.model":
+		if configuration.AI.Model == "" {
 			return nil, false, nil
 		}
-		return configuration.Advice.Model, true, nil
-	case "advice.openai-api-key":
-		if configuration.Advice.OpenAIKey == "" {
+		return configuration.AI.Model, true, nil
+	case "ai.openai-api-key":
+		if configuration.AI.OpenAIKey == "" {
 			return nil, false, nil
 		}
 		return "(set)", true, nil
-	case "advice.anthropic-api-key":
-		if configuration.Advice.AnthropicKey == "" {
+	case "ai.anthropic-api-key":
+		if configuration.AI.AnthropicKey == "" {
 			return nil, false, nil
 		}
 		return "(set)", true, nil

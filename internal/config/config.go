@@ -25,7 +25,7 @@ type Config struct {
 	Lookaside  Lookaside  `json:"lookaside,omitempty"`
 	Ingest     Ingest     `json:"ingest,omitempty"`
 	Model      Model      `json:"model,omitempty"`
-	Advice     Advice     `json:"advice,omitempty"`
+	AI         AI         `json:"ai,omitempty"`
 	Disclosure Disclosure `json:"disclosure,omitempty"`
 	Signing    Signing    `json:"signing,omitempty"`
 }
@@ -48,7 +48,7 @@ type Model struct {
 	Backend string `json:"backend,omitempty"`
 }
 
-type Advice struct {
+type AI struct {
 	Provider     string `json:"provider,omitempty"`
 	Model        string `json:"model,omitempty"`
 	OpenAIKey    string `json:"openai_api_key,omitempty"`
@@ -114,7 +114,7 @@ func Load() (Config, error) {
 	if err := validateModelBackend(config.Model.Backend); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
-	if err := validateAdvice(config.Advice); err != nil {
+	if err := validateAI(config.AI); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := validateSigning(config.Signing); err != nil {
@@ -138,7 +138,7 @@ func Save(config Config) error {
 	if err := validateModelBackend(config.Model.Backend); err != nil {
 		return err
 	}
-	if err := validateAdvice(config.Advice); err != nil {
+	if err := validateAI(config.AI); err != nil {
 		return err
 	}
 	if err := validateSigning(config.Signing); err != nil {
@@ -187,9 +187,9 @@ func Save(config Config) error {
 	return nil
 }
 
-func validateAdvice(value Advice) error {
+func validateAI(value AI) error {
 	if value.Provider != "" && value.Provider != "auto" && value.Provider != "openai" && value.Provider != "anthropic" && value.Provider != "deterministic" && value.Provider != "local" {
-		return fmt.Errorf("advice provider must be auto, openai, anthropic, deterministic, or local")
+		return fmt.Errorf("AI provider must be auto, openai, anthropic, deterministic, or local")
 	}
 	return nil
 }

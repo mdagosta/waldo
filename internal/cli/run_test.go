@@ -891,3 +891,19 @@ func TestConfigRejectsUnknownKey(t *testing.T) {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}
 }
+
+func TestConfigMasksStoredAIKeys(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	var stdout, stderr bytes.Buffer
+	secret := "never-print-this-secret"
+	if code := Run([]string{"config", "set", "ai.openai-api-key", secret}, &stdout, &stderr); code != 0 {
+		t.Fatalf("set code = %d, stderr = %q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), secret) || !strings.Contains(stdout.String(), "(set)") {
+		t.Fatalf("set output exposed or omitted key state: %q", stdout.String())
+	}
+	stdout.Reset()
+	if code := Run([]string{"config", "get", "ai.openai-api-key"}, &stdout, &stderr); code != 0 || strings.Contains(stdout.String(), secret) || strings.TrimSpace(stdout.String()) != "(set)" {
+		t.Fatalf("get code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+}
