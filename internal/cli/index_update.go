@@ -179,7 +179,11 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 			return err
 		}
 	}
-	assembly, publication, err := ingest.ExecutePublicationWithSeed(execution, plan, staging, publisher, configuration.Lookaside.Publish.Workers, seed)
+	workers := options.Workers
+	if workers == 0 {
+		workers = configuration.Lookaside.Publish.Workers
+	}
+	assembly, publication, err := ingest.ExecutePublicationWithSeed(execution, plan, staging, publisher, workers, seed)
 	if err != nil {
 		return err
 	}

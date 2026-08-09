@@ -135,6 +135,7 @@ func ingestFlags() []commandFlag {
 		textFlag("source-category", "", "GPAI-compatible source category"),
 		textFlag("text-column", "", "raw Parquet text column"),
 		textFlag("input-profile", "", "declarative input profile path"),
+		integerFlag("workers", 0, "concurrent ingestion and publication workers (1..32; 0 uses lookaside.workers)"),
 	}
 }
 

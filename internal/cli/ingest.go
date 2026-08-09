@@ -184,7 +184,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		if err != nil {
 			return err
 		}
-		assembly, publication, err := ingest.ExecutePublication(execution, plan, staging, publisher, publish.Workers)
+		workers := options.Workers
+		if workers == 0 {
+			workers = publish.Workers
+		}
+		assembly, publication, err := ingest.ExecutePublication(execution, plan, staging, publisher, workers)
 		if err != nil {
 			return err
 		}
@@ -427,6 +431,7 @@ type indexIngestOptions struct {
 	Inputs          []string
 	DryRun          bool
 	InputProfile    string
+	Workers         int
 	MetadataOptions []string
 }
 
@@ -435,6 +440,7 @@ func cobraIndexIngestOptions(context Context, args []string) (indexIngestOptions
 		Inputs:       []string{args[0]},
 		DryRun:       boolOption(context, "dry-run"),
 		InputProfile: stringOption(context, "input-profile"),
+		Workers:      intOption(context, "workers"),
 		Request: ingest.PlanRequest{
 			Title:       stringOption(context, "title"),
 			Description: stringOption(context, "description"),
@@ -447,6 +453,9 @@ func cobraIndexIngestOptions(context Context, args []string) (indexIngestOptions
 				Category: stringOption(context, "source-category"),
 			},
 		},
+	}
+	if options.Workers < 0 || options.Workers > 32 {
+		return indexIngestOptions{}, fmt.Errorf("--workers must be an integer from 1 to 32, or 0 to use lookaside.workers")
 	}
 	for _, name := range []string{"title", "description", "license", "source", "source-name", "source-category", "text-column", "input-profile"} {
 		if optionChanged(context, name) {

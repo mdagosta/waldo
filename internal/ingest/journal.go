@@ -234,7 +234,7 @@ func ExecutePublicationWithSeed(ctx context.Context, plan Plan, stagingDirectory
 	}()
 
 	sequence := 0
-	assembly, assemblyErr := AssembleTextObjectsWithSeedAndSink(runCtx, plan, abs, seed, func(object ObjectResult) error {
+	assembly, assemblyErr := assembleTextObjectsWithSeedAndSink(runCtx, plan, abs, seed, workers, func(object ObjectResult) error {
 		sequence++
 		emitProgress(ctx, ProgressEvent{Phase: "upload", Status: "queued", Shard: object.SHA256, Sequence: sequence, TotalBytes: object.Bytes})
 		select {

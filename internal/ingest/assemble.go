@@ -71,6 +71,10 @@ func AssembleTextObjectsWithSink(ctx context.Context, plan Plan, stagingDirector
 }
 
 func AssembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingDirectory string, seed DedupSeed, sink func(ObjectResult) error) (AssemblyResult, error) {
+	return assembleTextObjectsWithSeedAndSink(ctx, plan, stagingDirectory, seed, 0, sink)
+}
+
+func assembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingDirectory string, seed DedupSeed, workers int, sink func(ObjectResult) error) (AssemblyResult, error) {
 	if err := plan.Validate(); err != nil {
 		return AssemblyResult{}, err
 	}
@@ -98,7 +102,10 @@ func AssembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 			return AssemblyResult{}, fmt.Errorf("seed existing corpus identities: %w", err)
 		}
 	}
-	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory, sink: sink}
+	if workers <= 0 {
+		workers = min(runtime.GOMAXPROCS(0), 32)
+	}
+	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory, sink: sink, workers: workers}
 	err = StreamCanonicalTextBatches(ctx, plan, func(batch TextBatch) error {
 		unique, err := dedup.filter(batch)
 		if err != nil || len(unique.Rows) == 0 {
@@ -133,6 +140,7 @@ type objectAssembler struct {
 	clock     int64
 	results   []ObjectResult
 	sink      func(ObjectResult) error
+	workers   int
 	counters  []tokenizer.Counter
 }
 
@@ -223,7 +231,7 @@ func (assembler *objectAssembler) countTokens(rows []shard.TextRow) ([]int64, er
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	workers := min(len(rows), runtime.GOMAXPROCS(0))
+	workers := min(len(rows), assembler.workers)
 	for len(assembler.counters) < workers {
 		var counter tokenizer.Counter
 		var err error
