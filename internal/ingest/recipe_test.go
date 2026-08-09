@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -258,6 +259,33 @@ sources:
 	}
 	if manifest.Sources[0].LicenseEvidence == nil || manifest.Sources[0].LicenseEvidence.Declaration == "" || manifest.Sources[0].Content == nil || manifest.Sources[0].Content.Selection == "" || manifest.Sources[0].CollectedTo != "2026-08-08" {
 		t.Fatalf("manifest source evidence = %+v", manifest.Sources[0])
+	}
+}
+
+func TestSourceCodeRecipeTreatsJSONArrayJavaScriptAsText(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "fixture.js")
+	writeFixture(t, path, `["const a = 1;", "const b = 2;"]`)
+	probe, err := ProbePaths(context.Background(), []string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if probe.Artifacts[0].Format != "json" {
+		t.Fatalf("probe format = %q, want json before source context", probe.Artifacts[0].Format)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "code/example",
+		Title:       "Example Code",
+		Sources: []PlanSourceRequest{{
+			ID: "example", License: "MIT", InputRoot: root,
+			Source: PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset", Content: &index.Content{Types: []string{"source code"}}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := plan.Inputs[0]; got.Adapter != "text" || got.Artifact.Format != "text" || !slices.Contains(got.Artifact.Evidence, "source-code-extension:.js") {
+		t.Fatalf("planned input = %+v", got)
 	}
 }
 

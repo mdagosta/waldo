@@ -195,12 +195,18 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			continue
 		}
 		profile, textColumn, inputRoot, sourceID := request.Profile, request.TextColumn, request.InputRoot, ""
+		sourceCode := contentIncludesSourceCode(request.Source.Content)
 		if len(request.Sources) > 0 {
 			source, err := sourceRequestForArtifact(request.Sources, artifact.Path)
 			if err != nil {
 				return Plan{}, err
 			}
 			profile, textColumn, inputRoot, sourceID = source.Profile, source.TextColumn, source.InputRoot, source.ID
+			sourceCode = contentIncludesSourceCode(source.Source.Content)
+		}
+		if sourceCode && artifact.Format == "json" && sourceCodeExtension(artifact.Path) {
+			artifact.Format = "text"
+			artifact.Evidence = append(artifact.Evidence, "source-code-extension:"+strings.ToLower(filepath.Ext(artifact.Path)))
 		}
 		input := PlanInput{Artifact: artifact, Profile: profile, SourceID: sourceID}
 		if inputRoot != "" {
@@ -275,6 +281,27 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		return Plan{}, err
 	}
 	return plan, nil
+}
+
+func contentIncludesSourceCode(content *index.Content) bool {
+	if content == nil {
+		return false
+	}
+	for _, contentType := range content.Types {
+		if strings.EqualFold(strings.TrimSpace(contentType), "source code") {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceCodeExtension(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".js", ".jsx", ".ts", ".tsx":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizePlanSource(source *PlanSource) error {
