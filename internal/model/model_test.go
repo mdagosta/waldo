@@ -435,7 +435,7 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 		}, nil
 	})
 	ids := 0
-	builder := Builder{Root: root, NewID: func() (string, error) {
+	builder := Builder{Root: root, ComposeName: "babble-mac.yaml", NewID: func() (string, error) {
 		ids++
 		return "compose0001", nil
 	}, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
@@ -443,6 +443,13 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	})}
 	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("first Compose error = %v", err)
+	}
+	if pending, err := HasPendingCompose(root, "smoke"); err != nil || !pending {
+		t.Fatalf("pending compose = %v, err = %v", pending, err)
+	}
+	latest, err := LatestComposePath(filepath.Join(root, "smoke"))
+	if err != nil || filepath.Base(latest) != "0000-babble-mac.yaml" {
+		t.Fatalf("latest compose = %q, err = %v", latest, err)
 	}
 	interrupted, err := Inspect(root, "smoke")
 	if err != nil || len(interrupted.Runs) != 1 || interrupted.Runs[0].State != RunInterrupted {
@@ -460,6 +467,9 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if pending, err := HasPendingCompose(root, "smoke"); err != nil || pending {
+		t.Fatalf("completed pending compose = %v, err = %v", pending, err)
+	}
 	if attempts != 2 || ids != 1 || len(completed.Runs) != 1 || completed.Runs[0].State != RunComplete || len(completed.Runs[0].Attempts) != 2 {
 		t.Fatalf("completed compose: attempts %d ids %d run %+v", attempts, ids, completed.Runs)
 	}
@@ -471,6 +481,28 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 		if entry.IsDir() {
 			t.Fatalf("completed compose retained workspace %s", entry.Name())
 		}
+	}
+}
+
+func TestComposeHistoryOrdersDistinctRecipes(t *testing.T) {
+	modelPath := t.TempDir()
+	first := validCompose()
+	path, err := ArchiveCompose(modelPath, first, "first compose.yaml")
+	if err != nil || filepath.Base(path) != "0000-first-compose.yaml" {
+		t.Fatalf("first archive = %q, err = %v", path, err)
+	}
+	if duplicate, err := ArchiveCompose(modelPath, first, "renamed.yaml"); err != nil || duplicate != path {
+		t.Fatalf("duplicate archive = %q, err = %v", duplicate, err)
+	}
+	second := validCompose()
+	second.Stages[0].Parameters.Steps++
+	path, err = ArchiveCompose(modelPath, second, "second.json")
+	if err != nil || filepath.Base(path) != "0001-second.yaml" {
+		t.Fatalf("second archive = %q, err = %v", path, err)
+	}
+	latest, err := LatestComposePath(modelPath)
+	if err != nil || latest != path {
+		t.Fatalf("latest archive = %q, err = %v", latest, err)
 	}
 }
 

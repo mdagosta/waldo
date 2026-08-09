@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/openwaldo/waldo/internal/model"
 	"github.com/spf13/cobra"
 )
 
@@ -17,6 +18,7 @@ type Context struct {
 	Execution context.Context
 	JSON      bool
 	Command   *cobra.Command
+	Progress  func(model.Progress)
 }
 
 type Handler func(Context, []string, io.Writer, io.Writer) error
@@ -189,6 +191,7 @@ func newModelCommand(state *cobraState) *cobra.Command {
 		leaf(state, "compose <name> <compose-file>", "Create and train from a model compose", "Materializes hash-verified stage inputs before publishing the model. Use --audit for an additional shard audit.", cobra.ExactArgs(2), runModelCompose,
 			booleanFlag("audit", "audit shard structure, attestations, and declared totals before training"),
 			booleanFlag("replace", "replace an existing model after all stages complete")),
+		leaf(state, "continue <name>", "Resume an interrupted compose build", "Loads the model's latest numbered compose and resumes its retained transaction from the newest verified checkpoint. Completed, failed, and untrained models are rejected.", cobra.ExactArgs(1), runModelContinue),
 		leaf(state, "export <name> <directory>", "Export a model release package", "Exports WALDO, Hugging Face, MLX, GGUF, or Ollama artifacts with provenance.", cobra.ExactArgs(2), runModelExport,
 			textFlag("format", "waldo", "export format: waldo, huggingface, mlx, gguf, or ollama"),
 			textFlag("quant", "", "GGUF quantization profile: 2, 3, 4, 5, 6, or 8"),

@@ -463,6 +463,7 @@ func runModelCompose(context Context, args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
+	builder.ComposeName = filepath.Base(composePath)
 	objectives := make([]string, 0, len(compose.Stages))
 	for _, stage := range compose.Stages {
 		if !slices.Contains(objectives, stage.Objective) {
@@ -498,6 +499,35 @@ func runModelCompose(context Context, args []string, stdout, stderr io.Writer) e
 		}{Compose: composePath, Result: result})
 	}
 	return writeModelMutationResult(context, stdout, result, "composed")
+}
+
+func runModelContinue(context Context, args []string, stdout, stderr io.Writer) error {
+	root, err := configuredModelRoot()
+	if err != nil {
+		return err
+	}
+	name := args[0]
+	inspection, err := model.Inspect(root, name)
+	if err != nil {
+		return err
+	}
+	pending, err := model.HasPendingCompose(root, name)
+	if err != nil {
+		return err
+	}
+	if !pending {
+		state := "untrained"
+		if len(inspection.Runs) > 0 {
+			state = string(inspection.Runs[len(inspection.Runs)-1].State)
+		}
+		return fmt.Errorf("model %q has no interrupted compose to continue (current state: %s)", name, state)
+	}
+	composePath, err := model.LatestComposePath(inspection.Path)
+	if err != nil {
+		return fmt.Errorf("locate last compose for model %q: %w", name, err)
+	}
+	fmt.Fprintf(stderr, "continue               resuming %s from %s\n", name, composePath)
+	return runModelCompose(context, []string{name, composePath}, stdout, stderr)
 }
 
 func runModelExport(context Context, args []string, stdout, stderr io.Writer) error {
@@ -875,17 +905,20 @@ func configuredModelBuilder(commandContext Context, progress io.Writer) (model.B
 	builder := model.Builder{Root: root, Progress: func(event model.Progress) {
 		if commandContext.JSON {
 			_ = json.NewEncoder(progress).Encode(event)
-			return
-		}
-		label := event.Phase
-		if event.Stage != "" {
-			label += "/" + event.Stage
-		}
-		message := modelProgressMessage(event)
-		if event.State != "" {
-			fmt.Fprintf(progress, "%-22s %-11s %s\n", label, event.State, message)
 		} else {
-			fmt.Fprintf(progress, "%-22s %s\n", label, message)
+			label := event.Phase
+			if event.Stage != "" {
+				label += "/" + event.Stage
+			}
+			message := modelProgressMessage(event)
+			if event.State != "" {
+				fmt.Fprintf(progress, "%-22s %-11s %s\n", label, event.State, message)
+			} else {
+				fmt.Fprintf(progress, "%-22s %s\n", label, message)
+			}
+		}
+		if commandContext.Progress != nil {
+			commandContext.Progress(event)
 		}
 	}}
 	backend := config.EffectiveModelBackend(configuration)

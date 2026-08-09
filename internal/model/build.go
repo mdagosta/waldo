@@ -35,11 +35,12 @@ type Progress struct {
 }
 
 type Builder struct {
-	Root     string
-	Now      func() time.Time
-	NewID    func() (string, error)
-	Resolver training.Resolver
-	Progress func(Progress)
+	Root        string
+	Now         func() time.Time
+	NewID       func() (string, error)
+	Resolver    training.Resolver
+	Progress    func(Progress)
+	ComposeName string
 }
 
 // CheckBackend validates that this host can execute the requested portable
@@ -737,6 +738,9 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 		}
 	} else {
 		return Inspection{}, err
+	}
+	if _, err := ArchiveCompose(destination, compose, builder.ComposeName); err != nil {
+		return Inspection{}, fmt.Errorf("archive model compose: %w", err)
 	}
 	staged, err := Inspect(builder.Root, name)
 	if err != nil {
