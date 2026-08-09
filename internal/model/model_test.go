@@ -397,16 +397,17 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false); !errors.Is(err, context.Canceled) {
 		t.Fatalf("first Compose error = %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "smoke")); !os.IsNotExist(err) {
-		t.Fatalf("interrupted compose published destination: %v", err)
+	interrupted, err := Inspect(root, "smoke")
+	if err != nil || len(interrupted.Runs) != 1 || interrupted.Runs[0].State != RunInterrupted {
+		t.Fatalf("interrupted compose model = %+v, err = %v", interrupted, err)
 	}
 	entries, err := os.ReadDir(filepath.Join(root, ".waldo-compose"))
 	if err != nil || len(entries) < 2 {
 		t.Fatalf("durable staging entries = %v, err = %v", entries, err)
 	}
 	listed, err := List(root, nil)
-	if err != nil || len(listed) != 1 || listed[0].Name != "smoke" || listed[0].State != string(RunInterrupted) {
-		t.Fatalf("staged compose listing = %+v, err = %v", listed, err)
+	if err != nil || len(listed) != 1 || listed[0].Name != "smoke" || listed[0].State != string(RunInterrupted) || listed[0].Path != filepath.Join(root, "smoke") {
+		t.Fatalf("active compose listing = %+v, err = %v", listed, err)
 	}
 	completed, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false)
 	if err != nil {

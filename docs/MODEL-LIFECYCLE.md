@@ -277,22 +277,23 @@ An existing name is refused. Explicit replacement uses one flag:
 waldo model compose example model.yaml --replace
 ```
 
-WALDO resolves and hash-verifies every stage and builds the replacement in a durable,
-content-identified transaction beneath `<model.root>/.waldo-compose`. The
-transaction pins the compose, every corpus BOM, and the model being replaced.
+WALDO resolves and hash-verifies every stage and creates the active model at
+`<model.root>/<name>`. Durable transaction metadata beneath
+`<model.root>/.waldo-compose` pins the compose, every corpus BOM, and any model
+being replaced.
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown
 as a separate phase. The deterministic held-out selection scan reports shard,
 record, and byte progress before backend selection. While a compose is running,
-`model list` includes its validated staged model and current run state even
-though final publication remains atomic.
-After Ctrl-C or process loss, repeating the exact command discovers the staged
+ordinary `model list` and `model summary` operations see its current state at
+the standard model path.
+After Ctrl-C or process loss, repeating the exact command discovers the active
 model, marks an abandoned running attempt interrupted, and resumes the same
-stage and run from its newest verified checkpoint. Changed inputs create a
-different transaction rather than contaminating prior work. A failed stage is
-cleared; interrupted work is retained. The old model remains intact until all
-stages complete and the replacement is atomically published.
+stage and run from its newest verified checkpoint. Different inputs are refused
+while that transaction is unfinished. A failed stage is cleared; interrupted
+work is retained. Replacement keeps the prior model as a hidden rollback backup
+until the compose completes.
 
 ## Durable layout
 

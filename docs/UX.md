@@ -574,13 +574,13 @@ origin hash. The command validates every selection and hash-verifies every
 materialized object. `--audit` additionally verifies shard structure,
 attestations, and declared totals before any training begins. It creates the model if
 absent, and executes its stages. Existing names are refused unless `--replace`
-is explicitly supplied; replacement is prepared fully before the old model is
-removed. Compose work is staged in a content-identified durable transaction.
-`model list` includes a validated staged compose and its current run state;
-final publication remains atomic. Held-out selection reports shard, record,
-and byte progress before the training backend starts.
+is explicitly supplied. The active compose always occupies its standard
+`<model.root>/<name>` directory, so ordinary model inspection sees its current
+run state. Content-identified transaction metadata and any replacement rollback
+backup remain hidden. Held-out selection reports shard, record, and byte
+progress before the training backend starts.
 Repeating the exact command after interruption resumes its current stage and
-run; changed composes, corpus BOMs, or replacement targets never share staging.
+run; different compose inputs are refused while that transaction is unfinished.
 
 Direct `model train` defaults to one epoch. `--epochs` is the sole direct-run
 training-budget flag and means complete passes over the training partition.

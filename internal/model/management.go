@@ -40,7 +40,7 @@ func List(root string, patterns []string) ([]Listing, error) {
 			return nil, fmt.Errorf("invalid model pattern %q: %w", pattern, err)
 		}
 	}
-	listed := make(map[string]Listing)
+	result := make([]Listing, 0)
 	for _, entry := range entries {
 		if !entry.IsDir() || !validName.MatchString(entry.Name()) || !matchesAny(entry.Name(), patterns) {
 			continue
@@ -50,36 +50,6 @@ func List(root string, patterns []string) ([]Listing, error) {
 			return nil, err
 		}
 		listing := listingFromInspection(inspection)
-		listed[listing.Name] = listing
-	}
-	// Compose stages are trained in a durable transaction workspace and are
-	// atomically published only after every stage completes. Include valid
-	// staged models so long-running composes remain visible to model list.
-	stagingRoot := filepath.Join(root, ".waldo-compose")
-	transactions, err := os.ReadDir(stagingRoot)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	for _, entry := range transactions {
-		if !entry.IsDir() {
-			continue
-		}
-		workspace := filepath.Join(stagingRoot, entry.Name())
-		var transaction composeTransaction
-		if err := readJSON(filepath.Join(workspace, "COMPOSE.json"), &transaction); err != nil || transaction.Kind != "waldo-model-compose-transaction" || transaction.Schema != 1 || !validName.MatchString(transaction.Name) || !matchesAny(transaction.Name, patterns) {
-			continue
-		}
-		inspection, err := Inspect(workspace, transaction.Name)
-		if err != nil {
-			continue
-		}
-		listing := listingFromInspection(inspection)
-		if current, ok := listed[listing.Name]; !ok || listing.Updated > current.Updated {
-			listed[listing.Name] = listing
-		}
-	}
-	result := make([]Listing, 0, len(listed))
-	for _, listing := range listed {
 		result = append(result, listing)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
