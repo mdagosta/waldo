@@ -4,7 +4,7 @@ Status: accepted
 
 ## Decision
 
-`waldo model train` and `waldo model compose` always materialize selected
+Direct and compose-driven `waldo model train` always materialize selected
 objects through the lookaside cache, enforcing the manifest size and SHA-256.
 They do not additionally audit shard structure, embedded attestations, or
 declared aggregate totals by default.
@@ -22,4 +22,4 @@ verification or runtime parsing.
 
 Starting a normal training run no longer includes an unrequested extra audit
 pass. Operators who require preflight attestation evidence can request it with
-one consistent flag on direct and composed training.
+one consistent flag on direct and compose-driven training.

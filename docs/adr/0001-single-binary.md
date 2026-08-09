@@ -18,7 +18,7 @@ lookaside, provenance, model, and training domains with the dependency rules in
 `docs/ARCHITECTURE.md`.
 
 There is no separate `compose` product surface. Declarative composition is a
-model compose consumed by `waldo model compose`.
+model compose consumed by `waldo model train`.
 
 ## Consequences
 

@@ -7,6 +7,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -31,13 +33,30 @@ func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
 	if err != nil || !boolOption(context, "audit") {
 		t.Fatalf("audit = %v, error = %v", boolOption(context, "audit"), err)
 	}
-	context, _, err = parseCobraCommand(t, []string{"model", "compose"}, []string{"foo", "compose.yaml"})
-	if err != nil || boolOption(context, "audit") {
-		t.Fatalf("compose audit default = %v, error = %v", boolOption(context, "audit"), err)
-	}
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"model", "train", "foo", "core/books", "--epochs", "0"}, &stdout, &stderr); code != 1 {
 		t.Fatal("zero epochs accepted")
+	}
+}
+
+func TestTrainingComposeInputRequiresOneIdentifiedCompose(t *testing.T) {
+	directory := t.TempDir()
+	compose := filepath.Join(directory, "training.yaml")
+	if err := os.WriteFile(compose, []byte("kind: waldo-model-compose\nschema: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(directory, "index.yaml")
+	if err := os.WriteFile(index, []byte("kind: index\nschema: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := trainingComposeInput([]string{compose}); err != nil || got != compose {
+		t.Fatalf("compose input = %q, err = %v", got, err)
+	}
+	if got, err := trainingComposeInput([]string{index}); err != nil || got != "" {
+		t.Fatalf("index input = %q, err = %v", got, err)
+	}
+	if _, err := trainingComposeInput([]string{compose, "core/books"}); err == nil || !strings.Contains(err.Error(), "only training input") {
+		t.Fatalf("mixed compose inputs error = %v", err)
 	}
 }
 
@@ -89,7 +108,7 @@ func TestModelTrainFormatsOmittedNameDiagnostic(t *testing.T) {
 	if stderr.String() != wantError {
 		t.Fatalf("stderr = %q, want %q", stderr.String(), wantError)
 	}
-	if !strings.Contains(stdout.String(), "Usage:\n  waldo model train <name> [index-path...] [flags]") {
+	if !strings.Contains(stdout.String(), "Usage:\n  waldo model train <name> [index-path...] | <name> <compose-file> [flags]") {
 		t.Fatalf("stdout does not contain Cobra usage: %q", stdout.String())
 	}
 }

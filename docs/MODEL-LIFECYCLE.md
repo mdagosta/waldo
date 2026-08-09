@@ -259,7 +259,7 @@ stages:
 Run it with:
 
 ```bash
-waldo model compose example model.yaml
+waldo model train example model.yaml
 ```
 
 Unknown fields, additional YAML documents, incomplete architecture, unsupported
@@ -273,16 +273,13 @@ its current weights. WALDO verifies every origin artifact, checks the optional
 hash assertion and exact architecture equality, then initializes the new model
 from that origin. A compose never mutates the named base model.
 
-An existing name is refused. Explicit replacement uses one flag:
-
-```bash
-waldo model compose example model.yaml --replace
-```
-
 WALDO resolves and hash-verifies every stage and creates the active model at
-`<model.root>/<name>`. Durable transaction metadata beneath
-`<model.root>/.waldo-compose` pins the compose, every corpus BOM, and any model
-being replaced.
+`<model.root>/<name>` when absent. When the name already exists, its normalized
+architecture and tokenizer hash must exactly match the compose; a mismatch is
+refused with guidance to use a new model name. Matching composes append their
+stages without replacing the model. Durable transaction metadata beneath
+`<model.root>/.waldo-compose` pins the compose, every corpus BOM, the model ID,
+and the starting run ordinal.
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown
@@ -294,8 +291,7 @@ After Ctrl-C or process loss, repeating the exact command discovers the active
 model, marks an abandoned running attempt interrupted, and resumes the same
 stage and run from its newest verified checkpoint. Different inputs are refused
 while that transaction is unfinished. A failed stage is cleared; interrupted
-work is retained. Replacement keeps the prior model as a hidden rollback backup
-until the compose completes.
+work is retained.
 
 ## Durable layout
 
@@ -331,10 +327,8 @@ until the compose completes.
   `complete`, `failed`, or `interrupted`. It separates verified partial
   progress from a complete observation and records every resume attempt.
 - Once a model is published beneath `model.root`, failed and interrupted work
-  remains visible and inspectable. WALDO removes or supersedes a managed model
-  only through explicit `model rm` or a successfully committed `--replace`;
-  a failed replacement restores the original model rather than adopting its
-  incomplete candidate.
+  remains visible and inspectable. Training never replaces or removes it;
+  removal requires explicit `model rm`.
 - `TELEMETRY.csv` is an append-only, spreadsheet-ready event and scalar time
   series. Its stable columns record UTC observation time, attempt-relative
   elapsed time, run and stage identity, event and state, optimizer progress,

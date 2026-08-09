@@ -171,7 +171,7 @@ func newLookasideCommand(state *cobraState) *cobra.Command {
 }
 
 func newModelCommand(state *cobraState) *cobra.Command {
-	command := group("model", "Create, train, compose, and use auditable models", "")
+	command := group("model", "Create, train, and use auditable models", "")
 	command.AddCommand(
 		leaf(state, "init <name>", "Initialize an untrained model", "Available presets: 10m, 35m, 90m, 300m, 1b, 3b, 7b, 13b, 34b, 70b.", cobra.ExactArgs(1), runModelInit,
 			requiredTextFlag("preset", "model architecture preset")),
@@ -185,12 +185,9 @@ func newModelCommand(state *cobraState) *cobra.Command {
 			booleanFlag("allow-incomplete", "emit a marked incomplete EU GPAI draft"),
 			booleanFlag("force", "replace an existing output file")),
 		leaf(state, "forecast [index-path...] | <compose.yaml>", "Estimate viable GPU configurations and runtime", "Forecasts one pass over selected index tokens or a declared model compose.", cobra.ArbitraryArgs, runModelForecast),
-		leaf(state, "train <name> [index-path...]", "Train an existing model on indexed corpora", "With no index path, WALDO trains on the entire resolved index.", modelTrainArgs, runModelTrain,
+		leaf(state, "train <name> [index-path...] | <name> <compose-file>", "Train a model from indexed corpora or a compose", "A compose creates an absent model or trains an existing model with the same architecture. With no input, WALDO trains an existing model on the entire resolved index.", modelTrainArgs, runModelTrain,
 			integer64Flag("epochs", 1, "complete training passes (1..1000000)"),
 			booleanFlag("audit", "audit shard structure, attestations, and declared totals before training")),
-		leaf(state, "compose <name> <compose-file>", "Create and train from a model compose", "Materializes hash-verified stage inputs before publishing the model. Use --audit for an additional shard audit.", cobra.ExactArgs(2), runModelCompose,
-			booleanFlag("audit", "audit shard structure, attestations, and declared totals before training"),
-			booleanFlag("replace", "replace an existing model after all stages complete")),
 		leaf(state, "continue <name>", "Resume an interrupted compose build", "Loads the model's latest numbered compose and resumes its retained transaction from the newest verified checkpoint. Completed, failed, and untrained models are rejected.", cobra.ExactArgs(1), runModelContinue),
 		leaf(state, "export <name> <directory>", "Export a model release package", "Exports WALDO, Hugging Face, MLX, GGUF, or Ollama artifacts with provenance.", cobra.ExactArgs(2), runModelExport,
 			textFlag("format", "waldo", "export format: waldo, huggingface, mlx, gguf, or ollama"),

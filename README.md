@@ -366,7 +366,7 @@ selections:
 ```bash
 waldo model init small --preset 10m
 waldo model train small core/books --epochs 1
-waldo model train small --epochs 1 # entire resolved index, with a warning
+waldo model train small --epochs 1 # entire resolved index
 waldo model summary small
 waldo model bom small
 ```
@@ -431,7 +431,7 @@ For a reusable architecture and ordered multi-stage plan, use a strict YAML or
 JSON model compose:
 
 ```bash
-waldo model compose composed-small ./model.yaml
+waldo model train composed-small ./model.yaml
 ```
 
 Runnable [reference composes](composes/README.md) form a capability ladder from

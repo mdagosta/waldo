@@ -149,11 +149,11 @@ stages:
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"model", "compose", "smoke", compose}, &stdout, &stderr); code != 0 {
-		t.Fatalf("model compose code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	if code := Run([]string{"model", "train", "smoke", compose}, &stdout, &stderr); code != 0 {
+		t.Fatalf("compose-driven model train code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "composed model smoke") || !strings.Contains(stderr.String(), "preflight/pretrain") {
-		t.Fatalf("model compose stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	if !strings.Contains(stdout.String(), "trained model smoke") || !strings.Contains(stderr.String(), "preflight/pretrain") {
+		t.Fatalf("compose-driven model train stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
 	runBOMs, err := filepath.Glob(filepath.Join(models, "smoke", "runs", "*", "RUN-BOM.json"))
 	if err != nil || len(runBOMs) != 1 {
@@ -235,7 +235,7 @@ stages:
 	if code := Run([]string{"advisor", "fresh", "--provider", "anthropic", "--model", "claude-sonnet-5"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("new-model advisor code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	if exists, err := model.Exists(models, "fresh"); err != nil || !exists || !strings.Contains(stdout.String(), "composed model fresh") {
+	if exists, err := model.Exists(models, "fresh"); err != nil || !exists || !strings.Contains(stdout.String(), "trained model fresh") {
 		t.Fatalf("new advisor model exists = %v, err = %v, stdout = %q", exists, err, stdout.String())
 	}
 	for _, path := range []string{

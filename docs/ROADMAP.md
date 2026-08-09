@@ -96,7 +96,7 @@ Implemented foundation:
 - Durable planned/running/complete/failed/interrupted run state machine
 - Deterministic fake backend with completion, failure, and interruption tests
 - Immutable architecture plans plus model and run OpenWALDO BOMs
-- Named-model `init`, `list`, `summary`, `bom`, `train`, `compose`, `export`,
+- Named-model `init`, `list`, `summary`, `bom`, `train`, `continue`, `export`,
   `chat`, and `rm` command surface; chat remains capability-gated until real
   weights exist
 - Direct index-backed training selections through the verified shard cache

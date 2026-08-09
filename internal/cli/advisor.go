@@ -736,7 +736,7 @@ func runAdvisorBuild(commandContext Context, name, composePath string, selected 
 	monitor := newAdvisorCheckpointMonitor(commandContext.Execution, root, name, selected, index, transcript, lockedOutput, lockedProgress)
 	buildContext := commandContext
 	buildContext.Progress = monitor.Observe
-	buildErr := runModelCompose(buildContext, []string{name, composePath}, lockedOutput, lockedProgress)
+	buildErr := runModelComposeTraining(buildContext, name, composePath, lockedOutput, lockedProgress)
 	monitor.Close()
 	result := "Build completed."
 	if buildErr != nil {

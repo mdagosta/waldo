@@ -37,6 +37,5 @@ retained as provenance rather than presented as a usable model.
 - Model inspection can validate the hash chain without an index checkout.
 - An aggregate BOM resolves every artifact without persisting an absolute
   machine path, and consumers can distinguish history from current weights.
-- A compose is built in a temporary model directory and published only after
-  every stage completes; `--replace` therefore preserves the old model on
-  failure.
+- Compose-driven training creates an absent model or appends runs to an
+  architecture-compatible model; it never replaces an existing model.

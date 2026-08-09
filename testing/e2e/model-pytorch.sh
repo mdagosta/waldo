@@ -125,7 +125,7 @@ stages:
       evaluate_every: 1
 EOF
 
-output=$("$binary" model compose pytorch-smoke "$compose")
+output=$("$binary" model train pytorch-smoke "$compose")
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q 'backend       pytorch@builtin-pytorch-worker-schema-1-r2'
 summary=$("$binary" --json model summary pytorch-smoke)

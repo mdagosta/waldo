@@ -561,14 +561,18 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 }
 
 type composeTransaction struct {
-	Kind          string                    `json:"kind"`
-	Schema        int                       `json:"schema"`
-	Name          string                    `json:"name"`
-	Compose       Compose                   `json:"compose"`
-	CorpusBOMs    []composeTransactionStage `json:"corpus_boms"`
-	Replace       bool                      `json:"replace"`
-	TargetModelID string                    `json:"target_model_id,omitempty"`
-	TargetSHA256  string                    `json:"target_sha256,omitempty"`
+	Kind       string                    `json:"kind"`
+	Schema     int                       `json:"schema"`
+	Name       string                    `json:"name"`
+	Compose    Compose                   `json:"compose"`
+	CorpusBOMs []composeTransactionStage `json:"corpus_boms"`
+	ModelID    string                    `json:"model_id,omitempty"`
+	StartRun   int                       `json:"start_run,omitempty"`
+	// Legacy replacement fields remain readable so an interrupted transaction
+	// created by an earlier WALDO can fail safely instead of being misread.
+	Replace       bool   `json:"replace,omitempty"`
+	TargetModelID string `json:"target_model_id,omitempty"`
+	TargetSHA256  string `json:"target_sha256,omitempty"`
 }
 
 type composeTransactionStage struct {
@@ -576,10 +580,87 @@ type composeTransactionStage struct {
 	SHA256 string `json:"sha256"`
 }
 
-// Compose creates a model at its standard model-root path and executes every
-// prepared stage there. Hidden transaction metadata preserves exact-command
-// resume and a replacement backup permits rollback on failure.
-func (builder Builder) Compose(ctx context.Context, name string, compose Compose, stages []PreparedStage, replace bool) (Inspection, error) {
+// CheckComposeTarget rejects incompatible existing targets before expensive
+// corpus preparation. Compose repeats the check while holding its name lock.
+func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	if err := compose.Validate(); err != nil {
+		return err
+	}
+	if _, err := builder.resolveComposeBase(&compose); err != nil {
+		return err
+	}
+	pending, err := pendingComposeTransaction(builder.Root, name)
+	if err != nil {
+		return err
+	}
+	if pending != nil {
+		if !reflect.DeepEqual(pending.Compose, compose) {
+			return fmt.Errorf("model %q has an unfinished compose with different inputs; repeat the exact command to resume it", name)
+		}
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(builder.Root, name)); os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	target, err := Inspect(builder.Root, name)
+	if err != nil {
+		return err
+	}
+	return validateComposeTarget(target, compose)
+}
+
+func validateComposeTarget(target Inspection, compose Compose) error {
+	if len(target.Runs) > 0 {
+		state := target.Runs[len(target.Runs)-1].State
+		if state == RunRunning || state == RunInterrupted {
+			return fmt.Errorf("model %q has an unfinished %s run; resume that training before starting another compose", target.Model.Name, state)
+		}
+	}
+	architectureHash, err := canonicalHash(compose.Architecture)
+	if err != nil {
+		return err
+	}
+	if target.Model.ArchitectureSHA256 != architectureHash {
+		return fmt.Errorf("compose architecture does not match existing model %q; use a new model name", target.Model.Name)
+	}
+	if compose.Base != nil && compose.Base.OriginSHA256 != "" && target.Model.OriginBOMSHA256 != compose.Base.OriginSHA256 {
+		return fmt.Errorf("compose base does not match existing model %q; use a new model name", target.Model.Name)
+	}
+	return nil
+}
+
+func (builder Builder) resolveComposeBase(compose *Compose) (*Inspection, error) {
+	if compose.Base == nil {
+		return nil, nil
+	}
+	declaration := *compose.Base
+	compose.Base = &declaration
+	base, err := Inspect(builder.Root, compose.Base.Model)
+	if err != nil {
+		return nil, fmt.Errorf("resolve compose base model %q: %w", compose.Base.Model, err)
+	}
+	if base.Origin == nil || base.BOM.CurrentOriginSHA256 == "" {
+		return nil, fmt.Errorf("compose base model %q must have pulled origin weights as its current weights", compose.Base.Model)
+	}
+	if compose.Base.OriginSHA256 != "" && compose.Base.OriginSHA256 != base.Model.OriginBOMSHA256 {
+		return nil, fmt.Errorf("compose base model %q origin is %s, not requested %s", compose.Base.Model, base.Model.OriginBOMSHA256, compose.Base.OriginSHA256)
+	}
+	if !reflect.DeepEqual(compose.Architecture, base.Model.Architecture) {
+		return nil, fmt.Errorf("compose architecture does not match base model %q", compose.Base.Model)
+	}
+	compose.Base.OriginSHA256 = base.Model.OriginBOMSHA256
+	return &base, nil
+}
+
+// Compose creates a model when absent or appends stages to an existing model
+// with the same immutable architecture. Hidden transaction metadata preserves
+// exact-command resume in both cases.
+func (builder Builder) Compose(ctx context.Context, name string, compose Compose, stages []PreparedStage) (Inspection, error) {
 	if err := compose.Validate(); err != nil {
 		return Inspection{}, err
 	}
@@ -598,25 +679,11 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 		return Inspection{}, err
 	}
 	destination := filepath.Join(builder.Root, name)
-	var base *Inspection
-	if compose.Base != nil {
-		inspectedBase, err := Inspect(builder.Root, compose.Base.Model)
-		if err != nil {
-			return Inspection{}, fmt.Errorf("resolve compose base model %q: %w", compose.Base.Model, err)
-		}
-		base = &inspectedBase
-		if base.Origin == nil || base.BOM.CurrentOriginSHA256 == "" {
-			return Inspection{}, fmt.Errorf("compose base model %q must have pulled origin weights as its current weights", compose.Base.Model)
-		}
-		if compose.Base.OriginSHA256 != "" && compose.Base.OriginSHA256 != base.Model.OriginBOMSHA256 {
-			return Inspection{}, fmt.Errorf("compose base model %q origin is %s, not requested %s", compose.Base.Model, base.Model.OriginBOMSHA256, compose.Base.OriginSHA256)
-		}
-		if !reflect.DeepEqual(compose.Architecture, base.Model.Architecture) {
-			return Inspection{}, fmt.Errorf("compose architecture does not match base model %q", compose.Base.Model)
-		}
-		compose.Base.OriginSHA256 = base.Model.OriginBOMSHA256
+	base, err := builder.resolveComposeBase(&compose)
+	if err != nil {
+		return Inspection{}, err
 	}
-	transaction := composeTransaction{Kind: "waldo-model-compose-transaction", Schema: 1, Name: name, Compose: compose, Replace: replace}
+	transaction := composeTransaction{Kind: "waldo-model-compose-transaction", Schema: 1, Name: name, Compose: compose}
 	for _, stage := range stages {
 		digest, err := hashJSON(stage.BOM)
 		if err != nil {
@@ -639,24 +706,22 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 		return Inspection{}, err
 	}
 	resumingTransaction := existing != nil
-	var target *Inspection
 	if resumingTransaction {
 		transaction = *existing
+		if transaction.Replace || transaction.TargetModelID != "" || transaction.TargetSHA256 != "" {
+			return Inspection{}, fmt.Errorf("model %q has an unfinished legacy replacement compose; continue it with the WALDO version that created it or start a new model", name)
+		}
 	} else {
-		if _, err := os.Stat(destination); err == nil && !replace {
-			return Inspection{}, fmt.Errorf("model %q already exists; use --replace to recreate it", name)
-		} else if err == nil {
-			inspected, inspectErr := Inspect(builder.Root, name)
+		if _, err := os.Stat(destination); err == nil {
+			target, inspectErr := Inspect(builder.Root, name)
 			if inspectErr != nil {
 				return Inspection{}, inspectErr
 			}
-			target = &inspected
-			transaction.TargetModelID = target.Model.ID
-			targetHash, hashErr := hashJSON(target.Model)
-			if hashErr != nil {
-				return Inspection{}, hashErr
+			if err := validateComposeTarget(target, compose); err != nil {
+				return Inspection{}, err
 			}
-			transaction.TargetSHA256 = targetHash
+			transaction.ModelID = target.Model.ID
+			transaction.StartRun = len(target.Runs)
 		} else if err != nil && !os.IsNotExist(err) {
 			return Inspection{}, err
 		}
@@ -677,50 +742,30 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	if err != nil {
 		return Inspection{}, err
 	}
-	backup := filepath.Join(workspace, "replaced")
 	if resumingTransaction {
 		builder.report(Progress{Phase: "compose", Message: fmt.Sprintf("resuming durable transaction %s", transactionID[:12])})
 		legacyModel := filepath.Join(workspace, name)
 		if _, legacyErr := os.Stat(legacyModel); legacyErr == nil {
-			if transaction.TargetModelID != "" {
-				if err := os.Rename(destination, backup); err != nil {
-					return Inspection{}, fmt.Errorf("migrate replacement backup for model %q: %w", name, err)
-				}
+			if _, err := os.Stat(destination); err == nil {
+				return Inspection{}, fmt.Errorf("cannot migrate legacy compose model %q because its destination already exists", name)
+			} else if !os.IsNotExist(err) {
+				return Inspection{}, err
 			}
 			if err := os.Rename(legacyModel, destination); err != nil {
-				if transaction.TargetModelID != "" {
-					_ = os.Rename(backup, destination)
-				}
 				return Inspection{}, fmt.Errorf("migrate composing model %q to its standard path: %w", name, err)
 			}
 		} else if legacyErr != nil && !os.IsNotExist(legacyErr) {
 			return Inspection{}, legacyErr
 		}
-		if transaction.TargetModelID != "" {
-			inspected, inspectErr := Inspect(workspace, "replaced")
-			if inspectErr != nil {
-				return Inspection{}, fmt.Errorf("inspect replacement backup: %w", inspectErr)
-			}
-			target = &inspected
-		}
-	}
-	if !resumingTransaction && target != nil {
-		if err := os.Rename(destination, backup); err != nil {
-			_ = os.RemoveAll(workspace)
-			return Inspection{}, fmt.Errorf("prepare replacement of model %q: %w", name, err)
-		}
-		if base != nil && base.Path == destination {
-			base.Path = backup
-		}
 	}
 	if _, err := os.Stat(destination); os.IsNotExist(err) {
 		if compose.Base == nil {
 			if _, err := builder.Initialize(name, compose.Architecture); err != nil {
-				finishFailedCompose(destination, workspace, backup, target != nil)
+				finishFailedCompose(workspace)
 				return Inspection{}, err
 			}
 		} else if _, err := builder.initializeFromOrigin(name, compose, *base); err != nil {
-			finishFailedCompose(destination, workspace, backup, target != nil)
+			finishFailedCompose(workspace)
 			return Inspection{}, err
 		}
 	} else if err != nil {
@@ -729,8 +774,16 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	composePath := filepath.Join(destination, "COMPOSE.json")
 	if data, err := os.ReadFile(composePath); err == nil {
 		var persisted Compose
-		if err := json.Unmarshal(data, &persisted); err != nil || !reflect.DeepEqual(persisted, compose) {
+		if err := json.Unmarshal(data, &persisted); err != nil {
+			return Inspection{}, fmt.Errorf("read persisted compose for model %s: %w", destination, err)
+		}
+		if !reflect.DeepEqual(persisted, compose) && transaction.ModelID == "" {
 			return Inspection{}, fmt.Errorf("composing model %s has a different persisted compose", destination)
+		}
+		if !reflect.DeepEqual(persisted, compose) {
+			if err := writeJSONAtomic(composePath, compose); err != nil {
+				return Inspection{}, fmt.Errorf("persist latest model compose: %w", err)
+			}
 		}
 	} else if os.IsNotExist(err) {
 		if err := writeJSONAtomic(composePath, compose); err != nil {
@@ -750,8 +803,14 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	if err != nil {
 		return Inspection{}, err
 	}
-	if staged.Model.ArchitectureSHA256 != architectureHash || staged.Model.OriginBOMSHA256 != composeOriginHash(compose) {
+	if staged.Model.ArchitectureSHA256 != architectureHash {
+		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture", destination)
+	}
+	if transaction.ModelID == "" && staged.Model.OriginBOMSHA256 != composeOriginHash(compose) {
 		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture or origin", destination)
+	}
+	if transaction.ModelID != "" && staged.Model.ID != transaction.ModelID {
+		return Inspection{}, fmt.Errorf("existing model %q changed while its compose transaction was pending", name)
 	}
 	if len(staged.Runs) > 0 && staged.Runs[len(staged.Runs)-1].State == RunRunning {
 		if err := recoverAbandonedComposeRun(builder, &staged); err != nil {
@@ -763,23 +822,24 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 		if err != nil {
 			return Inspection{}, err
 		}
-		if index < len(staged.Runs) {
-			if err := validateStagedComposeRun(staged, index, stage); err != nil {
+		runIndex := transaction.StartRun + index
+		if runIndex < len(staged.Runs) {
+			if err := validateStagedComposeRun(staged, runIndex, stage); err != nil {
 				return Inspection{}, fmt.Errorf("composing model %s: %w", destination, err)
 			}
-			if staged.Runs[index].State == RunComplete {
+			if staged.Runs[runIndex].State == RunComplete {
 				continue
 			}
-			if staged.Runs[index].State != RunInterrupted {
-				finishFailedCompose(destination, workspace, backup, target != nil)
-				return Inspection{}, fmt.Errorf("compose stage %s ended %s and cannot be resumed", stage.Stage.Name, staged.Runs[index].State)
+			if staged.Runs[runIndex].State != RunInterrupted {
+				finishFailedCompose(workspace)
+				return Inspection{}, fmt.Errorf("compose stage %s ended %s and cannot be resumed", stage.Stage.Name, staged.Runs[runIndex].State)
 			}
 		}
 		if _, err := builder.Train(ctx, name, stage); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				builder.report(Progress{Phase: "compose", Message: fmt.Sprintf("retained transaction %s; repeat the exact command to resume", transactionID[:12])})
 			} else {
-				finishFailedCompose(destination, workspace, backup, target != nil)
+				finishFailedCompose(workspace)
 			}
 			return Inspection{}, err
 		}
@@ -788,23 +848,38 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	if err != nil {
 		return Inspection{}, err
 	}
-	if len(staged.Runs) != len(stages) {
-		return Inspection{}, fmt.Errorf("composing model %s has %d runs for %d stages", destination, len(staged.Runs), len(stages))
-	}
-	if target != nil {
-		targetHash, hashErr := hashJSON(target.Model)
-		if hashErr != nil || target.Model.ID != transaction.TargetModelID || targetHash != transaction.TargetSHA256 {
-			return Inspection{}, fmt.Errorf("replacement backup for model %q changed during compose transaction %s", name, transactionID[:12])
-		}
-		if err := os.RemoveAll(backup); err != nil {
-			return Inspection{}, fmt.Errorf("remove replaced model backup %s: %w", backup, err)
-		}
+	wantRuns := transaction.StartRun + len(stages)
+	if len(staged.Runs) != wantRuns {
+		return Inspection{}, fmt.Errorf("composing model %s has %d runs, expected %d", destination, len(staged.Runs), wantRuns)
 	}
 	if err := os.RemoveAll(workspace); err != nil {
 		return Inspection{}, fmt.Errorf("remove completed compose staging %s: %w", workspace, err)
 	}
 	builder.report(Progress{Phase: "compose", Message: fmt.Sprintf("completed durable transaction %s", transactionID[:12])})
 	return Inspect(builder.Root, name)
+}
+
+func pendingComposeTransaction(root, name string) (*composeTransaction, error) {
+	entries, err := os.ReadDir(filepath.Join(root, ".waldo-compose"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		var transaction composeTransaction
+		if err := readJSON(filepath.Join(root, ".waldo-compose", entry.Name(), "COMPOSE.json"), &transaction); err != nil {
+			continue
+		}
+		if transaction.Kind == "waldo-model-compose-transaction" && transaction.Schema == 1 && transaction.Name == name {
+			return &transaction, nil
+		}
+	}
+	return nil, nil
 }
 
 func findComposeTransaction(root string, requested composeTransaction) (string, *composeTransaction, error) {
@@ -822,6 +897,8 @@ func findComposeTransaction(root string, requested composeTransaction) (string, 
 			continue
 		}
 		candidate := existing
+		candidate.ModelID = ""
+		candidate.StartRun = 0
 		candidate.TargetModelID = ""
 		candidate.TargetSHA256 = ""
 		if reflect.DeepEqual(candidate, requested) {
@@ -834,15 +911,9 @@ func findComposeTransaction(root string, requested composeTransaction) (string, 
 	return "", nil, nil
 }
 
-// finishFailedCompose never removes a newly published model. A failed new
-// compose remains in the managed model root for inspection and explicit
-// removal. A failed --replace restores the previously established model;
-// only its uncommitted replacement candidate is discarded.
-func finishFailedCompose(destination, workspace, backup string, replaced bool) {
-	if replaced {
-		_ = os.RemoveAll(destination)
-		_ = os.Rename(backup, destination)
-	}
+// finishFailedCompose removes only transaction metadata. The model and all
+// durable run evidence remain available for inspection and explicit action.
+func finishFailedCompose(workspace string) {
 	_ = os.RemoveAll(workspace)
 }
 

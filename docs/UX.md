@@ -60,7 +60,7 @@ waldo
 │   ├── bom
 │   ├── forecast
 │   ├── train
-│   ├── compose
+│   ├── continue
 │   ├── export
 │   ├── chat
 │   └── rm
@@ -559,9 +559,9 @@ waldo model pull llama-base huggingface://organization/model@main
 waldo model train smoke core/books
 waldo model train smoke core/books --epochs 3
 waldo model train smoke core/books --audit
-waldo model train smoke # entire resolved index, with a warning
-waldo model compose smoke configs/smoke.yaml
-waldo model compose smoke configs/smoke.yaml --audit
+waldo model train smoke # entire resolved index
+waldo model train smoke configs/smoke.yaml
+waldo model train smoke configs/smoke.yaml --audit
 ```
 
 The CLI name is the local model handle. `model pull` resolves a Hugging
@@ -573,15 +573,18 @@ other tokenizers.
 
 A model compose declares architecture and ordered training stages using index
 paths. It may optionally name a locally managed downloaded base and assert its
-origin hash. The command validates every selection and hash-verifies every
-materialized object. `--audit` additionally verifies shard structure,
-attestations, and declared totals before any training begins. It creates the model if
-absent, and executes its stages. Existing names are refused unless `--replace`
-is explicitly supplied. The active compose always occupies its standard
-`<model.root>/<name>` directory, so ordinary model inspection sees its current
-run state. Content-identified transaction metadata and any replacement rollback
-backup remain hidden. Held-out selection reports shard, record, and byte
-progress before the training backend starts.
+origin hash. `model train` recognizes a compose by its strict document identity;
+an index path is never inferred to be one. The command validates every selection
+and hash-verifies every materialized object. `--audit` additionally verifies
+shard structure, attestations, and declared totals before any training begins.
+It creates the model if absent and executes its stages. For an existing model,
+the complete normalized architecture and tokenizer identity must match; WALDO
+otherwise refuses the run and directs the operator to use a new model name. A
+matching compose appends runs without replacing the model. The active compose
+always occupies its standard `<model.root>/<name>` directory, so ordinary model
+inspection sees its current run state. Content-identified transaction metadata
+remains hidden. Held-out selection reports shard, record, and byte progress
+before the training backend starts.
 Repeating the exact command after interruption resumes its current stage and
 run; different compose inputs are refused while that transaction is unfinished.
 

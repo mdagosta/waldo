@@ -111,7 +111,7 @@ stages:
       evaluate_every: 1
 EOF
 
-output=$("$binary" model compose torchtitan-smoke "$compose")
+output=$("$binary" model train torchtitan-smoke "$compose")
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q 'backend       torchtitan@builtin-torchtitan-worker-schema-1-r2'
 summary=$("$binary" --json model summary torchtitan-smoke)

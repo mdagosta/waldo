@@ -6,7 +6,7 @@ wall-clock promise.
 
 ```bash
 waldo model forecast composes/0000-babble.yaml
-waldo model compose babble composes/0000-babble.yaml
+waldo model train babble composes/0000-babble.yaml
 ```
 
 | Compose | Architecture | Planned byte tokens | Corpus progression | Intended milestone |

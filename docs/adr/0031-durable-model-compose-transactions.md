@@ -1,6 +1,6 @@
 # ADR 0031: Resume durable model-compose transactions
 
-- Status: accepted
+- Status: accepted; replacement behavior superseded by ADR 0043
 - Date: 2026-08-05
 
 ## Context
@@ -29,19 +29,15 @@ Failed work is cleared rather than treated as resumable. An interrupted model
 remains at its ordinary path. While a transaction is unfinished, a different
 compose for that name is refused.
 
-For `--replace`, WALDO moves the original model into the transaction as a
-rollback backup before initializing the replacement at the ordinary path. A
-non-interruption failure restores it. Successful completion verifies and
-removes the pinned backup and transaction metadata.
+ADR 0043 later removed replacement and extended this transaction to append
+compose stages to an architecture-compatible existing model.
 
 ## Consequences
 
 - Ctrl-C or process loss does not discard completed compose stages or a usable
   checkpoint from the current stage.
 - Concurrent identical composes fail clearly instead of sharing mutable state.
-- Active new and replacement models appear under their standard name and are
+- Active new models appear under their standard name and are
   visible to ordinary model inspection commands.
-- Replacement backups are hidden implementation state and are restored after
-  non-interruption failures.
 - Staging is intentionally machine-local and is not part of model identity or
   an export.

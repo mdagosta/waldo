@@ -128,7 +128,7 @@ stages:
       evaluate_every: 1
 EOF
 
-output=$("$binary" model compose mlx-smoke "$compose")
+output=$("$binary" model train mlx-smoke "$compose")
 printf '%s\n' "$output"
 printf '%s\n' "$output" | grep -q 'backend       mlx@builtin-mlx-worker-schema-1-r2'
 summary=$("$binary" --json model summary mlx-smoke)

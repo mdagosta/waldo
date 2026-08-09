@@ -355,33 +355,30 @@ func TestTrainResumesInterruptedRunFromVerifiedCheckpoint(t *testing.T) {
 	}
 }
 
-func TestComposeReplacementIsTransactional(t *testing.T) {
+func TestComposeAppendsToCompatibleModelAndRejectsDifferentArchitecture(t *testing.T) {
 	root := t.TempDir()
 	compose := validCompose()
 	stage := preparedFixture(t, compose.Stages[0])
-	builder := Builder{Root: root, NewID: func() (string, error) { return "run0001", nil }, Resolver: training.FakeResolver()}
-	first, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false)
+	nextID := 0
+	builder := Builder{Root: root, NewID: func() (string, error) {
+		nextID++
+		return fmt.Sprintf("run%04d", nextID), nil
+	}, Resolver: training.FakeResolver()}
+	first, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false); err == nil || !strings.Contains(err.Error(), "--replace") {
-		t.Fatalf("second compose error = %v", err)
-	}
-	failingBackend := backendFunc(func(context.Context, training.Request) (training.Observation, error) {
-		return training.Observation{}, errors.New("replacement failed")
-	})
-	builder.Resolver = training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
-		return testSelection(failingBackend), nil
-	})
-	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, true); err == nil {
-		t.Fatal("replacement succeeded")
-	}
-	after, err := Inspect(root, "smoke")
+	second, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after.Model.ID != first.Model.ID || after.Model.Runs[0].State != RunComplete {
-		t.Fatalf("replacement changed original: %+v", after.Model)
+	if second.Model.ID != first.Model.ID || len(second.Runs) != 2 || second.Runs[1].State != RunComplete {
+		t.Fatalf("compatible compose did not append: first = %+v, second = %+v", first.Model, second.Model)
+	}
+	different := compose
+	different.Architecture.Layers++
+	if _, err := builder.Compose(context.Background(), "smoke", different, []PreparedStage{stage}); err == nil || !strings.Contains(err.Error(), "use a new model name") {
+		t.Fatalf("different architecture error = %v", err)
 	}
 }
 
@@ -395,7 +392,7 @@ func TestFailedNewComposeRemainsListed(t *testing.T) {
 	builder := Builder{Root: root, NewID: func() (string, error) { return "failed0001", nil }, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
 		return testSelection(backend), nil
 	})}
-	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false); err == nil {
+	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}); err == nil {
 		t.Fatal("failed compose succeeded")
 	}
 	inspection, err := Inspect(root, "smoke")
@@ -441,7 +438,7 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	}, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
 		return testSelection(backend), nil
 	})}
-	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false); !errors.Is(err, context.Canceled) {
+	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("first Compose error = %v", err)
 	}
 	if pending, err := HasPendingCompose(root, "smoke"); err != nil || !pending {
@@ -463,7 +460,7 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	if err != nil || len(listed) != 1 || listed[0].Name != "smoke" || listed[0].State != string(RunInterrupted) || listed[0].Path != filepath.Join(root, "smoke") {
 		t.Fatalf("active compose listing = %+v, err = %v", listed, err)
 	}
-	completed, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false)
+	completed, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -481,6 +478,55 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 		if entry.IsDir() {
 			t.Fatalf("completed compose retained workspace %s", entry.Name())
 		}
+	}
+}
+
+func TestComposeResumesWhenAppendingToExistingModel(t *testing.T) {
+	root := t.TempDir()
+	compose := validCompose()
+	stage := preparedFixture(t, compose.Stages[0])
+	ids := 0
+	builder := Builder{Root: root, NewID: func() (string, error) {
+		ids++
+		return fmt.Sprintf("append%04d", ids), nil
+	}, Resolver: training.FakeResolver()}
+	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}); err != nil {
+		t.Fatal(err)
+	}
+	attempts := 0
+	backend := backendFunc(func(ctx context.Context, request training.Request) (training.Observation, error) {
+		attempts++
+		if attempts == 1 {
+			return training.Observation{}, context.Canceled
+		}
+		observation, err := (training.Fake{}).Run(ctx, request)
+		observation.Simulated = false
+		return observation, err
+	})
+	builder.Resolver = training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})
+	if _, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("append Compose error = %v", err)
+	}
+	if pending, err := HasPendingCompose(root, "smoke"); err != nil || !pending {
+		t.Fatalf("pending append = %v, err = %v", pending, err)
+	}
+	if err := builder.CheckComposeTarget("smoke", compose); err != nil {
+		t.Fatalf("matching pending compose target = %v", err)
+	}
+	different := compose
+	different.Stages = append([]Stage(nil), compose.Stages...)
+	different.Stages[0].Parameters.Steps++
+	if err := builder.CheckComposeTarget("smoke", different); err == nil || !strings.Contains(err.Error(), "repeat the exact command") {
+		t.Fatalf("different pending compose target = %v", err)
+	}
+	completed, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 || ids != 2 || len(completed.Runs) != 2 || completed.Runs[0].State != RunComplete || completed.Runs[1].State != RunComplete || len(completed.Runs[1].Attempts) != 2 {
+		t.Fatalf("completed append: attempts %d ids %d runs %+v", attempts, ids, completed.Runs)
 	}
 }
 
@@ -519,7 +565,7 @@ func TestComposeCancellationDuringPreflightRemainsListed(t *testing.T) {
 	builder := Builder{Root: root, NewID: func() (string, error) { return "preflight0001", nil }, Resolver: training.FakeResolver()}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := builder.Compose(ctx, "smoke", compose, []PreparedStage{stage}, false); !errors.Is(err, context.Canceled) {
+	if _, err := builder.Compose(ctx, "smoke", compose, []PreparedStage{stage}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled Compose error = %v", err)
 	}
 	listed, err := List(root, nil)
@@ -530,7 +576,7 @@ func TestComposeCancellationDuringPreflightRemainsListed(t *testing.T) {
 	if err != nil || len(inspection.Runs) != 0 {
 		t.Fatalf("preflight-canceled model = %+v, err = %v", inspection, err)
 	}
-	completed, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false)
+	completed, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage})
 	if err != nil || len(completed.Runs) != 1 || completed.Runs[0].State != RunComplete {
 		t.Fatalf("resumed preflight compose = %+v, err = %v", completed, err)
 	}

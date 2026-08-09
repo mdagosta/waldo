@@ -137,24 +137,6 @@ func HasPendingCompose(root, name string) (bool, error) {
 	if err := ValidateName(name); err != nil {
 		return false, err
 	}
-	entries, err := os.ReadDir(filepath.Join(root, ".waldo-compose"))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		var transaction composeTransaction
-		if err := readJSON(filepath.Join(root, ".waldo-compose", entry.Name(), "COMPOSE.json"), &transaction); err != nil {
-			continue
-		}
-		if transaction.Kind == "waldo-model-compose-transaction" && transaction.Schema == 1 && transaction.Name == name {
-			return true, nil
-		}
-	}
-	return false, nil
+	transaction, err := pendingComposeTransaction(root, name)
+	return transaction != nil, err
 }

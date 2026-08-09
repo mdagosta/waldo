@@ -414,14 +414,31 @@ func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error
 }
 
 func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
+	name, inputs := args[0], args[1:]
+	composePath, err := trainingComposeInput(inputs)
+	if err != nil {
+		return err
+	}
+	if composePath != "" {
+		if context.Command != nil && context.Command.Flags().Changed("epochs") {
+			return fmt.Errorf("--epochs cannot be used with compose %q; set each stage budget in the compose file", composePath)
+		}
+		return runModelComposeTraining(context, name, composePath, stdout, stderr)
+	}
 	epochs := int64Option(context, "epochs")
 	if epochs < 1 || epochs > 1_000_000 {
 		return fmt.Errorf("--epochs must be an integer in 1..1000000")
 	}
-	name, paths := args[0], args[1:]
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
+	}
+	exists, err := model.Exists(root, name)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("model %q does not exist; train it from a compose file or initialize it with waldo model init", name)
 	}
 	inspection, err := model.Inspect(root, name)
 	if err != nil {
@@ -438,7 +455,7 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	stage, err := prepareDefaultTrainingStage(context, inspection, paths, epochs, cache, stderr, boolOption(context, "audit"))
+	stage, err := prepareDefaultTrainingStage(context, inspection, inputs, epochs, cache, stderr, boolOption(context, "audit"))
 	if err != nil {
 		return err
 	}
@@ -452,18 +469,38 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	return writeModelMutationResult(context, stdout, result, "trained")
 }
 
+func trainingComposeInput(inputs []string) (string, error) {
+	var composePath string
+	for _, input := range inputs {
+		isCompose, err := model.IsComposeFile(input)
+		if err != nil {
+			return "", err
+		}
+		if !isCompose {
+			continue
+		}
+		if len(inputs) != 1 {
+			return "", fmt.Errorf("compose file %q must be the only training input", input)
+		}
+		composePath = input
+	}
+	return composePath, nil
+}
+
 func looksLikeIndexPath(value string) bool {
 	return value == "." || value == ".." || value == "~" || strings.ContainsAny(value, `/\\`)
 }
 
-func runModelCompose(context Context, args []string, stdout, stderr io.Writer) error {
-	name, path, replace := args[0], args[1], boolOption(context, "replace")
+func runModelComposeTraining(context Context, name, path string, stdout, stderr io.Writer) error {
 	compose, composePath, err := model.LoadCompose(path)
 	if err != nil {
 		return err
 	}
 	builder, err := configuredModelBuilder(context, stderr)
 	if err != nil {
+		return err
+	}
+	if err := builder.CheckComposeTarget(name, compose); err != nil {
 		return err
 	}
 	builder.ComposeName = filepath.Base(composePath)
@@ -488,7 +525,7 @@ func runModelCompose(context Context, args []string, stdout, stderr io.Writer) e
 		}
 		prepared = append(prepared, resolved)
 	}
-	result, err := builder.Compose(context.Execution, name, compose, prepared, replace)
+	result, err := builder.Compose(context.Execution, name, compose, prepared)
 	if err != nil {
 		return err
 	}
@@ -501,7 +538,7 @@ func runModelCompose(context Context, args []string, stdout, stderr io.Writer) e
 			Result  model.Inspection `json:"result"`
 		}{Compose: composePath, Result: result})
 	}
-	return writeModelMutationResult(context, stdout, result, "composed")
+	return writeModelMutationResult(context, stdout, result, "trained")
 }
 
 func runModelContinue(context Context, args []string, stdout, stderr io.Writer) error {
@@ -530,7 +567,7 @@ func runModelContinue(context Context, args []string, stdout, stderr io.Writer) 
 		return fmt.Errorf("locate last compose for model %q: %w", name, err)
 	}
 	fmt.Fprintf(stderr, "continue               resuming %s from %s\n", name, composePath)
-	return runModelCompose(context, []string{name, composePath}, stdout, stderr)
+	return runModelComposeTraining(context, name, composePath, stdout, stderr)
 }
 
 func runModelExport(context Context, args []string, stdout, stderr io.Writer) error {

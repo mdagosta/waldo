@@ -55,7 +55,7 @@ func TestDownloadHuggingFaceModelCreatesVerifiedOrigin(t *testing.T) {
 	stage := testStage("continue")
 	stage.Parameters.SequenceLength = 32
 	compose := Compose{Kind: "waldo-model-compose", Schema: 1, Base: &ComposeBase{Model: "tiny", OriginSHA256: inspection.Model.OriginBOMSHA256}, Architecture: architecture, Stages: []Stage{stage}}
-	continued, err := (Builder{Root: root, NewID: func() (string, error) { return "continue0001", nil }, Resolver: training.FakeResolver()}).Compose(t.Context(), "continued", compose, []PreparedStage{preparedFixture(t, stage)}, false)
+	continued, err := (Builder{Root: root, NewID: func() (string, error) { return "continue0001", nil }, Resolver: training.FakeResolver()}).Compose(t.Context(), "continued", compose, []PreparedStage{preparedFixture(t, stage)})
 	if err != nil {
 		t.Fatal(err)
 	}
