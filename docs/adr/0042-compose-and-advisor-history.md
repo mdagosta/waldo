@@ -9,6 +9,12 @@ Each model preserves every distinct compose as ordered YAML beneath
 canonical compatibility record. Reusing the exact compose during transaction
 resume does not add a duplicate.
 
+Advisor edits never silently overwrite an existing working compose. WALDO
+offers a new numbered working revision or an in-place draft update. New
+revision is the default when architecture or base changes, or when the current
+draft is already present in archived model history. Archived files themselves
+are immutable.
+
 `waldo model continue <name>` is authorized only by a retained durable compose
 transaction. It loads the latest archived compose, with legacy `COMPOSE.json`
 as a fallback, and uses the existing verified-checkpoint resume path. It does

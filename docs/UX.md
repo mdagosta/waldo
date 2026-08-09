@@ -659,6 +659,12 @@ name:
 waldo model continue smoke
 ```
 
+The advisor never silently overwrites an existing working compose. It offers
+new revision versus update, and defaults to a new numbered working file when
+the architecture or base changes or the current draft is already represented
+in the model's archived compose history. Later sessions rediscover the newest
+numbered advisor draft in the current directory.
+
 The command succeeds only while a durable interrupted compose transaction is
 retained. It selects the latest archived compose and uses the normal verified
 checkpoint path. It never repeats a completed run.

@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"os"
@@ -110,6 +111,41 @@ func TestAdvisorComposeReferenceIsValid(t *testing.T) {
 	}
 	if err := compose.Validate(); err != nil {
 		t.Fatalf("advisor compose reference is invalid: %v", err)
+	}
+}
+
+func TestAdvisorStructuralOrArchivedChangeDefaultsToNewCompose(t *testing.T) {
+	root := t.TempDir()
+	currentPath := filepath.Join(t.TempDir(), "babble-advisor.yaml")
+	current := advisorTestCompose()
+	if err := writeAdvisorDraft(currentPath, current); err != nil {
+		t.Fatal(err)
+	}
+	structural := advisorTestCompose()
+	structural.Architecture.Layers++
+	var output strings.Builder
+	selected, err := selectAdvisorDraftPath(bufio.NewReader(strings.NewReader("\n")), &output, root, "babble", currentPath, &current, structural)
+	if err != nil || filepath.Base(selected) != "babble-advisor-0001.yaml" || !strings.Contains(output.String(), "[Y/n]") {
+		t.Fatalf("structural selection = %q, output = %q, err = %v", selected, output.String(), err)
+	}
+
+	modelPath := filepath.Join(root, "babble")
+	if err := os.MkdirAll(modelPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := model.ArchiveCompose(modelPath, current, "original.yaml"); err != nil {
+		t.Fatal(err)
+	}
+	nonstructural := advisorTestCompose()
+	nonstructural.Stages[0].Parameters.Steps++
+	output.Reset()
+	selected, err = selectAdvisorDraftPath(bufio.NewReader(strings.NewReader("\n")), &output, root, "babble", currentPath, &current, nonstructural)
+	if err != nil || filepath.Base(selected) != "babble-advisor-0001.yaml" || !strings.Contains(output.String(), "[Y/n]") {
+		t.Fatalf("archived selection = %q, output = %q, err = %v", selected, output.String(), err)
+	}
+	selected, err = selectAdvisorDraftPath(bufio.NewReader(strings.NewReader("no\n")), &output, root, "babble", currentPath, &current, nonstructural)
+	if err != nil || selected != currentPath {
+		t.Fatalf("explicit update selection = %q, err = %v", selected, err)
 	}
 }
 

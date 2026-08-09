@@ -414,6 +414,11 @@ interrupted compose without repeating its path:
 waldo model continue small
 ```
 
+When an advisor draft already exists, WALDO offers to create a new numbered
+working file instead of updating it. A new file is the default when the model
+architecture or base changes, or when the current draft matches an archived
+compose that has already been used.
+
 `continue` only resumes a retained interrupted compose transaction from its
 latest verified checkpoint. Completed, failed, and ordinary untrained models
 are rejected.

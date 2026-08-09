@@ -353,6 +353,10 @@ until the compose completes.
   `0000-<name>.yaml`, `0001-<name>.yaml`, and so on. `COMPOSE.json` remains the
   canonical compatibility record. Exact transaction resume deduplicates the
   archive rather than recording the same compose twice.
+- Advisor edits to an existing working compose require a new-revision versus
+  update choice. New revision is the default for architecture/base changes and
+  whenever the working compose matches an archived compose. Archived model
+  composes are never edited.
 - `model continue <name>` is valid only when `.waldo-compose` retains an
   interrupted transaction for that model. It loads the latest archived compose
   (falling back to legacy `COMPOSE.json`) and enters the normal transaction and

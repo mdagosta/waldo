@@ -15,6 +15,9 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -102,6 +105,8 @@ type synchronizedWriter struct {
 	value io.Writer
 }
 
+var advisorDraftNumber = regexp.MustCompile(`^(.*)-([0-9]{4})\.yaml$`)
+
 func (writer synchronizedWriter) Write(data []byte) (int, error) {
 	writer.mutex.Lock()
 	defer writer.mutex.Unlock()
@@ -166,7 +171,7 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 		original = report.Compose
 	}
 	allowedCorpora := advisorAllowedCorpora(original, indexEvidence.Corpora)
-	draftPath, err := filepath.Abs(name + "-advisor.yaml")
+	draftPath, draftExists, err := latestAdvisorDraftPath(name)
 	if err != nil {
 		return err
 	}
@@ -175,15 +180,13 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 		copy := *original
 		draft = &copy
 	}
-	if _, statErr := os.Stat(draftPath); statErr == nil {
+	if draftExists {
 		loaded, _, loadErr := model.LoadCompose(draftPath)
 		if loadErr != nil {
 			return fmt.Errorf("load advisor draft: %w", loadErr)
 		}
 		draft = &loaded
 		fmt.Fprintf(stdout, "Advisor: loaded existing draft %s\n", draftPath)
-	} else if !errors.Is(statErr, os.ErrNotExist) {
-		return statErr
 	}
 
 	if creating {
@@ -253,15 +256,20 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 		}
 		if answer.Compose != nil {
 			printAdvisorChanges(stdout, answer.Changes)
-			fmt.Fprintf(stdout, "Advisor: apply these changes to %s? [y/N] ", draftPath)
+			targetPath, selectErr := selectAdvisorDraftPath(reader, stdout, root, name, draftPath, draft, *answer.Compose)
+			if selectErr != nil {
+				return selectErr
+			}
+			fmt.Fprintf(stdout, "Advisor: apply these changes to %s? [y/N] ", targetPath)
 			confirmation, confirmErr := reader.ReadString('\n')
 			if confirmErr != nil && confirmErr != io.EOF {
 				return confirmErr
 			}
 			if advisorConfirmed(confirmation) {
-				if err := writeAdvisorDraft(draftPath, *answer.Compose); err != nil {
+				if err := writeAdvisorDraft(targetPath, *answer.Compose); err != nil {
 					return err
 				}
+				draftPath = targetPath
 				copy := *answer.Compose
 				draft = &copy
 				fmt.Fprintf(stdout, "Advisor: updated %s\n", draftPath)
@@ -504,7 +512,7 @@ func advisorChatPrompt(name string, creating bool, report *model.Advice, draft *
 
 In new model creation mode, conduct a natural requirements interview. Establish intended behavior, suitable indexed training corpora, desired model scale, available hardware, wall-clock budget, context needs, and any evaluation or licensing constraints. Ask focused follow-up questions rather than dumping a questionnaire. Once you have enough information, propose a practical complete schema-1 waldo-model-compose. Do not propose it prematurely. In existing model mode, you may explain the model, assess a running job, diagnose a failure, or design a practical next experiment.
 
-When proposing a compose, return it in "compose" and list concise "changes". Otherwise omit both fields. In new model creation mode, "changes" describes the design choices. Set "build" true only when the operator explicitly asks to start a previously saved draft. Never claim a file was changed or training started; WALDO confirms and performs those actions. Never modify a running model. Use only corpus paths listed in the configured training index and consider corpus size, content, and license.
+When proposing a compose, return it in "compose" and list concise "changes". Otherwise omit both fields. In new model creation mode, "changes" describes the design choices. Set "build" true only when the operator explicitly asks to start a previously saved draft. Never claim a file was changed or training started; WALDO confirms and performs those actions. Archived composes are immutable; architecture or base changes represent a new compose and normally a new model build. Never modify a running model. Use only corpus paths listed in the configured training index and consider corpus size, content, and license.
 
 Return exactly one JSON object: {"reply":"Markdown response","changes":["choice"],"compose":{...},"build":false}. Omit changes, compose, and build when unused. Do not use Markdown fences or add other keys.
 
@@ -767,6 +775,123 @@ func renderAdvisorMarkdown(output io.Writer, title, markdown string) error {
 func advisorConfirmed(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
 	return value == "y" || value == "yes"
+}
+
+func latestAdvisorDraftPath(name string) (string, bool, error) {
+	base, err := filepath.Abs(name + "-advisor.yaml")
+	if err != nil {
+		return "", false, err
+	}
+	directory := filepath.Dir(base)
+	prefix := strings.TrimSuffix(filepath.Base(base), ".yaml")
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return "", false, err
+	}
+	best, bestOrdinal := "", -1
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		candidate := entry.Name()
+		ordinal := -1
+		if candidate == prefix+".yaml" {
+			ordinal = 0
+		} else if strings.HasPrefix(candidate, prefix+"-") {
+			if match := advisorDraftNumber.FindStringSubmatch(candidate); match != nil {
+				ordinal, _ = strconv.Atoi(match[2])
+			}
+		}
+		if ordinal > bestOrdinal {
+			best, bestOrdinal = candidate, ordinal
+		}
+	}
+	if best == "" {
+		return base, false, nil
+	}
+	return filepath.Join(directory, best), true, nil
+}
+
+func selectAdvisorDraftPath(reader *bufio.Reader, output io.Writer, root, name, currentPath string, current *model.Compose, proposed model.Compose) (string, error) {
+	if _, err := os.Stat(currentPath); errors.Is(err, os.ErrNotExist) {
+		return currentPath, nil
+	} else if err != nil {
+		return "", err
+	}
+	structural := current == nil || !reflect.DeepEqual(current.Architecture, proposed.Architecture) || !reflect.DeepEqual(current.Base, proposed.Base)
+	archived, err := advisorComposeArchived(filepath.Join(root, name), current)
+	if err != nil {
+		return "", err
+	}
+	defaultNew := structural || archived
+	defaultLabel := "y/N"
+	if defaultNew {
+		defaultLabel = "Y/n"
+	}
+	fmt.Fprintf(output, "Advisor: save this as a new compose instead of updating %s? [%s] ", currentPath, defaultLabel)
+	answer, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	useNew := defaultNew
+	if answer == "y" || answer == "yes" {
+		useNew = true
+	} else if answer == "n" || answer == "no" {
+		useNew = false
+	}
+	if !useNew {
+		return currentPath, nil
+	}
+	path, err := nextAdvisorDraftPath(currentPath)
+	if err != nil {
+		return "", err
+	}
+	fmt.Fprintf(output, "Advisor: new compose will be %s\n", path)
+	return path, nil
+}
+
+func nextAdvisorDraftPath(currentPath string) (string, error) {
+	directory, filename := filepath.Dir(currentPath), filepath.Base(currentPath)
+	stem := strings.TrimSuffix(filename, filepath.Ext(filename))
+	if match := advisorDraftNumber.FindStringSubmatch(filename); match != nil {
+		stem = match[1]
+	}
+	for ordinal := 1; ordinal <= 9999; ordinal++ {
+		path := filepath.Join(directory, fmt.Sprintf("%s-%04d.yaml", stem, ordinal))
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			return path, nil
+		} else if err != nil {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("advisor compose drafts exceed 9999 revisions")
+}
+
+func advisorComposeArchived(modelPath string, compose *model.Compose) (bool, error) {
+	if compose == nil {
+		return false, nil
+	}
+	entries, err := os.ReadDir(filepath.Join(modelPath, model.ComposeHistoryDirectory))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		archived, _, err := model.LoadCompose(filepath.Join(modelPath, model.ComposeHistoryDirectory, entry.Name()))
+		if err != nil {
+			return false, err
+		}
+		if reflect.DeepEqual(archived, *compose) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func writeAdvisorDraft(path string, compose model.Compose) error {
