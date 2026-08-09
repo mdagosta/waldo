@@ -7,14 +7,17 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	waldoai "github.com/openwaldo/waldo/internal/ai"
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/record"
@@ -168,16 +171,31 @@ stages:
 	if code := Run([]string{"model", "summary", "smoke"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("model summary code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "complete") || !strings.Contains(stdout.String(), "simulated") {
+	if !strings.Contains(stdout.String(), "complete") || !strings.Contains(stdout.String(), "simulated") || !strings.Contains(stdout.String(), "ADVICE:        complete") {
 		t.Fatalf("model summary stdout = %q", stdout.String())
 	}
+	advisorCompose, _, err := model.LoadCompose(filepath.Join(models, "smoke", "COMPOSE.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	advisorCompose.Stages[0].Parameters.Steps = 3
+	proposal, err := json.Marshal(advisorProposal{Assessment: "A slightly longer run tests continued improvement.", Changes: []string{"increase steps from 2 to 3"}, Compose: advisorCompose})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previousAdvisorAsk := modelAdvisorAsk
+	modelAdvisorAsk = func(context.Context, waldoai.Selection, string) (string, error) { return string(proposal), nil }
+	t.Cleanup(func() { modelAdvisorAsk = previousAdvisorAsk })
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	advisorPath := filepath.Join(t.TempDir(), "smoke-advisor.yaml")
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"model", "advise", "smoke", "Should I extend training?", "--provider", "deterministic"}, &stdout, &stderr); code != 0 {
-		t.Fatalf("model advise code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	if code := Run([]string{"model", "advisor", "smoke", "--provider", "anthropic", "--model", "claude-sonnet-5", "--goal", "improve continuation quality", "--budget", "same machine for one minute", "--priority", "held-out loss", "--output", advisorPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("model advisor code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "ACTION:        complete") || !strings.Contains(stdout.String(), "saved compose defines 1 training stage") {
-		t.Fatalf("model advise stdout = %q", stdout.String())
+	generated, _, err := model.LoadCompose(advisorPath)
+	if err != nil || generated.Stages[0].Parameters.Steps != 3 || !strings.Contains(stdout.String(), "TEST WITH:") || !strings.Contains(stderr.String(), "contacting anthropic/claude-sonnet-5") {
+		t.Fatalf("generated advisor compose = %+v, err = %v, stdout = %q, stderr = %q", generated, err, stdout.String(), stderr.String())
 	}
 	for _, name := range []string{"PLAN.json", "MODEL.json", "MODEL-BOM.json"} {
 		if _, err := os.Stat(filepath.Join(models, "smoke", name)); err != nil {

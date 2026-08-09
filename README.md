@@ -367,7 +367,6 @@ waldo model init small --preset 10m
 waldo model train small core/books --epochs 1
 waldo model train small --epochs 1 # entire resolved index, with a warning
 waldo model summary small
-waldo model advise small
 waldo model bom small
 ```
 
@@ -379,19 +378,23 @@ is one epoch. Every run has an append-only planned/running/terminal lifecycle
 and records backend identity, environment, observed consumption, losses,
 checkpoints, and artifact hashes.
 
-`model advise` is read-only. It evaluates the latest run and its
-`TELEMETRY.csv` locally, then reports whether to let it run, inspect it, stop
-it, fix it, or review a completed result. When `ai.provider` and `ai.api-key`
-are configured (or a provider-specific environment key is present), WALDO
-also sends the saved compose and compact training evidence to that provider:
+`model summary` evaluates the latest run and its `TELEMETRY.csv` locally, then
+reports whether to let it run, inspect it, stop it, fix it, or review a
+completed result. `model advisor` is a separate design workflow for models
+created from a compose. It asks about the next model's goal, compute budget,
+and improvement priority, sends the saved compose and compact evidence to the
+configured provider, validates the result, and writes a new compose without
+changing the source model:
 
 ```bash
 waldo config set ai.provider openai
 waldo config set ai.api-key "$API_KEY"
-waldo model advise small "Should I change the learning rate?"
+waldo model advisor small
 ```
 
-Use `--provider deterministic` to keep advice entirely local.
+For scripts, provide `--goal`, with optional `--budget`, `--priority`, and
+`--output`. Local status remains available without any provider through
+`model summary`.
 Anthropic model overrides use Messages API IDs such as `claude-sonnet-5` or
 `claude-opus-5`; Claude Code shorthand names such as `sonnet` and `opus` are
 not API model IDs.

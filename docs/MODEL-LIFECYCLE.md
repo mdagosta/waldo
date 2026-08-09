@@ -47,7 +47,6 @@ GPU on a single Linux node, and records the complete device set.
 waldo model init small --preset 10m
 waldo model list 'small*'
 waldo model summary small
-waldo model advise small
 waldo model train small core/books science/papers
 waldo model bom small
 waldo model export small ./small-export
@@ -341,12 +340,12 @@ until the compose completes.
   elapsed time, run and stage identity, event and state, optimizer progress,
   loss, held-out loss and perplexity, throughput, ETA, and the human message.
   Resume attempts append to the same file with a new attempt number.
-- `model advise` snapshots this durable state and the saved `COMPOSE.json`. Its
-  deterministic assessment is always available and read-only. If an AI
-  provider is selected, WALDO sends the normalized compose and compact
-  run/telemetry assessment for additional recommendations; it does not send
-  weights or training records. An optional positional question focuses the
-  response, and `--provider deterministic` disables remote advice.
+- `model summary` snapshots this durable state for a deterministic, read-only
+  health assessment. `model advisor` separately asks the operator about a
+  follow-up experiment, sends the saved compose and compact assessment to the
+  configured AI provider, validates its response, and writes a new compose.
+  It does not send weights or training records, alter the source model, or
+  overwrite an existing compose file.
 - `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, backend and
   simulation identity, observation hashes, and artifact hashes. Its
   `path_base` is `model-root`: every `run_bom` and artifact `path` resolves

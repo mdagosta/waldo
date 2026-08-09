@@ -180,10 +180,11 @@ the same files independently of an index checkout.
   guarded PyTorch and TorchTitan lifecycles.**
 - Append spreadsheet-ready per-run training telemetry with timing, optimizer
   progress, learning rate, losses, throughput, and ETA. **Implemented.** A
-  read-only `model advise` command now consumes this contract and the saved
-  compose for deterministic health findings plus optional provider-configured
-  AI recommendations. A future `--monitor` mode will repeat that analysis
-  during a live run.
+  `model summary` now consumes this contract for deterministic health findings.
+  The interactive `model advisor` combines those findings with the saved
+  compose and operator goals to write a validated follow-up compose through a
+  configured AI provider. A future `--monitor` mode will repeat local health
+  analysis during a live run.
 - Atomic weight, optimizer, runtime-random-state checkpoints and exact
   same-run resume after direct-training interruption. **Implemented for MLX,
   PyTorch, and single-node TorchTitan, including durable content-identified

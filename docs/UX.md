@@ -624,16 +624,21 @@ and durable layout are documented in `docs/MODEL-LIFECYCLE.md`.
 waldo index bom ~/training-data
 waldo index verify ~/training-data
 waldo model summary smoke
-waldo model advise smoke
+waldo model advisor smoke
 waldo model bom smoke
 ```
 
-`waldo model advise <name> [question]` reads the saved compose, latest durable
-run state, and telemetry without changing the run. Local analysis always
-returns an explicit action. A configured OpenAI or Anthropic provider adds
-contextual advice; `--provider deterministic` guarantees local-only analysis.
-Provider-backed advice sends the normalized compose and compact model/run
-evidence, but never the configured API key, model weights, or corpus text.
+`waldo model summary <name>` includes a local, deterministic health assessment
+and explicit action from the latest durable run state and telemetry.
+
+`waldo model advisor <name>` asks interactive questions about the next model's
+goal, hardware/time budget, and improvement priority. It sends the normalized
+compose and compact model/run evidence to the configured OpenAI or Anthropic
+provider, validates the returned schema and corpus references, and writes a
+new `<name>-advisor.yaml` without changing the source model or replacing an
+existing file. Non-interactive use requires `--goal`; `--budget`, `--priority`,
+`--output`, `--provider`, and `--model` are optional. It never sends the API
+key, model weights, or corpus text.
 
 The model BOM is a portable inventory rooted at the model directory. A
 pulled model selects its verified origin until a later real run supersedes

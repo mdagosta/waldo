@@ -21,7 +21,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	waldoai "github.com/openwaldo/waldo/internal/ai"
 	"github.com/openwaldo/waldo/internal/calibration"
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/corpus"
@@ -217,7 +216,14 @@ func runModelInit(context Context, args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 	if context.JSON {
-		return writeJSON(stdout, inspection)
+		advice, err := model.BuildAdvice(inspection, time.Now())
+		if err != nil {
+			return err
+		}
+		return writeJSON(stdout, struct {
+			model.Inspection
+			Advice model.Advice `json:"advice"`
+		}{Inspection: inspection, Advice: advice})
 	}
 	fmt.Fprintf(stdout, "initialized model %s\n", name)
 	fmt.Fprintf(stdout, "  preset        %s\n", preset.Name)
@@ -345,113 +351,15 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 			fmt.Fprintf(stdout, "  TELEMETRY:   %s\n", filepath.Join(inspection.Path, runDirectory, model.TelemetryFilename))
 		}
 	}
+	advice, err := model.BuildAdvice(inspection, time.Now())
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "ADVICE:        %s — %s\n", advice.Action, advice.Summary)
+	for _, finding := range advice.Findings {
+		fmt.Fprintf(stdout, "  - %s\n", finding)
+	}
 	return nil
-}
-
-type modelAdviceOutput struct {
-	Advice   model.Advice `json:"advice"`
-	Provider string       `json:"provider,omitempty"`
-	AIModel  string       `json:"ai_model,omitempty"`
-	Response string       `json:"response,omitempty"`
-}
-
-func runModelAdvise(context Context, args []string, stdout, stderr io.Writer) error {
-	configuration, err := config.Load()
-	if err != nil {
-		return err
-	}
-	root, err := config.EffectiveModelRoot(configuration)
-	if err != nil {
-		return err
-	}
-	inspection, err := model.Inspect(root, args[0])
-	if err != nil {
-		return err
-	}
-	report, err := model.BuildAdvice(inspection, time.Now())
-	if err != nil {
-		return err
-	}
-	provider := stringOption(context, "provider")
-	if provider == "" {
-		provider = configuration.AI.Provider
-	}
-	aiModel := stringOption(context, "model")
-	if aiModel == "" {
-		aiModel = configuration.AI.Model
-	}
-	selected, err := waldoai.Select(provider, aiModel, waldoai.Credentials{APIKey: configuration.AI.APIKey}, nil)
-	if err != nil {
-		return err
-	}
-	output := modelAdviceOutput{Advice: report}
-	if selected.Provider != waldoai.ProviderNone {
-		output.Provider, output.AIModel = selected.Provider, selected.Model
-		if !context.JSON {
-			writeModelAdvice(stdout, output)
-			fmt.Fprintf(stderr, "ai/advice              contacting %s/%s\n", selected.Provider, selected.Model)
-		}
-		question := ""
-		if len(args) == 2 {
-			question = args[1]
-		}
-		response, err := (waldoai.Client{}).Ask(context.Execution, selected, modelAdvicePrompt(report, question))
-		if err != nil {
-			return err
-		}
-		output.Response = response
-		if !context.JSON {
-			fmt.Fprintf(stdout, "\nAI ADVICE (%s/%s):\n%s\n", output.Provider, output.AIModel, output.Response)
-			return nil
-		}
-	}
-	if context.JSON {
-		return writeJSON(stdout, output)
-	}
-	writeModelAdvice(stdout, output)
-	return nil
-}
-
-func modelAdvicePrompt(report model.Advice, question string) string {
-	data, _ := json.MarshalIndent(report, "", "  ")
-	prompt := "You are advising an operator training an auditable language model with WALDO. Analyze only the supplied evidence. Distinguish observations from hypotheses. Recommend whether to let the run continue, inspect or fix it, or stop it; explain concrete compose changes only when supported. Never claim to have stopped or changed the run. Answer directly and concisely without extended deliberation.\n\nWALDO evidence:\n" + string(data)
-	if question != "" {
-		prompt += "\n\nOperator question:\n" + question
-	}
-	return prompt
-}
-
-func writeModelAdvice(stdout io.Writer, output modelAdviceOutput) {
-	report := output.Advice
-	fmt.Fprintf(stdout, "MODEL:         %s\n", report.Model)
-	fmt.Fprintf(stdout, "STATE:         %s\n", report.State)
-	fmt.Fprintf(stdout, "ACTION:        %s\n", report.Action)
-	fmt.Fprintf(stdout, "ASSESSMENT:    %s\n", report.Summary)
-	if report.Run != nil {
-		run := report.Run
-		fmt.Fprintf(stdout, "RUN:           %04d %s (%s)\n", run.Ordinal, run.Stage, run.ID)
-		if run.PlannedSteps > 0 {
-			fmt.Fprintf(stdout, "PROGRESS:      %.1f%% (%d/%d steps)\n", run.ProgressPercent, run.Step, run.PlannedSteps)
-		}
-		if run.Loss != nil {
-			fmt.Fprintf(stdout, "LOSS:          %.6g\n", *run.Loss)
-		}
-		if run.HeldoutLoss != nil {
-			fmt.Fprintf(stdout, "HELD-OUT LOSS: %.6g\n", *run.HeldoutLoss)
-		}
-		if run.TokensPerSecond > 0 {
-			fmt.Fprintf(stdout, "THROUGHPUT:    %s tokens/s\n", humanCount(int64(run.TokensPerSecond)))
-		}
-		if run.ETASeconds > 0 {
-			fmt.Fprintf(stdout, "ETA:           %s\n", compactDuration(run.ETASeconds))
-		}
-	}
-	if len(report.Findings) > 0 {
-		fmt.Fprintln(stdout, "\nFINDINGS:")
-		for _, finding := range report.Findings {
-			fmt.Fprintf(stdout, "  - %s\n", finding)
-		}
-	}
 }
 
 func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error {
