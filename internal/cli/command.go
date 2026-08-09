@@ -88,6 +88,7 @@ func newRootCommand() *cobra.Command {
 	root.SetVersionTemplate("waldo {{.Version}}\n")
 	root.PersistentFlags().BoolVar(&state.json, "json", false, "emit structured JSON output; progress remains on stderr")
 	root.AddCommand(
+		leaf(state, "advisor <model-name>", "Chat with an AI model advisor", "For an existing model, explains its configuration and live training state and can propose a follow-up compose. For a new name, gathers requirements, creates a validated compose, and starts training only after confirmation.", cobra.ExactArgs(1), runModelAdvisor, advisorFlags()...),
 		newIndexCommand(state),
 		newShardCommand(state),
 		newLookasideCommand(state),
@@ -175,9 +176,7 @@ func newModelCommand(state *cobraState) *cobra.Command {
 		leaf(state, "pull <name> <huggingface-source>", "Pull training-quality open weights", "Pulls and validates a Hugging Face Safetensors model into WALDO's managed model store.", cobra.ExactArgs(2), runModelPull),
 		leaf(state, "list [pattern...]", "List locally managed models", "Patterns use shell-style *, ?, and character classes.", cobra.ArbitraryArgs, runModelList),
 		leaf(state, "summary <name>", "Summarize architecture and training history", "", cobra.ExactArgs(1), runModelSummary),
-		leaf(state, "advisor <name>", "Chat with an AI model advisor", "Starts an interactive conversation grounded in the model's compose, runs, and current telemetry. The advisor can explain status and propose a validated next compose, which WALDO writes only after confirmation. It never changes the source model.", cobra.ExactArgs(1), runModelAdvisor,
-			textFlag("provider", "", "AI provider override: auto, openai, or anthropic"),
-			textFlag("model", "", "provider API model ID override")),
+		leaf(state, "advisor <name>", "Chat with an AI model advisor", "Compatibility form of `waldo advisor <name>`.", cobra.ExactArgs(1), runModelAdvisor, advisorFlags()...),
 		leaf(state, "bom <model-name-or-path> [output.json]", "Emit a model BOM", "The canonical OpenWALDO BOM is the default. EU GPAI is a derived regulatory representation and fails before emitting anything if required facts are absent.", cobra.RangeArgs(1, 2), runModelBOM,
 			textFlag("format", "openwaldo", "output format: openwaldo or eu-gpai"),
 			textFlag("provider", "", "EU GPAI provider profile override"),
@@ -203,6 +202,13 @@ func newModelCommand(state *cobraState) *cobra.Command {
 		leaf(state, "rm <name...>", "Remove explicitly named local models", "Names are preflighted before removal.", cobra.MinimumNArgs(1), runModelRemove),
 	)
 	return command
+}
+
+func advisorFlags() []commandFlag {
+	return []commandFlag{
+		textFlag("provider", "", "AI provider override: auto, openai, or anthropic"),
+		textFlag("model", "", "provider API model ID override"),
+	}
 }
 
 func newConfigCommand(state *cobraState) *cobra.Command {

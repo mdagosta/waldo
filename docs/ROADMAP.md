@@ -181,11 +181,12 @@ the same files independently of an index checkout.
 - Append spreadsheet-ready per-run training telemetry with timing, optimizer
   progress, learning rate, losses, throughput, and ETA. **Implemented.** A
   `model summary` now consumes this contract for deterministic health findings.
-  The interactive `model advisor` chats over those findings, the saved
+  The interactive `advisor` chats over those findings, the saved
   compose, and refreshed telemetry through a configured AI provider. It can
-  propose a validated follow-up compose and writes the separate draft only
-  after confirmation. A future `--monitor` mode will repeat local health
-  analysis during a live run.
+  propose a validated follow-up compose, or interview the operator and design
+  a new model when the requested name does not exist. Draft writes and new
+  builds require separate confirmations. A future `--monitor` mode will repeat
+  local health analysis during a live run.
 - Atomic weight, optimizer, runtime-random-state checkpoints and exact
   same-run resume after direct-training interruption. **Implemented for MLX,
   PyTorch, and single-node TorchTitan, including durable content-identified

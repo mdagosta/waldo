@@ -380,22 +380,25 @@ checkpoints, and artifact hashes.
 
 `model summary` evaluates the latest run and its `TELEMETRY.csv` locally, then
 reports whether to let it run, inspect it, stop it, fix it, or review a
-completed result. `model advisor` starts a conversational assistant grounded
+completed result. `advisor` starts a conversational assistant grounded
 in the model's saved compose, runs, and current telemetry. It can explain the
 model, assess a live run, and propose a next experiment:
 
 ```bash
 waldo config set ai.provider openai
 waldo config set ai.api-key "$API_KEY"
-waldo model advisor small
+waldo advisor small
 ```
 
 The advisor also receives a compact inventory of every corpus in the
 configured index, including paths, titles, sizes, token/document totals, and
-licenses, so it can recommend and validate broader corpus mixtures. It asks
-before writing any proposed compose to `<name>-advisor.yaml`; it never edits
-the immutable compose stored with the model. Local status remains available
-without any provider through `model summary`.
+licenses, so it can recommend and validate broader corpus mixtures. If `small`
+does not exist, the advisor interviews you about the intended model, data,
+hardware, runtime, context, evaluation, and license constraints. It then asks
+before writing `<name>-advisor.yaml` and asks again before starting training.
+For an existing model it never edits the immutable compose stored with the
+model. `waldo model advisor` remains a compatibility form, and local status
+remains available without any provider through `model summary`.
 Anthropic model overrides use Messages API IDs such as `claude-sonnet-5` or
 `claude-opus-5`; Claude Code shorthand names such as `sonnet` and `opus` are
 not API model IDs.

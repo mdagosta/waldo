@@ -21,7 +21,7 @@ import (
 func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.T) {
 	original := advisorTestCompose()
 	allowed := advisorAllowedCorpora(&original, []waldoindex.CorpusInfo{{Path: "core/code"}})
-	plain, err := parseAdvisorReply(`{"reply":"The held-out loss is improving."}`, &original, allowed)
+	plain, err := parseAdvisorReply(`{"reply":"The held-out loss is improving."}`, &original, allowed, false)
 	if err != nil || plain.Reply == "" || plain.Compose != nil {
 		t.Fatalf("plain reply = %+v, err = %v", plain, err)
 	}
@@ -30,7 +30,7 @@ func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	parsed, err := parseAdvisorReply(string(encoded), &original, allowed)
+	parsed, err := parseAdvisorReply(string(encoded), &original, allowed, false)
 	if err != nil || parsed.Compose == nil {
 		t.Fatalf("proposal = %+v, err = %v", parsed, err)
 	}
@@ -41,7 +41,7 @@ func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseAdvisorReply(string(encoded), &original, allowed); err == nil || !strings.Contains(err.Error(), "not in the configured index") {
+	if _, err := parseAdvisorReply(string(encoded), &original, allowed, false); err == nil || !strings.Contains(err.Error(), "not in the configured index") {
 		t.Fatalf("corpus boundary error = %v", err)
 	}
 	indexed := advisorTestCompose()
@@ -51,8 +51,14 @@ func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseAdvisorReply(string(encoded), &original, allowed); err != nil {
+	if _, err := parseAdvisorReply(string(encoded), &original, allowed, false); err != nil {
 		t.Fatalf("indexed corpus proposal was rejected: %v", err)
+	}
+	if _, err := parseAdvisorReply(string(encoded), nil, allowed, true); err != nil {
+		t.Fatalf("new-model compose was rejected: %v", err)
+	}
+	if _, err := parseAdvisorReply(string(encoded), nil, allowed, false); err == nil || !strings.Contains(err.Error(), "no saved compose") {
+		t.Fatalf("uncomposed existing model error = %v", err)
 	}
 }
 
@@ -90,6 +96,20 @@ func TestAdvisorReplyRendersMarkdown(t *testing.T) {
 	rendered := output.String()
 	if !strings.Contains(rendered, "Advisor") || !strings.Contains(rendered, "Architecture") || !strings.Contains(rendered, "6 layers") || !strings.Contains(rendered, "9.5M parameters") {
 		t.Fatalf("rendered advisor response = %q", rendered)
+	}
+}
+
+func TestAdvisorComposeReferenceIsValid(t *testing.T) {
+	encoded, err := json.Marshal(advisorComposeReference([]waldoindex.CorpusInfo{{Path: "core/books"}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var compose model.Compose
+	if err := json.Unmarshal(encoded, &compose); err != nil {
+		t.Fatal(err)
+	}
+	if err := compose.Validate(); err != nil {
+		t.Fatalf("advisor compose reference is invalid: %v", err)
 	}
 }
 

@@ -624,21 +624,25 @@ and durable layout are documented in `docs/MODEL-LIFECYCLE.md`.
 waldo index bom ~/training-data
 waldo index verify ~/training-data
 waldo model summary smoke
-waldo model advisor smoke
+waldo advisor smoke
 waldo model bom smoke
 ```
 
 `waldo model summary <name>` includes a local, deterministic health assessment
 and explicit action from the latest durable run state and telemetry.
 
-`waldo model advisor <name>` starts an interactive chat grounded in the
+`waldo advisor <name>` starts an interactive chat grounded in the
 model's normalized compose, run history, and freshly read telemetry. It can
 explain status, diagnose a run, or propose a follow-up experiment. A compact
 inventory of all configured index corpora supplies their paths, titles,
 descriptions, measures, and licenses. WALDO validates every proposed corpus
 against that index, shows the changes, and asks before updating
-`<name>-advisor.yaml`. It never changes the immutable source model, or sends
-the API key, model weights, or corpus text. `--provider` and `--model` can
+`<name>-advisor.yaml`. When the requested model does not exist, the same chat
+gathers its purpose, corpus, scale, hardware/time budget, context, evaluation,
+and licensing requirements. It generates a complete compose, confirms the
+write, and separately confirms before starting the build. It never changes an
+immutable source model, or sends the API key, model weights, or corpus text.
+`waldo model advisor` is a compatibility form; `--provider` and `--model` can
 override the configured AI backend.
 
 The model BOM is a portable inventory rooted at the model directory. A

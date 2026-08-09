@@ -52,6 +52,7 @@ type advisorReply struct {
 	Reply   string         `json:"reply"`
 	Changes []string       `json:"changes,omitempty"`
 	Compose *model.Compose `json:"compose,omitempty"`
+	Build   bool           `json:"build,omitempty"`
 }
 
 type advisorIndexEvidence struct {
@@ -92,22 +93,35 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 	}
 
 	name := args[0]
-	report, err := currentAdvisorEvidence(root, name)
+	exists, err := model.Exists(root, name)
 	if err != nil {
 		return err
+	}
+	creating := !exists
+	var report *model.Advice
+	if exists {
+		value, evidenceErr := currentAdvisorEvidence(root, name)
+		if evidenceErr != nil {
+			return evidenceErr
+		}
+		report = &value
 	}
 	indexEvidence, err := currentAdvisorIndex(configuration)
 	if err != nil {
 		return err
 	}
-	allowedCorpora := advisorAllowedCorpora(report.Compose, indexEvidence.Corpora)
+	var original *model.Compose
+	if report != nil {
+		original = report.Compose
+	}
+	allowedCorpora := advisorAllowedCorpora(original, indexEvidence.Corpora)
 	draftPath, err := filepath.Abs(name + "-advisor.yaml")
 	if err != nil {
 		return err
 	}
 	var draft *model.Compose
-	if report.Compose != nil {
-		copy := *report.Compose
+	if original != nil {
+		copy := *original
 		draft = &copy
 	}
 	if _, statErr := os.Stat(draftPath); statErr == nil {
@@ -121,7 +135,12 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 		return statErr
 	}
 
-	fmt.Fprintf(stdout, "Advisor: loaded model %s (%s) and %d indexed corpora. Ask about its training, configuration, or a next experiment.\n", name, report.State, len(indexEvidence.Corpora))
+	if creating {
+		fmt.Fprintf(stdout, "Advisor: model %s does not exist. I loaded %d indexed corpora so we can design it from scratch.\n", name, len(indexEvidence.Corpora))
+		fmt.Fprintln(stdout, "Advisor: what should this model do, and what hardware and training-time budget should it fit?")
+	} else {
+		fmt.Fprintf(stdout, "Advisor: loaded model %s (%s) and %d indexed corpora. Ask about its training, configuration, or a next experiment.\n", name, report.State, len(indexEvidence.Corpora))
+	}
 	fmt.Fprintln(stdout, "Advisor: type quit to exit. I will ask before writing any compose change.")
 	reader := bufio.NewReader(modelAdvisorInput)
 	var history []advisorTurn
@@ -141,12 +160,15 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 		if question == "quit" || question == "exit" || question == "/quit" {
 			return nil
 		}
-		report, err = currentAdvisorEvidence(root, name)
-		if err != nil {
-			return err
+		if !creating {
+			value, evidenceErr := currentAdvisorEvidence(root, name)
+			if evidenceErr != nil {
+				return evidenceErr
+			}
+			report = &value
 		}
 		history = append(history, advisorTurn{Role: "user", Content: question})
-		prompt := advisorChatPrompt(report, draft, indexEvidence, history)
+		prompt := advisorChatPrompt(name, creating, report, draft, indexEvidence, history)
 		var answer advisorReply
 		for attempt := 1; attempt <= 2; attempt++ {
 			fmt.Fprintf(stderr, "Advisor: thinking with %s/%s...\n", selected.Provider, selected.Model)
@@ -154,7 +176,7 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 			if askErr != nil {
 				return askErr
 			}
-			answer, err = parseAdvisorReply(response, report.Compose, allowedCorpora)
+			answer, err = parseAdvisorReply(response, original, allowedCorpora, creating)
 			if err == nil {
 				break
 			}
@@ -182,9 +204,30 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 				draft = &copy
 				fmt.Fprintf(stdout, "Advisor: updated %s\n", draftPath)
 				history = append(history, advisorTurn{Role: "system", Content: "The operator approved and WALDO wrote the proposed compose draft."})
+				if creating {
+					build, buildErr := confirmAdvisorBuild(reader, stdout, name, draftPath)
+					if buildErr != nil {
+						return buildErr
+					}
+					if build {
+						return runModelCompose(commandContext, []string{name, draftPath}, stdout, stderr)
+					}
+					history = append(history, advisorTurn{Role: "system", Content: "The compose draft was saved, but the operator declined to start training."})
+				}
 			} else {
 				fmt.Fprintln(stdout, "Advisor: compose unchanged.")
 				history = append(history, advisorTurn{Role: "system", Content: "The operator declined the proposed compose change."})
+			}
+		} else if creating && answer.Build {
+			if draft == nil {
+				return fmt.Errorf("advisor requested a build before creating a compose")
+			}
+			build, buildErr := confirmAdvisorBuild(reader, stdout, name, draftPath)
+			if buildErr != nil {
+				return buildErr
+			}
+			if build {
+				return runModelCompose(commandContext, []string{name, draftPath}, stdout, stderr)
 			}
 		}
 		if readErr == io.EOF {
@@ -236,19 +279,29 @@ func advisorAllowedCorpora(original *model.Compose, corpora []waldoindex.CorpusI
 	return allowed
 }
 
-func advisorChatPrompt(report model.Advice, draft *model.Compose, indexEvidence advisorIndexEvidence, history []advisorTurn) string {
+func advisorChatPrompt(name string, creating bool, report *model.Advice, draft *model.Compose, indexEvidence advisorIndexEvidence, history []advisorTurn) string {
 	evidence, _ := json.MarshalIndent(report, "", "  ")
 	draftJSON, _ := json.MarshalIndent(draft, "", "  ")
 	indexJSON, _ := json.MarshalIndent(indexEvidence, "", "  ")
+	referenceJSON, _ := json.MarshalIndent(advisorComposeReference(indexEvidence.Corpora), "", "  ")
 	if len(history) > 12 {
 		history = history[len(history)-12:]
 	}
 	historyJSON, _ := json.MarshalIndent(history, "", "  ")
-	return `You are WALDO's conversational model advisor. Answer the operator's latest message directly and concisely using the supplied model evidence, current telemetry, saved compose, and conversation. Distinguish observed facts from recommendations. You may explain the model, assess a running job, diagnose a failure, or design a practical next experiment. Format reply as concise Markdown: use short paragraphs and, when presenting several facts, descriptive headings and bullet lists. Do not return one dense paragraph.
+	mode := "existing model"
+	if creating {
+		mode = "new model creation"
+	}
+	return `You are WALDO's conversational model advisor. Answer the operator's latest message directly and concisely using the supplied model evidence, current telemetry, saved compose, index inventory, and conversation. Distinguish observed facts from recommendations. Format reply as concise Markdown: use short paragraphs and, when presenting several facts, descriptive headings and bullet lists. Do not return one dense paragraph.
 
-If the operator asks you to modify or create the next compose, return a complete proposed schema-1 waldo-model-compose in "compose" and list concise "changes". Otherwise omit both fields. Never claim a file was changed; WALDO asks the operator for confirmation and performs the write. Never modify the running model. You may add corpus paths listed in the configured training index below, but must not invent paths. Consider corpus size, content, and license when recommending a mix. If there is no saved compose, explain that compose editing is unavailable.
+In new model creation mode, conduct a natural requirements interview. Establish intended behavior, suitable indexed training corpora, desired model scale, available hardware, wall-clock budget, context needs, and any evaluation or licensing constraints. Ask focused follow-up questions rather than dumping a questionnaire. Once you have enough information, propose a practical complete schema-1 waldo-model-compose. Do not propose it prematurely. In existing model mode, you may explain the model, assess a running job, diagnose a failure, or design a practical next experiment.
 
-Return exactly one JSON object: {"reply":"plain conversational response","changes":["change"],"compose":{...}}. Omit changes and compose when no edit is proposed. Do not use Markdown fences or add other keys.
+When proposing a compose, return it in "compose" and list concise "changes". Otherwise omit both fields. In new model creation mode, "changes" describes the design choices. Set "build" true only when the operator explicitly asks to start a previously saved draft. Never claim a file was changed or training started; WALDO confirms and performs those actions. Never modify a running model. Use only corpus paths listed in the configured training index and consider corpus size, content, and license.
+
+Return exactly one JSON object: {"reply":"Markdown response","changes":["choice"],"compose":{...},"build":false}. Omit changes, compose, and build when unused. Do not use Markdown fences or add other keys.
+
+Requested model name: ` + name + `
+Mode: ` + mode + `
 
 Current WALDO evidence:
 ` + string(evidence) + `
@@ -259,11 +312,42 @@ Current editable compose draft (null means unavailable):
 Configured training corpus index:
 ` + string(indexJSON) + `
 
+Valid compose shape reference (schema example only, not a recommendation):
+` + string(referenceJSON) + `
+
+Current executable backends require tokenizer byte@builtin-byte-schema-1 with vocabulary_size 259. Architecture hidden_size must be divisible by attention_heads, attention_heads by key_value_heads, and every sequence_length must not exceed context_tokens. Training stages use type pre-training, fine-tuning, alignment, or other; the currently supported objective is causal-language-modeling. Set positive steps, batch_size, sequence_length, and learning_rate. Use checkpoint_every and evaluate_every appropriate to the run length.
+
 Conversation:
 ` + string(historyJSON)
 }
 
-func parseAdvisorReply(response string, original *model.Compose, allowedCorpora map[string]bool) (advisorReply, error) {
+func advisorComposeReference(corpora []waldoindex.CorpusInfo) map[string]any {
+	corpus := "select/an/indexed-corpus"
+	if len(corpora) > 0 {
+		corpus = corpora[0].Path
+	}
+	return map[string]any{
+		"kind": "waldo-model-compose", "schema": 1,
+		"architecture": map[string]any{
+			"family": "decoder-transformer", "context_tokens": 512, "vocabulary_size": 259,
+			"hidden_size": 384, "intermediate_size": 1024, "layers": 6,
+			"attention_heads": 6, "key_value_heads": 2, "tie_embeddings": true,
+			"parameter_dtype": "bfloat16",
+			"tokenizer":       map[string]any{"name": "byte", "revision": "builtin-byte-schema-1"},
+		},
+		"stages": []any{map[string]any{
+			"name": "pretrain", "type": "pre-training", "objective": "causal-language-modeling",
+			"corpora": []string{corpus},
+			"parameters": map[string]any{
+				"profile": "causal-pretrain-v1", "steps": 1000, "batch_size": 64,
+				"sequence_length": 512, "learning_rate": 0.0003, "seed": 42,
+				"warmup_steps": 10, "checkpoint_every": 100, "evaluate_every": 100,
+			},
+		}},
+	}
+}
+
+func parseAdvisorReply(response string, original *model.Compose, allowedCorpora map[string]bool, creating bool) (advisorReply, error) {
 	start, end := strings.IndexByte(response, '{'), strings.LastIndexByte(response, '}')
 	if start < 0 || end < start {
 		return advisorReply{}, fmt.Errorf("response does not contain a JSON object")
@@ -283,7 +367,7 @@ func parseAdvisorReply(response string, original *model.Compose, allowedCorpora 
 		}
 		return reply, nil
 	}
-	if original == nil {
+	if original == nil && !creating {
 		return advisorReply{}, fmt.Errorf("model has no saved compose to revise")
 	}
 	if len(reply.Changes) == 0 {
@@ -300,6 +384,20 @@ func parseAdvisorReply(response string, original *model.Compose, allowedCorpora 
 		}
 	}
 	return reply, nil
+}
+
+func confirmAdvisorBuild(reader *bufio.Reader, output io.Writer, name, composePath string) (bool, error) {
+	fmt.Fprintf(output, "Advisor: start training model %s from %s now? [y/N] ", name, composePath)
+	confirmation, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	if !advisorConfirmed(confirmation) {
+		fmt.Fprintln(output, "Advisor: build not started; the compose draft is ready when you are.")
+		return false, nil
+	}
+	fmt.Fprintf(output, "Advisor: starting model %s.\n", name)
+	return true, nil
 }
 
 func printAdvisorChanges(output io.Writer, changes []string) {

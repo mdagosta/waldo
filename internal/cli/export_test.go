@@ -214,6 +214,25 @@ stages:
 	if err != nil || generated.Stages[0].Parameters.Steps != 3 || !strings.Contains(stdout.String(), "updated ") || !strings.Contains(stderr.String(), "thinking with anthropic/claude-sonnet-5") {
 		t.Fatalf("generated advisor compose = %+v, err = %v, stdout = %q, stderr = %q", generated, err, stdout.String(), stderr.String())
 	}
+	newCompose := advisorTestCompose()
+	newCompose.Stages[0].Corpora = []string{"books"}
+	newProposal, err := json.Marshal(advisorReply{
+		Reply:   "I have enough information to propose a small test model.",
+		Changes: []string{"train a small byte-level model on the indexed books corpus"}, Compose: &newCompose,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelAdvisorAsk = func(context.Context, waldoai.Selection, string) (string, error) { return string(newProposal), nil }
+	modelAdvisorInput = strings.NewReader("Make a tiny test model for this machine.\nyes\nyes\n")
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"advisor", "fresh", "--provider", "anthropic", "--model", "claude-sonnet-5"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("new-model advisor code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if exists, err := model.Exists(models, "fresh"); err != nil || !exists || !strings.Contains(stdout.String(), "composed model fresh") {
+		t.Fatalf("new advisor model exists = %v, err = %v, stdout = %q", exists, err, stdout.String())
+	}
 	for _, name := range []string{"PLAN.json", "MODEL.json", "MODEL-BOM.json"} {
 		if _, err := os.Stat(filepath.Join(models, "smoke", name)); err != nil {
 			t.Fatal(err)
