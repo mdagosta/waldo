@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/glamour"
 	waldoai "github.com/openwaldo/waldo/internal/ai"
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/model"
@@ -27,6 +28,16 @@ import (
 
 var modelAdvisorInput io.Reader = os.Stdin
 var modelAdvisorTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+var modelAdvisorWidth = func() int {
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width < 60 {
+		return 88
+	}
+	if width > 120 {
+		return 120
+	}
+	return width
+}
 var modelAdvisorAsk = func(ctx context.Context, selection waldoai.Selection, prompt string) (string, error) {
 	return (waldoai.Client{}).Ask(ctx, selection, prompt)
 }
@@ -140,7 +151,9 @@ func runModelAdvisor(commandContext Context, args []string, stdout, stderr io.Wr
 			}
 			prompt += "\n\nYour response was invalid: " + err.Error() + "\nReturn corrected JSON only."
 		}
-		fmt.Fprintf(stdout, "Advisor: %s\n", answer.Reply)
+		if err := renderAdvisorReply(stdout, answer.Reply); err != nil {
+			return err
+		}
 		history = append(history, advisorTurn{Role: "assistant", Content: answer.Reply})
 		if answer.Compose != nil {
 			printAdvisorChanges(stdout, answer.Changes)
@@ -183,7 +196,7 @@ func advisorChatPrompt(report model.Advice, draft *model.Compose, history []advi
 		history = history[len(history)-12:]
 	}
 	historyJSON, _ := json.MarshalIndent(history, "", "  ")
-	return `You are WALDO's conversational model advisor. Answer the operator's latest message directly and concisely using the supplied model evidence, current telemetry, saved compose, and conversation. Distinguish observed facts from recommendations. You may explain the model, assess a running job, diagnose a failure, or design a practical next experiment.
+	return `You are WALDO's conversational model advisor. Answer the operator's latest message directly and concisely using the supplied model evidence, current telemetry, saved compose, and conversation. Distinguish observed facts from recommendations. You may explain the model, assess a running job, diagnose a failure, or design a practical next experiment. Format reply as concise Markdown: use short paragraphs and, when presenting several facts, descriptive headings and bullet lists. Do not return one dense paragraph.
 
 If the operator asks you to modify or create the next compose, return a complete proposed schema-1 waldo-model-compose in "compose" and list concise "changes". Otherwise omit both fields. Never claim a file was changed; WALDO asks the operator for confirmation and performs the write. Never modify the running model. Do not invent corpus paths or introduce paths absent from the saved compose. If there is no saved compose, explain that compose editing is unavailable.
 
@@ -249,6 +262,19 @@ func printAdvisorChanges(output io.Writer, changes []string) {
 	for _, change := range changes {
 		fmt.Fprintf(output, "  - %s\n", change)
 	}
+}
+
+func renderAdvisorReply(output io.Writer, markdown string) error {
+	renderer, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(modelAdvisorWidth()))
+	if err != nil {
+		return fmt.Errorf("initialize advisor Markdown renderer: %w", err)
+	}
+	rendered, err := renderer.Render("## Advisor\n\n" + strings.TrimSpace(markdown) + "\n")
+	if err != nil {
+		return fmt.Errorf("render advisor response: %w", err)
+	}
+	_, err = fmt.Fprint(output, rendered)
+	return err
 }
 
 func advisorConfirmed(value string) bool {

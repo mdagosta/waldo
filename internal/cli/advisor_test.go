@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -63,6 +64,20 @@ func TestAdvisorDraftUpdatesAtomicallyAfterConfirmation(t *testing.T) {
 	}
 	if !advisorConfirmed("yes\n") || !advisorConfirmed("Y") || advisorConfirmed("no") || advisorConfirmed("") {
 		t.Fatal("confirmation parsing is incorrect")
+	}
+}
+
+func TestAdvisorReplyRendersMarkdown(t *testing.T) {
+	previousWidth := modelAdvisorWidth
+	modelAdvisorWidth = func() int { return 72 }
+	t.Cleanup(func() { modelAdvisorWidth = previousWidth })
+	var output bytes.Buffer
+	if err := renderAdvisorReply(&output, "### Architecture\n\n- 6 layers\n- 9.5M parameters"); err != nil {
+		t.Fatal(err)
+	}
+	rendered := output.String()
+	if !strings.Contains(rendered, "Advisor") || !strings.Contains(rendered, "Architecture") || !strings.Contains(rendered, "6 layers") || !strings.Contains(rendered, "9.5M parameters") {
+		t.Fatalf("rendered advisor response = %q", rendered)
 	}
 }
 
