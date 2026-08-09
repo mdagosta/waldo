@@ -178,6 +178,10 @@ the same files independently of an index checkout.
 - Persist and validate typed progress, checkpoint, evaluation, final-loss, and
   artifact observations. **Implemented and exercised through real MLX plus
   guarded PyTorch and TorchTitan lifecycles.**
+- Append spreadsheet-ready per-run training telemetry with timing, optimizer
+  progress, learning rate, losses, throughput, and ETA. **Implemented.** A
+  future `--monitor` mode will consume this contract for periodic deterministic
+  health commentary and optional provider-configured LLM advice.
 - Atomic weight, optimizer, runtime-random-state checkpoints and exact
   same-run resume after direct-training interruption. **Implemented for MLX,
   PyTorch, and single-node TorchTitan, including durable content-identified

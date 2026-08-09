@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -83,6 +84,29 @@ func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	}
 	if trained.RunBOMs[0].EvaluationSet == nil || trained.RunBOMs[0].EvaluationSet.Records != 1 || len(trained.Runs[0].Observation.Evaluations) != 1 || trained.Runs[0].Observation.Evaluations[0].Metrics["heldout_loss"] <= 0 {
 		t.Fatalf("held-out evidence = %+v / %+v", trained.RunBOMs[0].EvaluationSet, trained.Runs[0].Observation.Evaluations)
+	}
+	telemetryPath := filepath.Join(trained.Path, "runs", "0001-pretrain-run0001", TelemetryFilename)
+	telemetryFile, err := os.Open(telemetryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	telemetry, err := csv.NewReader(telemetryFile).ReadAll()
+	_ = telemetryFile.Close()
+	if err != nil || len(telemetry) < 4 || !reflect.DeepEqual(telemetry[0], telemetryHeader) {
+		t.Fatalf("telemetry rows = %v, err = %v", telemetry, err)
+	}
+	last := telemetry[len(telemetry)-1]
+	if last[2] != "run0001" || last[5] != "run" || last[6] != string(RunComplete) || last[8] == "" || last[10] == "" {
+		t.Fatalf("terminal telemetry = %v", last)
+	}
+	foundEvaluation := false
+	for _, row := range telemetry[1:] {
+		if row[5] == "evaluation" && row[12] != "" && row[13] != "" {
+			foundEvaluation = true
+		}
+	}
+	if !foundEvaluation {
+		t.Fatalf("telemetry has no chartable held-out evaluation: %v", telemetry)
 	}
 	bomRun := trained.BOM.Runs[0]
 	if trained.BOM.PathBase != "model-root" || trained.BOM.CurrentRunID != "" || bomRun.Backend.Name != "fake" || !bomRun.Simulated || bomRun.RunBOM != "runs/0001-pretrain-run0001/RUN-BOM.json" || bomRun.Artifacts[0].Role != "simulation" || bomRun.Artifacts[0].Path != "runs/0001-pretrain-run0001/artifacts/fake-model.json" {

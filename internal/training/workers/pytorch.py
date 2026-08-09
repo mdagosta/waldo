@@ -415,8 +415,9 @@ class Trainer:
         inputs = tokens[:, :-1]
         targets = tokens[:, 1:]
         next_step = self.step_number + 1
+        current_learning_rate = self.learning_rate(next_step)
         for group in self.optimizer.param_groups:
-            group["lr"] = self.learning_rate(next_step)
+            group["lr"] = current_learning_rate
         self.optimizer.zero_grad(set_to_none=True)
         logits = self.model(inputs)
         losses = functional.cross_entropy(logits.float().reshape(-1, logits.shape[-1]), targets.reshape(-1), reduction="none")
@@ -443,6 +444,7 @@ class Trainer:
                     "step": self.step_number,
                     "tokens": self.consumed_tokens,
                     "loss": loss_value,
+                    "learning_rate": current_learning_rate,
                     "tokens_per_second": throughput,
                     "eta_seconds": eta,
                 },

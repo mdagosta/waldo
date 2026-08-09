@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const TorchTitanRevision = "builtin-torchtitan-worker-schema-1-r2"
+const TorchTitanRevision = "builtin-torchtitan-worker-schema-1-r3"
 
 type TorchTitan struct {
 	Python    string

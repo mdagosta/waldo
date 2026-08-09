@@ -309,6 +309,7 @@ until the compose completes.
     └── 0001-<stage>-<run-id>/
         ├── RUN-BOM.json
         ├── RUN.json
+        ├── TELEMETRY.csv
         └── artifacts/
             └── checkpoints/
                 └── step-00000500/
@@ -328,6 +329,11 @@ until the compose completes.
 - `RUN.json` moves atomically through `planned`, `running`, and exactly one of
   `complete`, `failed`, or `interrupted`. It separates verified partial
   progress from a complete observation and records every resume attempt.
+- `TELEMETRY.csv` is an append-only, spreadsheet-ready event and scalar time
+  series. Its stable columns record UTC observation time, attempt-relative
+  elapsed time, run and stage identity, event and state, optimizer progress,
+  loss, held-out loss and perplexity, throughput, ETA, and the human message.
+  Resume attempts append to the same file with a new attempt number.
 - `MODEL-BOM.json` aggregates run-BOM hashes, terminal states, backend and
   simulation identity, observation hashes, and artifact hashes. Its
   `path_base` is `model-root`: every `run_bom` and artifact `path` resolves

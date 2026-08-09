@@ -282,7 +282,8 @@ class Trainer:
         inputs = tokens[:, :-1]
         targets = tokens[:, 1:]
         next_step = self.step_number + 1
-        self.optimizer.learning_rate = self.learning_rate(next_step)
+        current_learning_rate = self.learning_rate(next_step)
+        self.optimizer.learning_rate = current_learning_rate
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
         self.optimizer.update(self.model, gradients)
         mx.eval(self.model.parameters(), self.optimizer.state, loss)
@@ -306,6 +307,7 @@ class Trainer:
                     "step": self.step_number,
                     "tokens": self.consumed_tokens,
                     "loss": loss_value,
+                    "learning_rate": current_learning_rate,
                     "tokens_per_second": throughput,
                     "eta_seconds": eta,
                 },

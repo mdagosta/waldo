@@ -44,3 +44,4 @@ logs.
 - [0038: Preserve recipe-relative paths for file records](0038-preserve-recipe-source-paths.md)
 - [0039: Preserve source evidence in ingest recipes](0039-recipe-source-evidence.md)
 - [0040: Make pre-training shard audit explicit](0040-opt-in-training-audit.md)
+- [0041: Record chartable training telemetry as CSV](0041-training-telemetry-csv.md)

@@ -143,13 +143,13 @@ func (frame WorkerOutputFrame) Validate() error {
 }
 
 func (event Event) Validate() error {
-	if event.Step < 0 || event.Tokens < 0 || event.TokensPerSecond < 0 || event.ETASeconds < 0 {
+	if event.Step < 0 || event.Tokens < 0 || event.LearningRate < 0 || event.TokensPerSecond < 0 || event.ETASeconds < 0 {
 		return fmt.Errorf("worker event %q contains negative progress", event.Kind)
 	}
 	if event.Loss != nil && (*event.Loss < 0 || math.IsNaN(*event.Loss) || math.IsInf(*event.Loss, 0)) {
 		return fmt.Errorf("worker event %q contains invalid loss", event.Kind)
 	}
-	if math.IsNaN(event.TokensPerSecond) || math.IsInf(event.TokensPerSecond, 0) {
+	if math.IsNaN(event.LearningRate) || math.IsInf(event.LearningRate, 0) || math.IsNaN(event.TokensPerSecond) || math.IsInf(event.TokensPerSecond, 0) {
 		return fmt.Errorf("worker event %q contains invalid throughput", event.Kind)
 	}
 	switch event.Kind {

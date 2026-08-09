@@ -339,6 +339,10 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 			}
 		}
 		fmt.Fprintf(stdout, "RUN %04d:      %-16s %-11s %s tokens%s%s\n", pin.Ordinal, pin.Stage, pin.State, humanCount(tokens), simulated, detail)
+		if position < len(inspection.BOM.Runs) {
+			runDirectory := filepath.Dir(filepath.FromSlash(inspection.BOM.Runs[position].RunBOM))
+			fmt.Fprintf(stdout, "  TELEMETRY:   %s\n", filepath.Join(inspection.Path, runDirectory, model.TelemetryFilename))
+		}
 	}
 	return nil
 }

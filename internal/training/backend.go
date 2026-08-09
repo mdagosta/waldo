@@ -210,6 +210,7 @@ type Event struct {
 	Step            int64       `json:"step,omitempty"`
 	Tokens          int64       `json:"tokens,omitempty"`
 	Loss            *float64    `json:"loss,omitempty"`
+	LearningRate    float64     `json:"learning_rate,omitempty"`
 	TokensPerSecond float64     `json:"tokens_per_second,omitempty"`
 	ETASeconds      int64       `json:"eta_seconds,omitempty"`
 	Checkpoint      *Checkpoint `json:"checkpoint,omitempty"`

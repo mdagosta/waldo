@@ -293,15 +293,21 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPath string, record *ModelRecord, pin RunPin, run RunRecord, runBOM RunBOM, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, architectureJSON json.RawMessage, selection training.Selection, resume *training.ResumePoint) (Inspection, error) {
 	now := builder.clock()
 	runDirectory := filepath.Join(modelPath, "runs", runDirectoryName(pin))
+	telemetryPath := filepath.Join(runDirectory, TelemetryFilename)
+	attemptStarted := now()
 	run.State = RunRunning
 	run.Finished = ""
 	run.Error = ""
 	if run.Started == "" {
-		run.Started = formatTime(now())
+		run.Started = formatTime(attemptStarted)
 	}
-	run.Attempts = append(run.Attempts, RunAttempt{Ordinal: len(run.Attempts) + 1, Started: formatTime(now()), State: RunRunning, ResumeStep: resumeStep(resume)})
+	run.Attempts = append(run.Attempts, RunAttempt{Ordinal: len(run.Attempts) + 1, Started: formatTime(attemptStarted), State: RunRunning, ResumeStep: resumeStep(resume)})
 	if err := persistRunAndPin(modelPath, runDirectory, record, pin, run, now()); err != nil {
 		return Inspection{}, err
+	}
+	attemptOrdinal := len(run.Attempts)
+	if err := appendTelemetry(telemetryPath, telemetryRow{Observed: attemptStarted, Started: attemptStarted, RunID: pin.ID, Stage: stage.Name, Attempt: attemptOrdinal, Event: "run", State: RunRunning, PlannedSteps: runBOM.Parameters.Steps, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity, Message: "training backend started"}); err != nil {
+		return Inspection{}, telemetryError(telemetryPath, err)
 	}
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunRunning, Message: "training backend started"})
 
@@ -311,7 +317,12 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		progressMutex.Lock()
 		defer progressMutex.Unlock()
 		if progressErr == nil {
-			progressErr = persistTrainingEvent(modelPath, runDirectory, record, pin, &run, event, now())
+			observed := now()
+			if err := appendTelemetry(telemetryPath, telemetryRow{Observed: observed, Started: attemptStarted, RunID: pin.ID, Stage: stage.Name, Attempt: attemptOrdinal, Event: event.Kind, State: RunRunning, PlannedSteps: runBOM.Parameters.Steps, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity, Training: &event, Message: event.Message}); err != nil {
+				progressErr = telemetryError(telemetryPath, err)
+			} else {
+				progressErr = persistTrainingEvent(modelPath, runDirectory, record, pin, &run, event, observed)
+			}
 		}
 		builder.report(Progress{Phase: "training", Stage: stage.Name, RunID: pin.ID, State: RunRunning, Message: event.Message, Training: &event})
 	}
@@ -357,6 +368,9 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		run.Error = backendErr.Error()
 		attempt.State = run.State
 		attempt.Error = run.Error
+		if err := appendTelemetry(telemetryPath, telemetryRow{Observed: now(), Started: attemptStarted, RunID: pin.ID, Stage: stage.Name, Attempt: attemptOrdinal, Event: "run", State: run.State, PlannedSteps: runBOM.Parameters.Steps, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity, Message: run.Error}); err != nil {
+			backendErr = errors.Join(backendErr, telemetryError(telemetryPath, err))
+		}
 		if err := persistRunAndPin(modelPath, runDirectory, record, pin, run, now()); err != nil {
 			return Inspection{}, errors.Join(backendErr, err)
 		}
@@ -368,6 +382,9 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	run.Observation = &observation
 	run.Progress = nil
 	clearResumePin(record, pin.ID)
+	if err := appendTelemetry(telemetryPath, telemetryRow{Observed: now(), Started: attemptStarted, RunID: pin.ID, Stage: stage.Name, Attempt: attemptOrdinal, Event: "run", State: RunComplete, PlannedSteps: runBOM.Parameters.Steps, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity, Message: "training complete"}); err != nil {
+		return Inspection{}, telemetryError(telemetryPath, err)
+	}
 	if err := persistRunAndPin(modelPath, runDirectory, record, pin, run, now()); err != nil {
 		return Inspection{}, err
 	}
