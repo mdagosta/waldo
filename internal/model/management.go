@@ -40,7 +40,7 @@ func List(root string, patterns []string) ([]Listing, error) {
 			return nil, fmt.Errorf("invalid model pattern %q: %w", pattern, err)
 		}
 	}
-	result := make([]Listing, 0)
+	listed := make(map[string]Listing)
 	for _, entry := range entries {
 		if !entry.IsDir() || !validName.MatchString(entry.Name()) || !matchesAny(entry.Name(), patterns) {
 			continue
@@ -49,21 +49,56 @@ func List(root string, patterns []string) ([]Listing, error) {
 		if err != nil {
 			return nil, err
 		}
-		listing := Listing{
-			Name: entry.Name(), ID: inspection.Model.ID, Path: inspection.Path,
-			Parameters: inspection.Model.Forecast.ApproximateParameters,
-			Runs:       len(inspection.Model.Runs), Updated: inspection.Model.Updated,
+		listing := listingFromInspection(inspection)
+		listed[listing.Name] = listing
+	}
+	// Compose stages are trained in a durable transaction workspace and are
+	// atomically published only after every stage completes. Include valid
+	// staged models so long-running composes remain visible to model list.
+	stagingRoot := filepath.Join(root, ".waldo-compose")
+	transactions, err := os.ReadDir(stagingRoot)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, entry := range transactions {
+		if !entry.IsDir() {
+			continue
 		}
-		if inspection.Origin != nil {
-			listing.State = "downloaded"
+		workspace := filepath.Join(stagingRoot, entry.Name())
+		var transaction composeTransaction
+		if err := readJSON(filepath.Join(workspace, "COMPOSE.json"), &transaction); err != nil || transaction.Kind != "waldo-model-compose-transaction" || transaction.Schema != 1 || !validName.MatchString(transaction.Name) || !matchesAny(transaction.Name, patterns) {
+			continue
 		}
-		if len(inspection.Model.Runs) > 0 {
-			listing.State = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
+		inspection, err := Inspect(workspace, transaction.Name)
+		if err != nil {
+			continue
 		}
+		listing := listingFromInspection(inspection)
+		if current, ok := listed[listing.Name]; !ok || listing.Updated > current.Updated {
+			listed[listing.Name] = listing
+		}
+	}
+	result := make([]Listing, 0, len(listed))
+	for _, listing := range listed {
 		result = append(result, listing)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	return result, nil
+}
+
+func listingFromInspection(inspection Inspection) Listing {
+	listing := Listing{
+		Name: inspection.Model.Name, ID: inspection.Model.ID, Path: inspection.Path,
+		Parameters: inspection.Model.Forecast.ApproximateParameters,
+		Runs:       len(inspection.Model.Runs), Updated: inspection.Model.Updated,
+	}
+	if inspection.Origin != nil {
+		listing.State = "downloaded"
+	}
+	if len(inspection.Model.Runs) > 0 {
+		listing.State = string(inspection.Model.Runs[len(inspection.Model.Runs)-1].State)
+	}
+	return listing
 }
 
 func matchesAny(name string, patterns []string) bool {

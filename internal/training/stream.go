@@ -34,6 +34,14 @@ type RecordPartition struct {
 	parameters ResolvedParameters
 }
 
+type PartitionProgress struct {
+	CurrentShard int
+	TotalShards  int
+	Records      int64
+	Bytes        int64
+	TotalBytes   int64
+}
+
 type evaluationCandidate struct {
 	key       string
 	score     [32]byte
@@ -57,6 +65,12 @@ func (values *evaluationHeap) Pop() any {
 }
 
 func NewRecordPartition(inputs []Input, parameters ResolvedParameters) (RecordPartition, error) {
+	return NewRecordPartitionWithProgress(inputs, parameters, nil)
+}
+
+// NewRecordPartitionWithProgress deterministically selects held-out records
+// while reporting the otherwise CPU-heavy full-corpus scan.
+func NewRecordPartitionWithProgress(inputs []Input, parameters ResolvedParameters, progress func(PartitionProgress)) (RecordPartition, error) {
 	ordered := orderedInputs(inputs)
 	partition := RecordPartition{selected: make(map[string]bool), inputs: ordered, parameters: parameters}
 	policy := parameters.Evaluation
@@ -69,8 +83,11 @@ func NewRecordPartition(inputs []Input, parameters ResolvedParameters) (RecordPa
 	}
 	var candidates evaluationHeap
 	heap.Init(&candidates)
-	var records int64
+	var records, completedBytes, totalBytes int64
 	for _, input := range ordered {
+		totalBytes += input.Bytes
+	}
+	for inputPosition, input := range ordered {
 		err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
 			records++
 			key := selectionID(input.SHA256, row)
@@ -82,10 +99,17 @@ func NewRecordPartition(inputs []Input, parameters ResolvedParameters) (RecordPa
 				heap.Pop(&candidates)
 				heap.Push(&candidates, candidate)
 			}
+			if progress != nil && records%1000 == 0 {
+				progress(PartitionProgress{CurrentShard: inputPosition + 1, TotalShards: len(ordered), Records: records, Bytes: completedBytes, TotalBytes: totalBytes})
+			}
 			return nil
 		})
 		if err != nil {
 			return RecordPartition{}, fmt.Errorf("select evaluation records from shard %s: %w", input.SHA256, err)
+		}
+		completedBytes += input.Bytes
+		if progress != nil {
+			progress(PartitionProgress{CurrentShard: inputPosition + 1, TotalShards: len(ordered), Records: records, Bytes: completedBytes, TotalBytes: totalBytes})
 		}
 	}
 	desired := int(math.Ceil(float64(records) * policy.Fraction))

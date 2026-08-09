@@ -404,6 +404,10 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	if err != nil || len(entries) < 2 {
 		t.Fatalf("durable staging entries = %v, err = %v", entries, err)
 	}
+	listed, err := List(root, nil)
+	if err != nil || len(listed) != 1 || listed[0].Name != "smoke" || listed[0].State != string(RunInterrupted) {
+		t.Fatalf("staged compose listing = %+v, err = %v", listed, err)
+	}
 	completed, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false)
 	if err != nil {
 		t.Fatal(err)

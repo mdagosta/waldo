@@ -283,7 +283,10 @@ transaction pins the compose, every corpus BOM, and the model being replaced.
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown
-as a separate phase.
+as a separate phase. The deterministic held-out selection scan reports shard,
+record, and byte progress before backend selection. While a compose is running,
+`model list` includes its validated staged model and current run state even
+though final publication remains atomic.
 After Ctrl-C or process loss, repeating the exact command discovers the staged
 model, marks an abandoned running attempt interrupted, and resumes the same
 stage and run from its newest verified checkpoint. Changed inputs create a

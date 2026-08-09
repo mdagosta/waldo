@@ -116,6 +116,30 @@ func TestRecordPartitionPinsAndExcludesHeldOutRecords(t *testing.T) {
 	}
 }
 
+func TestRecordPartitionReportsScanProgress(t *testing.T) {
+	inputs := []Input{
+		writeTrainingShard(t, []string{"one", "two"}),
+		writeTrainingShard(t, []string{"three"}),
+	}
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []PartitionProgress
+	if _, err := NewRecordPartitionWithProgress(inputs, parameters, func(event PartitionProgress) {
+		events = append(events, event)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 2 {
+		t.Fatalf("progress events = %+v", events)
+	}
+	last := events[len(events)-1]
+	if last.CurrentShard != 2 || last.TotalShards != 2 || last.Records != 3 || last.Bytes != last.TotalBytes || last.TotalBytes <= 0 {
+		t.Fatalf("final progress = %+v", last)
+	}
+}
+
 func TestCanonicalRecordSourceIsDeterministicAndComplete(t *testing.T) {
 	inputs := []Input{
 		writeTrainingShard(t, []string{"one", "two", "three"}),

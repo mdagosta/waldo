@@ -135,10 +135,14 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
 	}
-	partition, err := training.NewRecordPartition(prepared.Inputs, resolvedParameters)
+	builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))})
+	partition, err := training.NewRecordPartitionWithProgress(prepared.Inputs, resolvedParameters, func(event training.PartitionProgress) {
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("evaluation scan %d/%d shards, %d records, %s/%s", event.CurrentShard, event.TotalShards, event.Records, byteCount(event.Bytes), byteCount(event.TotalBytes))})
+	})
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s held-out evaluation partition: %w", stage.Name, err)
 	}
+	builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selected %d held-out records (%s text)", partition.Evaluation.Records, byteCount(partition.Evaluation.TextBytes))})
 	records, err := partition.TrainingRecords()
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s training record stream: %w", stage.Name, err)
@@ -152,6 +156,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if resolver == nil {
 		resolver = builtinResolver()
 	}
+	builder.report(Progress{Phase: "backend", Stage: stage.Name, Message: "verifying the selected training backend"})
 	selection, err := resolver.Resolve(ctx, training.ResolveRequest{
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
 		Architecture:       architectureJSON,
@@ -163,6 +168,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err := validateSelection(selection, []string{stage.Objective}); err != nil {
 		return Inspection{}, err
 	}
+	builder.report(Progress{Phase: "backend", Stage: stage.Name, Message: fmt.Sprintf("selected %s@%s", selection.Execution.Backend.Name, selection.Execution.Backend.Revision)})
 	var initialization *training.Initialization
 	if selection.Execution.Backend.Name != "fake" {
 		initialization, err = resolveInitialization(inspection)
@@ -214,6 +220,22 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	}
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunPlanned, Message: "persisted run OpenWALDO BOM"})
 	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, architectureJSON, selection, nil)
+}
+
+func byteCount(value int64) string {
+	const unit = int64(1024)
+	if value < unit {
+		return fmt.Sprintf("%d B", value)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	amount := float64(value)
+	for _, label := range units {
+		amount /= 1024
+		if amount < 1024 || label == units[len(units)-1] {
+			return fmt.Sprintf("%.1f %s", amount, label)
+		}
+	}
+	return fmt.Sprintf("%d B", value)
 }
 
 func resumableRun(inspection Inspection, stage Stage, parameters training.ResolvedParameters, evaluation training.EvaluationSet, corpusHash string, execution training.Execution) (int, bool) {

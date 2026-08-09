@@ -576,6 +576,9 @@ attestations, and declared totals before any training begins. It creates the mod
 absent, and executes its stages. Existing names are refused unless `--replace`
 is explicitly supplied; replacement is prepared fully before the old model is
 removed. Compose work is staged in a content-identified durable transaction.
+`model list` includes a validated staged compose and its current run state;
+final publication remains atomic. Held-out selection reports shard, record,
+and byte progress before the training backend starts.
 Repeating the exact command after interruption resumes its current stage and
 run; changed composes, corpus BOMs, or replacement targets never share staging.
 
