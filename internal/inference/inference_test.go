@@ -85,3 +85,33 @@ done
 		t.Fatalf("context = %d, streamed = %q, result = %+v", contextTokens, streamed, result)
 	}
 }
+
+func TestPyTorchSessionConsumesStreamingProtocol(t *testing.T) {
+	python := filepath.Join(t.TempDir(), "fake-python")
+	script := `#!/bin/sh
+printf '%s\n' '{"kind":"ready","schema":1,"context_tokens":512}'
+while IFS= read -r line; do
+  printf '%s\n' '{"kind":"token","schema":1,"data":"Qg=="}'
+  printf '%s\n' '{"kind":"complete","schema":1,"tokens":1,"finish_reason":"eos","duration_ms":5}'
+done
+`
+	if err := os.WriteFile(python, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	session, contextTokens, err := startPyTorchSession(context.Background(), python, "cuda", Artifacts{ContextTokens: 512})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	var streamed string
+	result, err := session.Generate(context.Background(), "hello", Options{MaxTokens: 1, Temperature: 0, TopP: 1}, func(token Token) error {
+		streamed += string(token.Bytes)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contextTokens != 512 || streamed != "B" || result.Text != "B" || result.Tokens != 1 || result.FinishReason != "eos" || result.DurationMS != 5 {
+		t.Fatalf("context = %d, streamed = %q, result = %+v", contextTokens, streamed, result)
+	}
+}

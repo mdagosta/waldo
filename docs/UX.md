@@ -636,8 +636,8 @@ directory.
 An optional positional prompt or piped standard input selects one-shot
 generation. Only generation controls are flags: `--max-tokens`,
 `--temperature`, `--top-p`, and `--seed`. The command verifies the BOM-selected
-artifacts before opening MLX for a compatible origin or the backend recorded by
-a run. Human output streams with terminal controls escaped;
+artifacts before opening MLX for compatible Apple artifacts or PyTorch for
+PyTorch and TorchTitan-produced Linux artifacts. Human output streams with terminal controls escaped;
 `--json` is one-shot and buffered into one result object. Models without a
 chat template are labeled as raw causal continuation rather than presented as
 instruction-tuned assistants.

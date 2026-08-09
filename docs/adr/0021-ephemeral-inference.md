@@ -19,11 +19,13 @@ against their BOM sizes and SHA-256 hashes before launching a worker. The
 recorded artifact backend—not `model.backend`—selects the inference adapter.
 Missing runtimes fail closed with installation diagnostics.
 
-Training and inference use one embedded MLX model definition. The inference
-worker remains alive for the command lifetime, loads weights once, and uses an
-incremental key/value cache. Its schema-1 line protocol streams base64 byte
-tokens and a typed completion record. WALDO escapes terminal controls and
-invalid UTF-8 in human output. One-shot JSON is emitted only after completion.
+Inference uses embedded MLX and PyTorch definitions matching their training
+workers. The selected worker remains alive for the command lifetime and loads
+weights once; MLX uses an incremental key/value cache, while the initial
+PyTorch adapter recomputes the bounded context window. The shared schema-1 line
+protocol streams base64 byte tokens and a typed completion record. WALDO
+escapes terminal controls and invalid UTF-8 in human output. One-shot JSON is
+emitted only after completion.
 
 Interactive history is bounded by the architecture context and is not written
 to the model directory. A model without an explicit chat template is described

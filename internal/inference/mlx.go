@@ -28,7 +28,7 @@ import (
 //go:embed workers/mlx.py
 var mlxChatWorker []byte
 
-type mlxFrame struct {
+type workerFrame struct {
 	Kind         string `json:"kind"`
 	Schema       int    `json:"schema"`
 	Data         string `json:"data,omitempty"`
@@ -39,7 +39,7 @@ type mlxFrame struct {
 	Error        string `json:"error,omitempty"`
 }
 
-type mlxRequest struct {
+type workerRequest struct {
 	Kind        string  `json:"kind"`
 	Schema      int     `json:"schema"`
 	Prompt      string  `json:"prompt"`
@@ -64,9 +64,17 @@ func Open(ctx context.Context, inspection model.Inspection) (Opened, error) {
 	if err != nil {
 		return Opened{}, err
 	}
-	if artifacts.Backend.Name != training.BackendMLX && artifacts.Backend.Name != "portable-safetensors" {
+	switch artifacts.Backend.Name {
+	case training.BackendMLX, "portable-safetensors":
+		return openMLX(ctx, inspection, artifacts)
+	case training.BackendPyTorch, training.BackendTorchTitan:
+		return openPyTorch(ctx, inspection, artifacts)
+	default:
 		return Opened{}, fmt.Errorf("model %q current weights require unsupported chat backend %s@%s", artifacts.Model, artifacts.Backend.Name, artifacts.Backend.Revision)
 	}
+}
+
+func openMLX(ctx context.Context, inspection model.Inspection, artifacts Artifacts) (Opened, error) {
 	architecture, err := json.Marshal(inspection.Model.Architecture)
 	if err != nil {
 		return Opened{}, err
@@ -136,7 +144,7 @@ func (session *MLXSession) Generate(ctx context.Context, prompt string, options 
 	if session.closed {
 		return Result{}, fmt.Errorf("MLX chat session is closed")
 	}
-	request := mlxRequest{Kind: "generate", Schema: 1, Prompt: prompt, MaxTokens: options.MaxTokens, Temperature: options.Temperature, TopP: options.TopP, Seed: options.Seed}
+	request := workerRequest{Kind: "generate", Schema: 1, Prompt: prompt, MaxTokens: options.MaxTokens, Temperature: options.Temperature, TopP: options.TopP, Seed: options.Seed}
 	if err := session.encoder.Encode(request); err != nil {
 		return Result{}, fmt.Errorf("send MLX chat request: %w", err)
 	}
@@ -177,23 +185,23 @@ func (session *MLXSession) Generate(ctx context.Context, prompt string, options 
 	}
 }
 
-func (session *MLXSession) nextFrame() (mlxFrame, error) {
+func (session *MLXSession) nextFrame() (workerFrame, error) {
 	if !session.scanner.Scan() {
 		if err := session.scanner.Err(); err != nil {
-			return mlxFrame{}, err
+			return workerFrame{}, err
 		}
 		detail := strings.TrimSpace(session.stderr.String())
 		if detail != "" {
-			return mlxFrame{}, fmt.Errorf("MLX chat worker exited: %s", detail)
+			return workerFrame{}, fmt.Errorf("MLX chat worker exited: %s", detail)
 		}
-		return mlxFrame{}, fmt.Errorf("MLX chat worker exited unexpectedly")
+		return workerFrame{}, fmt.Errorf("MLX chat worker exited unexpectedly")
 	}
-	var frame mlxFrame
+	var frame workerFrame
 	if err := json.Unmarshal(session.scanner.Bytes(), &frame); err != nil {
-		return mlxFrame{}, fmt.Errorf("decode MLX chat frame: %w", err)
+		return workerFrame{}, fmt.Errorf("decode MLX chat frame: %w", err)
 	}
 	if frame.Schema != 1 {
-		return mlxFrame{}, fmt.Errorf("unsupported MLX chat protocol schema %d", frame.Schema)
+		return workerFrame{}, fmt.Errorf("unsupported MLX chat protocol schema %d", frame.Schema)
 	}
 	return frame, nil
 }

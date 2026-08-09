@@ -167,8 +167,9 @@ ollama create small -f ./small-ollama/Modelfile
 
 `model chat` opens the BOM-selected current origin or newest complete
 real-weight run, verifies its weights, configuration, and tokenizer, and uses
-the compatible MLX runtime for an origin or the backend recorded by a run. MLX sessions
-load weights once and use incremental key/value caching while generating:
+the compatible runtime for an origin or the backend recorded by a run. MLX
+sessions use incremental key/value caching; PyTorch and TorchTitan-produced
+weights use a single-process PyTorch session on the selected Linux device:
 
 ```bash
 waldo model chat small
