@@ -451,6 +451,30 @@ func TestComposeResumesDurableTransactionAfterInterruption(t *testing.T) {
 	}
 }
 
+func TestComposeCancellationDuringPreflightRemainsListed(t *testing.T) {
+	root := t.TempDir()
+	compose := validCompose()
+	stage := preparedFixture(t, compose.Stages[0])
+	builder := Builder{Root: root, NewID: func() (string, error) { return "preflight0001", nil }, Resolver: training.FakeResolver()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := builder.Compose(ctx, "smoke", compose, []PreparedStage{stage}, false); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled Compose error = %v", err)
+	}
+	listed, err := List(root, nil)
+	if err != nil || len(listed) != 1 || listed[0].Name != "smoke" || listed[0].Path != filepath.Join(root, "smoke") {
+		t.Fatalf("preflight-canceled compose listing = %+v, err = %v", listed, err)
+	}
+	inspection, err := Inspect(root, "smoke")
+	if err != nil || len(inspection.Runs) != 0 {
+		t.Fatalf("preflight-canceled model = %+v, err = %v", inspection, err)
+	}
+	completed, err := builder.Compose(context.Background(), "smoke", compose, []PreparedStage{stage}, false)
+	if err != nil || len(completed.Runs) != 1 || completed.Runs[0].State != RunComplete {
+		t.Fatalf("resumed preflight compose = %+v, err = %v", completed, err)
+	}
+}
+
 func TestListExportAndRemoveModels(t *testing.T) {
 	root := t.TempDir()
 	builder := Builder{Root: root}
