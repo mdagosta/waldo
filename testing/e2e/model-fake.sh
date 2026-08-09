@@ -131,7 +131,7 @@ forecast_json=$("$binary" --json model forecast "$compose")
 printf '%s\n' "$forecast_json" | grep -Eq '"catalog"[[:space:]]*:[[:space:]]*"openwaldo-training-hardware-'
 printf '%s\n' "$forecast_json" | grep -Eq '"approximate_seconds"[[:space:]]*:'
 
-build_output=$("$binary" model compose smoke "$compose")
+build_output=$("$binary" model compose smoke "$compose" --audit)
 printf '%s\n' "$build_output"
 printf '%s\n' "$build_output" | grep -q 'composed model smoke'
 
@@ -162,11 +162,11 @@ artifact_count=$(find "$models/smoke/runs" -type f -name fake-model.json -print 
 checkpoint_count=$(find "$models/smoke/runs" -type f -name 'step-*.json' -print | wc -l | tr -d ' ')
 [ "$checkpoint_count" -eq 1 ] || { echo "found $checkpoint_count fake checkpoints, want 1" >&2; exit 1; }
 
-if "$binary" model compose smoke "$compose" >/dev/null 2>&1; then
+if "$binary" model compose smoke "$compose" --audit >/dev/null 2>&1; then
   echo "model compose replaced an existing model without --replace" >&2
   exit 1
 fi
-"$binary" model compose smoke "$compose" --replace >/dev/null
+"$binary" model compose smoke "$compose" --replace --audit >/dev/null
 
 "$binary" model init manual --preset 10m >/dev/null
 "$binary" model train manual core/e2e/model-corpus >/dev/null

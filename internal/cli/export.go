@@ -58,6 +58,9 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 		humanInteger(bom.Totals.Shards), humanCount(bom.Totals.Docs),
 		humanCount(bom.Totals.Tokens), humanBytes(bom.Totals.Bytes), cache.Root())
 	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
+		if event.Phase != "complete" {
+			return
+		}
 		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
 			fmt.Fprintf(stderr, "  verify %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
 		}

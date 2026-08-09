@@ -49,6 +49,36 @@ func TestFetchVerifiesAndCachesHTTPObject(t *testing.T) {
 	}
 }
 
+func TestFetchReportsDownloadAndCacheVerificationBytes(t *testing.T) {
+	content := "progress-bearing object"
+	digest := digestOf(content)
+	cache, err := NewCache(t.TempDir(), &http.Client{Transport: &fakeTransport{content: content}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var download, cached FetchProgress
+	if _, err := cache.FetchWithProgress(context.Background(), "https://objects.example/item", digest, int64(len(content)), func(event FetchProgress) {
+		if event.Phase == "download" {
+			download = event
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if download.Written != int64(len(content)) || download.Total != int64(len(content)) {
+		t.Fatalf("download progress = %+v", download)
+	}
+	if _, err := cache.FetchWithProgress(context.Background(), "https://objects.example/item", digest, int64(len(content)), func(event FetchProgress) {
+		if event.Phase == "cache" {
+			cached = event
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cached.Written != int64(len(content)) || cached.Total != int64(len(content)) {
+		t.Fatalf("cache progress = %+v", cached)
+	}
+}
+
 func TestFetchRejectsWrongDigestWithoutCacheEntry(t *testing.T) {
 	cache, err := NewCache(t.TempDir(), &http.Client{Transport: &fakeTransport{content: "wrong"}})
 	if err != nil {

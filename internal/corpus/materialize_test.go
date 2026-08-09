@@ -43,15 +43,20 @@ func TestMaterializeUsesBOMWithoutIndex(t *testing.T) {
 		Shards: []ShardPin{shard, shard},
 		Totals: index.Measures{Shards: 2, Docs: 2, Tokens: 4, Bytes: int64(len(content) * 2)},
 	}
-	progressCalls := 0
-	materialized, err := Materialize(context.Background(), bom, cache, func(MaterializeProgress) { progressCalls++ })
+	progressCalls, completed := 0, 0
+	materialized, err := Materialize(context.Background(), bom, cache, func(event MaterializeProgress) {
+		progressCalls++
+		if event.Phase == "complete" {
+			completed++
+		}
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(materialized.Objects) != 2 || materialized.Objects[0].Path != materialized.Objects[1].Path {
 		t.Fatalf("materialized objects = %+v", materialized.Objects)
 	}
-	if progressCalls != 2 {
-		t.Fatalf("progress calls = %d, want 2", progressCalls)
+	if progressCalls <= 2 || completed != 2 {
+		t.Fatalf("progress calls = %d, completed = %d", progressCalls, completed)
 	}
 }

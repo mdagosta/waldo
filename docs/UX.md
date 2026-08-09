@@ -555,8 +555,10 @@ waldo model init smoke --preset 10m
 waldo model pull llama-base huggingface://organization/model@main
 waldo model train smoke core/books
 waldo model train smoke core/books --epochs 3
+waldo model train smoke core/books --audit
 waldo model train smoke # entire resolved index, with a warning
 waldo model compose smoke configs/smoke.yaml
+waldo model compose smoke configs/smoke.yaml --audit
 ```
 
 The CLI name is the local model handle. `model pull` resolves a Hugging
@@ -568,7 +570,9 @@ other tokenizers.
 
 A model compose declares architecture and ordered training stages using index
 paths. It may optionally name a locally managed downloaded base and assert its
-origin hash. The command validates every selection, creates the model if
+origin hash. The command validates every selection and hash-verifies every
+materialized object. `--audit` additionally verifies shard structure,
+attestations, and declared totals before any training begins. It creates the model if
 absent, and executes its stages. Existing names are refused unless `--replace`
 is explicitly supplied; replacement is prepared fully before the old model is
 removed. Compose work is staged in a content-identified durable transaction.

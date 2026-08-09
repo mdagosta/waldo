@@ -89,7 +89,7 @@ func TestEnvironmentResolverExplainsMissingBackends(t *testing.T) {
 	}
 	resolver := EnvironmentResolver{Preference: BackendAuto, OS: "linux", Arch: "amd64", Candidates: []string{"python3"}, Probe: missing}
 	_, err := resolver.Resolve(context.Background(), ResolveRequest{})
-	if err == nil || !strings.Contains(err.Error(), "neither TorchTitan nor PyTorch") || !strings.Contains(err.Error(), "pytorch.org/get-started/locally") {
+	if err == nil || !strings.Contains(err.Error(), "neither TorchTitan nor PyTorch") || !strings.Contains(err.Error(), "detected host:") || !strings.Contains(err.Error(), "pytorch.org/get-started/locally") {
 		t.Fatalf("auto error = %v", err)
 	}
 
@@ -97,6 +97,13 @@ func TestEnvironmentResolverExplainsMissingBackends(t *testing.T) {
 	_, err = resolver.Resolve(context.Background(), ResolveRequest{})
 	if err == nil || !strings.Contains(err.Error(), "`torch` Python package is not installed") || !strings.Contains(err.Error(), "CUDA, ROCm, or CPU") {
 		t.Fatalf("explicit error = %v", err)
+	}
+}
+
+func TestLinuxDistributionUsesPrettyName(t *testing.T) {
+	got := linuxDistribution([]byte("NAME=Ubuntu\nVERSION_ID=24.04\nPRETTY_NAME=\"Ubuntu 24.04 LTS\"\n"))
+	if got != "Ubuntu 24.04 LTS" {
+		t.Fatalf("distribution = %q", got)
 	}
 }
 

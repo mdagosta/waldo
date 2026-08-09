@@ -152,6 +152,17 @@ stages:
 	if !strings.Contains(stdout.String(), "composed model smoke") || !strings.Contains(stderr.String(), "preflight/pretrain") {
 		t.Fatalf("model compose stdout = %q, stderr = %q", stdout.String(), stderr.String())
 	}
+	runBOMs, err := filepath.Glob(filepath.Join(models, "smoke", "runs", "*", "RUN-BOM.json"))
+	if err != nil || len(runBOMs) != 1 {
+		t.Fatalf("run BOM paths = %v, error = %v", runBOMs, err)
+	}
+	runBOMData, err := os.ReadFile(runBOMs[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(runBOMData, []byte(`"attestation"`)) {
+		t.Fatal("default model compose unexpectedly audited shard attestations")
+	}
 	stdout.Reset()
 	stderr.Reset()
 	if code := Run([]string{"model", "summary", "smoke"}, &stdout, &stderr); code != 0 {

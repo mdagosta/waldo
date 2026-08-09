@@ -204,6 +204,9 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 			return err
 		}
 		materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
+			if event.Phase != "complete" {
+				return
+			}
 			if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
 				fmt.Fprintf(progress, "  fetched %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
 			}
@@ -437,6 +440,9 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	fmt.Fprintf(progress, "verifying %s objects (%s) through lookaside cache %s\n",
 		humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes), cache.Root())
 	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
+		if event.Phase != "complete" {
+			return
+		}
 		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
 			fmt.Fprintf(progress, "  %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
 		}

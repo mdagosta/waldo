@@ -9,6 +9,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/openwaldo/waldo/internal/corpus"
 )
 
 func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
@@ -23,9 +25,32 @@ func TestParseModelTrainDefaultsAndValidatesEpochs(t *testing.T) {
 	if err != nil || int64Option(context, "epochs") != 3 {
 		t.Fatalf("epochs = %d, error = %v", int64Option(context, "epochs"), err)
 	}
+	context, _, err = parseCobraCommand(t, []string{"model", "train"}, []string{"foo", "core/books", "--audit"})
+	if err != nil || !boolOption(context, "audit") {
+		t.Fatalf("audit = %v, error = %v", boolOption(context, "audit"), err)
+	}
+	context, _, err = parseCobraCommand(t, []string{"model", "compose"}, []string{"foo", "compose.yaml"})
+	if err != nil || boolOption(context, "audit") {
+		t.Fatalf("compose audit default = %v, error = %v", boolOption(context, "audit"), err)
+	}
 	var stdout, stderr bytes.Buffer
 	if code := Run([]string{"model", "train", "foo", "core/books", "--epochs", "0"}, &stdout, &stderr); code != 1 {
 		t.Fatal("zero epochs accepted")
+	}
+}
+
+func TestModelMaterializeProgressReportsEveryCompletedShardToLogs(t *testing.T) {
+	var output bytes.Buffer
+	report := modelMaterializeProgressPrinter(&output)
+	for position := 1; position <= 3; position++ {
+		report(corpus.MaterializeProgress{
+			Phase: "complete", Current: position, Total: 3,
+			Bytes: int64(position * 10), TotalBytes: 30,
+			Shard: corpus.ShardPin{SHA256: strings.Repeat(string(rune('a'+position-1)), 64)},
+		})
+	}
+	if strings.Count(output.String(), "materialized") != 3 || !strings.Contains(output.String(), "30 B/30 B") {
+		t.Fatalf("progress output = %q", output.String())
 	}
 }
 

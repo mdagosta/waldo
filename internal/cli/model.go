@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -404,15 +405,18 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
+	builder, err := configuredModelBuilder(context, stderr)
+	if err != nil {
+		return err
+	}
+	if err := builder.CheckBackend(context.Execution, inspection.Model.Architecture, []string{"causal-language-modeling"}); err != nil {
+		return err
+	}
 	cache, err := lookaside.DefaultCache()
 	if err != nil {
 		return err
 	}
-	stage, err := prepareDefaultTrainingStage(context, inspection, paths, epochs, cache, stderr)
-	if err != nil {
-		return err
-	}
-	builder, err := configuredModelBuilder(context, stderr)
+	stage, err := prepareDefaultTrainingStage(context, inspection, paths, epochs, cache, stderr, boolOption(context, "audit"))
 	if err != nil {
 		return err
 	}
@@ -449,21 +453,30 @@ func runModelCompose(context Context, args []string, stdout, stderr io.Writer) e
 			return fmt.Errorf("model %q already exists; use --replace to recreate it", name)
 		}
 	}
+	builder, err := configuredModelBuilder(context, stderr)
+	if err != nil {
+		return err
+	}
+	objectives := make([]string, 0, len(compose.Stages))
+	for _, stage := range compose.Stages {
+		if !slices.Contains(objectives, stage.Objective) {
+			objectives = append(objectives, stage.Objective)
+		}
+	}
+	if err := builder.CheckBackend(context.Execution, compose.Architecture, objectives); err != nil {
+		return err
+	}
 	cache, err := lookaside.DefaultCache()
 	if err != nil {
 		return err
 	}
 	prepared := make([]model.PreparedStage, 0, len(compose.Stages))
 	for _, stage := range compose.Stages {
-		resolved, err := prepareModelStage(context, stage, cache, stderr)
+		resolved, err := prepareModelStage(context, stage, cache, stderr, boolOption(context, "audit"))
 		if err != nil {
 			return err
 		}
 		prepared = append(prepared, resolved)
-	}
-	builder, err := configuredModelBuilder(context, stderr)
-	if err != nil {
-		return err
 	}
 	result, err := builder.Compose(context.Execution, name, compose, prepared, replace)
 	if err != nil {
@@ -875,8 +888,6 @@ func configuredModelBuilder(commandContext Context, progress io.Writer) (model.B
 		if err != nil {
 			if commandContext.JSON {
 				_ = json.NewEncoder(progress).Encode(model.Progress{Phase: "backend", State: "unavailable", Message: err.Error()})
-			} else {
-				fmt.Fprintf(progress, "warning: training backend unavailable: %v\n", err)
 			}
 		}
 		return selection, err
@@ -884,7 +895,7 @@ func configuredModelBuilder(commandContext Context, progress io.Writer) (model.B
 	return builder, nil
 }
 
-func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, epochs int64, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
+func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, epochs int64, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {
 	architecture := inspection.Model.Architecture
 	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
 		return model.PreparedStage{}, fmt.Errorf("automatic one-pass training currently requires byte@builtin-byte-schema-1 with vocabulary_size 259")
@@ -915,7 +926,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 		Objective: "causal-language-modeling", Corpora: append([]string(nil), paths...),
 		Parameters: training.Parameters{Epochs: epochs, Steps: 1, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
 	}
-	prepared, err := materializeModelStage(context, stage, bom, cache, progress)
+	prepared, err := materializeModelStage(context, stage, bom, cache, progress, audit)
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
@@ -945,7 +956,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	return model.PrepareStage(prepared.Stage, prepared.BOM, prepared.Inputs)
 }
 
-func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
+func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {
 	targets, err := resolveIndexArguments(context.Execution, stage.Corpora, progress)
 	if err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
@@ -958,16 +969,12 @@ func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cach
 	if err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
 	}
-	return materializeModelStage(context, stage, bom, cache, progress)
+	return materializeModelStage(context, stage, bom, cache, progress, audit)
 }
 
-func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
+func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {
 	fmt.Fprintf(progress, "preflight/%s          resolving %s shards, %s records, %s reference tokens\n", stage.Name, humanInteger(bom.Totals.Shards), humanCount(bom.Totals.Docs), humanCount(bom.Totals.Tokens))
-	materialized, err := corpus.Materialize(context.Execution, bom, cache, func(event corpus.MaterializeProgress) {
-		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
-			fmt.Fprintf(progress, "  shard %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
-		}
-	})
+	materialized, err := corpus.Materialize(context.Execution, bom, cache, modelMaterializeProgressPrinter(progress))
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
@@ -982,17 +989,74 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 		paths = append(paths, object.Path)
 		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes})
 	}
-	audited, err := shard.VerifyWithOptions(context.Execution, paths, shard.AuditOptions{})
-	if err != nil {
-		return model.PreparedStage{}, fmt.Errorf("stage %s shard audit: %w", stage.Name, err)
-	}
-	if audited.Records != bom.Totals.Docs || audited.Tokens != bom.Totals.Tokens || audited.EncodedBytes != bom.Totals.Bytes {
-		return model.PreparedStage{}, fmt.Errorf("stage %s audited totals differ from index manifests", stage.Name)
-	}
-	if err := corpus.AttachShardAttestations(&bom, materialized.Objects); err != nil {
-		return model.PreparedStage{}, fmt.Errorf("stage %s shard BOM evidence: %w", stage.Name, err)
+	if audit {
+		fmt.Fprintf(progress, "preflight/%s          auditing %s materialized shards\n", stage.Name, humanInteger(int64(len(paths))))
+		audited, err := shard.VerifyWithOptions(context.Execution, paths, shard.AuditOptions{Progress: auditProgressPrinter(progress)})
+		if err != nil {
+			return model.PreparedStage{}, fmt.Errorf("stage %s shard audit: %w", stage.Name, err)
+		}
+		if audited.Records != bom.Totals.Docs || audited.Tokens != bom.Totals.Tokens || audited.EncodedBytes != bom.Totals.Bytes {
+			return model.PreparedStage{}, fmt.Errorf("stage %s audited totals differ from index manifests", stage.Name)
+		}
+		if err := corpus.AttachShardAttestations(&bom, materialized.Objects); err != nil {
+			return model.PreparedStage{}, fmt.Errorf("stage %s shard BOM evidence: %w", stage.Name, err)
+		}
 	}
 	return model.PrepareStage(stage, bom, inputs)
+}
+
+func modelMaterializeProgressPrinter(output io.Writer) func(corpus.MaterializeProgress) {
+	type terminalWriter interface{ Fd() uintptr }
+	terminal := false
+	if writer, ok := output.(terminalWriter); ok {
+		terminal = term.IsTerminal(int(writer.Fd()))
+	}
+	lastUpdate := time.Time{}
+	return func(event corpus.MaterializeProgress) {
+		if !terminal {
+			if event.Phase == "complete" {
+				fmt.Fprintf(output, "  materialized %s/%s  %s/%s  %s\n",
+					humanInteger(int64(event.Current)), humanInteger(int64(event.Total)),
+					humanBytes(event.Bytes), humanBytes(event.TotalBytes), event.Shard.SHA256[:12])
+			}
+			return
+		}
+		now := time.Now()
+		if event.Phase != "complete" && !lastUpdate.IsZero() && now.Sub(lastUpdate) < 100*time.Millisecond {
+			return
+		}
+		lastUpdate = now
+		const width = 24
+		filled := 0
+		if event.TotalBytes > 0 {
+			filled = int(event.Bytes * width / event.TotalBytes)
+			if filled > width {
+				filled = width
+			}
+		}
+		phase := event.Phase
+		if phase == "complete" {
+			phase = "verified"
+		}
+		fmt.Fprintf(output, "\r\x1b[K  materialize [%-24s] %3d%%  %s/%s  %s/%s  %-8s %s",
+			strings.Repeat("=", filled), percentage(event.Bytes, event.TotalBytes),
+			humanInteger(int64(event.Current)), humanInteger(int64(event.Total)),
+			humanBytes(event.Bytes), humanBytes(event.TotalBytes), phase, event.Shard.SHA256[:12])
+		if event.Phase == "complete" && event.Current == event.Total {
+			fmt.Fprintln(output)
+		}
+	}
+}
+
+func percentage(current, total int64) int64 {
+	if total <= 0 {
+		return 0
+	}
+	value := current * 100 / total
+	if value > 100 {
+		return 100
+	}
+	return value
 }
 
 func writeModelMutationResult(context Context, stdout io.Writer, inspection model.Inspection, verb string) error {

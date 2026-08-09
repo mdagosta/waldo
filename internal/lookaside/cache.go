@@ -47,6 +47,12 @@ type ProbeResult struct {
 	Method string `json:"method"`
 }
 
+type FetchProgress struct {
+	Phase   string
+	Written int64
+	Total   int64
+}
+
 type Option func(*Cache)
 
 func WithMirrors(mirrors []string) Option {
@@ -237,12 +243,19 @@ func (cache *Cache) Path(digest string) (string, error) {
 // re-hashed before use. Downloads are streamed to a sibling temporary file and
 // become visible only after their digest and optional expected size match.
 func (cache *Cache) Fetch(ctx context.Context, objectURL, digest string, expectedBytes int64) (string, error) {
+	return cache.FetchWithProgress(ctx, objectURL, digest, expectedBytes, nil)
+}
+
+// FetchWithProgress is Fetch with byte-level progress for cache verification
+// and remote transfer. Progress is observational and never changes identity
+// verification or installation semantics.
+func (cache *Cache) FetchWithProgress(ctx context.Context, objectURL, digest string, expectedBytes int64, progress func(FetchProgress)) (string, error) {
 	destination, err := cache.Path(digest)
 	if err != nil {
 		return "", err
 	}
 	if info, err := os.Stat(destination); err == nil && !info.IsDir() {
-		if err := VerifyFile(destination, digest, expectedBytes); err == nil {
+		if err := verifyFileWithProgress(destination, digest, expectedBytes, progress); err == nil {
 			_ = os.Chtimes(destination, time.Now(), time.Now())
 			cache.markUsed(destination)
 			return destination, nil
@@ -269,7 +282,7 @@ func (cache *Cache) Fetch(ctx context.Context, objectURL, digest string, expecte
 			continue
 		}
 		seen[candidate] = true
-		if err := cache.fetchCandidate(ctx, candidate, destination, digest, expectedBytes); err == nil {
+		if err := cache.fetchCandidate(ctx, candidate, destination, digest, expectedBytes, progress); err == nil {
 			cache.markUsed(destination)
 			if cache.retain {
 				_ = cache.prune()
@@ -337,7 +350,7 @@ func (cache *Cache) markUsed(path string) {
 	cache.mu.Unlock()
 }
 
-func (cache *Cache) fetchCandidate(ctx context.Context, objectURL, destination, digest string, expectedBytes int64) error {
+func (cache *Cache) fetchCandidate(ctx context.Context, objectURL, destination, digest string, expectedBytes int64, progress func(FetchProgress)) error {
 	reader, err := cache.open(ctx, objectURL)
 	if err != nil {
 		return err
@@ -357,7 +370,7 @@ func (cache *Cache) fetchCandidate(ctx context.Context, objectURL, destination, 
 	}()
 
 	hasher := sha256.New()
-	written, copyErr := io.Copy(io.MultiWriter(temporary, hasher), reader)
+	written, copyErr := io.Copy(io.MultiWriter(temporary, hasher), &fetchProgressReader{reader: reader, total: expectedBytes, phase: "download", progress: progress})
 	if copyErr != nil {
 		return fmt.Errorf("fetch %s: %w", objectURL, copyErr)
 	}
@@ -511,6 +524,10 @@ func mirrorObjectURL(base, digest string) string {
 }
 
 func VerifyFile(path, digest string, expectedBytes int64) error {
+	return verifyFileWithProgress(path, digest, expectedBytes, nil)
+}
+
+func verifyFileWithProgress(path, digest string, expectedBytes int64, progress func(FetchProgress)) error {
 	if err := validateDigest(digest); err != nil {
 		return err
 	}
@@ -527,10 +544,31 @@ func VerifyFile(path, digest string, expectedBytes int64) error {
 		return fmt.Errorf("%s: size mismatch: got %d bytes, want %d", path, info.Size(), expectedBytes)
 	}
 	hasher := sha256.New()
-	if _, err := io.Copy(hasher, file); err != nil {
+	total := expectedBytes
+	if total <= 0 {
+		total = info.Size()
+	}
+	if _, err := io.Copy(hasher, &fetchProgressReader{reader: file, total: total, phase: "cache", progress: progress}); err != nil {
 		return err
 	}
 	return compareDigest(path, hasher, digest)
+}
+
+type fetchProgressReader struct {
+	reader   io.Reader
+	written  int64
+	total    int64
+	phase    string
+	progress func(FetchProgress)
+}
+
+func (reader *fetchProgressReader) Read(buffer []byte) (int, error) {
+	read, err := reader.reader.Read(buffer)
+	reader.written += int64(read)
+	if reader.progress != nil && (read > 0 || err != nil) {
+		reader.progress(FetchProgress{Phase: reader.phase, Written: reader.written, Total: reader.total})
+	}
+	return read, err
 }
 
 func compareDigest(path string, hasher hash.Hash, want string) error {

@@ -23,10 +23,13 @@ type MaterializedObject struct {
 }
 
 type MaterializeProgress struct {
-	Current int
-	Total   int
-	Shard   ShardPin
-	Path    string
+	Phase      string
+	Current    int
+	Total      int
+	Bytes      int64
+	TotalBytes int64
+	Shard      ShardPin
+	Path       string
 }
 
 // Materialize turns an OpenWALDO BOM into verified local object paths. It
@@ -39,6 +42,15 @@ func Materialize(ctx context.Context, bom BOM, cache *lookaside.Cache, progress 
 	result := Materialized{BOM: bom, Objects: make([]MaterializedObject, 0, len(bom.Shards))}
 	fetched := map[string]string{}
 	sizes := map[string]int64{}
+	var totalBytes int64
+	for _, shard := range bom.Shards {
+		if _, exists := sizes[shard.SHA256]; !exists {
+			sizes[shard.SHA256] = shard.Bytes
+			totalBytes += shard.Bytes
+		}
+	}
+	clear(sizes)
+	var completedBytes int64
 	for position, shard := range bom.Shards {
 		path := fetched[shard.SHA256]
 		if path != "" {
@@ -47,16 +59,24 @@ func Materialize(ctx context.Context, bom BOM, cache *lookaside.Cache, progress 
 			}
 		} else {
 			var err error
-			path, err = cache.Fetch(ctx, shard.URL, shard.SHA256, shard.Bytes)
+			path, err = cache.FetchWithProgress(ctx, shard.URL, shard.SHA256, shard.Bytes, func(event lookaside.FetchProgress) {
+				if progress != nil {
+					progress(MaterializeProgress{
+						Phase: event.Phase, Current: position + 1, Total: len(bom.Shards),
+						Bytes: completedBytes + event.Written, TotalBytes: totalBytes, Shard: shard,
+					})
+				}
+			})
 			if err != nil {
 				return Materialized{}, fmt.Errorf("%s shard %s: %w", shard.Manifest, shard.SHA256[:12], err)
 			}
 			fetched[shard.SHA256] = path
 			sizes[shard.SHA256] = shard.Bytes
+			completedBytes += shard.Bytes
 		}
 		result.Objects = append(result.Objects, MaterializedObject{Shard: shard, Path: path})
 		if progress != nil {
-			progress(MaterializeProgress{Current: position + 1, Total: len(bom.Shards), Shard: shard, Path: path})
+			progress(MaterializeProgress{Phase: "complete", Current: position + 1, Total: len(bom.Shards), Bytes: completedBytes, TotalBytes: totalBytes, Shard: shard, Path: path})
 		}
 	}
 	return result, nil

@@ -371,10 +371,11 @@ waldo model bom small
 ```
 
 `train` resolves and deduplicates the selection, materializes hash-verified
-shards through the bounded cache, audits every record, counts exact model-token
-targets, persists the run BOM, and only then starts the backend. The default is
-one epoch. Every run has an append-only planned/running/terminal lifecycle and
-records backend identity, environment, observed consumption, losses,
+shards through the bounded cache, counts exact model-token targets, persists
+the run BOM, and only then starts the backend. `--audit` additionally validates
+shard structure, attestations, and declared totals before training. The default
+is one epoch. Every run has an append-only planned/running/terminal lifecycle
+and records backend identity, environment, observed consumption, losses,
 checkpoints, and artifact hashes.
 
 For a reusable architecture and ordered multi-stage plan, use a strict YAML or

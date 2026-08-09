@@ -27,13 +27,18 @@ machine-local overrides; `fake` is an explicit simulation mode for development
 and automated lifecycle tests whose artifacts are permanently marked as
 simulated.
 
-Backend resolution happens before a run record is created. A missing or
-unusable selected backend writes a warning to standard error, then fails with
-platform-appropriate official installation guidance. MLX and single-process
-PyTorch are executable adapters. PyTorch verifies a real operation on its
-selected Linux CPU, NVIDIA CUDA, or AMD ROCm device before a run is created.
-TorchTitan verifies its current package APIs and every visible GPU, launches
-one rank per GPU on a single Linux node, and records the complete device set.
+Backend resolution happens before corpus materialization or a run record is
+created. A missing or unusable selected backend therefore fails immediately
+with platform-appropriate official
+installation guidance. On Linux, WALDO reports the detected distribution,
+Python candidates, and NVIDIA/AMD tooling. It gives the matching
+package-manager command for Python prerequisites and directs the operator to
+the official CUDA, ROCm, or CPU PyTorch selector; it does not assume a distro
+package named `pytorch` is correct. MLX and single-process PyTorch are
+executable adapters. PyTorch verifies a real operation on its selected Linux
+CPU, NVIDIA CUDA, or AMD ROCm device before a run is created. TorchTitan
+verifies its current package APIs and every visible GPU, launches one rank per
+GPU on a single Linux node, and records the complete device set.
 
 ## Basic commands
 
@@ -76,8 +81,10 @@ converted or silently retokenized.
 
 `init` creates an untrained immutable architecture. `train` resolves one or
 more recursive index selections, deduplicates them into an OpenWALDO BOM,
-materializes hash-verified Parquet through the shared cache, audits every
-canonical record, and appends one run. Before training, WALDO deterministically
+materializes size- and SHA-256-verified Parquet through the shared cache, and
+appends one run. `--audit` additionally verifies shard structure, embedded
+attestations, and declared totals; legacy or unattested shards then receive the
+normal deep record scan. Before training, WALDO deterministically
 holds out one percent of records, capped at 256 records and 1 MiB of text, and
 pins that exact selection in the run BOM. Held-out records never enter a
 training epoch. A one-record corpus records no holdout because a real split is
@@ -270,9 +277,13 @@ An existing name is refused. Explicit replacement uses one flag:
 waldo model compose example model.yaml --replace
 ```
 
-WALDO resolves and audits every stage and builds the replacement in a durable,
+WALDO resolves and hash-verifies every stage and builds the replacement in a durable,
 content-identified transaction beneath `<model.root>/.waldo-compose`. The
 transaction pins the compose, every corpus BOM, and the model being replaced.
+Passing `--audit` audits every materialized stage before the transaction starts.
+Interactive terminals receive byte-level materialization progress; redirected
+logs receive one completion line for every shard. The optional audit is shown
+as a separate phase.
 After Ctrl-C or process loss, repeating the exact command discovers the staged
 model, marks an abandoned running attempt interrupted, and resumes the same
 stage and run from its newest verified checkpoint. Changed inputs create a
@@ -305,10 +316,10 @@ stages complete and the replacement is atomically published.
 - `PLAN.json` content-identifies the immutable architecture and local model
   name plus any external origin BOM. Adding training does not change model
   identity.
-- `RUN-BOM.json` embeds the verified corpus OpenWALDO BOM, including each
-  embedded shard BOM and its independent SHA-256 (or explicit legacy/deep
-  validation status), and pins architecture, backend, objective, parameters,
-  and execution environment before launch.
+- `RUN-BOM.json` embeds the hash-pinned corpus OpenWALDO BOM and pins
+  architecture, backend, objective, parameters, and execution environment
+  before launch. With `--audit`, it additionally carries each embedded shard
+  BOM and its independent SHA-256, or explicit legacy/deep validation status.
 - `RUN.json` moves atomically through `planned`, `running`, and exactly one of
   `complete`, `failed`, or `interrupted`. It separates verified partial
   progress from a complete observation and records every resume attempt.
@@ -372,7 +383,7 @@ Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records
 its immutable identity, framework, runtime, host, accelerator, node count, and
 world size in the run BOM. Every adapter receives the same architecture,
-verified BOM, resolved training profile, deterministic canonical-record stream,
+hash-pinned BOM, resolved training profile, deterministic canonical-record stream,
 artifact directory, and progress sink. Adapters never parse Parquet or choose
 record order. An embedded worker communicates through schema-1 NDJSON: a begin
 frame, record frames from a shuffle bounded by both record count and retained

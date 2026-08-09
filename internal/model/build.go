@@ -42,6 +42,27 @@ type Builder struct {
 	Progress func(Progress)
 }
 
+// CheckBackend validates that this host can execute the requested portable
+// architecture and objectives before callers materialize any corpus objects.
+func (builder Builder) CheckBackend(ctx context.Context, architecture Architecture, objectives []string) error {
+	architectureJSON, err := json.Marshal(architecture)
+	if err != nil {
+		return err
+	}
+	resolver := builder.Resolver
+	if resolver == nil {
+		resolver = builtinResolver()
+	}
+	selection, err := resolver.Resolve(ctx, training.ResolveRequest{Architecture: architectureJSON, Objectives: objectives})
+	if err != nil {
+		return fmt.Errorf("resolve training backend: %w", err)
+	}
+	if err := validateSelection(selection, objectives); err != nil {
+		return err
+	}
+	return nil
+}
+
 func ValidateName(name string) error {
 	if !validName.MatchString(name) {
 		return fmt.Errorf("model name must match %s", validName.String())
