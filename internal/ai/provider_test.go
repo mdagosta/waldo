@@ -96,10 +96,29 @@ func TestClientAsksAnthropic(t *testing.T) {
 		if request.Header.Get("X-Api-Key") != "secret" || request.Header.Get("Anthropic-Version") != "2023-06-01" {
 			t.Errorf("headers = %+v", request.Header)
 		}
+		var body map[string]any
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		output, ok := body["output_config"].(map[string]any)
+		if body["max_tokens"] != float64(8192) || !ok || output["effort"] != "medium" {
+			t.Errorf("body = %+v", body)
+		}
 		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(`{"content":[{"type":"text","text":"inspect the loss"}]}`))}, nil
 	})}
-	response, err := (Client{HTTP: httpClient, AnthropicURL: "https://anthropic.example/v1/messages"}).Ask(context.Background(), Selection{Provider: ProviderAnthropic, Model: "test-model", Key: "secret"}, "evidence")
+	response, err := (Client{HTTP: httpClient, AnthropicURL: "https://anthropic.example/v1/messages"}).Ask(context.Background(), Selection{Provider: ProviderAnthropic, Model: "claude-opus-5", Key: "secret"}, "evidence")
 	if err != nil || response != "inspect the loss" {
 		t.Fatalf("response = %q, err = %v", response, err)
+	}
+}
+
+func TestClientReportsAnthropicStopReasonWithoutText(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		body := `{"content":[{"type":"thinking","thinking":""}],"stop_reason":"max_tokens","usage":{"output_tokens":8192}}`
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Body: io.NopCloser(strings.NewReader(body))}, nil
+	})}
+	_, err := (Client{HTTP: httpClient, AnthropicURL: "https://anthropic.example/v1/messages"}).Ask(context.Background(), Selection{Provider: ProviderAnthropic, Model: "claude-opus-5", Key: "secret"}, "evidence")
+	if err == nil || !strings.Contains(err.Error(), "exhausted its 8192-token output budget") {
+		t.Fatalf("error = %v", err)
 	}
 }

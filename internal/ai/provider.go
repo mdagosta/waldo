@@ -182,8 +182,19 @@ func (client Client) askAnthropic(ctx context.Context, selected Selection, promp
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
+		StopReason string `json:"stop_reason"`
+		Usage      struct {
+			OutputTokens int `json:"output_tokens"`
+		} `json:"usage"`
 	}
-	err := client.request(ctx, url, map[string]any{"model": selected.Model, "max_tokens": 2048, "messages": []map[string]string{{"role": "user", "content": prompt}}}, map[string]string{"x-api-key": selected.Key, "anthropic-version": "2023-06-01"}, &response)
+	body := map[string]any{
+		"model": selected.Model, "max_tokens": 8192,
+		"messages": []map[string]string{{"role": "user", "content": prompt}},
+	}
+	if anthropicAdaptiveThinkingModel(selected.Model) {
+		body["output_config"] = map[string]string{"effort": "medium"}
+	}
+	err := client.request(ctx, url, body, map[string]string{"x-api-key": selected.Key, "anthropic-version": "2023-06-01"}, &response)
 	if err != nil {
 		return "", err
 	}
@@ -194,7 +205,19 @@ func (client Client) askAnthropic(ctx context.Context, selected Selection, promp
 		}
 	}
 	if len(text) == 0 {
-		return "", fmt.Errorf("Anthropic advisor returned no text")
+		if response.StopReason == "max_tokens" {
+			return "", fmt.Errorf("advisor exhausted its 8192-token output budget before producing text (%d output tokens)", response.Usage.OutputTokens)
+		}
+		if response.StopReason != "" {
+			return "", fmt.Errorf("advisor returned no text (stop reason %s, %d output tokens)", response.StopReason, response.Usage.OutputTokens)
+		}
+		return "", fmt.Errorf("advisor returned no text or stop reason")
 	}
 	return strings.Join(text, "\n"), nil
+}
+
+func anthropicAdaptiveThinkingModel(model string) bool {
+	return strings.HasPrefix(model, "claude-opus-5") || strings.HasPrefix(model, "claude-sonnet-5") ||
+		strings.HasPrefix(model, "claude-opus-4-6") || strings.HasPrefix(model, "claude-opus-4-7") ||
+		strings.HasPrefix(model, "claude-opus-4-8") || strings.HasPrefix(model, "claude-sonnet-4-6")
 }

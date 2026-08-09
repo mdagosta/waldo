@@ -355,7 +355,7 @@ type modelAdviceOutput struct {
 	Response string       `json:"response,omitempty"`
 }
 
-func runModelAdvise(context Context, args []string, stdout, _ io.Writer) error {
+func runModelAdvise(context Context, args []string, stdout, stderr io.Writer) error {
 	configuration, err := config.Load()
 	if err != nil {
 		return err
@@ -386,6 +386,11 @@ func runModelAdvise(context Context, args []string, stdout, _ io.Writer) error {
 	}
 	output := modelAdviceOutput{Advice: report}
 	if selected.Provider != waldoai.ProviderNone {
+		output.Provider, output.AIModel = selected.Provider, selected.Model
+		if !context.JSON {
+			writeModelAdvice(stdout, output)
+			fmt.Fprintf(stderr, "ai/advice              contacting %s/%s\n", selected.Provider, selected.Model)
+		}
 		question := ""
 		if len(args) == 2 {
 			question = args[1]
@@ -394,7 +399,11 @@ func runModelAdvise(context Context, args []string, stdout, _ io.Writer) error {
 		if err != nil {
 			return err
 		}
-		output.Provider, output.AIModel, output.Response = selected.Provider, selected.Model, response
+		output.Response = response
+		if !context.JSON {
+			fmt.Fprintf(stdout, "\nAI ADVICE (%s/%s):\n%s\n", output.Provider, output.AIModel, output.Response)
+			return nil
+		}
 	}
 	if context.JSON {
 		return writeJSON(stdout, output)
@@ -405,7 +414,7 @@ func runModelAdvise(context Context, args []string, stdout, _ io.Writer) error {
 
 func modelAdvicePrompt(report model.Advice, question string) string {
 	data, _ := json.MarshalIndent(report, "", "  ")
-	prompt := "You are advising an operator training an auditable language model with WALDO. Analyze only the supplied evidence. Distinguish observations from hypotheses. Recommend whether to let the run continue, inspect or fix it, or stop it; explain concrete compose changes only when supported. Never claim to have stopped or changed the run.\n\nWALDO evidence:\n" + string(data)
+	prompt := "You are advising an operator training an auditable language model with WALDO. Analyze only the supplied evidence. Distinguish observations from hypotheses. Recommend whether to let the run continue, inspect or fix it, or stop it; explain concrete compose changes only when supported. Never claim to have stopped or changed the run. Answer directly and concisely without extended deliberation.\n\nWALDO evidence:\n" + string(data)
 	if question != "" {
 		prompt += "\n\nOperator question:\n" + question
 	}
@@ -442,9 +451,6 @@ func writeModelAdvice(stdout io.Writer, output modelAdviceOutput) {
 		for _, finding := range report.Findings {
 			fmt.Fprintf(stdout, "  - %s\n", finding)
 		}
-	}
-	if output.Response != "" {
-		fmt.Fprintf(stdout, "\nAI ADVICE (%s/%s):\n%s\n", output.Provider, output.AIModel, output.Response)
 	}
 }
 
