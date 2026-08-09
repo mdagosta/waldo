@@ -892,6 +892,17 @@ func TestConfigRejectsUnknownKey(t *testing.T) {
 	}
 }
 
+func TestRuntimeErrorsDoNotPrintCommandUsage(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"config", "set", "ai.provider", "invalid"}, &stdout, &stderr); code != 1 {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "Usage:") || strings.Contains(stderr.String(), "Usage:") {
+		t.Fatalf("runtime error printed usage: stdout = %q, stderr = %q", stdout.String(), stderr.String())
+	}
+}
+
 func TestConfigMasksStoredAIKeys(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	var stdout, stderr bytes.Buffer

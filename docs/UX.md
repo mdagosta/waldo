@@ -538,7 +538,7 @@ Configuration keys are positional and intentionally limited:
 | `model.root` | Durable local model, run, BOM, and artifact directory; default `~/.waldo/models`. |
 | `model.backend` | `auto` (default), or explicit `mlx`, `torchtitan`, `pytorch`, or development-only `fake`. |
 | `ai.provider` | General AI preference: `auto`, `openai`, `anthropic`, `deterministic`, or reserved `local`. |
-| `ai.model` | Optional provider model override used by AI-powered features. |
+| `ai.model` | Optional provider API model ID used by AI-powered features; for example `claude-sonnet-5` or `claude-opus-5`. |
 | `ai.api-key` | Credential for the configured AI provider; output reports only `(set)`. |
 
 `waldo config get` lists every supported key and its effective or unset value.

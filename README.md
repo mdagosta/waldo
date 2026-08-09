@@ -392,6 +392,9 @@ waldo model advise small "Should I change the learning rate?"
 ```
 
 Use `--provider deterministic` to keep advice entirely local.
+Anthropic model overrides use Messages API IDs such as `claude-sonnet-5` or
+`claude-opus-5`; Claude Code shorthand names such as `sonnet` and `opus` are
+not API model IDs.
 
 For a reusable architecture and ordered multi-stage plan, use a strict YAML or
 JSON model compose:

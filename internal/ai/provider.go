@@ -24,7 +24,7 @@ const (
 	ProviderLocal         = "local"
 	ProviderNone          = "deterministic"
 	DefaultOpenAIModel    = "gpt-5.6-terra"
-	DefaultAnthropicModel = "claude-sonnet-4-20250514"
+	DefaultAnthropicModel = "claude-sonnet-5"
 )
 
 type Selection struct {
@@ -96,9 +96,17 @@ type Client struct {
 func (client Client) Ask(ctx context.Context, selected Selection, prompt string) (string, error) {
 	switch selected.Provider {
 	case ProviderOpenAI:
-		return client.askOpenAI(ctx, selected, prompt)
+		response, err := client.askOpenAI(ctx, selected, prompt)
+		if err != nil {
+			return "", fmt.Errorf("OpenAI model %q: %w", selected.Model, err)
+		}
+		return response, nil
 	case ProviderAnthropic:
-		return client.askAnthropic(ctx, selected, prompt)
+		response, err := client.askAnthropic(ctx, selected, prompt)
+		if err != nil {
+			return "", fmt.Errorf("Anthropic model %q: %w", selected.Model, err)
+		}
+		return response, nil
 	default:
 		return "", fmt.Errorf("provider %q does not support API advice", selected.Provider)
 	}
