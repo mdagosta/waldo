@@ -65,12 +65,21 @@ func (values *evaluationHeap) Pop() any {
 }
 
 func NewRecordPartition(inputs []Input, parameters ResolvedParameters) (RecordPartition, error) {
-	return NewRecordPartitionWithProgress(inputs, parameters, nil)
+	return NewRecordPartitionContext(context.Background(), inputs, parameters, nil)
 }
 
 // NewRecordPartitionWithProgress deterministically selects held-out records
 // while reporting the otherwise CPU-heavy full-corpus scan.
 func NewRecordPartitionWithProgress(inputs []Input, parameters ResolvedParameters, progress func(PartitionProgress)) (RecordPartition, error) {
+	return NewRecordPartitionContext(context.Background(), inputs, parameters, progress)
+}
+
+// NewRecordPartitionContext makes the full-corpus held-out selection scan
+// interruptible by its caller.
+func NewRecordPartitionContext(ctx context.Context, inputs []Input, parameters ResolvedParameters, progress func(PartitionProgress)) (RecordPartition, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ordered := orderedInputs(inputs)
 	partition := RecordPartition{selected: make(map[string]bool), inputs: ordered, parameters: parameters}
 	policy := parameters.Evaluation
@@ -89,6 +98,9 @@ func NewRecordPartitionWithProgress(inputs []Input, parameters ResolvedParameter
 	}
 	for inputPosition, input := range ordered {
 		err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			records++
 			key := selectionID(input.SHA256, row)
 			score := evaluationScore(parameters.Seed, key)

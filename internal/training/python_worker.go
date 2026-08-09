@@ -107,6 +107,13 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 	waitErr := command.Wait()
 	worker := <-result
 	if worker.err != nil {
+		// CommandContext closes the worker pipes when cancellation kills the
+		// process. The output reader consequently observes EOF before a complete
+		// frame; preserve cancellation so the model lifecycle records an
+		// interrupted, resumable run instead of a failed worker.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Observation{}, ctxErr
+		}
 		return Observation{}, fmt.Errorf("%s worker: %w%s", label, worker.err, workerStderr(stderr.String()))
 	}
 	if writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {

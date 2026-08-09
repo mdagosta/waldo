@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -113,6 +114,19 @@ func TestRecordPartitionPinsAndExcludesHeldOutRecords(t *testing.T) {
 	}
 	if targets, err := first.TrainingByteTargets(context.Background()); err != nil || targets <= 0 {
 		t.Fatalf("training targets = %d, err = %v", targets, err)
+	}
+}
+
+func TestRecordPartitionHonorsCanceledContext(t *testing.T) {
+	inputs := []Input{writeTrainingShard(t, []string{"one", "two"})}
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := NewRecordPartitionContext(ctx, inputs, parameters, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("partition cancellation error = %v", err)
 	}
 }
 

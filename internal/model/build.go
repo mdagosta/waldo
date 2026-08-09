@@ -136,7 +136,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
 	}
 	builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))})
-	partition, err := training.NewRecordPartitionWithProgress(prepared.Inputs, resolvedParameters, func(event training.PartitionProgress) {
+	partition, err := training.NewRecordPartitionContext(ctx, prepared.Inputs, resolvedParameters, func(event training.PartitionProgress) {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("evaluation scan %d/%d shards, %d records, %s/%s", event.CurrentShard, event.TotalShards, event.Records, byteCount(event.Bytes), byteCount(event.TotalBytes))})
 	})
 	if err != nil {

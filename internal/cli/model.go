@@ -1066,7 +1066,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
-	partition, err := training.NewRecordPartition(prepared.Inputs, resolved)
+	partition, err := training.NewRecordPartitionContext(context.Execution, prepared.Inputs, resolved, nil)
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
