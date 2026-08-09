@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/openwaldo/waldo/internal/shard"
 )
@@ -108,22 +110,37 @@ func TestStreamTextBatchesRejectsChangedArtifact(t *testing.T) {
 	}
 }
 
-func TestStreamTextBatchesRejectsOversizedRecord(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "input.txt")
-	writeFixture(t, path, "five!")
+func TestStreamTextBatchesChunksOversizedFilesLosslessly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "large.txt")
+	contents := strings.Repeat("abcé", 20)
+	writeFixture(t, path, contents)
 	probe, err := ProbePaths(context.Background(), []string{path})
 	if err != nil {
 		t.Fatal(err)
 	}
 	plan, err := NewPlan(probe, PlanRequest{
-		Destination: "core/example", Title: "Example", License: "CC0-1.0",
-		Source: PlanSource{Name: "fixture", URL: "https://example.test/data", Category: "public-dataset"},
+		Destination: "text/example", Title: "Example", License: "CC0-1.0",
+		Source: PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := streamTextBatches(context.Background(), plan, 4, 4, func(TextBatch) error { return nil }); err == nil {
-		t.Fatal("expected oversized record rejection")
+	var rebuilt strings.Builder
+	rows := 0
+	if err := streamTextBatches(context.Background(), plan, 17, 17, func(batch TextBatch) error {
+		for _, row := range batch.Rows {
+			if !utf8.ValidString(row.Text) {
+				t.Fatalf("invalid chunk %q", row.Text)
+			}
+			rebuilt.WriteString(row.Text)
+			rows++
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if rows < 2 || rebuilt.String() != contents {
+		t.Fatalf("rows=%d rebuilt=%q", rows, rebuilt.String())
 	}
 }
 

@@ -78,6 +78,15 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if input.Artifact.Bytes > recordMaximum {
+			if err := flush(); err != nil {
+				return err
+			}
+			if err := streamLargeTextInput(ctx, plan, input, min(batchMaximum, recordMaximum), consume); err != nil {
+				return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
+			}
+			continue
+		}
 		row, size, err := readTextRow(ctx, plan, input, recordMaximum)
 		if err != nil {
 			return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
@@ -96,6 +105,81 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 		}
 	}
 	return flush()
+}
+
+func streamLargeTextInput(ctx context.Context, plan Plan, input PlanInput, chunkMaximum int64, consume func(TextBatch) error) error {
+	if chunkMaximum <= 0 || chunkMaximum > int64(^uint(0)>>1) {
+		return fmt.Errorf("text chunk limit is invalid")
+	}
+	file, err := os.Open(input.Artifact.Path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	before, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	source, license, err := plan.sourceFor(input)
+	if err != nil {
+		return err
+	}
+	chunks := (input.Artifact.Bytes + chunkMaximum - 1) / chunkMaximum
+	hasher := sha256.New()
+	reader := &contextReader{ctx: ctx, reader: io.TeeReader(file, hasher)}
+	carry := make([]byte, 0, utf8.UTFMax)
+	buffer := make([]byte, int(chunkMaximum))
+	var readBytes int64
+	for chunk := int64(0); chunk < chunks; chunk++ {
+		data := buffer[:len(carry)]
+		copy(data, carry)
+		carry = carry[:0]
+		needed := int(chunkMaximum) - len(data)
+		count, readErr := io.ReadFull(reader, buffer[len(data):len(data)+needed])
+		data = buffer[:len(data)+count]
+		readBytes += int64(count)
+		final := readErr == io.EOF || readErr == io.ErrUnexpectedEOF
+		if readErr != nil && !final {
+			return readErr
+		}
+		cut := len(data)
+		if !final {
+			for trim := 0; trim < utf8.UTFMax && cut > 0 && !utf8.Valid(data[:cut]); trim++ {
+				cut--
+			}
+			if !utf8.Valid(data[:cut]) {
+				return fmt.Errorf("record is not UTF-8")
+			}
+			carry = append(carry, data[cut:]...)
+			data = data[:cut]
+		} else if !utf8.Valid(data) {
+			return fmt.Errorf("record is not UTF-8")
+		}
+		text := string(data)
+		contentHash := sha256.Sum256(data)
+		metadata, err := json.Marshal(map[string]any{
+			"source_path": input.SourcePath, "representation": "text-chunk", "chunk": chunk + 1, "chunks": chunks,
+		})
+		if err != nil {
+			return err
+		}
+		metadataText := string(metadata)
+		sourceName := source.Name
+		if err := consume(TextBatch{Rows: []shard.TextRow{{
+			ContentSHA256: contentHash, Text: text, Source: "sha256:" + input.Artifact.SHA256,
+			SourceName: &sourceName, License: license, Meta: &metadataText,
+		}}, LogicalBytes: int64(len(data))}); err != nil {
+			return err
+		}
+	}
+	after, err := file.Stat()
+	if err != nil {
+		return err
+	}
+	if len(carry) != 0 || readBytes != input.Artifact.Bytes || hex.EncodeToString(hasher.Sum(nil)) != input.Artifact.SHA256 || before.Size() != readBytes || after.Size() != readBytes || !before.ModTime().Equal(after.ModTime()) {
+		return fmt.Errorf("artifact changed after the ingestion plan was accepted")
+	}
+	return nil
 }
 
 func readTextRow(ctx context.Context, plan Plan, input PlanInput, maximum int64) (shard.TextRow, int64, error) {
