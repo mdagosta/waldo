@@ -35,9 +35,9 @@ func TestSelectFallsBackAndFailsClosed(t *testing.T) {
 }
 
 func TestSelectUsesConfiguredKeysAndEnvironmentOverrides(t *testing.T) {
-	configured := Credentials{OpenAI: "stored-openai", Anthropic: "stored-anthropic"}
+	configured := Credentials{APIKey: "stored-key"}
 	selected, err := Select("anthropic", "", configured, func(string) string { return "" })
-	if err != nil || selected.Key != "stored-anthropic" {
+	if err != nil || selected.Key != "stored-key" {
 		t.Fatalf("configured selection = %+v, err = %v", selected, err)
 	}
 	selected, err = Select("openai", "", configured, func(name string) string {
@@ -48,5 +48,12 @@ func TestSelectUsesConfiguredKeysAndEnvironmentOverrides(t *testing.T) {
 	})
 	if err != nil || selected.Key != "environment-openai" {
 		t.Fatalf("environment selection = %+v, err = %v", selected, err)
+	}
+}
+
+func TestSelectDoesNotInferProviderFromConfiguredKey(t *testing.T) {
+	_, err := Select("auto", "", Credentials{APIKey: "stored-key"}, func(string) string { return "" })
+	if err == nil || err.Error() != "ai.provider must be openai or anthropic when ai.api-key is set" {
+		t.Fatalf("error = %v", err)
 	}
 }

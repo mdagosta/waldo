@@ -32,7 +32,7 @@ type Selection struct {
 	Key      string
 }
 
-type Credentials struct{ OpenAI, Anthropic string }
+type Credentials struct{ APIKey string }
 
 func Select(requested, model string, credentials Credentials, getenv func(string) string) (Selection, error) {
 	if getenv == nil {
@@ -43,18 +43,14 @@ func Select(requested, model string, credentials Credentials, getenv func(string
 		provider = ProviderAuto
 	}
 	openAI, anthropic := getenv("OPENAI_API_KEY"), getenv("ANTHROPIC_API_KEY")
-	if openAI == "" {
-		openAI = credentials.OpenAI
-	}
-	if anthropic == "" {
-		anthropic = credentials.Anthropic
-	}
 	if provider == ProviderAuto {
 		switch {
 		case openAI != "":
 			provider = ProviderOpenAI
 		case anthropic != "":
 			provider = ProviderAnthropic
+		case credentials.APIKey != "":
+			return Selection{}, fmt.Errorf("ai.provider must be openai or anthropic when ai.api-key is set")
 		default:
 			provider = ProviderNone
 		}
@@ -62,7 +58,10 @@ func Select(requested, model string, credentials Credentials, getenv func(string
 	switch provider {
 	case ProviderOpenAI:
 		if openAI == "" {
-			return Selection{}, fmt.Errorf("OpenAI advice requires OPENAI_API_KEY")
+			openAI = credentials.APIKey
+		}
+		if openAI == "" {
+			return Selection{}, fmt.Errorf("OpenAI AI features require ai.api-key or OPENAI_API_KEY")
 		}
 		if model == "" {
 			model = DefaultOpenAIModel
@@ -70,7 +69,10 @@ func Select(requested, model string, credentials Credentials, getenv func(string
 		return Selection{Provider: provider, Model: model, Key: openAI}, nil
 	case ProviderAnthropic:
 		if anthropic == "" {
-			return Selection{}, fmt.Errorf("Anthropic advice requires ANTHROPIC_API_KEY")
+			anthropic = credentials.APIKey
+		}
+		if anthropic == "" {
+			return Selection{}, fmt.Errorf("Anthropic AI features require ai.api-key or ANTHROPIC_API_KEY")
 		}
 		if model == "" {
 			model = DefaultAnthropicModel

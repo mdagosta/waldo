@@ -32,8 +32,7 @@ var configKeys = []string{
 	"model.backend",
 	"ai.provider",
 	"ai.model",
-	"ai.openai-api-key",
-	"ai.anthropic-api-key",
+	"ai.api-key",
 	"disclosure.provider",
 	"signing.method",
 	"signing.key",
@@ -268,16 +267,11 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 			return oneConfigValue(key)
 		}
 		configuration.AI.Model = values[0]
-	case "ai.openai-api-key":
+	case "ai.api-key":
 		if len(values) != 1 {
 			return oneConfigValue(key)
 		}
-		configuration.AI.OpenAIKey = values[0]
-	case "ai.anthropic-api-key":
-		if len(values) != 1 {
-			return oneConfigValue(key)
-		}
-		configuration.AI.AnthropicKey = values[0]
+		configuration.AI.APIKey = values[0]
 	case "disclosure.provider":
 		if len(values) != 1 {
 			return oneConfigValue(key)
@@ -362,10 +356,8 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.AI.Provider = ""
 	case "ai.model":
 		configuration.AI.Model = ""
-	case "ai.openai-api-key":
-		configuration.AI.OpenAIKey = ""
-	case "ai.anthropic-api-key":
-		configuration.AI.AnthropicKey = ""
+	case "ai.api-key":
+		configuration.AI.APIKey = ""
 	case "disclosure.provider":
 		configuration.Disclosure.Provider = ""
 	case "signing.method":
@@ -461,13 +453,8 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 			return nil, false, nil
 		}
 		return configuration.AI.Model, true, nil
-	case "ai.openai-api-key":
-		if configuration.AI.OpenAIKey == "" {
-			return nil, false, nil
-		}
-		return "(set)", true, nil
-	case "ai.anthropic-api-key":
-		if configuration.AI.AnthropicKey == "" {
+	case "ai.api-key":
+		if configuration.AI.APIKey == "" {
 			return nil, false, nil
 		}
 		return "(set)", true, nil

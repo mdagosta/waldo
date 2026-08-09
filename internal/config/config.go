@@ -49,10 +49,9 @@ type Model struct {
 }
 
 type AI struct {
-	Provider     string `json:"provider,omitempty"`
-	Model        string `json:"model,omitempty"`
-	OpenAIKey    string `json:"openai_api_key,omitempty"`
-	AnthropicKey string `json:"anthropic_api_key,omitempty"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	APIKey   string `json:"api_key,omitempty"`
 }
 
 type Lookaside struct {
