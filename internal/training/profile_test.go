@@ -219,6 +219,31 @@ func TestBalancedRecordSourceInterleavesDeclaredCorpora(t *testing.T) {
 	}
 }
 
+func TestBalancedRecordSourceAccountsForTokenLength(t *testing.T) {
+	first := writeTrainingShard(t, []string{strings.Repeat("a", 20), strings.Repeat("a", 20)})
+	first.Corpus = "corpus-a"
+	second := writeTrainingShard(t, []string{"b", "b", "b", "b", "b", "b"})
+	second.Corpus = "corpus-b"
+	parameters, err := ResolveParameters(Parameters{Profile: BalancedProfile, Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := NewCanonicalRecordSource([]Input{first, second}, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corpora []string
+	if err := source.Stream(context.Background(), func(value Record) error {
+		corpora = append(corpora, value.Corpus)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(corpora) < 4 || !reflect.DeepEqual(corpora[:4], []string{"corpus-a", "corpus-b", "corpus-b", "corpus-b"}) {
+		t.Fatalf("token-balanced prefix = %v", corpora)
+	}
+}
+
 func TestBalancedEvaluationIncludesEveryCorpus(t *testing.T) {
 	first := writeTrainingShard(t, []string{"a1", "a2", "a3", "a4"})
 	first.Corpus = "corpus-a"

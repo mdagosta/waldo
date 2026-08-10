@@ -216,7 +216,7 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 }
 
 func (partition RecordPartition) TrainingRecords() (RecordSource, error) {
-	source, err := NewCanonicalRecordSource(partition.inputs, partition.parameters)
+	source, err := NewCanonicalRecordSourceWithTokenizer(partition.inputs, partition.parameters, partition.codec)
 	if err != nil {
 		return nil, err
 	}
@@ -350,20 +350,28 @@ type canonicalRecordSource struct {
 	buffer      int
 	bufferBytes int64
 	balanced    bool
+	codec       TokenCodec
 }
 
 func NewCanonicalRecordSource(inputs []Input, parameters ResolvedParameters) (RecordSource, error) {
+	return NewCanonicalRecordSourceWithTokenizer(inputs, parameters, byteCodec{})
+}
+
+func NewCanonicalRecordSourceWithTokenizer(inputs []Input, parameters ResolvedParameters, codec TokenCodec) (RecordSource, error) {
 	if len(inputs) == 0 {
 		return nil, fmt.Errorf("canonical record source requires at least one shard input")
 	}
 	if parameters.Epochs < 1 {
 		return nil, fmt.Errorf("canonical record source requires at least one epoch")
 	}
+	if codec == nil {
+		return nil, fmt.Errorf("canonical record source requires a tokenizer")
+	}
 	if (parameters.Data.Order != "bounded-shuffle-v1" && parameters.Data.Order != "corpus-balanced-shuffle-v1") || parameters.Data.ShuffleBufferRecords < 1 || parameters.Data.ShuffleBufferBytes < 1 {
 		return nil, fmt.Errorf("unsupported canonical record order %q", parameters.Data.Order)
 	}
 	ordered := orderedInputs(inputs)
-	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, epochs: parameters.Epochs, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes, balanced: parameters.Data.Order == "corpus-balanced-shuffle-v1"}, nil
+	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, epochs: parameters.Epochs, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes, balanced: parameters.Data.Order == "corpus-balanced-shuffle-v1", codec: codec}, nil
 }
 
 func orderedInputs(inputs []Input) []Input {
@@ -456,8 +464,9 @@ type balancedRecord struct {
 	err    error
 }
 
-// streamBalancedEpoch emits one record from each declared corpus group in
-// stable round-robin order. Each group retains the bounded shuffle contract.
+// streamBalancedEpoch chooses the corpus with the fewest emitted tokenizer
+// targets. This keeps cumulative training exposure balanced even when record
+// lengths differ, while each corpus retains the bounded shuffle contract.
 func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, epoch int64, consume func(Record) error) error {
 	groups := map[string][]Input{}
 	for _, input := range source.inputs {
@@ -498,22 +507,43 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 			}
 		}(position, group, output)
 	}
-	for len(streams) > 0 {
-		remaining := streams[:0]
-		for _, stream := range streams {
-			item, ok := <-stream
-			if !ok {
-				continue
-			}
-			if item.err != nil {
-				return item.err
-			}
-			if err := consume(item.record); err != nil {
-				return err
-			}
-			remaining = append(remaining, stream)
+	heads := make([]balancedRecord, len(streams))
+	active := make([]bool, len(streams))
+	emitted := make([]int64, len(streams))
+	activeCount := 0
+	for index, stream := range streams {
+		item, ok := <-stream
+		if !ok {
+			continue
 		}
-		streams = remaining
+		if item.err != nil {
+			return item.err
+		}
+		heads[index], active[index] = item, true
+		activeCount++
+	}
+	for activeCount > 0 {
+		selected := -1
+		for index := range streams {
+			if active[index] && (selected < 0 || emitted[index] < emitted[selected]) {
+				selected = index
+			}
+		}
+		record := heads[selected].record
+		if err := consume(record); err != nil {
+			return err
+		}
+		emitted[selected] += int64(source.codec.Count(record.Text)) + 1
+		item, ok := <-streams[selected]
+		if !ok {
+			active[selected] = false
+			activeCount--
+			continue
+		}
+		if item.err != nil {
+			return item.err
+		}
+		heads[selected] = item
 	}
 	return nil
 }

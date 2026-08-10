@@ -21,18 +21,18 @@ stages:
     objective: causal-language-modeling
     corpora:
       - core/common-pile/public-domain-review
-      - core/common-pile/foodista
       - core/common-pile/python-enhancement-proposals/peps
       - post-train/sft/dolly
+      - post-train/sft/oasst1
     parameters:
       profile: causal-pretrain-v2
-      steps: 1000
+      steps: 250
       batch_size: 32
       sequence_length: 512
       learning_rate: 0.0003
       seed: 42
-      warmup_steps: 50
-      checkpoint_every: 250
-      evaluate_every: 250
+      warmup_steps: 25
+      checkpoint_every: 50
+      evaluate_every: 50
       evaluation_max_records: 128
       evaluation_max_bytes: 4194304

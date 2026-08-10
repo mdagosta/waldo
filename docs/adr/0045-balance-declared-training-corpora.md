@@ -14,9 +14,8 @@ available inputs, but its observation did not prove what training consumed.
 `causal-pretrain-v1` remains unchanged for reproducibility.
 `causal-pretrain-v2` adds two general contracts:
 
-- records are emitted in deterministic round-robin order across the logical
-  corpus paths declared by the stage, with bounded deterministic shuffle inside
-  each path;
+- records are selected from the logical corpus path with the fewest emitted
+  tokenizer targets, with bounded deterministic shuffle inside each path;
 - held-out records are selected deterministically and evenly across those paths.
 
 Every materialized input carries its selected logical corpus identity into the
@@ -29,6 +28,7 @@ declared corpus and exactly equal the run's total consumed token targets.
 - A finite v2 run cannot silently omit a declared corpus.
 - Run observations provide auditable per-corpus consumption rather than inferring
   use from selected shard sizes.
-- Equal record interleaving is the v2 policy; explicit weighting is a future,
-  separately versioned profile concern.
+- Equal tokenizer-target exposure is the v2 policy while every selected corpus
+  still has records; explicit weighting is a future, separately versioned
+  profile concern.
 - Existing v1 runs and resumes keep their original data order.
