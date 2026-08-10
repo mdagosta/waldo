@@ -84,6 +84,30 @@ func TestRecordMapPreservesSelectedProvenanceMetadata(t *testing.T) {
 	}
 }
 
+func TestRecordMapUsesFallbackTextOnlyWhenPrimaryTextIsEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.jsonl")
+	contents := "{\"text\":\"page text\",\"metadata\":{\"url\":\"https://source.example/1\"}}\n" +
+		"{\"text\":\"\",\"metadata\":{\"url\":\"https://source.example/2\"}}\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{
+		Text: []string{"text"}, TextFallback: []string{"metadata.url"},
+		Meta: map[string]string{"url": "metadata.url"},
+	}}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	if len(rows) != 2 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if rows[0].Text != "page text" || rows[1].Text != "https://source.example/2" {
+		t.Fatalf("fallback rows = %+v", rows)
+	}
+	if rows[0].Meta == nil || *rows[0].Meta != `{"url":"https://source.example/1"}` ||
+		rows[1].Meta == nil || *rows[1].Meta != `{"url":"https://source.example/2"}` {
+		t.Fatalf("fallback metadata = %+v", rows)
+	}
+}
+
 func TestRecordMapRejectsTopLevelJSONArray(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.json")
 	if err := os.WriteFile(path, []byte(`[{"text":"one"},{"text":"two"}]`), 0o644); err != nil {

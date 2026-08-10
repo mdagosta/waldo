@@ -318,19 +318,31 @@ func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit f
 }
 
 func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallbackSource string) (shard.TextRow, error) {
-	parts := make([]string, 0, len(input.Profile.Fields.Text))
-	for _, path := range input.Profile.Fields.Text {
-		values, err := record.Values(path)
+	mapText := func(paths []string) (string, error) {
+		parts := make([]string, 0, len(paths))
+		for _, path := range paths {
+			values, err := record.Values(path)
+			if err != nil {
+				return "", err
+			}
+			for _, value := range values {
+				if strings.TrimSpace(value) != "" {
+					parts = append(parts, value)
+				}
+			}
+		}
+		return strings.Join(parts, "\n\n"), nil
+	}
+	text, err := mapText(input.Profile.Fields.Text)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
+	if text == "" && len(input.Profile.Fields.TextFallback) > 0 {
+		text, err = mapText(input.Profile.Fields.TextFallback)
 		if err != nil {
 			return shard.TextRow{}, err
 		}
-		for _, value := range values {
-			if strings.TrimSpace(value) != "" {
-				parts = append(parts, value)
-			}
-		}
 	}
-	text := strings.Join(parts, "\n\n")
 	if text == "" {
 		return shard.TextRow{}, fmt.Errorf("%w: mapped text fields are empty or absent", errEmptyMappedRecord)
 	}

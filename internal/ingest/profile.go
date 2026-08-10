@@ -42,15 +42,16 @@ type InputProfile struct {
 }
 
 type ProfileFields struct {
-	Text     []string          `json:"text,omitempty" yaml:"text,omitempty"`
-	ID       string            `json:"id,omitempty" yaml:"id,omitempty"`
-	Date     string            `json:"date,omitempty" yaml:"date,omitempty"`
-	Language string            `json:"language,omitempty" yaml:"language,omitempty"`
-	License  string            `json:"license,omitempty" yaml:"license,omitempty"`
-	Source   string            `json:"source,omitempty" yaml:"source,omitempty"`
-	Context  string            `json:"context,omitempty" yaml:"context,omitempty"`
-	Response string            `json:"response,omitempty" yaml:"response,omitempty"`
-	Meta     map[string]string `json:"meta,omitempty" yaml:"meta,omitempty"`
+	Text         []string          `json:"text,omitempty" yaml:"text,omitempty"`
+	TextFallback []string          `json:"text_fallback,omitempty" yaml:"text_fallback,omitempty"`
+	ID           string            `json:"id,omitempty" yaml:"id,omitempty"`
+	Date         string            `json:"date,omitempty" yaml:"date,omitempty"`
+	Language     string            `json:"language,omitempty" yaml:"language,omitempty"`
+	License      string            `json:"license,omitempty" yaml:"license,omitempty"`
+	Source       string            `json:"source,omitempty" yaml:"source,omitempty"`
+	Context      string            `json:"context,omitempty" yaml:"context,omitempty"`
+	Response     string            `json:"response,omitempty" yaml:"response,omitempty"`
+	Meta         map[string]string `json:"meta,omitempty" yaml:"meta,omitempty"`
 }
 
 type TextBounds struct {
@@ -152,14 +153,14 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) == 0 || profile.Fields.Response == "" {
 			return fmt.Errorf("dialogue-pair requires fields.text and fields.response")
 		}
-		if profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if len(profile.Fields.TextFallback) > 0 || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("dialogue-pair does not accept tree fields")
 		}
 	case ProfileRankedConversationTree:
 		if profile.Tree.Replies == "" || profile.Tree.Text == "" || profile.Tree.Rank == "" {
 			return fmt.Errorf("ranked-conversation-tree requires tree.replies, tree.text, and tree.rank")
 		}
-		if len(profile.Fields.Text) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if len(profile.Fields.Text) > 0 || len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("ranked-conversation-tree text comes from the tree mapping")
 		}
 		if profile.Tree.MissingRank != "" && profile.Tree.MissingRank != "source-order" {
@@ -182,7 +183,7 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) == 0 {
 			return fmt.Errorf("xml-record requires fields.text")
 		}
-		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) {
+		if len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) {
 			return fmt.Errorf("xml-record accepts text, id, date, language, license, source, and meta fields only")
 		}
 		if profile.XML.OnMalformed != "" && profile.XML.OnMalformed != "error" && profile.XML.OnMalformed != "skip" {
@@ -207,7 +208,7 @@ func (profile InputProfile) Validate() error {
 }
 
 func (fields ProfileFields) empty() bool {
-	return len(fields.Text) == 0 && fields.ID == "" && fields.Date == "" && fields.Language == "" &&
+	return len(fields.Text) == 0 && len(fields.TextFallback) == 0 && fields.ID == "" && fields.Date == "" && fields.Language == "" &&
 		fields.License == "" && fields.Source == "" && fields.Context == "" && fields.Response == "" && len(fields.Meta) == 0
 }
 
@@ -217,6 +218,7 @@ func (mapping XMLMapping) empty() bool {
 
 func (profile InputProfile) paths() []string {
 	paths := append([]string(nil), profile.Fields.Text...)
+	paths = append(paths, profile.Fields.TextFallback...)
 	paths = append(paths, profile.Fields.ID, profile.Fields.Date, profile.Fields.Language,
 		profile.Fields.License, profile.Fields.Context, profile.Fields.Response,
 		profile.Tree.Root, profile.Tree.Replies, profile.Tree.Text, profile.Tree.Rank,
