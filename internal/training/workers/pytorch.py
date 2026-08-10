@@ -19,8 +19,8 @@ import torch.nn.functional as functional
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r2"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r2"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r4"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r4"
 IS_PRIMARY = True
 
 
@@ -330,10 +330,12 @@ class Trainer:
             if missing or unexpected:
                 raise ValueError(f"resume weights do not match architecture: missing={missing}, unexpected={unexpected}")
         dtype_name = self.architecture["parameter_dtype"]
-        dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[dtype_name]
-        if self.device.type == "cpu" and dtype == torch.float16:
+        self.parameter_dtype = {"float32": torch.float32, "float16": torch.float16, "bfloat16": torch.bfloat16}[dtype_name]
+        if self.device.type == "cpu" and self.parameter_dtype == torch.float16:
             raise ValueError("float16 training is not supported by the PyTorch CPU adapter; use bfloat16 or float32")
-        self.model.to(device=self.device, dtype=dtype)
+        # Keep master weights and AdamW state in FP32. Reduced precision is a
+        # compute and portable-artifact format, not optimizer state.
+        self.model.to(device=self.device, dtype=torch.float32)
         if self.distributed:
             from torch.distributed._composable.fsdp import fully_shard
 
@@ -351,6 +353,11 @@ class Trainer:
         )
         if self.resume is not None:
             self.restore_checkpoint()
+
+    def forward_logits(self, model, tokens, mixed_precision=True):
+        enabled = mixed_precision and self.parameter_dtype != torch.float32
+        with torch.autocast(device_type=self.device.type, dtype=self.parameter_dtype, enabled=enabled):
+            return model(tokens)
 
     def logical(self, name):
         return "/".join(part for part in (self.artifact_prefix, name) if part)
@@ -419,7 +426,7 @@ class Trainer:
         for group in self.optimizer.param_groups:
             group["lr"] = current_learning_rate
         self.optimizer.zero_grad(set_to_none=True)
-        logits = self.model(inputs)
+        logits = self.forward_logits(self.model, inputs)
         losses = functional.cross_entropy(logits.float().reshape(-1, logits.shape[-1]), targets.reshape(-1), reduction="none")
         loss = (losses.reshape_as(mask) * mask).sum() / mask.sum()
         loss.backward()
@@ -470,6 +477,10 @@ class Trainer:
         else:
             tensors = self.model.state_dict()
         if IS_PRIMARY:
+            tensors = {
+                name: value.to(dtype=self.parameter_dtype) if value.is_floating_point() else value
+                for name, value in tensors.items()
+            }
             backend = "torchtitan" if self.distributed else "pytorch"
             revision = TORCHTITAN_REVISION if self.distributed else WORKER_REVISION
             save_safetensors(
@@ -607,10 +618,8 @@ class Trainer:
         self.replay_steps = self.resume["step"]
         self.checkpoints = [self.resume["checkpoint"]]
 
-    def record_evaluation(self, _training_loss):
-        if not self.evaluation_sequences:
-            return
-        self.model.eval()
+    def evaluate_model(self, model, mixed_precision):
+        model.eval()
         total_loss = 0.0
         total_tokens = 0.0
         with torch.no_grad():
@@ -618,12 +627,17 @@ class Trainer:
                 batch = self.evaluation_sequences[offset : offset + self.batch_size]
                 tokens = torch.tensor([item[0] for item in batch], dtype=torch.long, device=self.device)
                 mask = torch.tensor([item[1] for item in batch], dtype=torch.float32, device=self.device)
-                logits = self.model(tokens[:, :-1])
+                logits = self.forward_logits(model, tokens[:, :-1], mixed_precision=mixed_precision)
                 losses = functional.cross_entropy(logits.float().reshape(-1, logits.shape[-1]), tokens[:, 1:].reshape(-1), reduction="none")
                 total_loss += float((losses.reshape_as(mask) * mask).sum().detach().cpu().item())
                 total_tokens += float(mask.sum().detach().cpu().item())
+        return total_loss / total_tokens
+
+    def record_evaluation(self, _training_loss):
+        if not self.evaluation_sequences:
+            return
+        loss_value = self.evaluate_model(self.model, mixed_precision=True)
         self.model.train()
-        loss_value = total_loss / total_tokens
         item = {
             "step": self.step_number,
             "tokens": self.consumed_tokens,
@@ -670,6 +684,33 @@ class Trainer:
         weights_path = os.path.join(self.artifact_directory, weights_name)
         backend_name = "torchtitan" if self.distributed else "pytorch"
         self.save_weights(weights_path, f"waldo-{backend_name}-model", self.step_number)
+        if IS_PRIMARY and self.evaluation_sequences:
+            artifact_model = DecoderLM(self.architecture)
+            missing, unexpected = artifact_model.load_state_dict(load_safetensors(weights_path), strict=False)
+            if missing or unexpected:
+                raise ValueError(f"saved artifact weights do not match architecture: missing={missing}, unexpected={unexpected}")
+            artifact_model.to(device=self.device, dtype=torch.float32)
+            artifact_loss = self.evaluate_model(artifact_model, mixed_precision=False)
+            del artifact_model
+            live_loss = self.evaluations[-1]["metrics"]["heldout_loss"]
+            tolerance = max(0.02, abs(live_loss) * 0.01)
+            if not math.isfinite(artifact_loss) or abs(artifact_loss - live_loss) > tolerance:
+                raise ValueError(
+                    f"saved artifact held-out loss {artifact_loss:.6f} does not match live loss "
+                    f"{live_loss:.6f} within tolerance {tolerance:.6f}"
+                )
+            self.evaluations[-1]["metrics"]["artifact_heldout_loss"] = artifact_loss
+            self.evaluations[-1]["metrics"]["artifact_heldout_perplexity"] = math.exp(min(artifact_loss, 80.0))
+            self.evaluations[-1]["metrics"]["artifact_loss_delta"] = artifact_loss - live_loss
+            emit(
+                "event",
+                event={
+                    "kind": "log",
+                    "message": f"reloaded model artifact verified at held-out loss {artifact_loss:.4f}",
+                    "step": self.step_number,
+                    "tokens": self.consumed_tokens,
+                },
+            )
         config_name = "config.json"
         config_path = os.path.join(self.artifact_directory, config_name)
         backend_revision = TORCHTITAN_REVISION if self.distributed else WORKER_REVISION

@@ -355,6 +355,12 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 						break
 					}
 				}
+				if backendErr == nil && selection.Execution.Backend.Name == training.BackendPyTorch {
+					metrics := observation.Evaluations[len(observation.Evaluations)-1].Metrics
+					if _, ok := metrics["artifact_heldout_loss"]; !ok {
+						backendErr = fmt.Errorf("invalid backend observation: final PyTorch evaluation does not verify the persisted model artifact")
+					}
+				}
 			}
 		}
 	}

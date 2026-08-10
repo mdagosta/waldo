@@ -47,3 +47,4 @@ logs.
 - [0041: Record chartable training telemetry as CSV](0041-training-telemetry-csv.md)
 - [0042: Preserve compose and advisor history](0042-compose-and-advisor-history.md)
 - [0043: Unify model training entry points](0043-unified-model-training.md)
+- [0044: Verify persisted training artifacts](0044-verify-persisted-training-artifacts.md)
