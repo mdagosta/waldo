@@ -29,4 +29,5 @@ this evidence when held-out evaluation was configured.
 - PyTorch checkpoints retain FP32 optimizer state, increasing checkpoint size
   but avoiding reduced-precision AdamW state.
 - The final artifact reload adds one held-out evaluation to run completion time.
-- Backend revision `builtin-pytorch-worker-schema-1-r4` identifies this contract.
+- Backend revision `builtin-pytorch-worker-schema-1-r5` identifies this contract
+  together with explicit normal(0, 0.02) embedding and projection initialization.

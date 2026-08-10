@@ -19,8 +19,8 @@ import torch.nn.functional as functional
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r4"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r4"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r5"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r5"
 IS_PRIMARY = True
 
 
@@ -237,6 +237,13 @@ class DecoderLM(nn.Module):
         if not self.tie_embeddings:
             self.output = nn.Linear(hidden, vocabulary, bias=False)
 
+    def initialize(self):
+        for module in self.modules():
+            if isinstance(module, (nn.Embedding, nn.Linear)):
+                nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            elif isinstance(module, RMSNorm):
+                nn.init.ones_(module.weight)
+
     def forward(self, tokens):
         value = self.embedding(tokens)
         for layer in self.layers:
@@ -329,6 +336,7 @@ class Trainer:
         if self.device.type == "cuda":
             torch.cuda.manual_seed_all(self.parameters["seed"])
         self.model = DecoderLM(self.architecture)
+        self.model.initialize()
         self.initialization = begin.get("initialization")
         if self.initialization is not None:
             missing, unexpected = self.model.load_state_dict(load_safetensors(self.initialization["path"]), strict=False)
