@@ -203,13 +203,18 @@ class Generator:
             tokenizer = json.load(stream)
         if config.get("kind") not in ("waldo-pytorch-model-config", "waldo-torchtitan-model-config") or config.get("schema") != 1:
             raise ValueError("unsupported WALDO PyTorch model configuration")
-        if tokenizer.get("kind") != "waldo-byte-tokenizer" or tokenizer.get("schema") != 1:
+        if tokenizer.get("kind") not in ("waldo-tokenizer", "waldo-byte-tokenizer") or tokenizer.get("schema") != 1:
             raise ValueError("unsupported WALDO tokenizer artifact")
         architecture = config["architecture"]
-        if tokenizer.get("name") != "byte" or tokenizer.get("revision") != "builtin-byte-schema-1" or tokenizer.get("vocabulary_size") != 259 or architecture.get("vocabulary_size") != 259:
-            raise ValueError("PyTorch chat requires byte@builtin-byte-schema-1 with vocabulary size 259")
+        architecture_tokenizer = architecture["tokenizer"]
+        if tokenizer.get("name") != architecture_tokenizer.get("name") or tokenizer.get("revision") != architecture_tokenizer.get("revision") or tokenizer.get("vocabulary_size") != architecture.get("vocabulary_size"):
+            raise ValueError("PyTorch chat tokenizer artifact does not match the architecture")
         self.context_tokens = int(architecture["context_tokens"])
-        self.tokenizer = ByteTokenizer()
+        self.byte_tokenizer = tokenizer.get("name") == "byte"
+        self.tokenizer = ByteTokenizer() if self.byte_tokenizer else None
+        self.bos_id = int(tokenizer["bos_id"])
+        self.eos_id = int(tokenizer["eos_id"])
+        self.pad_id = int(tokenizer["pad_id"])
         self.device = torch.device(device_name)
         self.model = DecoderLM(architecture)
         missing, unexpected = self.model.load_state_dict(load_safetensors(weights_path), strict=False)
@@ -225,9 +230,11 @@ class Generator:
         top_p = float(request["top_p"])
         seed = request.get("seed")
         generator = random.Random(seed if seed is not None else int.from_bytes(os.urandom(16), "big"))
-        tokens = self.tokenizer.encode(prompt)
+        tokens = [int(token) for token in request.get("token_ids", [])]
+        if not tokens and self.byte_tokenizer:
+            tokens = self.tokenizer.encode(prompt)
         if not tokens:
-            tokens = [self.tokenizer.bos_id]
+            tokens = [self.bos_id]
         tokens = tokens[-self.context_tokens :]
         started = time.perf_counter()
         produced = 0
@@ -238,13 +245,18 @@ class Generator:
                 logits = self.model(inputs)
                 token = sample(logits[0, -1], temperature, top_p, generator)
                 tokens.append(token)
-                if token == self.tokenizer.eos_id:
+                if token == self.eos_id:
                     reason = "eos"
                     break
-                data = self.tokenizer.decode_token(token)
-                if data:
-                    produced += 1
-                    emit("token", data=base64.b64encode(data).decode("ascii"))
+                if token == self.pad_id or token == self.bos_id:
+                    continue
+                produced += 1
+                if self.byte_tokenizer:
+                    data = self.tokenizer.decode_token(token)
+                    if data:
+                        emit("token", data=base64.b64encode(data).decode("ascii"))
+                else:
+                    emit("token", token_id=token)
         emit("complete", tokens=produced, finish_reason=reason, duration_ms=int((time.perf_counter() - started) * 1000))
 
 

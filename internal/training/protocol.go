@@ -23,9 +23,23 @@ type WorkerBegin struct {
 	ArchitectureSHA256 string                `json:"architecture_sha256"`
 	Architecture       json.RawMessage       `json:"architecture"`
 	Parameters         ResolvedParameters    `json:"parameters"`
+	Tokenizer          TokenizerSpec         `json:"tokenizer"`
 	EvaluationSet      EvaluationSet         `json:"evaluation_set"`
 	Initialization     *WorkerInitialization `json:"initialization,omitempty"`
 	Resume             *WorkerResume         `json:"resume,omitempty"`
+}
+
+type tokenizedRecordSource struct {
+	source RecordSource
+	codec  TokenCodec
+}
+
+func (source tokenizedRecordSource) Stream(ctx context.Context, consume func(Record) error) error {
+	return source.source.Stream(ctx, func(record Record) error {
+		record.Tokens = source.codec.Encode(record.Text)
+		record.Text = ""
+		return consume(record)
+	})
 }
 
 type WorkerInitialization struct {

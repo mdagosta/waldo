@@ -105,6 +105,13 @@ per-record EOS-packed sequences without gradients and report `heldout_loss`
 and `heldout_perplexity`; the old current-training-batch loss is not presented
 as evaluation.
 
+Compose-driven models may instead pin
+`tiktoken/cl100k_base@tiktoken-cl100k-base` with vocabulary size 100259. WALDO
+encodes canonical text in Go from its offline vocabulary and streams identical
+token IDs to MLX or PyTorch. Pad, BOS, and EOS use IDs 100256 through 100258.
+Chat uses the persisted tokenizer identity and the same codec for prompts and
+generated IDs.
+
 Real backends commit checkpoint directories containing model weights,
 optimizer state, runtime random state, and state metadata before reporting the
 checkpoint to WALDO. Repeating the exact `model train` command after Ctrl-C

@@ -89,8 +89,8 @@ func (resolver PyTorchResolver) Resolve(ctx context.Context, request ResolveRequ
 	if architecture.Family != "decoder-transformer" {
 		return Selection{}, fmt.Errorf("PyTorch backend does not support architecture family %q", architecture.Family)
 	}
-	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
-		return Selection{}, fmt.Errorf("PyTorch backend currently requires tokenizer byte@builtin-byte-schema-1 with vocabulary_size 259; model pins %s@%s with vocabulary_size %d", architecture.Tokenizer.Name, architecture.Tokenizer.Revision, architecture.VocabularySize)
+	if _, _, err := ResolveTokenizer(architecture.Tokenizer.Name, architecture.Tokenizer.Revision, architecture.VocabularySize); err != nil {
+		return Selection{}, fmt.Errorf("PyTorch backend: %w", err)
 	}
 	candidates := resolver.Candidates
 	if len(candidates) == 0 {

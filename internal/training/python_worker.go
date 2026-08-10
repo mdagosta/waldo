@@ -30,6 +30,9 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 	if request.Records == nil {
 		return Observation{}, fmt.Errorf("%s backend received no canonical record stream", label)
 	}
+	if request.Tokenizer.Name == "" {
+		request.Tokenizer = TokenizerSpec{Name: "byte", Revision: ByteTokenizerRevision, VocabularySize: 259, PadID: 0, BOSID: 1, EOSID: 2}
+	}
 	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 		return Observation{}, fmt.Errorf("create %s artifact directory: %w", label, err)
 	}
@@ -84,7 +87,7 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 	begin := WorkerBegin{
 		RunID: request.RunID, Stage: request.Stage, Objective: request.Objective,
 		ArchitectureSHA256: request.ArchitectureSHA256, Architecture: request.Architecture,
-		Parameters: request.Parameters, EvaluationSet: request.EvaluationSet,
+		Parameters: request.Parameters, EvaluationSet: request.EvaluationSet, Tokenizer: request.Tokenizer,
 	}
 	if request.Initialization != nil {
 		begin.Initialization = &WorkerInitialization{
@@ -102,7 +105,21 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 			Paths:      append([]string(nil), request.Resume.Paths...),
 		}
 	}
-	writeErr := WriteWorkerInput(ctx, stdin, begin, request.Records, request.EvaluationRecords)
+	records, evaluationRecords := request.Records, request.EvaluationRecords
+	if request.Tokenizer.Name != "byte" {
+		_, codec, tokenizerErr := ResolveTokenizer(request.Tokenizer.Name, request.Tokenizer.Revision, uint64(request.Tokenizer.VocabularySize))
+		if tokenizerErr != nil {
+			_ = stdin.Close()
+			_ = command.Process.Kill()
+			_ = command.Wait()
+			return Observation{}, tokenizerErr
+		}
+		records = tokenizedRecordSource{source: records, codec: codec}
+		if evaluationRecords != nil {
+			evaluationRecords = tokenizedRecordSource{source: evaluationRecords, codec: codec}
+		}
+	}
+	writeErr := WriteWorkerInput(ctx, stdin, begin, records, evaluationRecords)
 	closeErr := stdin.Close()
 	waitErr := command.Wait()
 	worker := <-result

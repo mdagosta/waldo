@@ -62,7 +62,7 @@ func TestPyTorchResolverFailsClosed(t *testing.T) {
 		t.Fatalf("platform error = %v", err)
 	}
 	unsupported := json.RawMessage(`{"family":"decoder-transformer","vocabulary_size":100277,"tokenizer":{"name":"tiktoken/cl100k_base","revision":"tiktoken-cl100k-base"}}`)
-	if _, err := (PyTorchResolver{OS: "linux", Arch: "amd64"}).Resolve(context.Background(), ResolveRequest{Architecture: unsupported}); err == nil || !strings.Contains(err.Error(), "currently requires tokenizer byte") {
+	if _, err := (PyTorchResolver{OS: "linux", Arch: "amd64"}).Resolve(context.Background(), ResolveRequest{Architecture: unsupported}); err == nil || !strings.Contains(err.Error(), "unsupported tokenizer") {
 		t.Fatalf("tokenizer error = %v", err)
 	}
 }

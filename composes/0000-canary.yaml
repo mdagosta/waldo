@@ -1,0 +1,38 @@
+# Release gate: exercise the complete training and inference path cheaply.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 512
+  vocabulary_size: 100259
+  hidden_size: 128
+  intermediate_size: 384
+  layers: 4
+  attention_heads: 4
+  key_value_heads: 2
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: tiktoken/cl100k_base
+    revision: tiktoken-cl100k-base
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - core/books/gutenberg
+      - core/common-pile/public-domain-review
+      - core/common-pile/foodista
+      - core/common-pile/python-enhancement-proposals/peps
+    parameters:
+      profile: causal-pretrain-v2
+      steps: 1000
+      batch_size: 32
+      sequence_length: 512
+      learning_rate: 0.0003
+      seed: 42
+      warmup_steps: 50
+      checkpoint_every: 250
+      evaluate_every: 250
+      evaluation_max_records: 128
+      evaluation_max_bytes: 4194304

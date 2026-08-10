@@ -171,6 +171,7 @@ type Request struct {
 	Objective          string
 	ArchitectureSHA256 string
 	Architecture       json.RawMessage
+	Tokenizer          TokenizerSpec
 	BOM                corpus.BOM
 	Inputs             []Input
 	Parameters         ResolvedParameters

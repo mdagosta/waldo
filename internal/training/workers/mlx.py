@@ -163,6 +163,22 @@ class ByteTokenizer:
         return [byte + 3 for byte in text.encode("utf-8")] + [self.eos_id]
 
 
+class FramingTokenizer:
+    def __init__(self, specification):
+        self.name = specification["name"]
+        self.revision = specification["revision"]
+        self.pad_id = int(specification["pad_id"])
+        self.bos_id = int(specification["bos_id"])
+        self.eos_id = int(specification["eos_id"])
+
+    def encode_record(self, record):
+        if "tokens" in record:
+            return [int(token) for token in record["tokens"]] + [self.eos_id]
+        if self.name == "byte":
+            return [byte + 3 for byte in record["text"].encode("utf-8")] + [self.eos_id]
+        raise ValueError(f"record is missing pre-tokenized IDs for {self.name}")
+
+
 class Trainer:
     def __init__(self, begin, artifact_directory, artifact_prefix):
         self.begin = begin
@@ -190,14 +206,11 @@ class Trainer:
         self.last_report = self.started
         self.last_report_tokens = 0
 
-        tokenizer = self.architecture["tokenizer"]
-        if (
-            tokenizer["name"] != "byte"
-            or tokenizer["revision"] != "builtin-byte-schema-1"
-            or self.architecture["vocabulary_size"] != 259
-        ):
-            raise ValueError("MLX worker requires byte@builtin-byte-schema-1 with vocabulary_size 259")
-        self.tokenizer = ByteTokenizer()
+        tokenizer = begin["tokenizer"]
+        architecture_tokenizer = self.architecture["tokenizer"]
+        if tokenizer["name"] != architecture_tokenizer["name"] or tokenizer["revision"] != architecture_tokenizer["revision"] or tokenizer["vocabulary_size"] != self.architecture["vocabulary_size"]:
+            raise ValueError("MLX worker tokenizer framing does not match the architecture")
+        self.tokenizer = FramingTokenizer(tokenizer)
         mx.random.seed(self.parameters["seed"])
         self.model = DecoderLM(self.architecture)
         self.initialization = begin.get("initialization")
@@ -242,7 +255,7 @@ class Trainer:
     def add_record(self, record):
         if self.step_number >= self.target_steps:
             return
-        encoded = self.tokenizer.encode(record["text"])
+        encoded = self.tokenizer.encode_record(record)
         self.token_buffer.extend(encoded)
         self.corpus_buffer.extend([record.get("corpus", "")] * len(encoded))
         window = self.sequence_length + 1
@@ -253,7 +266,7 @@ class Trainer:
 
     def add_evaluation_record(self, record):
         self.evaluation_record_count += 1
-        tokens = self.tokenizer.encode(record["text"])
+        tokens = self.tokenizer.encode_record(record)
         window = self.sequence_length + 1
         while len(tokens) > 1:
             piece = tokens[:window]
@@ -523,15 +536,9 @@ class Trainer:
         write_json(
             tokenizer_path,
             {
-                "kind": "waldo-byte-tokenizer",
+                "kind": "waldo-tokenizer",
                 "schema": 1,
-                "name": "byte",
-                "revision": "builtin-byte-schema-1",
-                "pad_id": 0,
-                "bos_id": 1,
-                "eos_id": 2,
-                "byte_offset": 3,
-                "vocabulary_size": 259,
+                **self.begin["tokenizer"],
             },
         )
         outputs = [

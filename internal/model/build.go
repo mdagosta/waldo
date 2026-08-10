@@ -136,8 +136,12 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
 	}
+	codec, err := training.ResolveTokenizerCodec(inspection.Model.Architecture.Tokenizer.Name)
+	if err != nil {
+		return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
+	}
 	builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))})
-	partition, err := training.NewRecordPartitionContext(ctx, prepared.Inputs, resolvedParameters, func(event training.PartitionProgress) {
+	partition, err := training.NewRecordPartitionContextWithTokenizer(ctx, prepared.Inputs, resolvedParameters, codec, func(event training.PartitionProgress) {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("evaluation scan %d/%d shards, %d records, %s/%s", event.CurrentShard, event.TotalShards, event.Records, byteCount(event.Bytes), byteCount(event.TotalBytes))})
 	})
 	if err != nil {
@@ -171,7 +175,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	}
 	builder.report(Progress{Phase: "backend", Stage: stage.Name, Message: fmt.Sprintf("selected %s@%s", selection.Execution.Backend.Name, selection.Execution.Backend.Revision)})
 	var initialization *training.Initialization
-	if selection.Execution.Backend.Name != "fake" {
+	if selection.Execution.Backend.Name != training.BackendFake {
 		initialization, err = resolveInitialization(inspection)
 		if err != nil {
 			return Inspection{}, err
@@ -292,6 +296,14 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 }
 
 func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPath string, record *ModelRecord, pin RunPin, run RunRecord, runBOM RunBOM, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, architectureJSON json.RawMessage, selection training.Selection, resume *training.ResumePoint) (Inspection, error) {
+	tokenizerSpec := training.TokenizerSpec{Name: record.Architecture.Tokenizer.Name, Revision: record.Architecture.Tokenizer.Revision, VocabularySize: int(record.Architecture.VocabularySize), PadID: 0, BOSID: 1, EOSID: 2}
+	if selection.Execution.Backend.Name == training.BackendPyTorch || selection.Execution.Backend.Name == training.BackendTorchTitan || selection.Execution.Backend.Name == training.BackendMLX {
+		var err error
+		tokenizerSpec, _, err = training.ResolveTokenizer(record.Architecture.Tokenizer.Name, record.Architecture.Tokenizer.Revision, record.Architecture.VocabularySize)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
+		}
+	}
 	now := builder.clock()
 	runDirectory := filepath.Join(modelPath, "runs", runDirectoryName(pin))
 	telemetryPath := filepath.Join(runDirectory, TelemetryFilename)
@@ -331,7 +343,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	observation, backendErr := selection.Backend.Run(ctx, training.Request{
 		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
 		ArchitectureSHA256: record.ArchitectureSHA256,
-		Architecture:       architectureJSON, BOM: prepared.BOM, Inputs: prepared.Inputs,
+		Architecture:       architectureJSON, Tokenizer: tokenizerSpec, BOM: prepared.BOM, Inputs: prepared.Inputs,
 		Parameters: runBOM.Parameters, Records: records, EvaluationRecords: evaluationRecords, EvaluationSet: evaluationSetValue(runBOM.EvaluationSet), Initialization: initializationForAttempt(runBOM.Initialization, resume), Resume: resume,
 		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix, Report: report,
 	})

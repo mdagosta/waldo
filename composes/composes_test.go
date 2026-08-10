@@ -19,12 +19,13 @@ func TestReferenceComposesFormCapabilityLadder(t *testing.T) {
 		stages     int
 		minCorpora int
 	}{
-		{file: "0000-babble.yaml", stages: 1, minCorpora: 4},
-		{file: "0001-reader.yaml", stages: 1, minCorpora: 4},
-		{file: "0002-writer.yaml", stages: 1, minCorpora: 2},
-		{file: "0003-knowledge.yaml", stages: 1, minCorpora: 4},
-		{file: "0004-generalist.yaml", stages: 1, minCorpora: 5},
-		{file: "0005-assistant.yaml", stages: 2, minCorpora: 5},
+		{file: "0000-canary.yaml", stages: 1, minCorpora: 4},
+		{file: "0001-babble.yaml", stages: 1, minCorpora: 4},
+		{file: "0002-reader.yaml", stages: 1, minCorpora: 4},
+		{file: "0003-writer.yaml", stages: 1, minCorpora: 2},
+		{file: "0004-knowledge.yaml", stages: 1, minCorpora: 4},
+		{file: "0005-generalist.yaml", stages: 1, minCorpora: 5},
+		{file: "0006-assistant.yaml", stages: 2, minCorpora: 5},
 	}
 	var previousParameters uint64
 	var previousTokens int64
@@ -37,8 +38,8 @@ func TestReferenceComposesFormCapabilityLadder(t *testing.T) {
 			if len(compose.Stages) != test.stages || len(compose.Stages[0].Corpora) < test.minCorpora {
 				t.Fatalf("compose stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
 			}
-			if compose.Architecture.Tokenizer.Name != "byte" || compose.Architecture.Tokenizer.Revision != "builtin-byte-schema-1" || compose.Architecture.VocabularySize != 259 {
-				t.Fatalf("compose does not use the executable byte tokenizer: %+v", compose.Architecture.Tokenizer)
+			if compose.Architecture.Tokenizer.Name != "tiktoken/cl100k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-cl100k-base" || compose.Architecture.VocabularySize != 100259 {
+				t.Fatalf("compose does not use the portable subword tokenizer: %+v", compose.Architecture.Tokenizer)
 			}
 			forecast, err := model.ForecastCompose(compose)
 			if err != nil {
@@ -50,7 +51,7 @@ func TestReferenceComposesFormCapabilityLadder(t *testing.T) {
 			previousParameters, previousTokens = forecast.ApproximateParameters, forecast.PlannedTokens
 		})
 	}
-	assistant, _, err := model.LoadCompose("0005-assistant.yaml")
+	assistant, _, err := model.LoadCompose("0006-assistant.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

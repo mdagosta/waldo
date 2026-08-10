@@ -32,6 +32,7 @@ type workerFrame struct {
 	Kind         string `json:"kind"`
 	Schema       int    `json:"schema"`
 	Data         string `json:"data,omitempty"`
+	TokenID      *int   `json:"token_id,omitempty"`
 	Tokens       int    `json:"tokens,omitempty"`
 	FinishReason string `json:"finish_reason,omitempty"`
 	DurationMS   int64  `json:"duration_ms,omitempty"`
@@ -43,6 +44,7 @@ type workerRequest struct {
 	Kind        string  `json:"kind"`
 	Schema      int     `json:"schema"`
 	Prompt      string  `json:"prompt"`
+	TokenIDs    []int   `json:"token_ids,omitempty"`
 	MaxTokens   int     `json:"max_tokens"`
 	Temperature float64 `json:"temperature"`
 	TopP        float64 `json:"top_p"`
@@ -57,6 +59,8 @@ type MLXSession struct {
 	stderr  bytes.Buffer
 	mu      sync.Mutex
 	closed  bool
+	codec   training.TokenCodec
+	spec    training.TokenizerSpec
 }
 
 func Open(ctx context.Context, inspection model.Inspection) (Opened, error) {
@@ -102,6 +106,10 @@ func openMLX(ctx context.Context, inspection model.Inspection, artifacts Artifac
 }
 
 func startMLXSession(ctx context.Context, python string, artifacts Artifacts) (*MLXSession, int, error) {
+	spec, codec, err := loadTokenizer(artifacts.Tokenizer)
+	if err != nil {
+		return nil, 0, err
+	}
 	command := exec.CommandContext(ctx, python, "-c", mlxruntime.WithModel(mlxChatWorker), artifacts.Weights, artifacts.Configuration, artifacts.Tokenizer)
 	stdin, err := command.StdinPipe()
 	if err != nil {
@@ -112,7 +120,7 @@ func startMLXSession(ctx context.Context, python string, artifacts Artifacts) (*
 		_ = stdin.Close()
 		return nil, 0, err
 	}
-	session := &MLXSession{command: command, stdin: stdin, encoder: json.NewEncoder(stdin), scanner: bufio.NewScanner(stdout)}
+	session := &MLXSession{command: command, stdin: stdin, encoder: json.NewEncoder(stdin), scanner: bufio.NewScanner(stdout), codec: codec, spec: spec}
 	session.scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	command.Stderr = &session.stderr
 	if err := command.Start(); err != nil {
@@ -145,6 +153,10 @@ func (session *MLXSession) Generate(ctx context.Context, prompt string, options 
 		return Result{}, fmt.Errorf("MLX chat session is closed")
 	}
 	request := workerRequest{Kind: "generate", Schema: 1, Prompt: prompt, MaxTokens: options.MaxTokens, Temperature: options.Temperature, TopP: options.TopP, Seed: options.Seed}
+	if session.spec.Name != "byte" {
+		request.TokenIDs = session.codec.Encode(prompt)
+		request.Prompt = ""
+	}
 	if err := session.encoder.Encode(request); err != nil {
 		return Result{}, fmt.Errorf("send MLX chat request: %w", err)
 	}
@@ -160,9 +172,14 @@ func (session *MLXSession) Generate(ctx context.Context, prompt string, options 
 		}
 		switch frame.Kind {
 		case "token":
-			data, err := base64.StdEncoding.DecodeString(frame.Data)
-			if err != nil {
-				return Result{}, fmt.Errorf("decode MLX chat token: %w", err)
+			var data []byte
+			if frame.TokenID != nil {
+				data = []byte(session.codec.Decode([]int{*frame.TokenID}))
+			} else {
+				data, err = base64.StdEncoding.DecodeString(frame.Data)
+				if err != nil {
+					return Result{}, fmt.Errorf("decode MLX chat token: %w", err)
+				}
 			}
 			generated = append(generated, data...)
 			if emit != nil && emitErr == nil {

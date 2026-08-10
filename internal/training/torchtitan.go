@@ -156,8 +156,8 @@ func validateTorchArchitecture(raw json.RawMessage, label string) error {
 	if architecture.Family != "decoder-transformer" {
 		return fmt.Errorf("%s backend does not support architecture family %q", label, architecture.Family)
 	}
-	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
-		return fmt.Errorf("%s backend currently requires tokenizer byte@builtin-byte-schema-1 with vocabulary_size 259; model pins %s@%s with vocabulary_size %d", label, architecture.Tokenizer.Name, architecture.Tokenizer.Revision, architecture.VocabularySize)
+	if _, _, err := ResolveTokenizer(architecture.Tokenizer.Name, architecture.Tokenizer.Revision, architecture.VocabularySize); err != nil {
+		return fmt.Errorf("%s backend: %w", label, err)
 	}
 	return nil
 }

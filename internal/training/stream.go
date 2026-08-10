@@ -26,6 +26,7 @@ type Record struct {
 	License     string `json:"license"`
 	Language    string `json:"language,omitempty"`
 	Corpus      string `json:"corpus,omitempty"`
+	Tokens      []int  `json:"tokens,omitempty"`
 }
 
 type RecordPartition struct {
@@ -33,6 +34,7 @@ type RecordPartition struct {
 	selected   map[string]bool
 	inputs     []Input
 	parameters ResolvedParameters
+	codec      TokenCodec
 }
 
 type PartitionProgress struct {
@@ -79,11 +81,18 @@ func NewRecordPartitionWithProgress(inputs []Input, parameters ResolvedParameter
 // NewRecordPartitionContext makes the full-corpus held-out selection scan
 // interruptible by its caller.
 func NewRecordPartitionContext(ctx context.Context, inputs []Input, parameters ResolvedParameters, progress func(PartitionProgress)) (RecordPartition, error) {
+	return NewRecordPartitionContextWithTokenizer(ctx, inputs, parameters, byteCodec{}, progress)
+}
+
+func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input, parameters ResolvedParameters, codec TokenCodec, progress func(PartitionProgress)) (RecordPartition, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if codec == nil {
+		return RecordPartition{}, fmt.Errorf("record partition requires a tokenizer")
+	}
 	ordered := orderedInputs(inputs)
-	partition := RecordPartition{selected: make(map[string]bool), inputs: ordered, parameters: parameters}
+	partition := RecordPartition{selected: make(map[string]bool), inputs: ordered, parameters: parameters, codec: codec}
 	policy := parameters.Evaluation
 	if policy == nil {
 		policy = &EvaluationPolicy{Selection: "none-v1"}
@@ -107,7 +116,7 @@ func NewRecordPartitionContext(ctx context.Context, inputs []Input, parameters R
 			records++
 			key := selectionID(input.SHA256, row)
 			score := evaluationScore(parameters.Seed, key)
-			candidate := evaluationCandidate{key: key, corpus: input.Corpus, score: score, textBytes: int64(len(view.Text)), tokens: int64(len(view.Text))}
+			candidate := evaluationCandidate{key: key, corpus: input.Corpus, score: score, textBytes: int64(len(view.Text)), tokens: int64(codec.Count(view.Text))}
 			candidateHeap := &candidates
 			if policy.Selection == "stratified-lowest-sha256-v1" {
 				candidateHeap = groupCandidates[input.Corpus]
@@ -221,7 +230,7 @@ func (partition RecordPartition) EvaluationRecords() RecordSource {
 func (partition RecordPartition) TrainingByteTargets(ctx context.Context) (int64, error) {
 	var perEpoch int64
 	err := rawRecordSource{inputs: partition.inputs, include: func(record Record) bool { return !partition.selected[record.SelectionID] }}.Stream(ctx, func(record Record) error {
-		value := int64(len(record.Text)) + 1
+		value := int64(partition.codec.Count(record.Text)) + 1
 		if perEpoch > math.MaxInt64-value {
 			return fmt.Errorf("training byte-token target count overflows int64")
 		}

@@ -24,6 +24,15 @@ type Counter interface {
 	Count(string) int
 }
 
+// Codec is the portable tokenizer surface used by model training and
+// inference. Encode never recognizes special-token text; WALDO owns special
+// token framing separately.
+type Codec interface {
+	Counter
+	Encode(string) []int
+	Decode([]int) string
+}
+
 var (
 	initialize sync.Once
 	mutex      sync.Mutex
@@ -83,4 +92,24 @@ func (counter *tiktokenCounter) Name() string { return counter.name }
 
 func (counter *tiktokenCounter) Count(text string) int {
 	return len(counter.encoding.Encode(text, nil, nil))
+}
+
+func (counter *tiktokenCounter) Encode(text string) []int {
+	return counter.encoding.Encode(text, nil, nil)
+}
+
+func (counter *tiktokenCounter) Decode(tokens []int) string {
+	return counter.encoding.Decode(tokens)
+}
+
+func NewCodec(name string) (Codec, error) {
+	counter, err := New(name)
+	if err != nil {
+		return nil, err
+	}
+	codec, ok := counter.(Codec)
+	if !ok {
+		return nil, fmt.Errorf("tokenizer %q does not support encoding and decoding", name)
+	}
+	return codec, nil
 }

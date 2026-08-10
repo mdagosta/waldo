@@ -4,7 +4,7 @@ schema: 1
 architecture:
   family: decoder-transformer
   context_tokens: 512
-  vocabulary_size: 259
+  vocabulary_size: 100259
   hidden_size: 384
   intermediate_size: 1024
   layers: 6
@@ -13,8 +13,8 @@ architecture:
   tie_embeddings: true
   parameter_dtype: bfloat16
   tokenizer:
-    name: byte
-    revision: builtin-byte-schema-1
+    name: tiktoken/cl100k_base
+    revision: tiktoken-cl100k-base
 stages:
   - name: pretrain
     type: pre-training

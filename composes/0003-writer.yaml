@@ -1,10 +1,10 @@
-# Fifth rung: cover literary, encyclopedic, technical, civic, and scientific text.
+# Third rung: maintain topic and structure across longer prose.
 kind: waldo-model-compose
 schema: 1
 architecture:
   family: decoder-transformer
   context_tokens: 2048
-  vocabulary_size: 259
+  vocabulary_size: 100259
   hidden_size: 1024
   intermediate_size: 2816
   layers: 24
@@ -13,8 +13,8 @@ architecture:
   tie_embeddings: true
   parameter_dtype: bfloat16
   tokenizer:
-    name: byte
-    revision: builtin-byte-schema-1
+    name: tiktoken/cl100k_base
+    revision: tiktoken-cl100k-base
 stages:
   - name: pretrain
     type: pre-training
@@ -22,16 +22,13 @@ stages:
     corpora:
       - core/books
       - core/common-pile/wikimedia
-      - core/common-pile/stackexchange
-      - government
-      - science/plos
     parameters:
       profile: causal-pretrain-v2
-      steps: 247883
+      steps: 75000
       batch_size: 32
       sequence_length: 2048
       learning_rate: 0.0003
       seed: 42
-      warmup_steps: 2479
-      checkpoint_every: 24788
-      evaluate_every: 24788
+      warmup_steps: 750
+      checkpoint_every: 7500
+      evaluate_every: 7500

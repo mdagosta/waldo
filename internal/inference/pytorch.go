@@ -35,6 +35,8 @@ type PyTorchSession struct {
 	stderr  bytes.Buffer
 	mu      sync.Mutex
 	closed  bool
+	codec   training.TokenCodec
+	spec    training.TokenizerSpec
 }
 
 func openPyTorch(ctx context.Context, inspection model.Inspection, artifacts Artifacts) (Opened, error) {
@@ -65,6 +67,10 @@ func openPyTorch(ctx context.Context, inspection model.Inspection, artifacts Art
 }
 
 func startPyTorchSession(ctx context.Context, python, device string, artifacts Artifacts) (*PyTorchSession, int, error) {
+	spec, codec, err := loadTokenizer(artifacts.Tokenizer)
+	if err != nil {
+		return nil, 0, err
+	}
 	command := exec.CommandContext(ctx, python, "-c", string(pyTorchChatWorker), artifacts.Weights, artifacts.Configuration, artifacts.Tokenizer, device)
 	stdin, err := command.StdinPipe()
 	if err != nil {
@@ -75,7 +81,7 @@ func startPyTorchSession(ctx context.Context, python, device string, artifacts A
 		_ = stdin.Close()
 		return nil, 0, err
 	}
-	session := &PyTorchSession{command: command, stdin: stdin, encoder: json.NewEncoder(stdin), scanner: bufio.NewScanner(stdout)}
+	session := &PyTorchSession{command: command, stdin: stdin, encoder: json.NewEncoder(stdin), scanner: bufio.NewScanner(stdout), codec: codec, spec: spec}
 	session.scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	command.Stderr = &session.stderr
 	if err := command.Start(); err != nil {
@@ -108,6 +114,10 @@ func (session *PyTorchSession) Generate(ctx context.Context, prompt string, opti
 		return Result{}, fmt.Errorf("PyTorch chat session is closed")
 	}
 	request := workerRequest{Kind: "generate", Schema: 1, Prompt: prompt, MaxTokens: options.MaxTokens, Temperature: options.Temperature, TopP: options.TopP, Seed: options.Seed}
+	if session.spec.Name != "byte" {
+		request.TokenIDs = session.codec.Encode(prompt)
+		request.Prompt = ""
+	}
 	if err := session.encoder.Encode(request); err != nil {
 		return Result{}, fmt.Errorf("send PyTorch chat request: %w", err)
 	}
@@ -123,9 +133,14 @@ func (session *PyTorchSession) Generate(ctx context.Context, prompt string, opti
 		}
 		switch frame.Kind {
 		case "token":
-			data, err := base64.StdEncoding.DecodeString(frame.Data)
-			if err != nil {
-				return Result{}, fmt.Errorf("decode PyTorch chat token: %w", err)
+			var data []byte
+			if frame.TokenID != nil {
+				data = []byte(session.codec.Decode([]int{*frame.TokenID}))
+			} else {
+				data, err = base64.StdEncoding.DecodeString(frame.Data)
+				if err != nil {
+					return Result{}, fmt.Errorf("decode PyTorch chat token: %w", err)
+				}
 			}
 			generated = append(generated, data...)
 			if emit != nil && emitErr == nil {

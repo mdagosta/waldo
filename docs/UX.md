@@ -610,8 +610,10 @@ executing a real operation on Metal. On Linux, automatic resolution probes for
 TorchTitan first and PyTorch second. PyTorch is an executable single-process
 adapter for usable CPU, NVIDIA CUDA, and AMD ROCm installations. TorchTitan
 launches one rank per visible GPU on a single Linux node and uses its device
-mesh with PyTorch FSDP2. The real workers accept the built-in byte-tokenizer
-presets, compute no-gradient held-out loss and perplexity, and produce
+mesh with PyTorch FSDP2. The real workers accept both the legacy built-in byte
+tokenizer and portable offline `tiktoken/cl100k_base`; WALDO performs subword
+encoding and decoding in Go so MLX and PyTorch receive identical token IDs.
+Workers compute no-gradient held-out loss and perplexity, and produce
 resumable checkpoint bundles plus terminal Safetensors weights with the same
 internal tensor contract. If no
 compatible real backend is available, training warns and fails with

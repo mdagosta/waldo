@@ -169,18 +169,18 @@ class Generator:
             tokenizer = json.load(stream)
         if config.get("kind") != "waldo-mlx-model-config" or config.get("schema") != 1:
             raise ValueError("unsupported WALDO MLX model configuration")
-        if tokenizer.get("kind") != "waldo-byte-tokenizer" or tokenizer.get("schema") != 1:
+        if tokenizer.get("kind") not in ("waldo-tokenizer", "waldo-byte-tokenizer") or tokenizer.get("schema") != 1:
             raise ValueError("unsupported WALDO tokenizer artifact")
         architecture = config["architecture"]
-        if (
-            tokenizer.get("name") != "byte"
-            or tokenizer.get("revision") != "builtin-byte-schema-1"
-            or tokenizer.get("vocabulary_size") != 259
-            or architecture.get("vocabulary_size") != 259
-        ):
-            raise ValueError("MLX chat requires byte@builtin-byte-schema-1 with vocabulary size 259")
+        architecture_tokenizer = architecture["tokenizer"]
+        if tokenizer.get("name") != architecture_tokenizer.get("name") or tokenizer.get("revision") != architecture_tokenizer.get("revision") or tokenizer.get("vocabulary_size") != architecture.get("vocabulary_size"):
+            raise ValueError("MLX chat tokenizer artifact does not match the architecture")
         self.context_tokens = int(architecture["context_tokens"])
-        self.tokenizer = ByteTokenizer()
+        self.byte_tokenizer = tokenizer.get("name") == "byte"
+        self.tokenizer = ByteTokenizer() if self.byte_tokenizer else None
+        self.bos_id = int(tokenizer["bos_id"])
+        self.eos_id = int(tokenizer["eos_id"])
+        self.pad_id = int(tokenizer["pad_id"])
         self.model = DecoderLM(architecture)
         self.model.load_weights(weights_path)
         mx.eval(self.model.parameters())
@@ -192,9 +192,11 @@ class Generator:
         top_p = float(request["top_p"])
         seed = request.get("seed")
         generator = random.Random(seed if seed is not None else int.from_bytes(os.urandom(16), "big"))
-        tokens = self.tokenizer.encode(prompt, add_eos=False)
+        tokens = [int(token) for token in request.get("token_ids", [])]
+        if not tokens and self.byte_tokenizer:
+            tokens = self.tokenizer.encode(prompt, add_eos=False)
         if not tokens:
-            tokens = [self.tokenizer.bos_id]
+            tokens = [self.bos_id]
         tokens = tokens[-self.context_tokens:]
         started = time.perf_counter()
         produced = 0
@@ -205,13 +207,18 @@ class Generator:
         for _ in range(maximum):
             token = sample(logits[0, -1], temperature, top_p, generator)
             tokens.append(token)
-            if token == self.tokenizer.eos_id:
+            if token == self.eos_id:
                 reason = "eos"
                 break
-            data = self.tokenizer.decode_token(token)
-            if data:
-                produced += 1
-                emit("token", data=base64.b64encode(data).decode("ascii"))
+            if token == self.pad_id or token == self.bos_id:
+                continue
+            produced += 1
+            if self.byte_tokenizer:
+                data = self.tokenizer.decode_token(token)
+                if data:
+                    emit("token", data=base64.b64encode(data).decode("ascii"))
+            else:
+                emit("token", token_id=token)
             if len(tokens) >= self.context_tokens:
                 tokens = tokens[-self.context_tokens:]
                 inputs = mx.array([tokens], dtype=mx.int32)
