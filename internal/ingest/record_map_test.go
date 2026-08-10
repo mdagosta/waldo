@@ -64,6 +64,26 @@ func TestRecordMapPreservesAndConservativelyCombinesLicenseArray(t *testing.T) {
 	}
 }
 
+func TestRecordMapPreservesSelectedProvenanceMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.jsonl")
+	contents := `{"text":"training record","id":"record-7","metadata":{"dataset_id":"dataset-a","url":"https://source.example/7","tags":["one","two"]}}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{
+		Text: []string{"text"}, ID: "metadata.url",
+		Meta: map[string]string{"dataset_id": "metadata.dataset_id", "record_id": "id", "tags": "metadata.tags[]"},
+	}}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	if len(rows) != 1 || rows[0].Source != "https://source.example/7" || rows[0].Meta == nil {
+		t.Fatalf("rows = %+v", rows)
+	}
+	want := `{"dataset_id":"dataset-a","record_id":"record-7","tags":["one","two"]}`
+	if *rows[0].Meta != want {
+		t.Fatalf("meta = %q, want %q", *rows[0].Meta, want)
+	}
+}
+
 func TestRecordMapRejectsTopLevelJSONArray(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.json")
 	if err := os.WriteFile(path, []byte(`[{"text":"one"},{"text":"two"}]`), 0o644); err != nil {

@@ -352,10 +352,46 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		}
 		text = renderDialogue(text, response)
 		meta = dialogueMeta(2)
-	} else if input.Profile.Type != ProfileRecordMap {
+	} else if input.Profile.Type == ProfileRecordMap {
+		mapped, err := mappedRecordMeta(record, input.Profile.Fields.Meta)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		meta = mapped
+	} else {
 		return shard.TextRow{}, fmt.Errorf("profile %q cannot be mapped from scalar fields", input.Profile.Type)
 	}
 	return canonicalMappedRow(record, plan, input, fallbackSource, text, meta)
+}
+
+func mappedRecordMeta(record recordAccessor, fields map[string]string) (*string, error) {
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	metadata := map[string]any{}
+	for name, path := range fields {
+		values, err := record.Values(path)
+		if err != nil {
+			return nil, err
+		}
+		switch len(values) {
+		case 0:
+			continue
+		case 1:
+			metadata[name] = values[0]
+		default:
+			metadata[name] = values
+		}
+	}
+	if len(metadata) == 0 {
+		return nil, nil
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	value := string(encoded)
+	return &value, nil
 }
 
 func mapJSONCanonicalRecord(object map[string]any, plan Plan, input PlanInput, fallbackSource string) (shard.TextRow, error) {

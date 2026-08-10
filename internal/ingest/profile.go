@@ -140,8 +140,13 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) == 0 {
 			return fmt.Errorf("record-map requires fields.text")
 		}
-		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
-			return fmt.Errorf("record-map accepts text, id, date, language, and license fields only")
+		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+			return fmt.Errorf("record-map accepts text, id, date, language, license, and meta fields only")
+		}
+		for name, path := range profile.Fields.Meta {
+			if strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {
+				return fmt.Errorf("record-map meta names and paths must be non-empty")
+			}
 		}
 	case ProfileDialoguePair:
 		if len(profile.Fields.Text) == 0 || profile.Fields.Response == "" {
@@ -216,6 +221,9 @@ func (profile InputProfile) paths() []string {
 		profile.Fields.License, profile.Fields.Context, profile.Fields.Response,
 		profile.Tree.Root, profile.Tree.Replies, profile.Tree.Text, profile.Tree.Rank,
 		profile.Tree.Role)
+	for _, path := range profile.Fields.Meta {
+		paths = append(paths, path)
+	}
 	return paths
 }
 
