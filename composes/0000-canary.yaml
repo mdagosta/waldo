@@ -20,10 +20,10 @@ stages:
     type: pre-training
     objective: causal-language-modeling
     corpora:
-      - core/books/gutenberg
       - core/common-pile/public-domain-review
       - core/common-pile/foodista
       - core/common-pile/python-enhancement-proposals/peps
+      - post-train/sft/dolly
     parameters:
       profile: causal-pretrain-v2
       steps: 1000

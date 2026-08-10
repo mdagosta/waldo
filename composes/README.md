@@ -11,7 +11,7 @@ waldo model train canary composes/0000-canary.yaml
 
 | Compose | Architecture | Planned tokens | Corpus progression | Intended milestone |
 | --- | ---: | ---: | --- | --- |
-| `0000-canary.yaml` | 13.6M parameters | 16.4M | Four distinct prose and technical selections | Release-gate CUDA/MLX, artifact reload, accounting, and chat |
+| `0000-canary.yaml` | 13.6M parameters | 16.4M | Four small prose, technical, and dialogue selections | Release-gate CUDA/MLX, artifact reload, accounting, and chat |
 | `0001-babble.yaml` | 47.9M parameters | 1.05B | Gutenberg, recipes, essays, and Python specifications | Recognizable local continuations across more than one prose style |
 | `0002-reader.yaml` | 152.5M parameters | 4.84B | Open books plus the small mixed-text sources | Coherent sentences and short paragraphs |
 | `0003-writer.yaml` | 373.2M parameters | 4.92B | Open books and Wikimedia | Longer topical and document-structured prose |
