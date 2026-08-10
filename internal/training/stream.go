@@ -25,6 +25,7 @@ type Record struct {
 	Source      string `json:"source"`
 	License     string `json:"license"`
 	Language    string `json:"language,omitempty"`
+	Corpus      string `json:"corpus,omitempty"`
 }
 
 type RecordPartition struct {
@@ -44,6 +45,7 @@ type PartitionProgress struct {
 
 type evaluationCandidate struct {
 	key       string
+	corpus    string
 	score     [32]byte
 	textBytes int64
 	tokens    int64
@@ -92,6 +94,7 @@ func NewRecordPartitionContext(ctx context.Context, inputs []Input, parameters R
 	}
 	var candidates evaluationHeap
 	heap.Init(&candidates)
+	groupCandidates := map[string]*evaluationHeap{}
 	var records, completedBytes, totalBytes int64
 	for _, input := range ordered {
 		totalBytes += input.Bytes
@@ -104,12 +107,21 @@ func NewRecordPartitionContext(ctx context.Context, inputs []Input, parameters R
 			records++
 			key := selectionID(input.SHA256, row)
 			score := evaluationScore(parameters.Seed, key)
-			candidate := evaluationCandidate{key: key, score: score, textBytes: int64(len(view.Text)), tokens: int64(len(view.Text))}
-			if candidates.Len() < policy.MaxRecords {
-				heap.Push(&candidates, candidate)
-			} else if string(score[:]) < string(candidates[0].score[:]) {
-				heap.Pop(&candidates)
-				heap.Push(&candidates, candidate)
+			candidate := evaluationCandidate{key: key, corpus: input.Corpus, score: score, textBytes: int64(len(view.Text)), tokens: int64(len(view.Text))}
+			candidateHeap := &candidates
+			if policy.Selection == "stratified-lowest-sha256-v1" {
+				candidateHeap = groupCandidates[input.Corpus]
+				if candidateHeap == nil {
+					candidateHeap = &evaluationHeap{}
+					heap.Init(candidateHeap)
+					groupCandidates[input.Corpus] = candidateHeap
+				}
+			}
+			if candidateHeap.Len() < policy.MaxRecords {
+				heap.Push(candidateHeap, candidate)
+			} else if string(score[:]) < string((*candidateHeap)[0].score[:]) {
+				heap.Pop(candidateHeap)
+				heap.Push(candidateHeap, candidate)
 			}
 			if progress != nil && records%1000 == 0 {
 				progress(PartitionProgress{CurrentShard: inputPosition + 1, TotalShards: len(ordered), Records: records, Bytes: completedBytes, TotalBytes: totalBytes})
@@ -133,19 +145,48 @@ func NewRecordPartitionContext(ctx context.Context, inputs []Input, parameters R
 			desired = 1
 		}
 	}
-	values := append([]evaluationCandidate(nil), candidates...)
-	sort.Slice(values, func(i, j int) bool { return string(values[i].score[:]) < string(values[j].score[:]) })
 	var selected []evaluationCandidate
 	var bytes int64
-	for _, candidate := range values {
-		if len(selected) == desired {
-			break
+	if policy.Selection == "stratified-lowest-sha256-v1" {
+		groups := make([]string, 0, len(groupCandidates))
+		values := make(map[string][]evaluationCandidate, len(groupCandidates))
+		maxRounds := 0
+		for group, candidates := range groupCandidates {
+			groups = append(groups, group)
+			values[group] = append([]evaluationCandidate(nil), (*candidates)...)
+			sort.Slice(values[group], func(i, j int) bool { return string(values[group][i].score[:]) < string(values[group][j].score[:]) })
+			maxRounds = max(maxRounds, len(values[group]))
 		}
-		if candidate.textBytes > policy.MaxBytes-bytes {
-			continue
+		sort.Strings(groups)
+		for round := 0; round < maxRounds && len(selected) < desired; round++ {
+			for _, group := range groups {
+				if round >= len(values[group]) {
+					continue
+				}
+				candidate := values[group][round]
+				if candidate.textBytes > policy.MaxBytes-bytes {
+					continue
+				}
+				selected = append(selected, candidate)
+				bytes += candidate.textBytes
+				if len(selected) == desired {
+					break
+				}
+			}
 		}
-		selected = append(selected, candidate)
-		bytes += candidate.textBytes
+	} else {
+		values := append([]evaluationCandidate(nil), candidates...)
+		sort.Slice(values, func(i, j int) bool { return string(values[i].score[:]) < string(values[j].score[:]) })
+		for _, candidate := range values {
+			if len(selected) == desired {
+				break
+			}
+			if candidate.textBytes > policy.MaxBytes-bytes {
+				continue
+			}
+			selected = append(selected, candidate)
+			bytes += candidate.textBytes
+		}
 	}
 	if desired > 0 && len(selected) == 0 {
 		return RecordPartition{}, fmt.Errorf("no held-out record fits evaluation_max_bytes=%d; increase the limit or explicitly disable evaluation", policy.MaxBytes)
@@ -221,7 +262,7 @@ func (source rawRecordSource) Stream(ctx context.Context, consume func(Record) e
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			record := recordFromView(input.SHA256, row, view)
+			record := recordFromView(input, row, view)
 			if source.include != nil && !source.include(record) {
 				return nil
 			}
@@ -299,6 +340,7 @@ type canonicalRecordSource struct {
 	epochs      int64
 	buffer      int
 	bufferBytes int64
+	balanced    bool
 }
 
 func NewCanonicalRecordSource(inputs []Input, parameters ResolvedParameters) (RecordSource, error) {
@@ -308,11 +350,11 @@ func NewCanonicalRecordSource(inputs []Input, parameters ResolvedParameters) (Re
 	if parameters.Epochs < 1 {
 		return nil, fmt.Errorf("canonical record source requires at least one epoch")
 	}
-	if parameters.Data.Order != "bounded-shuffle-v1" || parameters.Data.ShuffleBufferRecords < 1 || parameters.Data.ShuffleBufferBytes < 1 {
+	if (parameters.Data.Order != "bounded-shuffle-v1" && parameters.Data.Order != "corpus-balanced-shuffle-v1") || parameters.Data.ShuffleBufferRecords < 1 || parameters.Data.ShuffleBufferBytes < 1 {
 		return nil, fmt.Errorf("unsupported canonical record order %q", parameters.Data.Order)
 	}
 	ordered := orderedInputs(inputs)
-	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, epochs: parameters.Epochs, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes}, nil
+	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, epochs: parameters.Epochs, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes, balanced: parameters.Data.Order == "corpus-balanced-shuffle-v1"}, nil
 }
 
 func orderedInputs(inputs []Input) []Input {
@@ -339,7 +381,14 @@ func (source *canonicalRecordSource) Stream(ctx context.Context, consume func(Re
 }
 
 func (source *canonicalRecordSource) streamEpoch(ctx context.Context, epoch int64, consume func(Record) error) error {
-	inputs := append([]Input(nil), source.inputs...)
+	if source.balanced {
+		return source.streamBalancedEpoch(ctx, epoch, consume)
+	}
+	return source.streamInputGroup(ctx, epoch, source.inputs, consume)
+}
+
+func (source *canonicalRecordSource) streamInputGroup(ctx context.Context, epoch int64, group []Input, consume func(Record) error) error {
+	inputs := append([]Input(nil), group...)
 	inputRandom := newSplitMix64(source.seed + uint64(epoch)*0x9e3779b97f4a7c15)
 	for index := len(inputs) - 1; index > 0; index-- {
 		other := inputRandom.intn(index + 1)
@@ -356,7 +405,7 @@ func (source *canonicalRecordSource) streamEpoch(ctx context.Context, epoch int6
 	}
 	for _, input := range inputs {
 		err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
-			record := recordFromView(input.SHA256, row, view)
+			record := recordFromView(input, row, view)
 			recordBytes := recordMemoryBytes(record)
 			if recordBytes > source.bufferBytes {
 				return emit(record)
@@ -393,15 +442,82 @@ func (source *canonicalRecordSource) streamEpoch(ctx context.Context, epoch int6
 	return nil
 }
 
-func recordFromView(shardHash string, row int64, view shard.RecordView) Record {
-	return Record{SelectionID: selectionID(shardHash, row), ID: view.ID, Text: view.Text, Source: view.Source, License: view.License, Language: view.Language}
+type balancedRecord struct {
+	record Record
+	err    error
+}
+
+// streamBalancedEpoch emits one record from each declared corpus group in
+// stable round-robin order. Each group retains the bounded shuffle contract.
+func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, epoch int64, consume func(Record) error) error {
+	groups := map[string][]Input{}
+	for _, input := range source.inputs {
+		if input.Corpus == "" {
+			return fmt.Errorf("corpus-balanced record order requires corpus identity for shard %s", input.SHA256)
+		}
+		groups[input.Corpus] = append(groups[input.Corpus], input)
+	}
+	names := make([]string, 0, len(groups))
+	for name := range groups {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	streamContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	streams := make([]<-chan balancedRecord, 0, len(names))
+	for position, name := range names {
+		output := make(chan balancedRecord)
+		streams = append(streams, output)
+		group := groups[name]
+		go func(groupPosition int, values []Input, destination chan<- balancedRecord) {
+			defer close(destination)
+			groupSource := *source
+			groupSource.seed ^= uint64(groupPosition+1) * 0x9e3779b97f4a7c15
+			err := groupSource.streamInputGroup(streamContext, epoch, values, func(record Record) error {
+				select {
+				case destination <- balancedRecord{record: record}:
+					return nil
+				case <-streamContext.Done():
+					return streamContext.Err()
+				}
+			})
+			if err != nil && streamContext.Err() == nil {
+				select {
+				case destination <- balancedRecord{err: err}:
+				case <-streamContext.Done():
+				}
+			}
+		}(position, group, output)
+	}
+	for len(streams) > 0 {
+		remaining := streams[:0]
+		for _, stream := range streams {
+			item, ok := <-stream
+			if !ok {
+				continue
+			}
+			if item.err != nil {
+				return item.err
+			}
+			if err := consume(item.record); err != nil {
+				return err
+			}
+			remaining = append(remaining, stream)
+		}
+		streams = remaining
+	}
+	return nil
+}
+
+func recordFromView(input Input, row int64, view shard.RecordView) Record {
+	return Record{SelectionID: selectionID(input.SHA256, row), ID: view.ID, Text: view.Text, Source: view.Source, License: view.License, Language: view.Language, Corpus: input.Corpus}
 }
 
 // recordMemoryBytes accounts for retained string data and the five string
 // headers in Record. It is deliberately conservative and keeps the shuffle
 // window bounded by bytes as well as record count.
 func recordMemoryBytes(record Record) int64 {
-	return int64(6*16 + len(record.SelectionID) + len(record.ID) + len(record.Text) + len(record.Source) + len(record.License) + len(record.Language))
+	return int64(7*16 + len(record.SelectionID) + len(record.ID) + len(record.Text) + len(record.Source) + len(record.License) + len(record.Language) + len(record.Corpus))
 }
 
 // splitMix64 is specified here rather than delegated to math/rand so record

@@ -48,3 +48,4 @@ logs.
 - [0042: Preserve compose and advisor history](0042-compose-and-advisor-history.md)
 - [0043: Unify model training entry points](0043-unified-model-training.md)
 - [0044: Verify persisted training artifacts](0044-verify-persisted-training-artifacts.md)
+- [0045: Balance declared training corpora](0045-balance-declared-training-corpora.md)

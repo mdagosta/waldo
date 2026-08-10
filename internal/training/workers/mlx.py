@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r2"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r4"
 
 
 def emit(kind, **payload):
@@ -177,7 +177,9 @@ class Trainer:
         self.replay_steps = 0
         self.consumed_tokens = 0
         self.token_buffer = []
+        self.corpus_buffer = []
         self.batch = []
+        self.consumed_by_corpus = {}
         self.checkpoints = []
         self.evaluations = []
         self.evaluation_sequences = []
@@ -240,11 +242,14 @@ class Trainer:
     def add_record(self, record):
         if self.step_number >= self.target_steps:
             return
-        self.token_buffer.extend(self.tokenizer.encode(record["text"]))
+        encoded = self.tokenizer.encode(record["text"])
+        self.token_buffer.extend(encoded)
+        self.corpus_buffer.extend([record.get("corpus", "")] * len(encoded))
         window = self.sequence_length + 1
         while len(self.token_buffer) >= window and self.step_number < self.target_steps:
-            self.add_sequence(self.token_buffer[:window], self.sequence_length)
+            self.add_sequence(self.token_buffer[:window], self.sequence_length, self.corpus_buffer[1:window])
             del self.token_buffer[: self.sequence_length]
+            del self.corpus_buffer[: self.sequence_length]
 
     def add_evaluation_record(self, record):
         self.evaluation_record_count += 1
@@ -259,13 +264,16 @@ class Trainer:
             self.evaluation_token_targets += valid_targets
             del tokens[: self.sequence_length]
 
-    def add_sequence(self, tokens, valid_targets):
+    def add_sequence(self, tokens, valid_targets, target_corpora=None):
         if valid_targets <= 0 or self.step_number >= self.target_steps:
             return
         window = self.sequence_length + 1
         padded = tokens + [self.tokenizer.pad_id] * (window - len(tokens))
         mask = [1.0] * valid_targets + [0.0] * (self.sequence_length - valid_targets)
-        self.batch.append((padded, mask))
+        corpus_counts = {}
+        for corpus in (target_corpora or [])[:valid_targets]:
+            corpus_counts[corpus] = corpus_counts.get(corpus, 0) + 1
+        self.batch.append((padded, mask, corpus_counts))
         if len(self.batch) >= self.batch_size:
             self.train_batch()
 
@@ -291,6 +299,9 @@ class Trainer:
         valid_tokens = int(mask.sum().item())
         self.step_number = next_step
         self.consumed_tokens += valid_tokens
+        for item in self.batch:
+            for corpus, count in item[2].items():
+                self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
         self.final_loss = loss_value
         self.batch = []
         now = time.perf_counter()
@@ -364,6 +375,7 @@ class Trainer:
                 "architecture_sha256": self.begin["architecture_sha256"],
                 "step": self.step_number,
                 "consumed_tokens": self.consumed_tokens,
+                "consumption": self.consumed_by_corpus,
                 "random": {"algorithm": "mlx-seed-no-stochastic-layers-v1", "seed": self.parameters["seed"]},
             },
         )
@@ -419,6 +431,7 @@ class Trainer:
         mx.random.seed(state["random"]["seed"])
         self.step_number = resume["step"]
         self.consumed_tokens = resume["tokens"]
+        self.consumed_by_corpus = state.get("consumption", {})
         self.replay_steps = resume["step"]
         self.checkpoints = [resume["checkpoint"]]
 
@@ -467,7 +480,7 @@ class Trainer:
             )
         if self.step_number < self.target_steps and len(self.token_buffer) > 1:
             valid_targets = min(self.sequence_length, len(self.token_buffer) - 1)
-            self.add_sequence(self.token_buffer[: self.sequence_length + 1], valid_targets)
+            self.add_sequence(self.token_buffer[: self.sequence_length + 1], valid_targets, self.corpus_buffer[1 : valid_targets + 1])
         if self.step_number < self.target_steps and self.batch:
             self.train_batch()
         if self.step_number != self.target_steps:
@@ -536,6 +549,10 @@ class Trainer:
                 "checkpoints": self.checkpoints,
                 "evaluations": self.evaluations,
                 "artifacts": outputs,
+                "consumption": [
+                    {"corpus": corpus, "token_targets": targets}
+                    for corpus, targets in sorted(self.consumed_by_corpus.items())
+                ],
             },
         )
 

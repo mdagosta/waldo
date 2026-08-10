@@ -349,6 +349,27 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 			}
 		}
 		fmt.Fprintf(stdout, "RUN %04d:      %-16s %-11s %s tokens%s%s\n", pin.Ordinal, pin.Stage, pin.State, humanCount(tokens), simulated, detail)
+		if position < len(inspection.Runs) && inspection.Runs[position].Observation != nil {
+			observation := inspection.Runs[position].Observation
+			if len(observation.Evaluations) > 0 {
+				initial := observation.Evaluations[0].Metrics["heldout_loss"]
+				finalMetrics := observation.Evaluations[len(observation.Evaluations)-1].Metrics
+				best := initial
+				for _, evaluation := range observation.Evaluations {
+					if loss, ok := evaluation.Metrics["heldout_loss"]; ok && loss < best {
+						best = loss
+					}
+				}
+				fmt.Fprintf(stdout, "  EVALUATION:  held-out loss initial %.4f, best %.4f, final %.4f", initial, best, finalMetrics["heldout_loss"])
+				if artifactLoss, ok := finalMetrics["artifact_heldout_loss"]; ok {
+					fmt.Fprintf(stdout, "; reloaded artifact %.4f", artifactLoss)
+				}
+				fmt.Fprintln(stdout)
+			}
+			for _, item := range observation.Consumption {
+				fmt.Fprintf(stdout, "  CORPUS:      %-40s %s token targets\n", item.Corpus, humanCount(item.TokenTargets))
+			}
+		}
 		if position < len(inspection.BOM.Runs) {
 			runDirectory := filepath.Dir(filepath.FromSlash(inspection.BOM.Runs[position].RunBOM))
 			fmt.Fprintf(stdout, "  TELEMETRY:   %s\n", filepath.Join(inspection.Path, runDirectory, model.TelemetryFilename))
@@ -1093,7 +1114,7 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 		}
 		seen[object.Shard.SHA256] = true
 		paths = append(paths, object.Path)
-		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes})
+		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes, Corpus: selectedCorpusGroup(object.Shard.Manifest, bom.Paths)})
 	}
 	if audit {
 		fmt.Fprintf(progress, "preflight/%s          auditing %s materialized shards\n", stage.Name, humanInteger(int64(len(paths))))
@@ -1109,6 +1130,19 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 		}
 	}
 	return model.PrepareStage(stage, bom, inputs)
+}
+
+func selectedCorpusGroup(manifest string, selections []string) string {
+	best := ""
+	for _, selection := range selections {
+		selection = strings.TrimSuffix(strings.TrimSpace(selection), "/")
+		if manifest == selection || strings.HasPrefix(manifest, selection+"/") {
+			if len(selection) > len(best) {
+				best = selection
+			}
+		}
+	}
+	return best
 }
 
 func modelMaterializeProgressPrinter(output io.Writer) func(corpus.MaterializeProgress) {

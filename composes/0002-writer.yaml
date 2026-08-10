@@ -23,7 +23,7 @@ stages:
       - core/books
       - core/common-pile/wikimedia
     parameters:
-      profile: causal-pretrain-v1
+      profile: causal-pretrain-v2
       steps: 75000
       batch_size: 32
       sequence_length: 2048

@@ -154,6 +154,7 @@ type Input struct {
 	Path   string
 	SHA256 string
 	Bytes  int64
+	Corpus string
 }
 
 type Initialization struct {
@@ -224,13 +225,21 @@ type Artifact struct {
 }
 
 type Observation struct {
-	Simulated      bool         `json:"simulated"`
-	Steps          int64        `json:"steps"`
-	ConsumedTokens int64        `json:"consumed_tokens"`
-	FinalLoss      *float64     `json:"final_loss,omitempty"`
-	Checkpoints    []Checkpoint `json:"checkpoints,omitempty"`
-	Evaluations    []Evaluation `json:"evaluations,omitempty"`
-	Artifacts      []Artifact   `json:"artifacts"`
+	Simulated      bool                `json:"simulated"`
+	Steps          int64               `json:"steps"`
+	ConsumedTokens int64               `json:"consumed_tokens"`
+	FinalLoss      *float64            `json:"final_loss,omitempty"`
+	Checkpoints    []Checkpoint        `json:"checkpoints,omitempty"`
+	Evaluations    []Evaluation        `json:"evaluations,omitempty"`
+	Artifacts      []Artifact          `json:"artifacts"`
+	Consumption    []CorpusConsumption `json:"consumption,omitempty"`
+}
+
+// CorpusConsumption is exact next-token target usage attributed by the
+// trainer after packing, not an estimate based on selected shard sizes.
+type CorpusConsumption struct {
+	Corpus       string `json:"corpus"`
+	TokenTargets int64  `json:"token_targets"`
 }
 
 type Checkpoint struct {

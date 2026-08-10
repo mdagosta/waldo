@@ -25,7 +25,7 @@ stages:
       - core/common-pile/public-domain-review
       - core/common-pile/python-enhancement-proposals/peps
     parameters:
-      profile: causal-pretrain-v1
+      profile: causal-pretrain-v2
       steps: 31984
       batch_size: 64
       sequence_length: 512

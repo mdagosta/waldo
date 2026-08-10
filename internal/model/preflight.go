@@ -50,10 +50,21 @@ func PrepareStage(stage Stage, bom corpus.BOM, inputs []training.Input) (Prepare
 		expected[selected.SHA256] = selected.Bytes
 	}
 	seen := make(map[string]bool, len(inputs))
+	resolved, err := training.ResolveParameters(stage.Parameters)
+	if err != nil {
+		return PreparedStage{}, fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
+	}
+	selected := make(map[string]bool, len(bom.Paths))
+	for _, path := range bom.Paths {
+		selected[path] = true
+	}
 	for _, input := range inputs {
 		size, exists := expected[input.SHA256]
 		if input.Path == "" || !exists || input.Bytes != size || seen[input.SHA256] {
 			return PreparedStage{}, fmt.Errorf("stage %s has an invalid or duplicate materialized input %s", stage.Name, input.SHA256)
+		}
+		if resolved.Data.Order == "corpus-balanced-shuffle-v1" && !selected[input.Corpus] {
+			return PreparedStage{}, fmt.Errorf("stage %s input %s has invalid corpus identity %q", stage.Name, input.SHA256, input.Corpus)
 		}
 		seen[input.SHA256] = true
 	}

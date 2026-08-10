@@ -21,7 +21,7 @@ import (
 	"github.com/openwaldo/waldo/internal/mlxruntime"
 )
 
-const MLXRevision = "builtin-mlx-worker-schema-1-r3"
+const MLXRevision = "builtin-mlx-worker-schema-1-r4"
 
 //go:embed workers/mlx.py
 var mlxWorker []byte

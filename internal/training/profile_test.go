@@ -71,6 +71,16 @@ func TestResolveParametersPinsVersionedDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestBalancedProfilePinsCorpusBalancedDataAndEvaluation(t *testing.T) {
+	resolved, err := ResolveParameters(Parameters{Profile: BalancedProfile, Steps: 10, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.ProfileSchema != 2 || resolved.Data.Order != "corpus-balanced-shuffle-v1" || resolved.Evaluation == nil || resolved.Evaluation.Selection != "stratified-lowest-sha256-v1" {
+		t.Fatalf("balanced profile = %+v", resolved)
+	}
+}
+
 func TestRecordPartitionPinsAndExcludesHeldOutRecords(t *testing.T) {
 	var texts []string
 	for index := 0; index < 100; index++ {
@@ -180,6 +190,59 @@ func TestCanonicalRecordSourceIsDeterministicAndComplete(t *testing.T) {
 	sort.Strings(other)
 	if !reflect.DeepEqual(sorted, other) {
 		t.Fatalf("record sets differ: %v, %v", sorted, other)
+	}
+}
+
+func TestBalancedRecordSourceInterleavesDeclaredCorpora(t *testing.T) {
+	first := writeTrainingShard(t, []string{"a1", "a2", "a3", "a4"})
+	first.Corpus = "corpus-a"
+	second := writeTrainingShard(t, []string{"b1", "b2", "b3", "b4"})
+	second.Corpus = "corpus-b"
+	parameters, err := ResolveParameters(Parameters{Profile: BalancedProfile, Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := NewCanonicalRecordSource([]Input{first, second}, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corpora []string
+	if err := source.Stream(context.Background(), func(value Record) error {
+		corpora = append(corpora, value.Corpus)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"corpus-a", "corpus-b", "corpus-a", "corpus-b", "corpus-a", "corpus-b", "corpus-a", "corpus-b"}
+	if !reflect.DeepEqual(corpora, want) {
+		t.Fatalf("corpus order = %v, want %v", corpora, want)
+	}
+}
+
+func TestBalancedEvaluationIncludesEveryCorpus(t *testing.T) {
+	first := writeTrainingShard(t, []string{"a1", "a2", "a3", "a4"})
+	first.Corpus = "corpus-a"
+	second := writeTrainingShard(t, []string{"b1", "b2", "b3", "b4"})
+	second.Corpus = "corpus-b"
+	fraction := 0.5
+	maximum := 4
+	parameters, err := ResolveParameters(Parameters{Profile: BalancedProfile, Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42, EvaluationFraction: &fraction, EvaluationMaxRecords: &maximum})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartition([]Input{first, second}, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]int{}
+	if err := partition.EvaluationRecords().Stream(context.Background(), func(value Record) error {
+		seen[value.Corpus]++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if seen["corpus-a"] != 2 || seen["corpus-b"] != 2 {
+		t.Fatalf("stratified evaluation = %v", seen)
 	}
 }
 

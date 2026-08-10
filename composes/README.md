@@ -28,6 +28,11 @@ Gutenberg. `0000-babble.yaml` deliberately remains small enough to exercise the
 pipeline while adding recipes, public-domain essays, and technical prose to its
 book data.
 
+The templates use `causal-pretrain-v2`, which deterministically interleaves the
+declared corpus selections, stratifies held-out evaluation across them, and
+records exact consumed token targets per corpus. This prevents a finite run from
+silently stopping before it reaches a declared source.
+
 Hardware remains a deployment decision. Use `waldo model forecast` to compare
 the same capability compose against the accelerator catalog and locally
 observed calibration. WALDO selects the training backend from machine-local

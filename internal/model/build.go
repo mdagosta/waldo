@@ -363,6 +363,21 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 				}
 			}
 		}
+		if backendErr == nil && runBOM.Parameters.Data.Order == "corpus-balanced-shuffle-v1" {
+			var consumed int64
+			seen := map[string]bool{}
+			for _, item := range observation.Consumption {
+				if item.Corpus == "" || item.TokenTargets <= 0 || seen[item.Corpus] {
+					backendErr = fmt.Errorf("invalid backend observation: invalid corpus consumption evidence")
+					break
+				}
+				seen[item.Corpus] = true
+				consumed += item.TokenTargets
+			}
+			if backendErr == nil && (len(seen) != len(runBOM.CorpusBOM.Paths) || consumed != observation.ConsumedTokens) {
+				backendErr = fmt.Errorf("invalid backend observation: corpus consumption accounts for %d corpora and %d of %d token targets", len(seen), consumed, observation.ConsumedTokens)
+			}
+		}
 	}
 	run.Finished = formatTime(now())
 	attempt := &run.Attempts[len(run.Attempts)-1]

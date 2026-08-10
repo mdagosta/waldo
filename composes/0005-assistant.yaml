@@ -26,7 +26,7 @@ stages:
       - government
       - science
     parameters:
-      profile: causal-pretrain-v1
+      profile: causal-pretrain-v2
       steps: 495766
       batch_size: 32
       sequence_length: 2048
@@ -41,7 +41,7 @@ stages:
     corpora:
       - post-train/sft
     parameters:
-      profile: causal-pretrain-v1
+      profile: causal-pretrain-v2
       steps: 1800
       batch_size: 32
       sequence_length: 2048

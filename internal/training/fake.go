@@ -117,9 +117,18 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 			request.Report(Event{Kind: "evaluation", Message: "simulated evaluation completed", Step: evaluation.Step, Tokens: evaluation.Tokens, Evaluation: &evaluation})
 		}
 	}
+	var consumption []CorpusConsumption
+	if request.Parameters.Data.Order == "corpus-balanced-shuffle-v1" {
+		remaining := capacity
+		for index, corpus := range request.BOM.Paths {
+			targets := remaining / int64(len(request.BOM.Paths)-index)
+			consumption = append(consumption, CorpusConsumption{Corpus: corpus, TokenTargets: targets})
+			remaining -= targets
+		}
+	}
 	return Observation{
 		Simulated: true, Steps: request.Parameters.Steps, ConsumedTokens: capacity, FinalLoss: &loss,
-		Checkpoints: checkpoints, Evaluations: evaluations,
+		Checkpoints: checkpoints, Evaluations: evaluations, Consumption: consumption,
 		Artifacts: []Artifact{{Path: filepath.ToSlash(filepath.Join(request.ArtifactPrefix, artifactName)), SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(payload))}},
 	}, nil
 }

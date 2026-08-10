@@ -12,6 +12,7 @@ import (
 
 const (
 	DefaultProfile            = "causal-pretrain-v1"
+	BalancedProfile           = "causal-pretrain-v2"
 	ProfileSchema             = 1
 	defaultShuffleBufferBytes = int64(64 * 1024 * 1024)
 )
@@ -21,7 +22,7 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if profile == "" {
 		profile = DefaultProfile
 	}
-	if profile != DefaultProfile {
+	if profile != DefaultProfile && profile != BalancedProfile {
 		return ResolvedParameters{}, fmt.Errorf("unsupported training profile %q", profile)
 	}
 	if parameters.Steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {
@@ -107,15 +108,23 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if evaluationFraction == 0 || evaluationMaxRecords == 0 || evaluationMaxBytes == 0 {
 		evaluationFraction, evaluationMaxRecords, evaluationMaxBytes = 0, 0, 0
 	}
+	order := "bounded-shuffle-v1"
+	selection := "lowest-sha256-v1"
+	profileSchema := ProfileSchema
+	if profile == BalancedProfile {
+		order = "corpus-balanced-shuffle-v1"
+		selection = "stratified-lowest-sha256-v1"
+		profileSchema = 2
+	}
 	return ResolvedParameters{
-		Profile: profile, ProfileSchema: ProfileSchema,
+		Profile: profile, ProfileSchema: profileSchema,
 		Epochs: epochs, Steps: parameters.Steps, BatchSize: parameters.BatchSize,
 		SequenceLength: parameters.SequenceLength, LearningRate: parameters.LearningRate,
 		Seed: parameters.Seed, PlannedTokenCapacity: capacity,
 		Optimizer:       Optimizer{Name: "adamw", WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},
 		Schedule:        Schedule{Name: "cosine", WarmupSteps: warmup, MinimumRateRatio: 0.1},
-		Data:            DataPlan{Order: "bounded-shuffle-v1", ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1"},
-		Evaluation:      &EvaluationPolicy{Selection: "lowest-sha256-v1", Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
+		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1"},
+		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
 	}, nil
 }

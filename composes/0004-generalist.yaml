@@ -26,7 +26,7 @@ stages:
       - government
       - science/plos
     parameters:
-      profile: causal-pretrain-v1
+      profile: causal-pretrain-v2
       steps: 247883
       batch_size: 32
       sequence_length: 2048
