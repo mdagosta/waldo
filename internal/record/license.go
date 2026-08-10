@@ -7,6 +7,7 @@ package record
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -18,6 +19,18 @@ var creativeCommonsName = regexp.MustCompile(`(?i)^CC[ _-]*(BY(?:[ _-]*(?:NC|ND|
 // removed; WALDO does not invent an identity for upstream license evidence.
 func NormalizeLicense(raw string) string {
 	value := strings.TrimSpace(raw)
+	for name, normalized := range map[string]string{
+		"Apache 2 License - https://www.apache.org/licenses/LICENSE-2.0": "Apache-2.0",
+		"BSD 2-Clause": "BSD-2-Clause",
+		"BSD 3-Clause": "BSD-3-Clause",
+		"Community Data License Agreement - Permissive 1.0 - https://cdla.dev/": "CDLA-Permissive-1.0",
+		"ISC License": "ISC",
+		"MIT License": "MIT",
+	} {
+		if strings.EqualFold(value, name) {
+			return normalized
+		}
+	}
 	if match := creativeCommonsURL.FindStringSubmatch(value); match != nil {
 		if match[3] != "" {
 			return "CC0-" + match[3]
@@ -36,4 +49,23 @@ func NormalizeLicense(raw string) string {
 		return "CC-" + name + "-" + match[2]
 	}
 	return value
+}
+
+// NormalizeLicenseSet conservatively represents simultaneous upstream license
+// declarations. Each term is normalized independently, duplicates are removed,
+// and multiple terms are joined with deterministic AND semantics. An array is
+// never collapsed to a more permissive single term.
+func NormalizeLicenseSet(raw []string) string {
+	terms := make([]string, 0, len(raw))
+	seen := map[string]bool{}
+	for _, value := range raw {
+		term := NormalizeLicense(value)
+		if term == "" || seen[term] {
+			continue
+		}
+		seen[term] = true
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	return strings.Join(terms, " AND ")
 }

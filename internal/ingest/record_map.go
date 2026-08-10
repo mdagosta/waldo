@@ -391,7 +391,7 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 	if err != nil {
 		return shard.TextRow{}, err
 	}
-	license, err := optionalScalar(record, input.Profile.Fields.License)
+	license, rawLicense, err := optionalLicense(record, input.Profile.Fields.License)
 	if err != nil {
 		return shard.TextRow{}, err
 	}
@@ -399,10 +399,8 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 	if err != nil {
 		return shard.TextRow{}, err
 	}
-	var rawLicense *string
 	if license != "" {
-		effective = waldorecord.NormalizeLicense(license)
-		rawLicense = &license
+		effective = license
 	}
 	if !input.Profile.LicensePolicy.Allows(effective) {
 		return shard.TextRow{}, fmt.Errorf("%w: %s", errLicensePolicy, effective)
@@ -413,6 +411,32 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 		ContentSHA256: hash, Text: text, Source: source, SourceName: &sourceName,
 		License: effective, LicenseRaw: rawLicense, Language: stringPointer(language), Date: stringPointer(date), Meta: meta,
 	}, nil
+}
+
+func optionalLicense(record recordAccessor, path string) (string, *string, error) {
+	if path == "" {
+		return "", nil, nil
+	}
+	values, err := record.Values(path)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(values) == 0 {
+		return "", nil, nil
+	}
+	effective := waldorecord.NormalizeLicenseSet(values)
+	if effective == "" {
+		return "", nil, nil
+	}
+	raw := values[0]
+	if len(values) > 1 {
+		encoded, err := json.Marshal(values)
+		if err != nil {
+			return "", nil, err
+		}
+		raw = string(encoded)
+	}
+	return effective, &raw, nil
 }
 
 func renderDialogue(user, assistant string) string {

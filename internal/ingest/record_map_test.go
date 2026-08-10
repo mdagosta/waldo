@@ -41,6 +41,29 @@ func TestRecordMapReadsOneJSONObjectAndExpandsArrays(t *testing.T) {
 	}
 }
 
+func TestRecordMapPreservesAndConservativelyCombinesLicenseArray(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.jsonl")
+	contents := `{"text":"licensed text","metadata":{"license":["MIT License","Creative Commons - Attribution Share-Alike - https://creativecommons.org/licenses/by-sa/4.0/"]}}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type:   ProfileRecordMap,
+		Fields: ProfileFields{Text: []string{"text"}, License: "metadata.license[]"},
+		LicensePolicy: corpus.LicensePolicy{Include: []string{
+			"CC-BY-SA-4.0 AND MIT",
+		}},
+	}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	if len(rows) != 1 || rows[0].License != "CC-BY-SA-4.0 AND MIT" || rows[0].LicenseRaw == nil {
+		t.Fatalf("rows = %+v", rows)
+	}
+	wantRaw := `["MIT License","Creative Commons - Attribution Share-Alike - https://creativecommons.org/licenses/by-sa/4.0/"]`
+	if *rows[0].LicenseRaw != wantRaw {
+		t.Fatalf("raw license = %q, want %q", *rows[0].LicenseRaw, wantRaw)
+	}
+}
+
 func TestRecordMapRejectsTopLevelJSONArray(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.json")
 	if err := os.WriteFile(path, []byte(`[{"text":"one"},{"text":"two"}]`), 0o644); err != nil {
