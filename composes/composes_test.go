@@ -13,50 +13,30 @@ import (
 	"github.com/openwaldo/waldo/internal/model"
 )
 
-func TestReferenceComposesFormCapabilityLadder(t *testing.T) {
-	tests := []struct {
-		file       string
-		stages     int
-		minCorpora int
-	}{
-		{file: "0000-canary.yaml", stages: 1, minCorpora: 4},
-		{file: "0001-babble.yaml", stages: 1, minCorpora: 4},
-		{file: "0002-reader.yaml", stages: 1, minCorpora: 4},
-		{file: "0003-writer.yaml", stages: 1, minCorpora: 2},
-		{file: "0004-knowledge.yaml", stages: 1, minCorpora: 4},
-		{file: "0005-generalist.yaml", stages: 1, minCorpora: 5},
-		{file: "0006-assistant.yaml", stages: 2, minCorpora: 5},
-	}
-	var previousParameters uint64
-	var previousTokens int64
-	for _, test := range tests {
-		t.Run(test.file, func(t *testing.T) {
-			compose, _, err := model.LoadCompose(filepath.Join(".", test.file))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(compose.Stages) != test.stages || len(compose.Stages[0].Corpora) < test.minCorpora {
-				t.Fatalf("compose stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
-			}
-			if compose.Architecture.Tokenizer.Name != "tiktoken/cl100k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-cl100k-base" || compose.Architecture.VocabularySize != 100259 {
-				t.Fatalf("compose does not use the portable subword tokenizer: %+v", compose.Architecture.Tokenizer)
-			}
-			forecast, err := model.ForecastCompose(compose)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if forecast.ApproximateParameters < previousParameters || forecast.PlannedTokens <= previousTokens {
-				t.Fatalf("ladder regressed from %d parameters/%d tokens to %d/%d", previousParameters, previousTokens, forecast.ApproximateParameters, forecast.PlannedTokens)
-			}
-			previousParameters, previousTokens = forecast.ApproximateParameters, forecast.PlannedTokens
-		})
-	}
-	assistant, _, err := model.LoadCompose("0006-assistant.yaml")
+func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
+	files, err := filepath.Glob("*.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assistant.Stages[1].Type != "fine-tuning" || assistant.Stages[1].Corpora[0] != "post-train/sft" {
-		t.Fatalf("assistant dialogue stage = %+v", assistant.Stages[1])
+	if len(files) != 1 || files[0] != "0000-canary.yaml" {
+		t.Fatalf("reference composes = %v, want only the validated canary", files)
+	}
+	compose, _, err := model.LoadCompose(files[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 4 {
+		t.Fatalf("canary stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
+	}
+	if compose.Architecture.Tokenizer.Name != "tiktoken/cl100k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-cl100k-base" || compose.Architecture.VocabularySize != 100259 {
+		t.Fatalf("canary does not use the portable subword tokenizer: %+v", compose.Architecture.Tokenizer)
+	}
+	forecast, err := model.ForecastCompose(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forecast.ApproximateParameters != 13620736 || forecast.PlannedTokens != 4096000 {
+		t.Fatalf("canary forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 

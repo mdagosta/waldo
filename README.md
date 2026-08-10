@@ -434,9 +434,9 @@ JSON model compose:
 waldo model train composed-small ./model.yaml
 ```
 
-Runnable [reference composes](composes/README.md) form a capability ladder from
-mixed-corpus babble, through coherent reading, writing, knowledge, and
-generalist experiments, to a dialogue-tuned assistant. Hardware and runtime
+The runnable [reference compose](composes/README.md) is an end-to-end training
+canary. Larger templates are added only after their budgets and resulting
+artifacts have been validated on a real training run. Hardware and runtime
 remain forecast results rather than compose identities.
 
 Portable composes name architecture, corpora, objectives, and training
