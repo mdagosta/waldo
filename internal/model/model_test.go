@@ -122,6 +122,15 @@ func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	}
 }
 
+func TestMergeProgressKeepsTerminalArtifactEvaluation(t *testing.T) {
+	progress := &training.Progress{Evaluations: []training.Evaluation{{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2}}}}
+	observation := training.Observation{Evaluations: []training.Evaluation{{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2, "artifact_heldout_loss": 2.001}}}}
+	merged := mergeProgress(progress, observation)
+	if len(merged.Evaluations) != 1 || merged.Evaluations[0].Metrics["artifact_heldout_loss"] != 2.001 {
+		t.Fatalf("merged evaluations = %+v", merged.Evaluations)
+	}
+}
+
 func TestModelBOMIdentifiesLatestRealWeights(t *testing.T) {
 	record := ModelRecord{
 		ID: "model", Name: "example", PlanSHA256: "plan", ArchitectureSHA256: "architecture", Updated: "now",

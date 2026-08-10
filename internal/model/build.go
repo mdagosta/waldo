@@ -532,7 +532,11 @@ func mergeProgress(progress *training.Progress, observation training.Observation
 	}
 	evaluations := append([]training.Evaluation(nil), progress.Evaluations...)
 	for _, evaluation := range observation.Evaluations {
-		if len(evaluations) == 0 || evaluation.Step > evaluations[len(evaluations)-1].Step {
+		if len(evaluations) > 0 && evaluation.Step == evaluations[len(evaluations)-1].Step {
+			// The completion observation may enrich the already-durable event at
+			// the same step with post-save artifact verification metrics.
+			evaluations[len(evaluations)-1] = evaluation
+		} else if len(evaluations) == 0 || evaluation.Step > evaluations[len(evaluations)-1].Step {
 			evaluations = append(evaluations, evaluation)
 		}
 	}
