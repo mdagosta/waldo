@@ -41,9 +41,13 @@ trademarks, governance terms with legal effect, and DCO-versus-CLA policy.
 ## Current status
 
 - Present: Apache-2.0 `LICENSE`, `NOTICE`, concise project documentation,
-  package tests, end-to-end tests, and cross-platform CI configuration.
+  package tests, passing portable end-to-end tests, cross-platform CI
+  configuration, and lightweight GitHub collaboration templates.
 - Corrected during this preparation: the local binary ignore rule, stale BOM
   commands in E2E tests, and the obsolete CI script path.
-- Still needed before publication: a focused history/security review, a
-  security contact, lightweight GitHub collaboration templates, and an owner
+- A preliminary source/history scan found no common credential patterns,
+  private-looking URLs, user-specific paths, or historical blobs at least
+  1 MiB. The owner still needs to confirm contributor email visibility and
+  redistributability assumptions.
+- Still needed before publication: a private security contact and an owner
   decision about the initial legal posture.
