@@ -1,7 +1,9 @@
 # Contributing
 
-This guide describes the contribution workflow while the first supported
-public release is prepared.
+WALDO is being opened early so the community can participate while its
+interfaces, workflows, and governance are still taking shape. Early feedback,
+testing, documentation improvements, and focused code contributions are
+welcome.
 
 ## Before changing code
 
@@ -21,15 +23,11 @@ gofmt -w .
 Hardware-dependent tests skip when their runtime or accelerator is unavailable.
 Networked and S3 tests require explicit opt-in; see [Testing](TESTING.md).
 
-## Commits
+## Proposing a change
 
-Use focused commits with clear messages. Corpus-index contributions and future
-code contributions are expected to use Developer Certificate of Origin (DCO)
-sign-off:
+Use focused commits with clear messages. Open an issue before a large or
+cross-domain change so the intended contract can be discussed first.
 
-```bash
-git commit --signoff
-```
-
-The project must publish its final contribution policy, code of conduct, and
-security reporting channel before accepting general contributions.
+The project has not finalized a DCO/CLA or governance policy. Those choices
+will be made explicitly with the project owner; contributors should not infer
+additional legal terms from this development guide.

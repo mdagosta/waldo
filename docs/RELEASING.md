@@ -1,71 +1,49 @@
-# Open-source release plan
+# Opening WALDO for collaboration
 
-WALDO has an Apache-2.0 license and public-oriented source structure, but it is
-not ready for a supported public release. Complete these gates in order.
+The goal is to publish WALDO early, iterate in public, and make it easy for
+other people to participate. This is not a stable-release or binary-
+distribution checklist.
 
-## 1. Ownership and project policy
+## Minimum publication gates
 
-- Confirm that CtrlIQ and the named contributors authorize publication under
-  Apache-2.0 and that `NOTICE` is complete.
-- Decide project governance, maintainer roles, trademark usage, and whether
-  contributions use DCO sign-off or a CLA.
-- Publish a code of conduct, contribution policy, support expectations, and a
-  private security-reporting channel.
+1. CI runs the real formatting, vet, unit, and portable end-to-end checks.
+2. The source and Git history receive a focused review for credentials,
+   private material, and files that cannot be redistributed.
+3. The README describes the project as early development and directs people
+   to a usable contribution path.
+4. Documentation distinguishes current behavior from plans and design history.
+5. A private security-reporting contact is available before inviting broad
+   external testing.
 
-## 2. Repository hygiene and security
+## Collaboration setup
 
-- Review the full Git history for credentials, private URLs, proprietary
-  material, large binaries, and personal email addresses before publication.
-- Keep local build products such as `/waldo` ignored.
-- Add automated secret scanning, dependency review, vulnerability scanning,
-  and dependency-update automation.
-- Confirm that examples and tests contain only redistributable fixtures.
+- Add GitHub issue and pull-request templates that ask for reproducible,
+  focused changes without imposing a heavyweight process.
+- Label good first issues and areas where design feedback is especially useful.
+- State which maintainers can review and merge changes.
+- Keep the roadmap short; track active work and proposals in public issues.
+- Release changes frequently from source while interfaces are still evolving.
 
-## 3. Documentation
+## Explicitly deferred
 
-- Treat `waldo <command> --help` as the command source of truth.
-- Keep the root README short and maintain user, contributor, testing, and
-  release documentation under `docs/`.
-- Reconcile the website and related `waldo-index` and `waldo-fetchers`
-  repositories with the same terminology and support status.
-- Add migration guidance only for compatibility promises the project intends
-  to support.
+- Stable API or format guarantees beyond `docs/COMPATIBILITY.md`.
+- Binary packaging and distribution.
+- Formal release trains, long-term support commitments, and platform support
+  guarantees.
+- A code of conduct.
 
-## 4. Quality gates
+## Decisions reserved for discussion with the project owner
 
-- Fix `.github/workflows/ci.yml`; it currently invokes the nonexistent
-  `./scripts/e2e/ingest-smoke.sh` path.
-- Replace stale top-level `waldo bom` calls in end-to-end tests with the
-  supported `waldo index` or `waldo model` command.
-- Require formatting, vet, unit tests, and portable end-to-end tests on Linux
-  and macOS. Keep accelerator and live-service tests as explicit qualified
-  gates.
-- Add a supported Go vulnerability scan and document the response process.
+No legal or ownership files should be changed without explicit discussion and
+approval. This includes copyright ownership and notices, licensing changes,
+trademarks, governance terms with legal effect, and DCO-versus-CLA policy.
 
-## 5. Distribution
+## Current status
 
-- Define versioning, release branches, changelog policy, and supported Go and
-  operating-system versions.
-- Produce reproducible checksummed binaries for supported platforms and an
-  SBOM/provenance record for each release.
-- Sign tags and release artifacts, test installation from a clean machine,
-  and publish rollback instructions.
-
-## 6. Launch
-
-- Enable branch protection, required reviews, required CI, issue templates,
-  pull-request templates, and release permissions.
-- Create a release candidate, run the complete matrix, and perform an external
-  documentation and security review.
-- Publish the first supported version only after every gate above has an owner
-  and recorded result.
-
-## Current audit findings
-
-- Present: Apache-2.0 `LICENSE`, `NOTICE`, Go module metadata, tests, and ADRs.
-- Fixed in this cleanup: local `/waldo` binary ignore rule and consolidated
-  documentation layout.
-- Blocking: broken CI path, stale BOM calls in end-to-end tests, no tagged
-  releases, and no public contribution, conduct, security, or support policy.
-- Needs an owner decision: copyright authority, governance, DCO/CLA policy,
-  supported platforms, and release signing identity.
+- Present: Apache-2.0 `LICENSE`, `NOTICE`, concise project documentation,
+  package tests, end-to-end tests, and cross-platform CI configuration.
+- Corrected during this preparation: the local binary ignore rule, stale BOM
+  commands in E2E tests, and the obsolete CI script path.
+- Still needed before publication: a focused history/security review, a
+  security contact, lightweight GitHub collaboration templates, and an owner
+  decision about the initial legal posture.

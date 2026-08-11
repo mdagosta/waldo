@@ -17,20 +17,17 @@ Git history and ADRs preserve the details of earlier design phases.
 - Native WALDO, Hugging Face, MLX, GGUF, and Ollama export formats, with
   optional Sigstore signing when configured.
 
-## First public release
+## Opening development to the public
 
 The immediate release work is:
 
-1. Repair CI and stale end-to-end test commands, then establish a green
-   cross-platform release gate.
-2. Complete the repository policy, security, governance, and contribution
-   decisions in [the release plan](RELEASING.md).
-3. Audit source and Git history for secrets, ownership, redistributability,
-   and unsupported public claims.
-4. Define supported platforms and publish signed, checksummed, reproducible
-   binaries with release provenance.
-5. Reconcile the CLI, this documentation, the website, and adjacent WALDO
-   repositories before tagging the first supported version.
+1. Keep CI and portable end-to-end tests green.
+2. Audit source and Git history for secrets, private material, and
+   redistributability concerns.
+3. Add lightweight issue, pull-request, and security-reporting paths.
+4. Discuss ownership, licensing, and contribution-policy questions with the
+   project owner before changing legal or governance files.
+5. Publish the source as early development and iterate in public.
 
 ## Deferred beyond the first release
 

@@ -4,8 +4,10 @@ WALDO is a command-line tool for building auditable AI training datasets and
 models. It connects a Git-governed corpus index, content-addressed Parquet
 objects, and model artifacts with verifiable bills of materials (BOMs).
 
-WALDO is under active development and does not yet have a supported public
-release. See the [roadmap](docs/ROADMAP.md) for the remaining release work.
+WALDO is under active development. It is being opened early so users and
+contributors can help shape the project through frequent, incremental
+releases. Expect interfaces and formats outside the documented compatibility
+contract to evolve.
 
 ## What works
 
@@ -66,6 +68,9 @@ Start with the [documentation index](docs/README.md). In particular:
 - [Contributing](docs/CONTRIBUTING.md)
 - [Testing](docs/TESTING.md)
 - [Open-source release plan](docs/RELEASING.md)
+
+Early feedback, testing, documentation improvements, and focused code
+contributions are welcome. See [Contributing](docs/CONTRIBUTING.md).
 
 ## Development
 

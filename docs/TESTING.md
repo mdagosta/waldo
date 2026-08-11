@@ -55,10 +55,3 @@ WALDO_E2E_AWS_REGION=us-west-2 \
 
 Credentials come from the AWS SDK chain or `waldo lookaside login`; tests must
 not write credentials to fixtures.
-
-## Current release blocker
-
-As of the current source revision, the full suite reaches the direct-ingestion
-export check and then calls the removed top-level `waldo bom` command. The
-supported command is `waldo index verify <export>`. The test and CI workflow
-must be corrected before the suite can be a release gate.
