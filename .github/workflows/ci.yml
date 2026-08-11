@@ -23,4 +23,4 @@ jobs:
       - name: Test
         run: go test ./...
       - name: Local ingestion E2E
-        run: ./scripts/e2e/ingest-smoke.sh local
+        run: ./testing/e2e/ingest-direct.sh

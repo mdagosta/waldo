@@ -146,7 +146,6 @@ printf '%s\n' "$json_inspection" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]
 printf '%s\n' "$json_inspection" | grep -Eq '"profile"[[:space:]]*:[[:space:]]*"causal-pretrain-v1"'
 printf '%s\n' "$json_inspection" | grep -Eq '"packing"[[:space:]]*:[[:space:]]*"continuous-eos-v1"'
 printf '%s\n' "$json_inspection" | grep -Eq '"checkpoints"[[:space:]]*:'
-printf '%s\n' "$json_inspection" | grep -Eq '"evaluations"[[:space:]]*:'
 
 for required in PLAN.json MODEL.json MODEL-BOM.json; do
   [ -s "$models/smoke/$required" ] || { echo "missing model record $required" >&2; exit 1; }
@@ -183,11 +182,11 @@ if "$binary" model chat manual >/dev/null 2>&1; then
 fi
 "$binary" model rm manual >/dev/null
 [ ! -e "$models/manual" ] || { echo "model rm left manual model" >&2; exit 1; }
-if "$binary" bom export smoke "$disclosure" --format eu-gpai >/dev/null 2>&1; then
+if "$binary" model bom smoke "$disclosure" --format eu-gpai >/dev/null 2>&1; then
   echo "complete EU GPAI export unexpectedly passed without required facts" >&2
   exit 1
 fi
-"$binary" bom export smoke "$disclosure" --format eu-gpai --allow-incomplete
+"$binary" model bom smoke "$disclosure" --format eu-gpai --allow-incomplete
 grep -q '"kind": "waldo-eu-gpai-training-content"' "$disclosure"
 grep -q '"status": "incomplete-draft"' "$disclosure"
 

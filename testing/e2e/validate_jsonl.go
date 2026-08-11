@@ -76,7 +76,7 @@ func validateManifest(path, inputDirectory, sourceURL, sourceName, license strin
 	if err != nil {
 		fatalf("load manifest: %v", err)
 	}
-	if manifest.Kind != "manifest" || manifest.Schema != 1 || manifest.Name != "tiny" || manifest.License != license || len(manifest.Sources) != 1 {
+	if manifest.Kind != "manifest" || manifest.Schema != 2 || manifest.Name != "tiny" || manifest.License != license || len(manifest.Sources) != 1 {
 		fatalf("manifest identity or license is incorrect")
 	}
 	source := manifest.Sources[0]

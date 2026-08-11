@@ -240,7 +240,7 @@ echo "verifying new corpus recursively"
 
 echo "exporting and verifying canonical JSONL"
 "$binary" index export "$destination" "$export_root" --format jsonl
-"$binary" bom verify "$export_root/EXPORT.json"
+"$binary" index verify "$export_root/EXPORT.json"
 
 jsonl_count=$(find "$export_root/data" -type f -name '*.jsonl' -print | wc -l | tr -d ' ')
 if [ "$jsonl_count" -ne 1 ]; then
