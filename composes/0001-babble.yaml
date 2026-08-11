@@ -1,4 +1,4 @@
-# Experimental second babble iteration: allocate capacity to the transformer.
+# Validated first language-model rung: produce coherent local continuations.
 kind: waldo-model-compose
 schema: 1
 architecture:

@@ -40,7 +40,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	}
 }
 
-func TestExperimentalBabbleHasMeasuredScalingBudget(t *testing.T) {
+func TestValidatedBabbleHasMeasuredScalingBudget(t *testing.T) {
 	compose, _, err := model.LoadCompose("0001-babble.yaml")
 	if err != nil {
 		t.Fatal(err)
