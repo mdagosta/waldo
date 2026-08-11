@@ -18,8 +18,8 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 2 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" {
-		t.Fatalf("reference composes = %v, want the canary and babble candidate", files)
+	if len(files) != 3 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-fluency.yaml" {
+		t.Fatalf("reference composes = %v, want canary, babble, and fluency", files)
 	}
 	compose, _, err := model.LoadCompose("0000-canary.yaml")
 	if err != nil {
@@ -37,6 +37,26 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	}
 	if forecast.ApproximateParameters != 13620736 || forecast.PlannedTokens != 4096000 {
 		t.Fatalf("canary forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	}
+}
+
+func TestFluencyHasTenHourScalingBudget(t *testing.T) {
+	compose, _, err := model.LoadCompose("0002-fluency.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 3 {
+		t.Fatalf("fluency stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
+	}
+	if compose.Architecture.Tokenizer.Name != "tiktoken/r50k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-r50k-base" || compose.Architecture.VocabularySize != 50259 {
+		t.Fatalf("fluency does not use the compact portable subword tokenizer: %+v", compose.Architecture.Tokenizer)
+	}
+	forecast, err := model.ForecastCompose(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forecast.ApproximateParameters != 114115584 || forecast.PlannedTokens != 3932160000 {
+		t.Fatalf("fluency forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 
