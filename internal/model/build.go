@@ -271,6 +271,16 @@ func resumableRunState(run RunRecord, parameters training.ResolvedParameters) bo
 	return checkpoint.Step == parameters.Steps && checkpoint.Tokens == parameters.PlannedTokenCapacity
 }
 
+// HasRecoverableFinalizationFailure identifies the narrowly scoped failure
+// produced by WALDO releases that rejected a repeated final-step evaluation.
+func HasRecoverableFinalizationFailure(inspection Inspection) bool {
+	if len(inspection.Runs) == 0 || len(inspection.RunBOMs) != len(inspection.Runs) {
+		return false
+	}
+	last := len(inspection.Runs) - 1
+	return resumableRunState(inspection.Runs[last], inspection.RunBOMs[last].Parameters)
+}
+
 func (builder Builder) resumeTraining(ctx context.Context, name string, inspection Inspection, index int, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, architectureJSON json.RawMessage, selection training.Selection) (Inspection, error) {
 	pin := inspection.Model.Runs[index]
 	run := inspection.Runs[index]
@@ -798,6 +808,9 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 			}
 			transaction.ModelID = target.Model.ID
 			transaction.StartRun = len(target.Runs)
+			if start, ok := recoverableComposeStart(target, stages); ok {
+				transaction.StartRun = start
+			}
 		} else if err != nil && !os.IsNotExist(err) {
 			return Inspection{}, err
 		}
@@ -906,7 +919,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 			if staged.Runs[runIndex].State == RunComplete {
 				continue
 			}
-			if staged.Runs[runIndex].State != RunInterrupted {
+			if staged.Runs[runIndex].State != RunInterrupted && !resumableRunState(staged.Runs[runIndex], staged.RunBOMs[runIndex].Parameters) {
 				finishFailedCompose(workspace)
 				return Inspection{}, fmt.Errorf("compose stage %s ended %s and cannot be resumed", stage.Stage.Name, staged.Runs[runIndex].State)
 			}
@@ -933,6 +946,35 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	}
 	builder.report(Progress{Phase: "compose", Message: fmt.Sprintf("completed durable transaction %s", transactionID[:12])})
 	return Inspect(builder.Root, name)
+}
+
+func recoverableComposeStart(inspection Inspection, stages []PreparedStage) (int, bool) {
+	if !HasRecoverableFinalizationFailure(inspection) {
+		return 0, false
+	}
+	failed := len(inspection.Runs) - 1
+	for stageIndex := len(stages) - 1; stageIndex >= 0; stageIndex-- {
+		start := failed - stageIndex
+		if start < 0 {
+			continue
+		}
+		matches := true
+		for position := 0; position <= stageIndex; position++ {
+			runIndex := start + position
+			if err := validateStagedComposeRun(inspection, runIndex, stages[position]); err != nil {
+				matches = false
+				break
+			}
+			if position < stageIndex && inspection.Runs[runIndex].State != RunComplete {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			return start, true
+		}
+	}
+	return 0, false
 }
 
 func pendingComposeTransaction(root, name string) (*composeTransaction, error) {

@@ -581,7 +581,10 @@ func runModelContinue(context Context, args []string, stdout, stderr io.Writer) 
 		if len(inspection.Runs) > 0 {
 			state = string(inspection.Runs[len(inspection.Runs)-1].State)
 		}
-		return fmt.Errorf("model %q has no interrupted compose to continue (current state: %s)", name, state)
+		if !model.HasRecoverableFinalizationFailure(inspection) {
+			return fmt.Errorf("model %q has no interrupted compose to continue (current state: %s)", name, state)
+		}
+		fmt.Fprintf(stderr, "continue               recovering checkpoint-backed finalization failure for %s\n", name)
 	}
 	composePath, err := model.LatestComposePath(inspection.Path)
 	if err != nil {

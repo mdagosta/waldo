@@ -145,7 +145,8 @@ func TestResumeReplacesEvaluationAtCheckpointStep(t *testing.T) {
 }
 
 func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
-	parameters, err := training.ResolveParameters(training.Parameters{Steps: 10, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1})
+	requested := training.Parameters{Steps: 10, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1}
+	parameters, err := training.ResolveParameters(requested)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,6 +157,21 @@ func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
 	}
 	if !resumableRunState(run, parameters) {
 		t.Fatal("final-checkpoint evaluation bookkeeping failure is not resumable")
+	}
+	stage := testStage("pretrain")
+	stage.Parameters = requested
+	prepared := preparedFixture(t, stage)
+	corpusHash, err := hashJSON(prepared.BOM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection := Inspection{
+		Model:   ModelRecord{Runs: []RunPin{{Stage: stage.Name}}},
+		Runs:    []RunRecord{run},
+		RunBOMs: []RunBOM{{Stage: stage.Name, StageType: stage.Type, Objective: stage.Objective, CorpusBOMSHA256: corpusHash, Parameters: parameters}},
+	}
+	if start, ok := recoverableComposeStart(inspection, []PreparedStage{prepared}); !ok || start != 0 {
+		t.Fatalf("recoverable compose start = %d, %v", start, ok)
 	}
 	run.Error = "trainer exited"
 	if resumableRunState(run, parameters) {
