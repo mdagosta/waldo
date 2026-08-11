@@ -37,8 +37,8 @@ distribution checklist.
   copyright notices are intentional.
 - Contributions use Developer Certificate of Origin sign-off, including all
   `waldo-index` commits.
-- `gmkurtzer@gmail.com` is the current public contact and private security
-  reporting address.
+- `gmkurtzer@gmail.com` is the current public contact; private security reports
+  may use `gmkurtzer@gmail.com` or `gmk@ciq.com`.
 - WALDO/OpenWALDO trademark ownership has not been secured. Do not make an
   ownership claim or publish trademark rules until that changes.
 
