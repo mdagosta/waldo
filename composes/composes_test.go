@@ -18,8 +18,8 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 3 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic.yaml" {
-		t.Fatalf("reference composes = %v, want canary, babble, and basic", files)
+	if len(files) != 4 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic.yaml" || files[3] != "0003-intermediate.yaml" {
+		t.Fatalf("reference composes = %v, want canary, babble, basic, and intermediate", files)
 	}
 	compose, _, err := model.LoadCompose("0000-canary.yaml")
 	if err != nil {
@@ -57,6 +57,26 @@ func TestBasicHasTenHourScalingBudget(t *testing.T) {
 	}
 	if forecast.ApproximateParameters != 114115584 || forecast.PlannedTokens != 3932160000 {
 		t.Fatalf("basic forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	}
+	if compose.Architecture.Dropout != 0.1 || compose.Stages[0].Parameters.Profile != "causal-pretrain-v3" || len(compose.Stages[0].Parameters.CorpusWeights) != 3 {
+		t.Fatalf("basic tuning controls are not pinned: architecture=%+v parameters=%+v", compose.Architecture, compose.Stages[0].Parameters)
+	}
+}
+
+func TestIntermediateHasTwoDayScalingBudget(t *testing.T) {
+	compose, _, err := model.LoadCompose("0003-intermediate.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 5 || compose.Architecture.Dropout != 0.1 {
+		t.Fatalf("intermediate architecture/stage is incomplete: %+v", compose)
+	}
+	forecast, err := model.ForecastCompose(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 {
+		t.Fatalf("intermediate forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 

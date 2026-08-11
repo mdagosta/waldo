@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r4"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r5"
 
 
 def emit(kind, **payload):
@@ -112,16 +112,17 @@ class FeedForward(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, hidden, intermediate, heads, kv_heads):
+    def __init__(self, hidden, intermediate, heads, kv_heads, dropout):
         super().__init__()
         self.attention_norm = nn.RMSNorm(hidden, eps=1e-5)
         self.attention = Attention(hidden, heads, kv_heads)
         self.ffn_norm = nn.RMSNorm(hidden, eps=1e-5)
         self.feed_forward = FeedForward(hidden, intermediate)
+        self.residual_dropout = nn.Dropout(dropout)
 
     def __call__(self, value):
-        value = value + self.attention(self.attention_norm(value))
-        return value + self.feed_forward(self.ffn_norm(value))
+        value = value + self.residual_dropout(self.attention(self.attention_norm(value)))
+        return value + self.residual_dropout(self.feed_forward(self.ffn_norm(value)))
 
 
 class DecoderLM(nn.Module):
@@ -137,6 +138,7 @@ class DecoderLM(nn.Module):
                 architecture["intermediate_size"],
                 architecture["attention_heads"],
                 architecture["key_value_heads"],
+                architecture.get("dropout", 0.0),
             )
             for _ in range(architecture["layers"])
         ]
@@ -213,6 +215,7 @@ class Trainer:
         self.tokenizer = FramingTokenizer(tokenizer)
         mx.random.seed(self.parameters["seed"])
         self.model = DecoderLM(self.architecture)
+        self.model.train()
         self.initialization = begin.get("initialization")
         if self.initialization is not None:
             self.model.load_weights(self.initialization["path"])
@@ -305,6 +308,7 @@ class Trainer:
         next_step = self.step_number + 1
         current_learning_rate = self.learning_rate(next_step)
         self.optimizer.learning_rate = current_learning_rate
+        mx.random.seed(self.parameters["seed"] ^ next_step)
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
         self.optimizer.update(self.model, gradients)
         mx.eval(self.model.parameters(), self.optimizer.state, loss)
@@ -389,7 +393,7 @@ class Trainer:
                 "step": self.step_number,
                 "consumed_tokens": self.consumed_tokens,
                 "consumption": self.consumed_by_corpus,
-                "random": {"algorithm": "mlx-seed-no-stochastic-layers-v1", "seed": self.parameters["seed"]},
+                "random": {"algorithm": "mlx-step-seeded-dropout-v1", "seed": self.parameters["seed"]},
             },
         )
         commit_directory(temporary, path)
@@ -451,6 +455,7 @@ class Trainer:
     def record_evaluation(self, _training_loss):
         if not self.evaluation_sequences:
             return
+        self.model.eval()
         total_loss = 0.0
         total_tokens = 0.0
         for offset in range(0, len(self.evaluation_sequences), self.batch_size):
@@ -467,6 +472,7 @@ class Trainer:
             total_loss += float(loss_sum.item())
             total_tokens += float(token_count.item())
         loss_value = total_loss / total_tokens
+        self.model.train()
         item = {
             "step": self.step_number,
             "tokens": self.consumed_tokens,

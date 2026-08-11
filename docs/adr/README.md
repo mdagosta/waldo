@@ -51,3 +51,4 @@ logs.
 - [0045: Balance declared training corpora](0045-balance-declared-training-corpora.md)
 - [0046: Portable subword tokenization](0046-portable-subword-tokenization.md)
 - [0047: Right-size tokenizer vocabularies for compact models](0047-compact-model-tokenizer.md)
+- [0048: Make corpus weights and dropout durable training facts](0048-weighted-corpus-and-dropout.md)

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"math/bits"
 	"os"
 	"path/filepath"
@@ -47,6 +48,7 @@ type Architecture struct {
 	Layers           uint64    `json:"layers" yaml:"layers"`
 	AttentionHeads   uint64    `json:"attention_heads" yaml:"attention_heads"`
 	KeyValueHeads    uint64    `json:"key_value_heads" yaml:"key_value_heads"`
+	Dropout          float64   `json:"dropout,omitempty" yaml:"dropout,omitempty"`
 	TieEmbeddings    bool      `json:"tie_embeddings" yaml:"tie_embeddings"`
 	ParameterDType   string    `json:"parameter_dtype" yaml:"parameter_dtype"`
 	Tokenizer        Tokenizer `json:"tokenizer" yaml:"tokenizer"`
@@ -176,6 +178,9 @@ func (architecture Architecture) Validate() error {
 	}
 	if architecture.HiddenSize%architecture.AttentionHeads != 0 || architecture.AttentionHeads%architecture.KeyValueHeads != 0 {
 		return fmt.Errorf("architecture heads must divide hidden_size and key_value_heads must divide attention_heads")
+	}
+	if architecture.Dropout < 0 || architecture.Dropout >= 1 || math.IsNaN(architecture.Dropout) || math.IsInf(architecture.Dropout, 0) {
+		return fmt.Errorf("architecture dropout must be finite and in 0..<1")
 	}
 	if architecture.ParameterDType != "float32" && architecture.ParameterDType != "float16" && architecture.ParameterDType != "bfloat16" {
 		return fmt.Errorf("unsupported parameter_dtype %q", architecture.ParameterDType)

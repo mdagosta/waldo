@@ -136,6 +136,12 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
 	}
+	if resolvedParameters.Data.Order == "corpus-weighted-shuffle-v1" {
+		resolvedParameters.Data.CorpusWeights, err = resolveCorpusWeights(resolvedParameters.Data.CorpusWeights, prepared.BOM.Paths)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s %w", stage.Name, err)
+		}
+	}
 	codec, err := training.ResolveTokenizerCodec(inspection.Model.Architecture.Tokenizer.Name)
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
@@ -400,7 +406,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 				}
 			}
 		}
-		if backendErr == nil && runBOM.Parameters.Data.Order == "corpus-balanced-shuffle-v1" {
+		if backendErr == nil && (runBOM.Parameters.Data.Order == "corpus-balanced-shuffle-v1" || runBOM.Parameters.Data.Order == "corpus-weighted-shuffle-v1") {
 			var consumed int64
 			seen := map[string]bool{}
 			for _, item := range observation.Consumption {
@@ -1101,6 +1107,12 @@ func validateStagedComposeRun(inspection Inspection, index int, prepared Prepare
 	parameters, err := training.ResolveParameters(prepared.Stage.Parameters)
 	if err != nil {
 		return err
+	}
+	if parameters.Data.Order == "corpus-weighted-shuffle-v1" {
+		parameters.Data.CorpusWeights, err = resolveCorpusWeights(parameters.Data.CorpusWeights, prepared.BOM.Paths)
+		if err != nil {
+			return err
+		}
 	}
 	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !reflect.DeepEqual(bom.Parameters, parameters) {
 		return fmt.Errorf("run %d immutable facts do not match stage %s", index+1, prepared.Stage.Name)

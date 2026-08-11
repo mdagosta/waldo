@@ -8,6 +8,7 @@ package model
 import (
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/shard"
@@ -63,20 +64,65 @@ func PrepareStage(stage Stage, bom corpus.BOM, inputs []training.Input) (Prepare
 	for _, path := range bom.Paths {
 		selected[path] = true
 	}
+	if resolved.Data.Order == "corpus-weighted-shuffle-v1" {
+		canonical, err := resolveCorpusWeights(resolved.Data.CorpusWeights, bom.Paths)
+		if err != nil {
+			return PreparedStage{}, fmt.Errorf("stage %s %w", stage.Name, err)
+		}
+		resolved.Data.CorpusWeights = canonical
+	}
 	for _, input := range inputs {
 		expectedInput, exists := expected[input.SHA256]
 		if input.Path == "" || !exists || input.Bytes != expectedInput.bytes || input.Records != expectedInput.records || seen[input.SHA256] {
 			return PreparedStage{}, fmt.Errorf("stage %s has an invalid or duplicate materialized input %s", stage.Name, input.SHA256)
 		}
-		if resolved.Data.Order == "corpus-balanced-shuffle-v1" && !selected[input.Corpus] {
+		if (resolved.Data.Order == "corpus-balanced-shuffle-v1" || resolved.Data.Order == "corpus-weighted-shuffle-v1") && !selected[input.Corpus] {
 			return PreparedStage{}, fmt.Errorf("stage %s input %s has invalid corpus identity %q", stage.Name, input.SHA256, input.Corpus)
 		}
 		seen[input.SHA256] = true
+	}
+	if resolved.Data.Order == "corpus-weighted-shuffle-v1" {
+		for path := range selected {
+			if resolved.Data.CorpusWeights[path] == 0 {
+				return PreparedStage{}, fmt.Errorf("stage %s corpus_weights does not declare selected corpus %q", stage.Name, path)
+			}
+		}
+		for path := range resolved.Data.CorpusWeights {
+			if !selected[path] {
+				return PreparedStage{}, fmt.Errorf("stage %s corpus_weights declares unselected corpus %q", stage.Name, path)
+			}
+		}
 	}
 	if len(seen) != len(expected) {
 		return PreparedStage{}, fmt.Errorf("stage %s materialized %d of %d unique shard objects", stage.Name, len(seen), len(expected))
 	}
 	return PreparedStage{Stage: stage, BOM: bom, Inputs: append([]training.Input(nil), inputs...)}, nil
+}
+
+func resolveCorpusWeights(declared map[string]uint64, paths []string) (map[string]uint64, error) {
+	resolved := make(map[string]uint64, len(paths))
+	used := make(map[string]bool, len(declared))
+	for _, path := range paths {
+		logical := strings.TrimSuffix(strings.TrimSuffix(path, ".yaml"), ".json")
+		for name, weight := range declared {
+			if name != path && name != logical {
+				continue
+			}
+			if _, exists := resolved[path]; exists || used[name] {
+				return nil, fmt.Errorf("corpus_weights ambiguously resolves corpus %q", path)
+			}
+			resolved[path], used[name] = weight, true
+		}
+		if resolved[path] == 0 {
+			return nil, fmt.Errorf("corpus_weights does not declare selected corpus %q", logical)
+		}
+	}
+	for name := range declared {
+		if !used[name] {
+			return nil, fmt.Errorf("corpus_weights declares unselected corpus %q", name)
+		}
+	}
+	return resolved, nil
 }
 
 func composePlan(name string, compose Compose) (Plan, error) {

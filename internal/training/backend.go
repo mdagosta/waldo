@@ -77,22 +77,23 @@ func (function ResolverFunc) Resolve(ctx context.Context, request ResolveRequest
 }
 
 type Parameters struct {
-	Profile              string   `json:"profile,omitempty" yaml:"profile,omitempty"`
-	Epochs               int64    `json:"epochs,omitempty" yaml:"epochs,omitempty"`
-	Steps                int64    `json:"steps" yaml:"steps"`
-	BatchSize            int64    `json:"batch_size" yaml:"batch_size"`
-	SequenceLength       int64    `json:"sequence_length" yaml:"sequence_length"`
-	LearningRate         float64  `json:"learning_rate" yaml:"learning_rate"`
-	Seed                 uint64   `json:"seed" yaml:"seed"`
-	WeightDecay          *float64 `json:"weight_decay,omitempty" yaml:"weight_decay,omitempty"`
-	WarmupSteps          *int64   `json:"warmup_steps,omitempty" yaml:"warmup_steps,omitempty"`
-	CheckpointEvery      *int64   `json:"checkpoint_every,omitempty" yaml:"checkpoint_every,omitempty"`
-	EvaluateEvery        *int64   `json:"evaluate_every,omitempty" yaml:"evaluate_every,omitempty"`
-	ShuffleBufferRecords *int     `json:"shuffle_buffer_records,omitempty" yaml:"shuffle_buffer_records,omitempty"`
-	ShuffleBufferBytes   *int64   `json:"shuffle_buffer_bytes,omitempty" yaml:"shuffle_buffer_bytes,omitempty"`
-	EvaluationFraction   *float64 `json:"evaluation_fraction,omitempty" yaml:"evaluation_fraction,omitempty"`
-	EvaluationMaxRecords *int     `json:"evaluation_max_records,omitempty" yaml:"evaluation_max_records,omitempty"`
-	EvaluationMaxBytes   *int64   `json:"evaluation_max_bytes,omitempty" yaml:"evaluation_max_bytes,omitempty"`
+	Profile              string            `json:"profile,omitempty" yaml:"profile,omitempty"`
+	Epochs               int64             `json:"epochs,omitempty" yaml:"epochs,omitempty"`
+	Steps                int64             `json:"steps" yaml:"steps"`
+	BatchSize            int64             `json:"batch_size" yaml:"batch_size"`
+	SequenceLength       int64             `json:"sequence_length" yaml:"sequence_length"`
+	LearningRate         float64           `json:"learning_rate" yaml:"learning_rate"`
+	Seed                 uint64            `json:"seed" yaml:"seed"`
+	WeightDecay          *float64          `json:"weight_decay,omitempty" yaml:"weight_decay,omitempty"`
+	WarmupSteps          *int64            `json:"warmup_steps,omitempty" yaml:"warmup_steps,omitempty"`
+	CheckpointEvery      *int64            `json:"checkpoint_every,omitempty" yaml:"checkpoint_every,omitempty"`
+	EvaluateEvery        *int64            `json:"evaluate_every,omitempty" yaml:"evaluate_every,omitempty"`
+	ShuffleBufferRecords *int              `json:"shuffle_buffer_records,omitempty" yaml:"shuffle_buffer_records,omitempty"`
+	ShuffleBufferBytes   *int64            `json:"shuffle_buffer_bytes,omitempty" yaml:"shuffle_buffer_bytes,omitempty"`
+	CorpusWeights        map[string]uint64 `json:"corpus_weights,omitempty" yaml:"corpus_weights,omitempty"`
+	EvaluationFraction   *float64          `json:"evaluation_fraction,omitempty" yaml:"evaluation_fraction,omitempty"`
+	EvaluationMaxRecords *int              `json:"evaluation_max_records,omitempty" yaml:"evaluation_max_records,omitempty"`
+	EvaluationMaxBytes   *int64            `json:"evaluation_max_bytes,omitempty" yaml:"evaluation_max_bytes,omitempty"`
 }
 
 type ResolvedParameters struct {
@@ -128,10 +129,11 @@ type Schedule struct {
 }
 
 type DataPlan struct {
-	Order                string `json:"order"`
-	ShuffleBufferRecords int    `json:"shuffle_buffer_records"`
-	ShuffleBufferBytes   int64  `json:"shuffle_buffer_bytes"`
-	Packing              string `json:"packing"`
+	Order                string            `json:"order"`
+	ShuffleBufferRecords int               `json:"shuffle_buffer_records"`
+	ShuffleBufferBytes   int64             `json:"shuffle_buffer_bytes"`
+	Packing              string            `json:"packing"`
+	CorpusWeights        map[string]uint64 `json:"corpus_weights,omitempty"`
 }
 
 type EvaluationPolicy struct {

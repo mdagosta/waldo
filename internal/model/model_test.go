@@ -61,6 +61,25 @@ func TestLoadComposeIsStrictAndKeepsIndexPathsLogical(t *testing.T) {
 	}
 }
 
+func TestArchitectureRejectsInvalidDropout(t *testing.T) {
+	architecture := testArchitecture()
+	architecture.Dropout = 1
+	if err := architecture.Validate(); err == nil || !strings.Contains(err.Error(), "dropout") {
+		t.Fatalf("invalid dropout error = %v", err)
+	}
+}
+
+func TestResolveCorpusWeightsUsesLogicalManifestPaths(t *testing.T) {
+	resolved, err := resolveCorpusWeights(map[string]uint64{"core/peps": 2, "science/plos": 1}, []string{"core/peps.yaml", "science/plos"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]uint64{"core/peps.yaml": 2, "science/plos": 1}
+	if !reflect.DeepEqual(resolved, want) {
+		t.Fatalf("resolved weights = %v, want %v", resolved, want)
+	}
+}
+
 func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	root := t.TempDir()
 	clock := time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC)

@@ -1,14 +1,14 @@
-# Third rung: establish basic cross-domain language-model capability.
+# Fourth rung: develop broader intermediate base-model capability.
 kind: waldo-model-compose
 schema: 1
 architecture:
   family: decoder-transformer
-  context_tokens: 1024
+  context_tokens: 2048
   vocabulary_size: 50259
-  hidden_size: 768
-  intermediate_size: 2048
-  layers: 12
-  attention_heads: 12
+  hidden_size: 1152
+  intermediate_size: 3072
+  layers: 20
+  attention_heads: 16
   key_value_heads: 4
   dropout: 0.1
   tie_embeddings: true
@@ -22,24 +22,28 @@ stages:
     objective: causal-language-modeling
     corpora:
       - core/books/gutenberg
+      - core/common-pile/stackexchange
       - core/common-pile/wikimedia
+      - government/regulations
       - science/plos
     parameters:
       profile: causal-pretrain-v3
-      steps: 60000
-      batch_size: 64
-      sequence_length: 1024
-      learning_rate: 0.0002
+      steps: 183105
+      batch_size: 32
+      sequence_length: 2048
+      learning_rate: 0.00018
       seed: 42
       weight_decay: 0.15
-      warmup_steps: 600
-      shuffle_buffer_records: 32768
-      shuffle_buffer_bytes: 1073741824
+      warmup_steps: 1831
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 2147483648
       corpus_weights:
         core/books/gutenberg: 2
+        core/common-pile/stackexchange: 1
         core/common-pile/wikimedia: 4
+        government/regulations: 1
         science/plos: 2
-      checkpoint_every: 6000
-      evaluate_every: 6000
-      evaluation_max_records: 512
-      evaluation_max_bytes: 16777216
+      checkpoint_every: 9155
+      evaluate_every: 9155
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432

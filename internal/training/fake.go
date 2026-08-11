@@ -118,12 +118,28 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 		}
 	}
 	var consumption []CorpusConsumption
-	if request.Parameters.Data.Order == "corpus-balanced-shuffle-v1" {
+	if request.Parameters.Data.Order == "corpus-balanced-shuffle-v1" || request.Parameters.Data.Order == "corpus-weighted-shuffle-v1" {
 		remaining := capacity
+		var remainingWeight uint64
+		for _, corpus := range request.BOM.Paths {
+			weight := uint64(1)
+			if request.Parameters.Data.Order == "corpus-weighted-shuffle-v1" {
+				weight = request.Parameters.Data.CorpusWeights[corpus]
+			}
+			remainingWeight += weight
+		}
 		for index, corpus := range request.BOM.Paths {
-			targets := remaining / int64(len(request.BOM.Paths)-index)
+			weight := uint64(1)
+			if request.Parameters.Data.Order == "corpus-weighted-shuffle-v1" {
+				weight = request.Parameters.Data.CorpusWeights[corpus]
+			}
+			targets := remaining
+			if index+1 < len(request.BOM.Paths) {
+				targets = int64(float64(remaining) * float64(weight) / float64(remainingWeight))
+			}
 			consumption = append(consumption, CorpusConsumption{Corpus: corpus, TokenTargets: targets})
 			remaining -= targets
+			remainingWeight -= weight
 		}
 	}
 	return Observation{

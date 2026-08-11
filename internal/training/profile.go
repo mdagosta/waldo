@@ -13,6 +13,7 @@ import (
 const (
 	DefaultProfile            = "causal-pretrain-v1"
 	BalancedProfile           = "causal-pretrain-v2"
+	WeightedProfile           = "causal-pretrain-v3"
 	ProfileSchema             = 1
 	defaultShuffleBufferBytes = int64(64 * 1024 * 1024)
 )
@@ -22,7 +23,7 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if profile == "" {
 		profile = DefaultProfile
 	}
-	if profile != DefaultProfile && profile != BalancedProfile {
+	if profile != DefaultProfile && profile != BalancedProfile && profile != WeightedProfile {
 		return ResolvedParameters{}, fmt.Errorf("unsupported training profile %q", profile)
 	}
 	if parameters.Steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {
@@ -116,6 +117,26 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 		selection = "stratified-lowest-sha256-v1"
 		profileSchema = 2
 	}
+	var weights map[string]uint64
+	if len(parameters.CorpusWeights) != 0 {
+		weights = make(map[string]uint64, len(parameters.CorpusWeights))
+	}
+	for name, weight := range parameters.CorpusWeights {
+		if name == "" || weight == 0 || weight > 1_000_000 {
+			return ResolvedParameters{}, fmt.Errorf("corpus_weights must use non-empty corpus paths and weights in 1..1000000")
+		}
+		weights[name] = weight
+	}
+	if profile == WeightedProfile {
+		if len(weights) == 0 {
+			return ResolvedParameters{}, fmt.Errorf("training profile %q requires corpus_weights", WeightedProfile)
+		}
+		order = "corpus-weighted-shuffle-v1"
+		selection = "stratified-lowest-sha256-v1"
+		profileSchema = 3
+	} else if len(weights) != 0 {
+		return ResolvedParameters{}, fmt.Errorf("corpus_weights require training profile %q", WeightedProfile)
+	}
 	return ResolvedParameters{
 		Profile: profile, ProfileSchema: profileSchema,
 		Epochs: epochs, Steps: parameters.Steps, BatchSize: parameters.BatchSize,
@@ -123,7 +144,7 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 		Seed: parameters.Seed, PlannedTokenCapacity: capacity,
 		Optimizer:       Optimizer{Name: "adamw", WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},
 		Schedule:        Schedule{Name: "cosine", WarmupSteps: warmup, MinimumRateRatio: 0.1},
-		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1"},
+		Data:            DataPlan{Order: order, ShuffleBufferRecords: shuffleBuffer, ShuffleBufferBytes: shuffleBufferBytes, Packing: "continuous-eos-v1", CorpusWeights: weights},
 		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
 	}, nil

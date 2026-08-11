@@ -12,6 +12,8 @@ waldo model forecast composes/0001-babble.yaml
 waldo model train babble-test composes/0001-babble.yaml
 waldo model forecast composes/0002-basic.yaml
 waldo model train basic-test composes/0002-basic.yaml
+waldo model forecast composes/0003-intermediate.yaml
+waldo model train intermediate-test composes/0003-intermediate.yaml
 ```
 
 | Compose | Architecture | Planned tokens | Corpus selection | Purpose |
@@ -19,6 +21,7 @@ waldo model train basic-test composes/0002-basic.yaml
 | `0000-canary.yaml` | 13.6M parameters | 4.1M | Four small prose, technical, and dialogue selections | Release-gate CUDA/MLX, artifact reload, accounting, and chat |
 | `0001-babble.yaml` | 49.9M parameters | 1.05B | Gutenberg and PLOS, balanced by token exposure | Coherent local continuations from a compact base model |
 | `0002-basic.yaml` | 114.1M parameters | 3.93B | Gutenberg, Wikimedia, and PLOS, balanced by token exposure | Basic cross-domain language-model capability over a longer context |
+| `0003-intermediate.yaml` | 336.6M parameters | 12.0B | Books, encyclopedic, technical Q&A, civic, and scientific text with declared weights | Broader intermediate base-model capability over a 2,048-token context |
 
 `0000-canary.yaml` has been validated end to end on a single H200. The first
 babble experiment used `cl100k_base`, which spent 80% of its 47.9M parameters
@@ -29,15 +32,23 @@ size to the transformer backbone. Its single-H200 validation completed in 69m
 3.6109, corpus exposure remained balanced, and generated prose avoided the
 previous repetition collapse.
 
-`0002-basic.yaml` is the next unvalidated candidate. It expands the backbone
-to 114.1M parameters, doubles context to 1,024 tokens, broadens the corpus with
-Wikimedia, and plans 3.93B tokens. Based on the observed babble run, it targets
-approximately ten hours on one H200; the measured run remains authoritative.
+The first `0002-basic.yaml` run completed in 6h 46m on one H200 and improved
+held-out loss from 3.8348 to 3.0598, but generation remained prone to repeated
+phrase loops. The revised candidate keeps its 114.1M-parameter and 3.93B-token
+budget while adding 10% residual dropout, gentler optimization, a larger
+shuffle window, and a 25/50/25 percent Gutenberg/Wikimedia/PLOS mixture.
 
-The composes use `causal-pretrain-v2`, which deterministically interleaves the
-declared corpus selections, stratifies held-out evaluation across them, and
-records exact consumed token targets per corpus. This prevents a finite run
-from silently stopping before it reaches a declared source.
+`0003-intermediate.yaml` is an unvalidated 336.6M-parameter, 12.0B-token
+candidate. Its estimate of approximately 48 hours on one H200 is scaled from
+the measured basic run with additional allowance for its larger softmax,
+longer context, dropout, checkpointing, and evaluation. Actual runtime remains
+authoritative.
+
+The babble compose uses equal-exposure `causal-pretrain-v2`. Later composes use
+`causal-pretrain-v3`, which applies declared integer corpus weights while
+retaining deterministic shuffling, stratified evaluation, and exact consumed
+token accounting. This prevents a finite run from silently stopping before it
+reaches a declared source.
 
 Hardware remains a deployment decision. Use `waldo model forecast` to compare
 the compose against the accelerator catalog and locally observed calibration.

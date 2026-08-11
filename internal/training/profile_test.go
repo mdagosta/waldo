@@ -81,6 +81,21 @@ func TestBalancedProfilePinsCorpusBalancedDataAndEvaluation(t *testing.T) {
 	}
 }
 
+func TestWeightedProfilePinsDeclaredCorpusWeights(t *testing.T) {
+	parameters := Parameters{Profile: WeightedProfile, Steps: 10, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 42, CorpusWeights: map[string]uint64{"corpus-a": 3, "corpus-b": 1}}
+	resolved, err := ResolveParameters(parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.ProfileSchema != 3 || resolved.Data.Order != "corpus-weighted-shuffle-v1" || !reflect.DeepEqual(resolved.Data.CorpusWeights, parameters.CorpusWeights) {
+		t.Fatalf("weighted profile = %+v", resolved)
+	}
+	parameters.Profile = BalancedProfile
+	if _, err := ResolveParameters(parameters); err == nil {
+		t.Fatal("balanced profile accepted corpus_weights")
+	}
+}
+
 func TestRecordPartitionPinsAndExcludesHeldOutRecords(t *testing.T) {
 	var texts []string
 	for index := 0; index < 100; index++ {
@@ -286,6 +301,31 @@ func TestBalancedRecordSourceAccountsForTokenLength(t *testing.T) {
 	}
 	if len(corpora) < 4 || !reflect.DeepEqual(corpora[:4], []string{"corpus-a", "corpus-b", "corpus-b", "corpus-b"}) {
 		t.Fatalf("token-balanced prefix = %v", corpora)
+	}
+}
+
+func TestWeightedRecordSourceHonorsTokenRatios(t *testing.T) {
+	first := writeTrainingShard(t, []string{"a1", "a2", "a3", "a4"})
+	first.Corpus = "corpus-a"
+	second := writeTrainingShard(t, []string{"b1", "b2", "b3", "b4"})
+	second.Corpus = "corpus-b"
+	parameters, err := ResolveParameters(Parameters{Profile: WeightedProfile, Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42, CorpusWeights: map[string]uint64{"corpus-a": 3, "corpus-b": 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := NewCanonicalRecordSource([]Input{first, second}, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var corpora []string
+	if err := source.Stream(context.Background(), func(value Record) error {
+		corpora = append(corpora, value.Corpus)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(corpora) < 5 || !reflect.DeepEqual(corpora[:5], []string{"corpus-a", "corpus-b", "corpus-a", "corpus-a", "corpus-a"}) {
+		t.Fatalf("weighted corpus prefix = %v", corpora)
 	}
 }
 

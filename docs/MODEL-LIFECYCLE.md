@@ -266,6 +266,26 @@ stages:
       shuffle_buffer_bytes: 67108864
 ```
 
+Use `architecture.dropout` for recorded residual dropout. Multi-corpus runs
+that need unequal exposure use `profile: causal-pretrain-v3` and declare an
+integer weight for every resolved corpus path:
+
+```yaml
+architecture:
+  dropout: 0.1
+stages:
+  - name: pretrain
+    parameters:
+      profile: causal-pretrain-v3
+      corpus_weights:
+        core/books/gutenberg: 1
+        core/common-pile/wikimedia: 2
+```
+
+Weights define relative tokenizer-target exposure, not sampling probabilities
+or duplicated source records. They are preserved in the run BOM and exact
+consumption remains backend-validated.
+
 Run it with:
 
 ```bash

@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"math/bits"
 	"sort"
 
 	"github.com/openwaldo/waldo/internal/shard"
@@ -461,6 +462,7 @@ type canonicalRecordSource struct {
 	buffer      int
 	bufferBytes int64
 	balanced    bool
+	weights     map[string]uint64
 	codec       TokenCodec
 }
 
@@ -478,11 +480,11 @@ func NewCanonicalRecordSourceWithTokenizer(inputs []Input, parameters ResolvedPa
 	if codec == nil {
 		return nil, fmt.Errorf("canonical record source requires a tokenizer")
 	}
-	if (parameters.Data.Order != "bounded-shuffle-v1" && parameters.Data.Order != "corpus-balanced-shuffle-v1") || parameters.Data.ShuffleBufferRecords < 1 || parameters.Data.ShuffleBufferBytes < 1 {
+	if (parameters.Data.Order != "bounded-shuffle-v1" && parameters.Data.Order != "corpus-balanced-shuffle-v1" && parameters.Data.Order != "corpus-weighted-shuffle-v1") || parameters.Data.ShuffleBufferRecords < 1 || parameters.Data.ShuffleBufferBytes < 1 {
 		return nil, fmt.Errorf("unsupported canonical record order %q", parameters.Data.Order)
 	}
 	ordered := orderedInputs(inputs)
-	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, epochs: parameters.Epochs, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes, balanced: parameters.Data.Order == "corpus-balanced-shuffle-v1", codec: codec}, nil
+	return &canonicalRecordSource{inputs: ordered, seed: parameters.Seed, epochs: parameters.Epochs, buffer: parameters.Data.ShuffleBufferRecords, bufferBytes: parameters.Data.ShuffleBufferBytes, balanced: parameters.Data.Order == "corpus-balanced-shuffle-v1" || parameters.Data.Order == "corpus-weighted-shuffle-v1", weights: parameters.Data.CorpusWeights, codec: codec}, nil
 }
 
 func orderedInputs(inputs []Input) []Input {
@@ -591,6 +593,21 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	weights := make([]uint64, len(names))
+	for position, name := range names {
+		weights[position] = 1
+		if len(source.weights) != 0 {
+			weights[position] = source.weights[name]
+			if weights[position] == 0 {
+				return fmt.Errorf("corpus-weighted record order requires a weight for corpus %q", name)
+			}
+		}
+	}
+	for name := range source.weights {
+		if _, exists := groups[name]; !exists {
+			return fmt.Errorf("corpus-weighted record order declares unknown corpus %q", name)
+		}
+	}
 	streamContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	streams := make([]<-chan balancedRecord, 0, len(names))
@@ -636,7 +653,7 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 	for activeCount > 0 {
 		selected := -1
 		for index := range streams {
-			if active[index] && (selected < 0 || emitted[index] < emitted[selected]) {
+			if active[index] && (selected < 0 || weightedBefore(emitted[index], weights[index], emitted[selected], weights[selected])) {
 				selected = index
 			}
 		}
@@ -657,6 +674,15 @@ func (source *canonicalRecordSource) streamBalancedEpoch(ctx context.Context, ep
 		heads[selected] = item
 	}
 	return nil
+}
+
+func weightedBefore(leftTokens int64, leftWeight uint64, rightTokens int64, rightWeight uint64) bool {
+	leftHigh, leftLow := bits.Mul64(uint64(leftTokens), rightWeight)
+	rightHigh, rightLow := bits.Mul64(uint64(rightTokens), leftWeight)
+	if leftHigh != rightHigh {
+		return leftHigh < rightHigh
+	}
+	return leftLow < rightLow
 }
 
 func recordFromView(input Input, row int64, view shard.RecordView) Record {
