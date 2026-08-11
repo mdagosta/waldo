@@ -583,7 +583,7 @@ otherwise refuses the run and directs the operator to use a new model name. A
 matching compose appends runs without replacing the model. The active compose
 always occupies its standard `<model.root>/<name>` directory, so ordinary model
 inspection sees its current run state. Content-identified transaction metadata
-remains hidden. Held-out selection reports shard, record, and byte progress
+remains hidden. Held-out selection reports shard and record progress
 before the training backend starts.
 Repeating the exact command after interruption resumes its current stage and
 run; different compose inputs are refused while that transaction is unfinished.

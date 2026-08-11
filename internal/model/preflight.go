@@ -42,12 +42,17 @@ func PrepareStage(stage Stage, bom corpus.BOM, inputs []training.Input) (Prepare
 	if len(inputs) == 0 {
 		return PreparedStage{}, fmt.Errorf("stage %s has no materialized shard inputs", stage.Name)
 	}
-	expected := make(map[string]int64, len(bom.Shards))
+	type expectedInput struct {
+		bytes   int64
+		records int64
+	}
+	expected := make(map[string]expectedInput, len(bom.Shards))
 	for _, selected := range bom.Shards {
-		if size, exists := expected[selected.SHA256]; exists && size != selected.Bytes {
+		value := expectedInput{bytes: selected.Bytes, records: selected.Docs}
+		if previous, exists := expected[selected.SHA256]; exists && previous != value {
 			return PreparedStage{}, fmt.Errorf("stage %s object %s has conflicting declared sizes", stage.Name, selected.SHA256[:12])
 		}
-		expected[selected.SHA256] = selected.Bytes
+		expected[selected.SHA256] = value
 	}
 	seen := make(map[string]bool, len(inputs))
 	resolved, err := training.ResolveParameters(stage.Parameters)
@@ -59,8 +64,8 @@ func PrepareStage(stage Stage, bom corpus.BOM, inputs []training.Input) (Prepare
 		selected[path] = true
 	}
 	for _, input := range inputs {
-		size, exists := expected[input.SHA256]
-		if input.Path == "" || !exists || input.Bytes != size || seen[input.SHA256] {
+		expectedInput, exists := expected[input.SHA256]
+		if input.Path == "" || !exists || input.Bytes != expectedInput.bytes || input.Records != expectedInput.records || seen[input.SHA256] {
 			return PreparedStage{}, fmt.Errorf("stage %s has an invalid or duplicate materialized input %s", stage.Name, input.SHA256)
 		}
 		if resolved.Data.Order == "corpus-balanced-shuffle-v1" && !selected[input.Corpus] {

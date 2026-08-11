@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,6 +38,42 @@ func TestSummaryUsesTinyFooterAggregatesAndAuditChecksRecords(t *testing.T) {
 	}
 	if audited.Records != summary.Records || audited.Tokens != summary.Tokens {
 		t.Fatalf("audit = %+v, summary = %+v", audited, summary)
+	}
+}
+
+func TestTargetedRecordReadsSeekWithoutWalkingShard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "canonical.parquet")
+	rows := []TextRow{
+		validTextRow("zero", tokenCount(t, "zero")),
+		validTextRow("one", tokenCount(t, "one")),
+		validTextRow("two", tokenCount(t, "two")),
+		validTextRow("three", tokenCount(t, "three")),
+	}
+	writeCanonicalFixture(t, path, rows, true, nil)
+	sizes, err := ReadRecordTextSizes(path, []int64{1, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(sizes, []int64{3, 5}) {
+		t.Fatalf("targeted text sizes = %v", sizes)
+	}
+	var positions []int64
+	var texts []string
+	if err := ReadRecordsAt(path, []int64{1, 3}, func(position int64, view RecordView) error {
+		positions = append(positions, position)
+		texts = append(texts, view.Text)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(positions, []int64{1, 3}) || !slices.Equal(texts, []string{"one", "three"}) {
+		t.Fatalf("targeted records = %v / %v", positions, texts)
+	}
+	if count, err := RecordCount(path); err != nil || count != 4 {
+		t.Fatalf("record count = %d, err = %v", count, err)
+	}
+	if _, err := ReadRecordTextSizes(path, []int64{3, 1}); err == nil {
+		t.Fatal("descending targeted positions accepted")
 	}
 }
 

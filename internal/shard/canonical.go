@@ -512,6 +512,128 @@ func WalkRecords(path string, callback func(int64, RecordView) error) error {
 	return err
 }
 
+// RecordCount reads the physical Parquet row count after validating the
+// canonical shard schema. It does not decode record pages.
+func RecordCount(path string) (int64, error) {
+	file, parquetFile, _, err := openShard(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	return parquetFile.NumRows(), nil
+}
+
+// ReadRecordTextSizes reads only the text column for the requested zero-based
+// row positions. Positions must be strictly increasing so Parquet page seeks
+// remain forward-only and bounded by the selected records rather than corpus
+// size.
+func ReadRecordTextSizes(path string, positions []int64) ([]int64, error) {
+	file, parquetFile, _, err := openShard(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	if err := validateRecordPositions(parquetFile.NumRows(), positions); err != nil {
+		return nil, err
+	}
+	type textRow struct {
+		Text string `parquet:"text"`
+	}
+	reader := parquet.NewGenericReader[textRow](parquetFile)
+	defer reader.Close()
+	result := make([]int64, 0, len(positions))
+	rows := make([]textRow, 1)
+	for _, position := range positions {
+		if err := reader.SeekToRow(position); err != nil {
+			return nil, fmt.Errorf("seek to record %d: %w", position, err)
+		}
+		count, readErr := reader.Read(rows)
+		if count != 1 {
+			if readErr == nil {
+				readErr = io.ErrUnexpectedEOF
+			}
+			return nil, fmt.Errorf("read record %d: %w", position, readErr)
+		}
+		result = append(result, int64(len(rows[0].Text)))
+	}
+	return result, nil
+}
+
+// ReadRecordsAt reads complete record views only at the requested zero-based
+// row positions. It preserves the canonical and established schema-1 readers
+// while avoiding a scan through unrelated rows.
+func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordView) error) error {
+	if callback == nil {
+		return fmt.Errorf("record callback is required")
+	}
+	file, parquetFile, _, err := openShard(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if err := validateRecordPositions(parquetFile.NumRows(), positions); err != nil {
+		return err
+	}
+	if slices.Equal(columnNames(parquetFile), legacyColumns) {
+		reader := parquet.NewGenericReader[Row](parquetFile)
+		defer reader.Close()
+		rows := make([]Row, 1)
+		for _, position := range positions {
+			if err := reader.SeekToRow(position); err != nil {
+				return fmt.Errorf("seek to record %d: %w", position, err)
+			}
+			count, readErr := reader.Read(rows)
+			if count != 1 {
+				if readErr == nil {
+					readErr = io.ErrUnexpectedEOF
+				}
+				return fmt.Errorf("read record %d: %w", position, readErr)
+			}
+			row := rows[0]
+			view := RecordView{ID: row.SHA256, Text: row.Text, Source: row.Source, License: row.License, Language: row.Lang, Tokens: row.Tokens, Bytes: int64(len(row.Text))}
+			if err := callback(position, view); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	reader := parquet.NewGenericReader[TextRow](parquetFile)
+	defer reader.Close()
+	rows := make([]TextRow, 1)
+	for _, position := range positions {
+		if err := reader.SeekToRow(position); err != nil {
+			return fmt.Errorf("seek to record %d: %w", position, err)
+		}
+		count, readErr := reader.Read(rows)
+		if count != 1 {
+			if readErr == nil {
+				readErr = io.ErrUnexpectedEOF
+			}
+			return fmt.Errorf("read record %d: %w", position, readErr)
+		}
+		row := rows[0]
+		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, License: row.License, Language: stringValue(row.Language), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text))}
+		if err := callback(position, view); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateRecordPositions(records int64, positions []int64) error {
+	previous := int64(-1)
+	for _, position := range positions {
+		if position < 0 || position >= records {
+			return fmt.Errorf("record position %d is outside 0..%d", position, records-1)
+		}
+		if position <= previous {
+			return fmt.Errorf("record positions must be strictly increasing")
+		}
+		previous = position
+	}
+	return nil
+}
+
 func ExportRecord(path, id string, output io.Writer) error {
 	found := false
 	err := WalkRecords(path, func(_ int64, view RecordView) error {

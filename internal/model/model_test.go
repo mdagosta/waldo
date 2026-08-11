@@ -670,7 +670,7 @@ func preparedFixture(t *testing.T, stage Stage) PreparedStage {
 		Manifests: []corpus.ManifestPin{{Path: "example/example.json", SHA256: strings.Repeat("a", 64), Name: "example", Title: "Example", Description: "Model fixture.", License: "CC0-1.0", Format: "parquet", RecordSchema: 1, ConvertedBy: conversion, Sources: []index.Source{{Name: "fixture", Source: "Fixture", URL: "https://example.test", SHA256: strings.Repeat("b", 64)}}, Totals: measures, Licenses: map[string]index.Measures{"CC0-1.0": measures}}},
 		Shards:    []corpus.ShardPin{{Manifest: "example/example.json", URL: "https://objects.example/" + digest, SHA256: digest, Format: "parquet", RecordSchema: 1, License: "CC0-1.0", ConvertedBy: conversion, Docs: 2, Tokens: 256, Bytes: int64(len(data))}},
 	}
-	prepared, err := PrepareStage(stage, bom, []training.Input{{Path: path, SHA256: digest, Bytes: int64(len(data))}})
+	prepared, err := PrepareStage(stage, bom, []training.Input{{Path: path, SHA256: digest, Bytes: int64(len(data)), Records: 2}})
 	if err != nil {
 		t.Fatal(err)
 	}

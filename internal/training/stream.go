@@ -6,6 +6,7 @@
 package training
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"crypto/sha256"
@@ -30,11 +31,12 @@ type Record struct {
 }
 
 type RecordPartition struct {
-	Evaluation EvaluationSet
-	selected   map[string]bool
-	inputs     []Input
-	parameters ResolvedParameters
-	codec      TokenCodec
+	Evaluation        EvaluationSet
+	selected          map[string]bool
+	evaluationRecords []Record
+	inputs            []Input
+	parameters        ResolvedParameters
+	codec             TokenCodec
 }
 
 type PartitionProgress struct {
@@ -49,15 +51,16 @@ type evaluationCandidate struct {
 	key       string
 	corpus    string
 	score     [32]byte
+	input     int
+	row       int64
 	textBytes int64
-	tokens    int64
 }
 
 type evaluationHeap []evaluationCandidate
 
 func (values evaluationHeap) Len() int { return len(values) }
 func (values evaluationHeap) Less(i, j int) bool {
-	return string(values[i].score[:]) > string(values[j].score[:])
+	return bytes.Compare(values[i].score[:], values[j].score[:]) > 0
 }
 func (values evaluationHeap) Swap(i, j int)   { values[i], values[j] = values[j], values[i] }
 func (values *evaluationHeap) Push(value any) { *values = append(*values, value.(evaluationCandidate)) }
@@ -73,13 +76,12 @@ func NewRecordPartition(inputs []Input, parameters ResolvedParameters) (RecordPa
 }
 
 // NewRecordPartitionWithProgress deterministically selects held-out records
-// while reporting the otherwise CPU-heavy full-corpus scan.
+// while reporting metadata enumeration progress.
 func NewRecordPartitionWithProgress(inputs []Input, parameters ResolvedParameters, progress func(PartitionProgress)) (RecordPartition, error) {
 	return NewRecordPartitionContext(context.Background(), inputs, parameters, progress)
 }
 
-// NewRecordPartitionContext makes the full-corpus held-out selection scan
-// interruptible by its caller.
+// NewRecordPartitionContext makes held-out metadata selection interruptible.
 func NewRecordPartitionContext(ctx context.Context, inputs []Input, parameters ResolvedParameters, progress func(PartitionProgress)) (RecordPartition, error) {
 	return NewRecordPartitionContextWithTokenizer(ctx, inputs, parameters, byteCodec{}, progress)
 }
@@ -109,14 +111,24 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 		totalBytes += input.Bytes
 	}
 	for inputPosition, input := range ordered {
-		err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
+		if input.Records <= 0 {
+			return RecordPartition{}, fmt.Errorf("select evaluation records from shard %s: declared record count must be positive", input.SHA256)
+		}
+		physicalRecords, err := shard.RecordCount(input.Path)
+		if err != nil {
+			return RecordPartition{}, fmt.Errorf("read evaluation row count from shard %s: %w", input.SHA256, err)
+		}
+		if physicalRecords != input.Records {
+			return RecordPartition{}, fmt.Errorf("shard %s contains %d records, corpus BOM declares %d", input.SHA256, physicalRecords, input.Records)
+		}
+		for row := int64(0); row < input.Records; row++ {
 			if err := ctx.Err(); err != nil {
-				return err
+				return RecordPartition{}, err
 			}
 			records++
 			key := selectionID(input.SHA256, row)
 			score := evaluationScore(parameters.Seed, key)
-			candidate := evaluationCandidate{key: key, corpus: input.Corpus, score: score, textBytes: int64(len(view.Text)), tokens: int64(codec.Count(view.Text))}
+			candidate := evaluationCandidate{key: key, corpus: input.Corpus, score: score, input: inputPosition, row: row}
 			candidateHeap := &candidates
 			if policy.Selection == "stratified-lowest-sha256-v1" {
 				candidateHeap = groupCandidates[input.Corpus]
@@ -128,17 +140,10 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 			}
 			if candidateHeap.Len() < policy.MaxRecords {
 				heap.Push(candidateHeap, candidate)
-			} else if string(score[:]) < string((*candidateHeap)[0].score[:]) {
+			} else if bytes.Compare(score[:], (*candidateHeap)[0].score[:]) < 0 {
 				heap.Pop(candidateHeap)
 				heap.Push(candidateHeap, candidate)
 			}
-			if progress != nil && records%1000 == 0 {
-				progress(PartitionProgress{CurrentShard: inputPosition + 1, TotalShards: len(ordered), Records: records, Bytes: completedBytes, TotalBytes: totalBytes})
-			}
-			return nil
-		})
-		if err != nil {
-			return RecordPartition{}, fmt.Errorf("select evaluation records from shard %s: %w", input.SHA256, err)
 		}
 		completedBytes += input.Bytes
 		if progress != nil {
@@ -155,7 +160,7 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 		}
 	}
 	var selected []evaluationCandidate
-	var bytes int64
+	var selectedBytes int64
 	if policy.Selection == "stratified-lowest-sha256-v1" {
 		groups := make([]string, 0, len(groupCandidates))
 		values := make(map[string][]evaluationCandidate, len(groupCandidates))
@@ -163,8 +168,17 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 		for group, candidates := range groupCandidates {
 			groups = append(groups, group)
 			values[group] = append([]evaluationCandidate(nil), (*candidates)...)
-			sort.Slice(values[group], func(i, j int) bool { return string(values[group][i].score[:]) < string(values[group][j].score[:]) })
+			sort.Slice(values[group], func(i, j int) bool { return bytes.Compare(values[group][i].score[:], values[group][j].score[:]) < 0 })
 			maxRounds = max(maxRounds, len(values[group]))
+		}
+		sizes, err := evaluationCandidateSizes(ctx, ordered, flattenEvaluationCandidates(values))
+		if err != nil {
+			return RecordPartition{}, err
+		}
+		for group := range values {
+			for index := range values[group] {
+				values[group][index].textBytes = sizes[values[group][index].key]
+			}
 		}
 		sort.Strings(groups)
 		for round := 0; round < maxRounds && len(selected) < desired; round++ {
@@ -173,11 +187,11 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 					continue
 				}
 				candidate := values[group][round]
-				if candidate.textBytes > policy.MaxBytes-bytes {
+				if candidate.textBytes > policy.MaxBytes-selectedBytes {
 					continue
 				}
 				selected = append(selected, candidate)
-				bytes += candidate.textBytes
+				selectedBytes += candidate.textBytes
 				if len(selected) == desired {
 					break
 				}
@@ -185,34 +199,117 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 		}
 	} else {
 		values := append([]evaluationCandidate(nil), candidates...)
-		sort.Slice(values, func(i, j int) bool { return string(values[i].score[:]) < string(values[j].score[:]) })
+		sort.Slice(values, func(i, j int) bool { return bytes.Compare(values[i].score[:], values[j].score[:]) < 0 })
+		sizes, err := evaluationCandidateSizes(ctx, ordered, values)
+		if err != nil {
+			return RecordPartition{}, err
+		}
+		for index := range values {
+			values[index].textBytes = sizes[values[index].key]
+		}
 		for _, candidate := range values {
 			if len(selected) == desired {
 				break
 			}
-			if candidate.textBytes > policy.MaxBytes-bytes {
+			if candidate.textBytes > policy.MaxBytes-selectedBytes {
 				continue
 			}
 			selected = append(selected, candidate)
-			bytes += candidate.textBytes
+			selectedBytes += candidate.textBytes
 		}
 	}
 	if desired > 0 && len(selected) == 0 {
 		return RecordPartition{}, fmt.Errorf("no held-out record fits evaluation_max_bytes=%d; increase the limit or explicitly disable evaluation", policy.MaxBytes)
 	}
+	evaluationRecords, tokenTargets, err := readEvaluationRecords(ctx, ordered, selected, codec)
+	if err != nil {
+		return RecordPartition{}, err
+	}
+	partition.evaluationRecords = evaluationRecords
 	sort.Slice(selected, func(i, j int) bool { return selected[i].key < selected[j].key })
 	hasher := sha256.New()
-	var tokenTargets int64
 	for _, candidate := range selected {
 		partition.selected[candidate.key] = true
 		_, _ = fmt.Fprintln(hasher, candidate.key)
-		tokenTargets += candidate.tokens
 	}
 	partition.Evaluation = EvaluationSet{
 		Selection: policy.Selection, Seed: parameters.Seed, Records: int64(len(selected)),
-		TokenTargets: tokenTargets, TextBytes: bytes, SHA256: hex.EncodeToString(hasher.Sum(nil)),
+		TokenTargets: tokenTargets, TextBytes: selectedBytes, SHA256: hex.EncodeToString(hasher.Sum(nil)),
 	}
 	return partition, nil
+}
+
+func flattenEvaluationCandidates(groups map[string][]evaluationCandidate) []evaluationCandidate {
+	var flattened []evaluationCandidate
+	for _, values := range groups {
+		flattened = append(flattened, values...)
+	}
+	return flattened
+}
+
+func evaluationCandidateSizes(ctx context.Context, inputs []Input, candidates []evaluationCandidate) (map[string]int64, error) {
+	grouped := make(map[int][]evaluationCandidate)
+	for _, candidate := range candidates {
+		grouped[candidate.input] = append(grouped[candidate.input], candidate)
+	}
+	sizes := make(map[string]int64, len(candidates))
+	for inputPosition := range inputs {
+		values := grouped[inputPosition]
+		if len(values) == 0 {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		sort.Slice(values, func(i, j int) bool { return values[i].row < values[j].row })
+		positions := make([]int64, len(values))
+		for index, candidate := range values {
+			positions[index] = candidate.row
+		}
+		valuesByPosition, err := shard.ReadRecordTextSizes(inputs[inputPosition].Path, positions)
+		if err != nil {
+			return nil, fmt.Errorf("read evaluation candidate sizes from shard %s: %w", inputs[inputPosition].SHA256, err)
+		}
+		for index, candidate := range values {
+			sizes[candidate.key] = valuesByPosition[index]
+		}
+	}
+	return sizes, nil
+}
+
+func readEvaluationRecords(ctx context.Context, inputs []Input, selected []evaluationCandidate, codec TokenCodec) ([]Record, int64, error) {
+	grouped := make(map[int][]evaluationCandidate)
+	for _, candidate := range selected {
+		grouped[candidate.input] = append(grouped[candidate.input], candidate)
+	}
+	records := make([]Record, 0, len(selected))
+	var tokenTargets int64
+	for inputPosition, input := range inputs {
+		values := grouped[inputPosition]
+		if len(values) == 0 {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, 0, err
+		}
+		sort.Slice(values, func(i, j int) bool { return values[i].row < values[j].row })
+		positions := make([]int64, len(values))
+		for index, candidate := range values {
+			positions[index] = candidate.row
+		}
+		err := shard.ReadRecordsAt(input.Path, positions, func(row int64, view shard.RecordView) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			records = append(records, recordFromView(input, row, view))
+			tokenTargets += int64(codec.Count(view.Text))
+			return nil
+		})
+		if err != nil {
+			return nil, 0, fmt.Errorf("read selected evaluation records from shard %s: %w", input.SHA256, err)
+		}
+	}
+	return records, tokenTargets, nil
 }
 
 func (partition RecordPartition) TrainingRecords() (RecordSource, error) {
@@ -224,7 +321,7 @@ func (partition RecordPartition) TrainingRecords() (RecordSource, error) {
 }
 
 func (partition RecordPartition) EvaluationRecords() RecordSource {
-	return rawRecordSource{inputs: partition.inputs, include: func(record Record) bool { return partition.selected[record.SelectionID] }}
+	return sliceRecordSource(partition.evaluationRecords)
 }
 
 func (partition RecordPartition) TrainingByteTargets(ctx context.Context) (int64, error) {
@@ -249,6 +346,20 @@ func (partition RecordPartition) TrainingByteTargets(ctx context.Context) (int64
 type filteredRecordSource struct {
 	source  RecordSource
 	include func(Record) bool
+}
+
+type sliceRecordSource []Record
+
+func (source sliceRecordSource) Stream(ctx context.Context, consume func(Record) error) error {
+	for _, record := range source {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := consume(record); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (source filteredRecordSource) Stream(ctx context.Context, consume func(Record) error) error {

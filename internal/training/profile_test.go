@@ -127,6 +127,51 @@ func TestRecordPartitionPinsAndExcludesHeldOutRecords(t *testing.T) {
 	}
 }
 
+type countingTokenCodec struct {
+	counts int
+}
+
+func (codec *countingTokenCodec) Count(text string) int {
+	codec.counts++
+	return len([]byte(text))
+}
+
+func (*countingTokenCodec) Encode(text string) []int   { return byteCodec{}.Encode(text) }
+func (*countingTokenCodec) Decode(tokens []int) string { return byteCodec{}.Decode(tokens) }
+
+func TestRecordPartitionTokenizesAndCachesOnlySelectedRecords(t *testing.T) {
+	texts := make([]string, 1000)
+	for index := range texts {
+		texts[index] = fmt.Sprintf("record-%04d", index)
+	}
+	input := writeTrainingShard(t, texts)
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 16, LearningRate: 0.001, Seed: 42})
+	if err != nil {
+		t.Fatal(err)
+	}
+	codec := &countingTokenCodec{}
+	partition, err := NewRecordPartitionContextWithTokenizer(context.Background(), []Input{input}, parameters, codec, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codec.counts != int(partition.Evaluation.Records) || codec.counts != 10 {
+		t.Fatalf("tokenizer calls = %d, evaluation records = %d", codec.counts, partition.Evaluation.Records)
+	}
+	if err := os.Remove(input.Path); err != nil {
+		t.Fatal(err)
+	}
+	var cached int
+	if err := partition.EvaluationRecords().Stream(context.Background(), func(Record) error {
+		cached++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if cached != codec.counts {
+		t.Fatalf("cached evaluation records = %d, want %d", cached, codec.counts)
+	}
+}
+
 func TestRecordPartitionHonorsCanceledContext(t *testing.T) {
 	inputs := []Input{writeTrainingShard(t, []string{"one", "two"})}
 	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 7})
@@ -412,5 +457,5 @@ func writeTrainingShard(t *testing.T, texts []string) Input {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return Input{Path: path, SHA256: digest, Bytes: int64(len(data))}
+	return Input{Path: path, SHA256: digest, Bytes: int64(len(data)), Records: int64(len(texts))}
 }

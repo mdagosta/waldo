@@ -151,10 +151,11 @@ type EvaluationSet struct {
 }
 
 type Input struct {
-	Path   string
-	SHA256 string
-	Bytes  int64
-	Corpus string
+	Path    string
+	SHA256  string
+	Bytes   int64
+	Records int64
+	Corpus  string
 }
 
 type Initialization struct {

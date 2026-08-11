@@ -1114,7 +1114,7 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 		}
 		seen[object.Shard.SHA256] = true
 		paths = append(paths, object.Path)
-		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes, Corpus: selectedCorpusGroup(object.Shard.Manifest, bom.Paths)})
+		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes, Records: object.Shard.Docs, Corpus: selectedCorpusGroup(object.Shard.Manifest, bom.Paths)})
 	}
 	if audit {
 		fmt.Fprintf(progress, "preflight/%s          auditing %s materialized shards\n", stage.Name, humanInteger(int64(len(paths))))

@@ -290,8 +290,9 @@ and the starting run ordinal.
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown
-as a separate phase. The deterministic held-out selection scan reports shard,
-record, and byte progress before backend selection. While a compose is running,
+as a separate phase. Deterministic held-out selection enumerates the row counts
+pinned by the corpus BOM, reports shard and record progress, and reads only the
+bounded candidate rows before backend selection. While a compose is running,
 ordinary `model list` and `model summary` operations see its current state at
 the standard model path.
 After Ctrl-C or process loss, repeating the exact command discovers the active
