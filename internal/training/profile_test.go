@@ -420,6 +420,38 @@ func TestWorkerProtocolStreamsBeginRecordsEndAndValidatesOutput(t *testing.T) {
 	}
 }
 
+func TestWorkerInputStopsTrainingRecordsAfterTargetSignal(t *testing.T) {
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	begin := WorkerBegin{RunID: "run", Stage: "pretrain", Objective: "causal-language-modeling", Parameters: parameters}
+	stop := make(chan struct{})
+	streamed := 0
+	records := recordSourceFunc(func(_ context.Context, consume func(Record) error) error {
+		for position := 0; position < 100; position++ {
+			if err := consume(Record{ID: fmt.Sprintf("record-%d", position), Text: "training text"}); err != nil {
+				return err
+			}
+			streamed++
+			if position == 0 {
+				close(stop)
+			}
+		}
+		return nil
+	})
+	var encoded bytes.Buffer
+	if err := writeWorkerInputUntil(context.Background(), &encoded, begin, records, nil, stop); err != nil {
+		t.Fatal(err)
+	}
+	if streamed != 1 {
+		t.Fatalf("streamed %d records after target signal, want 1", streamed)
+	}
+	if !strings.Contains(encoded.String(), `"kind":"end"`) {
+		t.Fatalf("worker stream did not terminate cleanly: %s", encoded.String())
+	}
+}
+
 func collectRecords(t *testing.T, inputs []Input, parameters ResolvedParameters) []string {
 	t.Helper()
 	source, err := NewCanonicalRecordSource(inputs, parameters)

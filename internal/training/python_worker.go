@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync"
 )
 
 // runPythonWorker owns the common schema-1 process and stream lifecycle used
@@ -55,12 +56,20 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		err         error
 	}
 	result := make(chan workerResult, 1)
+	stopRecords := make(chan struct{})
+	var stopRecordsOnce sync.Once
+	if request.Resume != nil && request.Resume.Step >= request.Parameters.Steps {
+		stopRecordsOnce.Do(func() { close(stopRecords) })
+	}
 	go func() {
 		var observation Observation
 		completed := false
 		err := ReadWorkerOutput(stdout, func(frame WorkerOutputFrame) error {
 			switch frame.Kind {
 			case "event":
+				if frame.Event.Step >= request.Parameters.Steps {
+					stopRecordsOnce.Do(func() { close(stopRecords) })
+				}
 				if request.Report != nil {
 					request.Report(*frame.Event)
 				}
@@ -119,7 +128,7 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 			evaluationRecords = tokenizedRecordSource{source: evaluationRecords, codec: codec}
 		}
 	}
-	writeErr := WriteWorkerInput(ctx, stdin, begin, records, evaluationRecords)
+	writeErr := writeWorkerInputUntil(ctx, stdin, begin, records, evaluationRecords, stopRecords)
 	closeErr := stdin.Close()
 	waitErr := command.Wait()
 	worker := <-result

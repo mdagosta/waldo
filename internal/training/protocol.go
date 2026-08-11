@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -73,6 +74,12 @@ type WorkerOutputFrame struct {
 }
 
 func WriteWorkerInput(ctx context.Context, output io.Writer, begin WorkerBegin, records, evaluationRecords RecordSource) error {
+	return writeWorkerInputUntil(ctx, output, begin, records, evaluationRecords, nil)
+}
+
+var errWorkerReachedTarget = errors.New("worker reached target steps")
+
+func writeWorkerInputUntil(ctx context.Context, output io.Writer, begin WorkerBegin, records, evaluationRecords RecordSource, stopRecords <-chan struct{}) error {
 	if records == nil {
 		return fmt.Errorf("worker input requires a record source")
 	}
@@ -88,8 +95,15 @@ func WriteWorkerInput(ctx context.Context, output io.Writer, begin WorkerBegin, 
 		}
 	}
 	if err := records.Stream(ctx, func(record Record) error {
+		if stopRecords != nil {
+			select {
+			case <-stopRecords:
+				return errWorkerReachedTarget
+			default:
+			}
+		}
 		return encoder.Encode(WorkerInputFrame{Kind: "record", Schema: WorkerProtocolSchema, Record: &record})
-	}); err != nil {
+	}); err != nil && !errors.Is(err, errWorkerReachedTarget) {
 		return err
 	}
 	return encoder.Encode(WorkerInputFrame{Kind: "end", Schema: WorkerProtocolSchema})
