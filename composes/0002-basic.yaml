@@ -1,4 +1,4 @@
-# Third rung: sustain coherent cross-domain prose over longer contexts.
+# Third rung: establish basic cross-domain language-model capability.
 kind: waldo-model-compose
 schema: 1
 architecture:
