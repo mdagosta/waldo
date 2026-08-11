@@ -42,7 +42,10 @@ shuffle window, and a 25/50/25 percent Gutenberg/Wikimedia/PLOS mixture.
 candidate. Its estimate of approximately 48 hours on one H200 is scaled from
 the measured basic run with additional allowance for its larger softmax,
 longer context, dropout, checkpointing, and evaluation. Actual runtime remains
-authoritative.
+authoritative. An initial physical batch of 32 exhausted a 141 GB H200 while
+materializing the FP32 loss input. The corrected batch of 16 doubles optimizer
+steps to preserve the exact token budget, lowers peak memory substantially, and
+uses a correspondingly gentler learning rate.
 
 The babble compose uses equal-exposure `causal-pretrain-v2`. Later composes use
 `causal-pretrain-v3`, which applies declared integer corpus weights while

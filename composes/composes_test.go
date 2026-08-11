@@ -78,6 +78,10 @@ func TestIntermediateHasTwoDayScalingBudget(t *testing.T) {
 	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 {
 		t.Fatalf("intermediate forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
+	parameters := compose.Stages[0].Parameters
+	if parameters.BatchSize != 16 || parameters.Steps != 366210 || parameters.SequenceLength != 2048 {
+		t.Fatalf("intermediate memory-safe training shape = %+v", parameters)
+	}
 }
 
 func TestValidatedBabbleHasMeasuredScalingBudget(t *testing.T) {

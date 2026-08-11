@@ -28,13 +28,13 @@ stages:
       - science/plos
     parameters:
       profile: causal-pretrain-v3
-      steps: 183105
-      batch_size: 32
+      steps: 366210
+      batch_size: 16
       sequence_length: 2048
-      learning_rate: 0.00018
+      learning_rate: 0.00013
       seed: 42
       weight_decay: 0.15
-      warmup_steps: 1831
+      warmup_steps: 3662
       shuffle_buffer_records: 65536
       shuffle_buffer_bytes: 2147483648
       corpus_weights:
@@ -43,7 +43,7 @@ stages:
         core/common-pile/wikimedia: 4
         government/regulations: 1
         science/plos: 2
-      checkpoint_every: 9155
-      evaluate_every: 9155
+      checkpoint_every: 18310
+      evaluate_every: 18310
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
