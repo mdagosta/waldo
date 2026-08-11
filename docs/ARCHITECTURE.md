@@ -1,211 +1,106 @@
 # Architecture
 
-## System shape
-
-WALDO is one binary containing several bounded domains. The binary is the
-distribution and user-experience boundary; it is not permission for arbitrary
-package coupling.
+WALDO is one Go binary with bounded internal domains. The binary is the
+distribution boundary; it is not a shared service container.
 
 ```text
 CLI
- ├─ index ─────────────────────────────┐
- ├─ corpus ── index + lookaside ──────┼─ provenance
- ├─ lookaside                         │
- └─ model ── OpenWALDO BOM ─────────┘
-              └─ training backend
+├── index ───────────────┐
+├── ingest ── index ─────┼── corpus BOM ── model ── training/inference
+├── corpus ─ lookaside ──┤
+└── shard ───────────────┘
+                                  └── provenance and exports
 ```
 
-Dependencies point from model workflows toward the corpus contract. Index,
-corpus, and lookaside code never depend on model or training code.
+Dependencies point from model workflows toward resolved corpus contracts.
+Index, record, shard, ingest, lookaside, and corpus packages must not depend on
+model or training packages.
 
-## Domain responsibilities
+## Domains
 
 ### Index
 
-Owns the Git metadata tree and its meaning:
+`internal/index` owns index and manifest schemas, canonical metadata,
+traversal, structural verification, summaries, and Git revision identity.
+`internal/git` owns safe managed-checkout synchronization.
 
-- Index and manifest schemas
-- Canonical metadata encoding
-- Path resolution and traversal
-- Manifest inheritance
-- Structural verification
-- Queries, summaries, and generated navigation files
-- Index revision identity and dirty-checkout reporting
+The index records meaning. It does not store large corpus bytes or inspect
+model state.
 
-The index never reads model state and never runs a trainer.
+### Record and shard
 
-WALDO maintains the default public metadata checkout at `~/.waldo/index`.
-That checkout is read-only to authoring workflows. Synchronization operates on
-the selected checkout—configured, explicitly supplied, or managed default—and
-derives its current branch and tracking remote from Git metadata. It may
-fast-forward only a clean, behind checkout. Ingestion and corpus update still
-require an explicit contributor checkout. Clone, fetch, state inspection, and
-fast-forward are implemented in-process with `go-git`; WALDO never requires or
-shells out to an installed `git` executable for managed index reads.
+`internal/record` owns canonical document and license semantics.
+`internal/shard` owns canonical Parquet encoding, decoding, embedded shard
+BOMs, and record validation. These definitions are shared by ingestion,
+audit, export, and training input.
 
-### Record and license
+### Ingestion
 
-Own the canonical document schema, record identity, license normalization, and
-policy matching used by corpus construction and selection. These definitions
-must not be duplicated in a fetcher or training backend.
+`internal/ingest` owns input probing, profiles, conversion, deterministic
+deduplication and packing, publication, contribution overlays, and recovery.
+
+Source-specific fetchers remain external shell scripts. WALDO executes them
+only through an explicitly supplied ingest recipe and then takes ownership of
+conversion and publication.
 
 ### Lookaside
 
-Owns content-addressed object transport and lifecycle:
+`internal/lookaside` owns content-addressed object transport, verification,
+caching, S3 credentials, mirroring, inventory, and explicit removal. An
+object URL is a transport location, not provenance.
 
-- Verified download scratch, purged after successful consumers
-- Header-only canonical-object reachability and size probes
-- Anonymous HTTP and S3 reads
-- Authenticated S3 reads and writes through the internal AWS SDK
-- Bucket-scoped interactive credentials in protected
-  `~/.waldo/credentials`, with the AWS environment, shared-file, and
-  workload-role chain as the fallback
-- Mirrors
-- Availability and integrity checks
-- Whole-bucket S3 object inventory with configured-prefix markers and optional
-  recursive index-reference annotations
-- Explicit removal of fully named objects; no index-free garbage collection
+### Corpus and provenance
 
-A lookaside object contains bytes. The index contains their meaning. Lookaside
-code must not treat an object's URL or location as provenance.
+`internal/corpus` resolves an index selection, license policy, and verified
+objects into an immutable corpus BOM or export. `internal/provenance` owns
+serialized provenance projections shared across exports.
 
-### Corpus
+Model code consumes resolved BOMs. It must not independently traverse index
+trees, choose mirrors, or normalize corpus licenses.
 
-Owns workflows that turn index meaning and lookaside objects into useful,
-immutable data selections:
+### Model, training, and inference
 
-- Corpus ingestion and deterministic packing
-- Corpus selection and license policy
-- Export
-- OpenWALDO BOM construction
+`internal/model` owns model identity, architecture, compose transactions,
+run history, origin pulls, forecasting inputs, and lifecycle state.
 
-Its central output is an OpenWALDO BOM (`corpus.BOM`), the only normal handoff to model
-workflows.
+`internal/training` owns portable backend requests and MLX, PyTorch, and
+TorchTitan adapters. A backend receives an explicit request and returns
+observations; it does not own model persistence or corpus selection.
 
-Conceptually:
+`internal/inference` loads verified model artifacts for supported local
+runtimes. Export conversion is split across `internal/modelexport`,
+`internal/modelweights`, and `internal/modelquant`.
 
-```go
-type BOM struct {
-    Kind      "openwaldo-bom"
-    Subject   "corpus"
-    Index     IndexIdentity
-    Selection Selection
-    Manifests []ManifestPin
-    Shards    []ShardPin
-    Totals    Totals
-}
-```
+### Cross-cutting packages
 
-The BOM contains resolved facts, not pointers to mutable manifests or implicit
-access to an index checkout.
+- `internal/config`: machine-local transport and execution preferences.
+- `internal/canon`: deterministic serialization helpers.
+- `internal/calibration`: forecast and quantization calibration evidence.
+- `internal/disclosure`: EU GPAI disclosure projection.
+- `internal/signing`: release BOM signing.
+- `internal/ai`: optional advisor provider boundary.
 
-### Provenance
+## Process boundaries
 
-Owns the vocabulary and serialization of:
-
-1. OpenWALDO BOMs and export records
-2. Training run records
-3. Model lineage and aggregate model BOMs
-
-These are related records, not one giant optional structure. A run references
-an OpenWALDO BOM and adds planned parameters, observed consumption, backend
-identity, status, and outputs.
-
-### Model
-
-Owns model identity, immutable architecture, composes, lifecycle, lineage, and
-artifact export. It asks the corpus domain for OpenWALDO BOMs and gives a fully
-resolved execution request to a training backend.
-
-It must not parse index files, normalize licenses, choose lookaside mirrors, or
-accept an unverified shard path from CLI code.
-
-External model acquisition belongs here. It resolves a provider reference to
-an immutable revision, inventories source artifacts in a separate origin BOM,
-and delegates tensor-container name normalization to `modelweights`. Source
-weight bytes are staging input, not a second durable managed checkpoint.
-
-### Training
-
-Owns the adapter boundary to an execution framework. A backend receives an
-explicit request and returns observed results. It does not own model state or
-BOM persistence.
-
-Portable model composes never name an execution framework. An environment-aware
-resolver selects an MLX, PyTorch, TensorFlow, or distributed PyTorch/TorchTitan
-adapter before model state is created. Every adapter exposes the same narrow
-capability, request, progress, and observation contracts. Framework-specific
-workers may translate the canonical architecture and training request, but may
-not introduce a second model compose or provenance lifecycle.
-
-The production resolver selects MLX on Apple Silicon and, on Linux, prefers
-TorchTitan before PyTorch. MLX and PyTorch are accepted only after a candidate
-Python runtime successfully executes a real operation on the selected device.
-TorchTitan additionally verifies every visible GPU and the required distributed
-APIs before selecting its single-node device-mesh/FSDP2 adapter.
-Automatic resolution fails when no real backend is usable. The fake adapter is
-reachable only through explicit machine-local test configuration.
-
-Portable parameters resolve through a named schema-1 training profile before a
-run BOM is written. The training domain streams deterministically shuffled
-canonical records through a versioned NDJSON worker protocol; framework workers
-therefore do not parse Parquet, traverse an index, or invent data ordering and
-packing semantics.
-
-The application writes a `planned` run before launching the backend, advances
-it to `running`, and persists exactly one terminal state: `complete`, `failed`,
-or `interrupted`. Backend-reported consumed tokens and output hashes are
-recorded as observations rather than replaced by projected corpus totals.
-
-## Expected package layout
-
-```text
-cmd/waldo/          process entry point
-internal/cli/       parsing, help, and presentation
-internal/config/    machine-local transport and execution preferences
-internal/git/       Go-native checkout inspection and synchronization
-internal/canon/     canonical JSON primitives shared by durable formats
-internal/index/     metadata schemas, tree, resolver, verification
-internal/record/    document schema and canonical representation
-internal/shard/     native shard decoding and interchange conversion
-internal/license/   normalization and selection policy
-internal/lookaside/ verified object access and lifecycle
-internal/acquire/   bounded source adapters and local acquisition records
-internal/corpus/    ingestion, selection, OpenWALDO BOMs, export
-internal/provenance/BOM types and verification
-internal/model/     model lifecycle and composes
-internal/training/  backend interface and adapters
-internal/platform/  narrow OS and process adapters when needed
-```
-
-This is a map, not a requirement to create empty packages. Packages are added
-with the first vertical slice that needs them.
+Framework-specific Python workers receive a versioned request and stream. They
+do not parse the Git index or define a second model configuration format.
+External fetchers populate private acquisition space and stop before
+conversion. Git remains the review mechanism for index metadata.
 
 ## Implementation rules
 
+- Durable formats have explicit `kind` and `schema` fields.
+- A durable format change requires an ADR, fixtures, and compatibility tests.
 - Domain types do not depend on CLI types.
-- CLI handlers translate arguments into explicit application requests.
-- External systems sit behind narrow interfaces owned by their consumer.
-- File writes that establish state use temporary files plus atomic rename.
-- Large-object operations stream; corpus size must not imply equivalent memory
-  use.
-- Network access is explicit in the command and injectable in tests, except
-  for the documented first-use clone of the managed default index.
-- Deterministic formats use golden-byte tests on Linux and macOS.
-- Errors retain the relevant path, hash, source, or run identifier.
-- Configuration contains machine preferences, never corpus meaning.
+- Interfaces live near their consumer.
+- State-establishing writes use temporary files and atomic rename.
+- Large data paths stream and remain bounded in memory.
+- Errors identify the failed path, object, model, or run and suggest the next
+  useful action when one exists.
+- Network and destructive operations remain explicit and testable.
 
-## Fetcher boundary
+## Durable boundaries
 
-Fetchers live in a separate repository as reviewed shell scripts, as defined in
-`docs/FETCHER-CONTRACT.md`. Direct ingestion consumes an independently prepared
-local directory. Recipe-driven ingestion is an explicit alternative: when the user
-passes a strict `waldo-ingest-recipe` file, WALDO executes only its named
-commands in sequence with a private temporary directory as their working
-directory. Fetchers stop after populating that directory. WALDO then owns
-probing, conversion, sharding, publication, cleanup, provenance, and the index
-contribution. Dry-run resolves and hashes commands but never executes them.
-
-Source-specific network logic and scripts do not enter this Go module. Merely
-reading or verifying an index never executes code; script execution is
-authorized only by the recipe path passed positionally to `index ingest`.
+The compatibility promises are limited to the surfaces in
+[COMPATIBILITY.md](COMPATIBILITY.md). Internal Go packages and managed-state
+layouts are not public APIs.

@@ -4,7 +4,7 @@ These rules apply to the entire repository.
 
 ## Begin with the contracts
 
-Read `VISION.md`, `docs/UX.md`, `docs/ARCHITECTURE.md`, and
+Read `docs/VISION.md`, `docs/UX.md`, `docs/ARCHITECTURE.md`, and
 `docs/COMPATIBILITY.md` before making architectural or cross-domain changes.
 Record durable architectural decisions under `docs/adr/`.
 
