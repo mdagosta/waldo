@@ -12,8 +12,7 @@ distribution checklist.
 3. The README describes the project as early development and directs people
    to a usable contribution path.
 4. Documentation distinguishes current behavior from plans and design history.
-5. A private security-reporting contact is available before inviting broad
-   external testing.
+5. Security reports have a private path through `.github/SECURITY.md`.
 
 ## Collaboration setup
 
@@ -32,11 +31,19 @@ distribution checklist.
   guarantees.
 - A code of conduct.
 
-## Decisions reserved for discussion with the project owner
+## Legal posture confirmed by the project owner
 
-No legal or ownership files should be changed without explicit discussion and
-approval. This includes copyright ownership and notices, licensing changes,
-trademarks, governance terms with legal effect, and DCO-versus-CLA policy.
+- The existing OpenWALDO contributors, CtrlIQ, Inc., and Gregory M. Kurtzer
+  copyright notices are intentional.
+- Contributions use Developer Certificate of Origin sign-off, including all
+  `waldo-index` commits.
+- `gmkurtzer@gmail.com` is the current public contact and private security
+  reporting address.
+- WALDO/OpenWALDO trademark ownership has not been secured. Do not make an
+  ownership claim or publish trademark rules until that changes.
+
+Any future licensing, ownership, notice, trademark, or legally consequential
+governance change still requires explicit discussion with the project owner.
 
 ## Current status
 
@@ -49,5 +56,5 @@ trademarks, governance terms with legal effect, and DCO-versus-CLA policy.
   private-looking URLs, user-specific paths, or historical blobs at least
   1 MiB. The owner still needs to confirm contributor email visibility and
   redistributability assumptions.
-- Still needed before publication: a private security contact and an owner
-  decision about the initial legal posture.
+- The initial copyright, DCO, contact, and trademark posture has been confirmed
+  by the project owner.

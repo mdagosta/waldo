@@ -28,6 +28,16 @@ Networked and S3 tests require explicit opt-in; see [Testing](TESTING.md).
 Use focused commits with clear messages. Open an issue before a large or
 cross-domain change so the intended contract can be discussed first.
 
-The project has not finalized a DCO/CLA or governance policy. Those choices
-will be made explicitly with the project owner; contributors should not infer
-additional legal terms from this development guide.
+## Developer Certificate of Origin
+
+All commits must certify the [Developer Certificate of Origin](https://developercertificate.org/)
+with a `Signed-off-by` trailer:
+
+```bash
+git commit --signoff
+```
+
+The sign-off certifies that you have the right to submit the contribution
+under the project's license. This requirement applies to code, documentation,
+and especially `waldo-index` commits, where contributors make source and
+license assertions. Pull-request CI rejects unsigned commits.

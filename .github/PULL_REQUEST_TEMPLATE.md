@@ -9,3 +9,7 @@
 ## Contracts
 
 <!-- Note affected durable formats, CLI behavior, docs, or ADRs. Write "none" when not applicable. -->
+
+## DCO
+
+- [ ] Every commit includes a `Signed-off-by` trailer (`git commit --signoff`).
