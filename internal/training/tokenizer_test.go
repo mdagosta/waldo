@@ -30,6 +30,26 @@ func TestCL100KTokenizerRoundTripAndSpecialFraming(t *testing.T) {
 	}
 }
 
+func TestR50KTokenizerRoundTripAndSpecialFraming(t *testing.T) {
+	spec, codec, err := ResolveTokenizer("tiktoken/r50k_base", TiktokenR50KRevision, TiktokenR50KVocabulary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "Once upon a time, there was a compact language model."
+	tokens := codec.Encode(text)
+	if len(tokens) == 0 || codec.Decode(tokens) != text {
+		t.Fatalf("round trip = %q through %v", codec.Decode(tokens), tokens)
+	}
+	if spec.PadID != 50256 || spec.BOSID != 50257 || spec.EOSID != 50258 || spec.VocabularySize != 50259 {
+		t.Fatalf("special framing = %+v", spec)
+	}
+	for _, token := range tokens {
+		if token >= spec.PadID {
+			t.Fatalf("ordinary token %d overlaps special token range", token)
+		}
+	}
+}
+
 func TestTokenizedRecordSourceRemovesRawText(t *testing.T) {
 	_, codec, err := ResolveTokenizer("tiktoken/cl100k_base", TiktokenCL100KRevision, TiktokenCL100KVocabulary)
 	if err != nil {

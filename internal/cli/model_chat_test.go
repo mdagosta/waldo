@@ -57,6 +57,22 @@ func TestOneShotChatStreamsSafeTerminalOutputAndReturnsJSON(t *testing.T) {
 	}
 }
 
+func TestSafeTokenWriterNormalizesCRLFAndEscapesLoneCarriageReturn(t *testing.T) {
+	var output bytes.Buffer
+	renderer := safeTokenWriter{writer: &output}
+	for _, piece := range [][]byte{[]byte("first\r"), []byte("\nsecond\r"), []byte("third")} {
+		if err := renderer.Write(piece); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := renderer.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if output.String() != "first\nsecond\\x0dthird" {
+		t.Fatalf("rendered output = %q", output.String())
+	}
+}
+
 func TestInteractiveChatMaintainsAndClearsContext(t *testing.T) {
 	session := &chatSession{data: []byte(" answer")}
 	opened := inference.Opened{Description: inference.Description{Model: "foo", Backend: "mlx", ContextTokens: 512}, Session: session}

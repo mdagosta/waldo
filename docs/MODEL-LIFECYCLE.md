@@ -105,10 +105,12 @@ per-record EOS-packed sequences without gradients and report `heldout_loss`
 and `heldout_perplexity`; the old current-training-batch loss is not presented
 as evaluation.
 
-Compose-driven models may instead pin
+Compose-driven models may instead pin either
+`tiktoken/r50k_base@tiktoken-r50k-base` with vocabulary size 50259 or
 `tiktoken/cl100k_base@tiktoken-cl100k-base` with vocabulary size 100259. WALDO
-encodes canonical text in Go from its offline vocabulary and streams identical
-token IDs to MLX or PyTorch. Pad, BOS, and EOS use IDs 100256 through 100258.
+encodes canonical text in Go from bundled offline vocabularies and streams
+identical token IDs to MLX or PyTorch. For `r50k_base`, pad, BOS, and EOS use
+IDs 50256 through 50258; for `cl100k_base`, they use IDs 100256 through 100258.
 Chat uses the persisted tokenizer identity and the same codec for prompts and
 generated IDs.
 
@@ -199,12 +201,13 @@ instruction-following behavior requires later supervised fine-tuning and a
 pinned chat template. Generation is ephemeral and does not mutate lifecycle
 state or claim a new BOM observation.
 
-The MLX, PyTorch, and TorchTitan adapters support `decoder-transformer` architectures pinned
-to the built-in `byte@builtin-byte-schema-1` tokenizer with vocabulary size
-259. This includes the 10m, 35m, and 90m presets. Unsupported tokenizers fail
-during backend resolution before a run record is created. WALDO records the
-selected Python path, framework version, host, device, accelerator identity,
-and accelerator memory when applicable in the run BOM.
+The MLX, PyTorch, and TorchTitan adapters support `decoder-transformer`
+architectures pinned to the byte, `r50k_base`, or `cl100k_base` tokenizer
+contracts described above. Unsupported tokenizer identities, revisions, or
+vocabulary sizes fail during backend resolution before a run record is
+created. WALDO records the selected Python path, framework version, host,
+device, accelerator identity, and accelerator memory when applicable in the
+run BOM.
 
 ## Model compose
 

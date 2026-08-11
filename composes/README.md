@@ -13,11 +13,15 @@ waldo model train babble-test composes/0001-babble.yaml
 | Compose | Architecture | Planned tokens | Corpus selection | Purpose |
 | --- | ---: | ---: | --- | --- |
 | `0000-canary.yaml` | 13.6M parameters | 4.1M | Four small prose, technical, and dialogue selections | Release-gate CUDA/MLX, artifact reload, accounting, and chat |
-| `0001-babble.yaml` | 47.9M parameters | 1.05B | Gutenberg and PLOS, balanced by token exposure | Experimental candidate for coherent local continuations |
+| `0001-babble.yaml` | 49.9M parameters | 1.05B | Gutenberg and PLOS, balanced by token exposure | Experimental candidate for coherent local continuations |
 
-`0000-canary.yaml` has been validated end to end on a single H200. The babble
-compose is intentionally marked experimental until a real run establishes its
-loss curve, artifact parity, corpus accounting, runtime, and generated output.
+`0000-canary.yaml` has been validated end to end on a single H200. The first
+babble experiment used `cl100k_base`, which spent 80% of its 47.9M parameters
+on token embeddings and failed its generation acceptance test. The replacement
+uses the GPT-2 `r50k_base` vocabulary and assigns about half of its similar total
+size to the transformer backbone. It remains experimental until a real run
+establishes its loss curve, artifact parity, corpus accounting, runtime, and
+generated output.
 
 The composes use `causal-pretrain-v2`, which deterministically interleaves the
 declared corpus selections, stratifies held-out evaluation across them, and
@@ -29,7 +33,8 @@ the compose against the accelerator catalog and locally observed calibration.
 WALDO selects the training backend from machine-local configuration; compose
 identity does not change when hardware changes.
 
-Both use the portable `tiktoken/cl100k_base` subword tokenizer and
+The canary uses `tiktoken/cl100k_base`; the compact babble experiment uses
+`tiktoken/r50k_base`. Both are portable offline subword tokenizers and use the
 causal-language-modeling objective. Promote experimental composes to reference
 status only after their budgets, accounting, saved artifacts, and observed
 behavior have been measured on a real training run.

@@ -18,6 +18,11 @@ const (
 	TiktokenCL100KPadID      = 100256
 	TiktokenCL100KBOSID      = 100257
 	TiktokenCL100KEOSID      = 100258
+	TiktokenR50KRevision     = "tiktoken-r50k-base"
+	TiktokenR50KVocabulary   = 50259
+	TiktokenR50KPadID        = 50256
+	TiktokenR50KBOSID        = 50257
+	TiktokenR50KEOSID        = 50258
 )
 
 type TokenizerSpec struct {
@@ -65,6 +70,12 @@ func ResolveTokenizer(name, revision string, vocabularySize uint64) (TokenizerSp
 			return TokenizerSpec{}, nil, err
 		}
 		return TokenizerSpec{Name: name, Revision: revision, VocabularySize: TiktokenCL100KVocabulary, PadID: TiktokenCL100KPadID, BOSID: TiktokenCL100KBOSID, EOSID: TiktokenCL100KEOSID}, codec, nil
+	case name == "tiktoken/r50k_base" && revision == TiktokenR50KRevision && vocabularySize == TiktokenR50KVocabulary:
+		codec, err := waldoTokenizer.NewCodec(name)
+		if err != nil {
+			return TokenizerSpec{}, nil, err
+		}
+		return TokenizerSpec{Name: name, Revision: revision, VocabularySize: TiktokenR50KVocabulary, PadID: TiktokenR50KPadID, BOSID: TiktokenR50KBOSID, EOSID: TiktokenR50KEOSID}, codec, nil
 	default:
 		return TokenizerSpec{}, nil, fmt.Errorf("unsupported tokenizer %s@%s with vocabulary_size %d", name, revision, vocabularySize)
 	}
@@ -78,7 +89,7 @@ func ResolveTokenizerCodec(name string) (TokenCodec, error) {
 	if name == "byte" {
 		return byteCodec{}, nil
 	}
-	if name == waldoTokenizer.Default {
+	if name == waldoTokenizer.Default || name == "tiktoken/r50k_base" {
 		return waldoTokenizer.NewCodec(name)
 	}
 	return nil, fmt.Errorf("unsupported tokenizer %q", name)

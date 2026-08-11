@@ -532,7 +532,7 @@ Configured training corpus index:
 Valid compose shape reference (schema example only, not a recommendation):
 ` + string(referenceJSON) + `
 
-Current executable backends require tokenizer byte@builtin-byte-schema-1 with vocabulary_size 259. Architecture hidden_size must be divisible by attention_heads, attention_heads by key_value_heads, and every sequence_length must not exceed context_tokens. Training stages use type pre-training, fine-tuning, alignment, or other; the currently supported objective is causal-language-modeling. Set positive steps, batch_size, sequence_length, and learning_rate. Use checkpoint_every and evaluate_every appropriate to the run length.
+Current executable backends support byte@builtin-byte-schema-1 with vocabulary_size 259, tiktoken/r50k_base@tiktoken-r50k-base with vocabulary_size 50259, and tiktoken/cl100k_base@tiktoken-cl100k-base with vocabulary_size 100259. Architecture hidden_size must be divisible by attention_heads, attention_heads by key_value_heads, and every sequence_length must not exceed context_tokens. Training stages use type pre-training, fine-tuning, alignment, or other; the currently supported objective is causal-language-modeling. Set positive steps, batch_size, sequence_length, and learning_rate. Use checkpoint_every and evaluate_every appropriate to the run length.
 
 Durable build history:
 ` + string(buildJSON) + `

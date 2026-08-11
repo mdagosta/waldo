@@ -15,17 +15,34 @@ import (
 // control sequences. Newline and tab remain readable; other controls and
 // invalid UTF-8 bytes are rendered as hexadecimal escapes.
 type safeTokenWriter struct {
-	writer  io.Writer
-	pending []byte
+	writer         io.Writer
+	pending        []byte
+	carriageReturn bool
 }
 
 func (renderer *safeTokenWriter) Write(data []byte) error {
 	renderer.pending = append(renderer.pending, data...)
 	for len(renderer.pending) > 0 {
+		if renderer.carriageReturn {
+			if renderer.pending[0] == '\n' {
+				if _, err := renderer.writer.Write([]byte{'\n'}); err != nil {
+					return err
+				}
+				renderer.pending = renderer.pending[1:]
+				renderer.carriageReturn = false
+				continue
+			}
+			if _, err := io.WriteString(renderer.writer, "\\x0d"); err != nil {
+				return err
+			}
+			renderer.carriageReturn = false
+		}
 		first := renderer.pending[0]
 		if first < utf8.RuneSelf {
 			renderer.pending = renderer.pending[1:]
-			if first == '\n' || first == '\t' || first >= 0x20 && first != 0x7f {
+			if first == '\r' {
+				renderer.carriageReturn = true
+			} else if first == '\n' || first == '\t' || first >= 0x20 && first != 0x7f {
 				if _, err := renderer.writer.Write([]byte{first}); err != nil {
 					return err
 				}
@@ -54,6 +71,12 @@ func (renderer *safeTokenWriter) Write(data []byte) error {
 }
 
 func (renderer *safeTokenWriter) Flush() error {
+	if renderer.carriageReturn {
+		if _, err := io.WriteString(renderer.writer, "\\x0d"); err != nil {
+			return err
+		}
+		renderer.carriageReturn = false
+	}
 	for _, value := range renderer.pending {
 		if _, err := fmt.Fprintf(renderer.writer, "\\x%02x", value); err != nil {
 			return err

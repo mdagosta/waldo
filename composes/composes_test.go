@@ -48,14 +48,14 @@ func TestExperimentalBabbleHasMeasuredScalingBudget(t *testing.T) {
 	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 2 {
 		t.Fatalf("babble stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
 	}
-	if compose.Architecture.Tokenizer.Name != "tiktoken/cl100k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-cl100k-base" || compose.Architecture.VocabularySize != 100259 {
+	if compose.Architecture.Tokenizer.Name != "tiktoken/r50k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-r50k-base" || compose.Architecture.VocabularySize != 50259 {
 		t.Fatalf("babble does not use the portable subword tokenizer: %+v", compose.Architecture.Tokenizer)
 	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 47941632 || forecast.PlannedTokens != 1048576000 {
+	if forecast.ApproximateParameters != 49858560 || forecast.PlannedTokens != 1048576000 {
 		t.Fatalf("babble forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }

@@ -47,3 +47,14 @@ func TestNewReturnsIndependentEquivalentCounters(t *testing.T) {
 		t.Fatal("independent counters disagree")
 	}
 }
+
+func TestR50KCodecIsAvailableOffline(t *testing.T) {
+	codec, err := NewCodec("tiktoken/r50k_base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := "portable GPT-2 vocabulary"
+	if tokens := codec.Encode(text); len(tokens) == 0 || codec.Decode(tokens) != text {
+		t.Fatalf("r50k round trip failed through %v", tokens)
+	}
+}
