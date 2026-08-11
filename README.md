@@ -434,10 +434,11 @@ JSON model compose:
 waldo model train composed-small ./model.yaml
 ```
 
-The runnable [reference compose](composes/README.md) is an end-to-end training
-canary. Larger templates are added only after their budgets and resulting
-artifacts have been validated on a real training run. Hardware and runtime
-remain forecast results rather than compose identities.
+The runnable [model composes](composes/README.md) include an end-to-end training
+canary and clearly labeled experimental candidates. Candidates become reference
+templates only after their budgets and resulting artifacts have been validated
+on a real training run. Hardware and runtime remain forecast results rather
+than compose identities.
 
 Portable composes name architecture, corpora, objectives, and training
 parameters—not MLX, PyTorch, or a host path. Machine-local `model.backend=auto`
