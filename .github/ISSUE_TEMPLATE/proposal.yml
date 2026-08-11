@@ -1,0 +1,25 @@
+name: Proposal
+description: Suggest a focused feature, workflow, or design improvement.
+title: "proposal: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or contributor problem should WALDO solve?
+    validations:
+      required: true
+  - type: textarea
+    id: approach
+    attributes:
+      label: Proposed approach
+      description: Describe the smallest useful change and relevant alternatives.
+    validations:
+      required: true
+  - type: textarea
+    id: contracts
+    attributes:
+      label: Contract impact
+      description: Note any effect on CLI behavior, durable formats, compatibility, provenance, or security.
+    validations:
+      required: true
