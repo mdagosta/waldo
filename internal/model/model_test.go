@@ -131,6 +131,38 @@ func TestMergeProgressKeepsTerminalArtifactEvaluation(t *testing.T) {
 	}
 }
 
+func TestResumeReplacesEvaluationAtCheckpointStep(t *testing.T) {
+	previous := training.Evaluation{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 2}}
+	run := RunRecord{
+		Progress: &training.Progress{Evaluations: []training.Evaluation{previous}},
+		Attempts: []RunAttempt{{Ordinal: 2, State: RunRunning, ResumeStep: 10}},
+	}
+	replacement := training.Evaluation{Step: 10, Tokens: 100, Metrics: map[string]float64{"heldout_loss": 1.99}}
+	changed, err := updateDurableEvaluation(&run, replacement)
+	if err != nil || !changed || !reflect.DeepEqual(run.Progress.Evaluations, []training.Evaluation{replacement}) {
+		t.Fatalf("updated evaluation = %+v, changed %v, err %v", run.Progress.Evaluations, changed, err)
+	}
+}
+
+func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
+	parameters, err := training.ResolveParameters(training.Parameters{Steps: 10, BatchSize: 1, SequenceLength: 10, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := RunRecord{
+		State:    RunFailed,
+		Error:    "persist training progress: evaluation step 10 does not advance durable progress",
+		Progress: &training.Progress{Checkpoints: []training.Checkpoint{{Step: 10, Tokens: 100}}},
+	}
+	if !resumableRunState(run, parameters) {
+		t.Fatal("final-checkpoint evaluation bookkeeping failure is not resumable")
+	}
+	run.Error = "trainer exited"
+	if resumableRunState(run, parameters) {
+		t.Fatal("ordinary failed run became resumable")
+	}
+}
+
 func TestModelBOMIdentifiesLatestRealWeights(t *testing.T) {
 	record := ModelRecord{
 		ID: "model", Name: "example", PlanSHA256: "plan", ArchitectureSHA256: "architecture", Updated: "now",

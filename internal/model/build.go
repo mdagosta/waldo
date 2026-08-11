@@ -250,10 +250,25 @@ func resumableRun(inspection Inspection, stage Stage, parameters training.Resolv
 	index := len(inspection.Runs) - 1
 	run := inspection.Runs[index]
 	bom := inspection.RunBOMs[index]
-	if run.State != RunInterrupted || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !reflect.DeepEqual(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
+	if !resumableRunState(run, parameters) || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !reflect.DeepEqual(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
 		return 0, false
 	}
 	return index, true
+}
+
+func resumableRunState(run RunRecord, parameters training.ResolvedParameters) bool {
+	if run.State == RunInterrupted {
+		return true
+	}
+	// Releases before the duplicate-evaluation fix could successfully verify a
+	// final artifact and then mark the run failed while persisting the repeated
+	// evaluation at its resume step. Permit only that exact, checkpoint-backed
+	// bookkeeping failure to resume; ordinary failed runs remain terminal.
+	if run.State != RunFailed || !strings.HasPrefix(run.Error, "persist training progress: evaluation step ") || !strings.HasSuffix(run.Error, " does not advance durable progress") || run.Progress == nil || len(run.Progress.Checkpoints) == 0 {
+		return false
+	}
+	checkpoint := run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1]
+	return checkpoint.Step == parameters.Steps && checkpoint.Tokens == parameters.PlannedTokenCapacity
 }
 
 func (builder Builder) resumeTraining(ctx context.Context, name string, inspection Inspection, index int, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, architectureJSON json.RawMessage, selection training.Selection) (Inspection, error) {
@@ -509,15 +524,39 @@ func persistTrainingEvent(modelPath, runDirectory string, record *ModelRecord, p
 	if event.Evaluation != nil {
 		evaluation := *event.Evaluation
 		evaluation.Metrics = cloneMetrics(event.Evaluation.Metrics)
-		if len(run.Progress.Evaluations) > 0 && evaluation.Step <= run.Progress.Evaluations[len(run.Progress.Evaluations)-1].Step {
-			if reflect.DeepEqual(evaluation, run.Progress.Evaluations[len(run.Progress.Evaluations)-1]) {
-				return nil
-			}
-			return fmt.Errorf("evaluation step %d does not advance durable progress", evaluation.Step)
+		changed, err := updateDurableEvaluation(run, evaluation)
+		if err != nil {
+			return err
 		}
-		run.Progress.Evaluations = append(run.Progress.Evaluations, evaluation)
+		if !changed {
+			return nil
+		}
 	}
 	return persistRunAndPin(modelPath, runDirectory, record, pin, *run, now)
+}
+
+func updateDurableEvaluation(run *RunRecord, evaluation training.Evaluation) (bool, error) {
+	if len(run.Progress.Evaluations) == 0 {
+		run.Progress.Evaluations = append(run.Progress.Evaluations, evaluation)
+		return true, nil
+	}
+	last := len(run.Progress.Evaluations) - 1
+	previous := run.Progress.Evaluations[last]
+	if evaluation.Step > previous.Step {
+		run.Progress.Evaluations = append(run.Progress.Evaluations, evaluation)
+		return true, nil
+	}
+	if reflect.DeepEqual(evaluation, previous) {
+		return false, nil
+	}
+	if evaluation.Step == previous.Step && len(run.Attempts) > 0 && run.Attempts[len(run.Attempts)-1].ResumeStep == evaluation.Step {
+		// Re-evaluation after restoring the same checkpoint can differ slightly
+		// because of accelerator arithmetic. It replaces the prior live metric;
+		// the completion observation subsequently enriches it with artifact metrics.
+		run.Progress.Evaluations[last] = evaluation
+		return true, nil
+	}
+	return false, fmt.Errorf("evaluation step %d does not advance durable progress", evaluation.Step)
 }
 
 func mergeProgress(progress *training.Progress, observation training.Observation) training.Observation {
