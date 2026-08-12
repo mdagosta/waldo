@@ -69,6 +69,26 @@ func TestArchitectureRejectsInvalidDropout(t *testing.T) {
 	}
 }
 
+func TestComposeRejectsDuplicateAndMismatchedWeightedCorpora(t *testing.T) {
+	compose := validCompose()
+	compose.Stages[0].Corpora = []string{"example", "example"}
+	if err := compose.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate corpus") {
+		t.Fatalf("duplicate corpus error = %v", err)
+	}
+
+	compose = validCompose()
+	compose.Stages[0].Parameters.Profile = training.WeightedProfile
+	compose.Stages[0].Parameters.CorpusWeights = map[string]uint64{"other": 1}
+	if err := compose.Validate(); err == nil || !strings.Contains(err.Error(), "does not declare corpus") {
+		t.Fatalf("missing corpus weight error = %v", err)
+	}
+
+	compose.Stages[0].Parameters.CorpusWeights = map[string]uint64{"example": 1, "other": 1}
+	if err := compose.Validate(); err == nil || !strings.Contains(err.Error(), "unselected corpus") {
+		t.Fatalf("extra corpus weight error = %v", err)
+	}
+}
+
 func TestResolveCorpusWeightsUsesLogicalManifestPaths(t *testing.T) {
 	resolved, err := resolveCorpusWeights(map[string]uint64{"core/peps": 2, "science/plos": 1}, []string{"core/peps.yaml", "science/plos"})
 	if err != nil {

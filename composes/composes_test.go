@@ -8,10 +8,81 @@ package composes_test
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/training"
 )
+
+func TestEveryReferenceComposeSettingResolvesIntoTrainingContract(t *testing.T) {
+	files, err := filepath.Glob("*.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range files {
+		t.Run(file, func(t *testing.T) {
+			compose, _, err := model.LoadCompose(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, stage := range compose.Stages {
+				raw := stage.Parameters
+				resolved, err := training.ResolveParameters(raw)
+				if err != nil {
+					t.Fatalf("stage %s: %v", stage.Name, err)
+				}
+				profile := raw.Profile
+				if profile == "" {
+					profile = training.DefaultProfile
+				}
+				epochs := raw.Epochs
+				if epochs == 0 {
+					epochs = 1
+				}
+				if resolved.Profile != profile || resolved.Epochs != epochs || resolved.Steps != raw.Steps || resolved.BatchSize != raw.BatchSize || resolved.SequenceLength != raw.SequenceLength || resolved.LearningRate != raw.LearningRate || resolved.Seed != raw.Seed {
+					t.Fatalf("stage %s direct settings were not preserved: raw=%+v resolved=%+v", stage.Name, raw, resolved)
+				}
+				if resolved.PlannedTokenCapacity != raw.Steps*raw.BatchSize*raw.SequenceLength {
+					t.Fatalf("stage %s planned capacity = %d", stage.Name, resolved.PlannedTokenCapacity)
+				}
+				assertOptionalFloat(t, stage.Name+" weight_decay", raw.WeightDecay, resolved.Optimizer.WeightDecay)
+				assertOptionalInt64(t, stage.Name+" warmup_steps", raw.WarmupSteps, resolved.Schedule.WarmupSteps)
+				assertOptionalInt64(t, stage.Name+" checkpoint_every", raw.CheckpointEvery, resolved.CheckpointEvery)
+				assertOptionalInt64(t, stage.Name+" evaluate_every", raw.EvaluateEvery, resolved.EvaluateEvery)
+				if raw.ShuffleBufferRecords != nil && resolved.Data.ShuffleBufferRecords != *raw.ShuffleBufferRecords {
+					t.Fatalf("stage %s shuffle_buffer_records = %d, want %d", stage.Name, resolved.Data.ShuffleBufferRecords, *raw.ShuffleBufferRecords)
+				}
+				assertOptionalInt64(t, stage.Name+" shuffle_buffer_bytes", raw.ShuffleBufferBytes, resolved.Data.ShuffleBufferBytes)
+				if !reflect.DeepEqual(resolved.Data.CorpusWeights, raw.CorpusWeights) {
+					t.Fatalf("stage %s corpus_weights = %v, want %v", stage.Name, resolved.Data.CorpusWeights, raw.CorpusWeights)
+				}
+				if resolved.Evaluation == nil {
+					t.Fatalf("stage %s has no resolved evaluation policy", stage.Name)
+				}
+				assertOptionalFloat(t, stage.Name+" evaluation_fraction", raw.EvaluationFraction, resolved.Evaluation.Fraction)
+				if raw.EvaluationMaxRecords != nil && resolved.Evaluation.MaxRecords != *raw.EvaluationMaxRecords {
+					t.Fatalf("stage %s evaluation_max_records = %d, want %d", stage.Name, resolved.Evaluation.MaxRecords, *raw.EvaluationMaxRecords)
+				}
+				assertOptionalInt64(t, stage.Name+" evaluation_max_bytes", raw.EvaluationMaxBytes, resolved.Evaluation.MaxBytes)
+			}
+		})
+	}
+}
+
+func assertOptionalInt64(t *testing.T, name string, declared *int64, resolved int64) {
+	t.Helper()
+	if declared != nil && resolved != *declared {
+		t.Fatalf("%s = %d, want %d", name, resolved, *declared)
+	}
+}
+
+func assertOptionalFloat(t *testing.T, name string, declared *float64, resolved float64) {
+	t.Helper()
+	if declared != nil && resolved != *declared {
+		t.Fatalf("%s = %g, want %g", name, resolved, *declared)
+	}
+}
 
 func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	files, err := filepath.Glob("*.yaml")

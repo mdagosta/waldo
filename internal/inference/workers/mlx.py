@@ -183,6 +183,7 @@ class Generator:
         self.pad_id = int(tokenizer["pad_id"])
         self.model = DecoderLM(architecture)
         self.model.load_weights(weights_path)
+        self.model.eval()
         mx.eval(self.model.parameters())
 
     def generate(self, request):

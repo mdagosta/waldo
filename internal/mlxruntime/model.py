@@ -65,21 +65,22 @@ class FeedForward(nn.Module):
 
 
 class DecoderBlock(nn.Module):
-    def __init__(self, hidden, intermediate, heads, kv_heads):
+    def __init__(self, hidden, intermediate, heads, kv_heads, dropout=0.0):
         super().__init__()
         self.attention_norm = nn.RMSNorm(hidden, eps=1e-5)
         self.attention = Attention(hidden, heads, kv_heads)
         self.ffn_norm = nn.RMSNorm(hidden, eps=1e-5)
         self.feed_forward = FeedForward(hidden, intermediate)
+        self.residual_dropout = nn.Dropout(dropout)
 
     def __call__(self, value):
-        value = value + self.attention(self.attention_norm(value))
-        return value + self.feed_forward(self.ffn_norm(value))
+        value = value + self.residual_dropout(self.attention(self.attention_norm(value)))
+        return value + self.residual_dropout(self.feed_forward(self.ffn_norm(value)))
 
     def generate(self, value, cache=None):
         attended, next_cache = self.attention.generate(self.attention_norm(value), cache)
-        value = value + attended
-        return value + self.feed_forward(self.ffn_norm(value)), next_cache
+        value = value + self.residual_dropout(attended)
+        return value + self.residual_dropout(self.feed_forward(self.ffn_norm(value))), next_cache
 
 
 class DecoderLM(nn.Module):
@@ -95,6 +96,7 @@ class DecoderLM(nn.Module):
                 architecture["intermediate_size"],
                 architecture["attention_heads"],
                 architecture["key_value_heads"],
+                architecture.get("dropout", 0.0),
             )
             for _ in range(architecture["layers"])
         ]

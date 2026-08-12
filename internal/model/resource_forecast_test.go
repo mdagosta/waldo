@@ -46,6 +46,41 @@ func TestForecastPlanFiltersNonFitsAndSortsSlowestFirst(t *testing.T) {
 	}
 }
 
+func TestForecastAccountsForFullBatchVocabularyWorkspace(t *testing.T) {
+	architecture := Architecture{
+		Family: "decoder-transformer", ContextTokens: 2048, VocabularySize: 50259,
+		HiddenSize: 1152, IntermediateSize: 3072, Layers: 20,
+		AttentionHeads: 16, KeyValueHeads: 4, TieEmbeddings: true,
+		ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "tiktoken/r50k_base", Revision: "tiktoken-r50k-base"},
+	}
+	forecast, err := architecture.Forecast()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := Plan{Architecture: architecture, Forecast: forecast, Stages: []PlannedStage{{Name: "pretrain", Parameters: training.Parameters{BatchSize: 32, SequenceLength: 2048}}}}
+	large, err := requiredMemoryPerGPU(plan, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.Stages[0].Parameters.BatchSize = 16
+	safe, err := requiredMemoryPerGPU(plan, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h200Limit := uint64(141<<30) - uint64(141<<30)/10
+	if large <= h200Limit || safe >= h200Limit || safe >= large {
+		t.Fatalf("forecast memory batch32=%d batch16=%d H200 limit=%d", large, safe, h200Limit)
+	}
+	plan.Stages[0].Parameters.BatchSize = 16
+	multiGPU, err := requiredMemoryPerGPU(plan, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if multiGPU >= safe || multiGPU < safe-forecast.ApproximateParameters*16 {
+		t.Fatalf("FSDP should shard model state but retain the complete physical batch: one=%d eight=%d", safe, multiGPU)
+	}
+}
+
 func TestForecastUsesExactObservedConfiguration(t *testing.T) {
 	recipe := validCompose()
 	architecture, err := recipe.Architecture.Forecast()

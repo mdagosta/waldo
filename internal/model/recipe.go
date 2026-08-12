@@ -153,14 +153,32 @@ func (compose Compose) Validate() error {
 		if len(stage.Corpora) == 0 {
 			return fmt.Errorf("stage %s requires at least one index path in corpora", stage.Name)
 		}
+		corpora := make(map[string]bool, len(stage.Corpora))
 		for _, corpusPath := range stage.Corpora {
 			if corpusPath == "" {
 				return fmt.Errorf("stage %s contains an empty corpus index path", stage.Name)
 			}
+			if corpora[corpusPath] {
+				return fmt.Errorf("stage %s contains duplicate corpus path %q", stage.Name, corpusPath)
+			}
+			corpora[corpusPath] = true
 		}
 		parameters := stage.Parameters
-		if _, err := training.ResolveParameters(parameters); err != nil {
+		resolved, err := training.ResolveParameters(parameters)
+		if err != nil {
 			return fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
+		}
+		if resolved.Data.Order == "corpus-weighted-shuffle-v1" {
+			for corpusPath := range corpora {
+				if parameters.CorpusWeights[corpusPath] == 0 {
+					return fmt.Errorf("stage %s corpus_weights does not declare corpus %q", stage.Name, corpusPath)
+				}
+			}
+			for corpusPath := range parameters.CorpusWeights {
+				if !corpora[corpusPath] {
+					return fmt.Errorf("stage %s corpus_weights declares unselected corpus %q", stage.Name, corpusPath)
+				}
+			}
 		}
 		if uint64(parameters.SequenceLength) > compose.Architecture.ContextTokens {
 			return fmt.Errorf("stage %s sequence_length exceeds architecture context_tokens", stage.Name)

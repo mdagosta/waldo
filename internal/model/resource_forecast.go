@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	forecastCatalog           = "openwaldo-training-hardware-2026-08-05"
+	forecastCatalog           = "openwaldo-training-hardware-2026-08-12"
 	forecastFormula           = "6 * parameters * planned_tokens / effective_throughput; catalog estimates include 8% run overhead and exact observed configurations use measured active run time"
 	forecastCalibrationSchema = 1
 )
@@ -202,8 +202,10 @@ func requiredMemoryPerGPU(plan Plan, GPUs int) (uint64, error) {
 	}
 	// BF16 parameters and gradients plus FP32 master weights and two Adam
 	// moments require approximately 16 bytes per parameter. Model state is
-	// assumed fully sharded. Activations use checkpointed decoder storage and
-	// are conservatively based on the largest stage-local microbatch.
+	// assumed fully sharded. The built-in workers do not activation-checkpoint,
+	// and FSDP shards model state rather than the input batch, so every rank must
+	// fit the complete declared physical batch. The loss also retains BF16
+	// logits and an FP32 conversion across the complete vocabulary.
 	states, err := multiply(plan.Forecast.ApproximateParameters, 16)
 	if err != nil {
 		return 0, err
@@ -211,10 +213,18 @@ func requiredMemoryPerGPU(plan Plan, GPUs int) (uint64, error) {
 	states = divideRoundUp(states, uint64(GPUs))
 	var maxActivations uint64
 	for _, stage := range plan.Stages {
-		localBatch := divideRoundUp(uint64(stage.Parameters.BatchSize), uint64(GPUs))
-		activations, err := multiplyAll(localBatch, uint64(stage.Parameters.SequenceLength), plan.Architecture.HiddenSize, plan.Architecture.Layers, 12)
+		batch := uint64(stage.Parameters.BatchSize)
+		activations, err := multiplyAll(batch, uint64(stage.Parameters.SequenceLength), plan.Architecture.HiddenSize, plan.Architecture.Layers, 72)
 		if err != nil {
 			return 0, fmt.Errorf("stage %s activation memory: %w", stage.Name, err)
+		}
+		logits, err := multiplyAll(batch, uint64(stage.Parameters.SequenceLength), plan.Architecture.VocabularySize, 6)
+		if err != nil {
+			return 0, fmt.Errorf("stage %s logits memory: %w", stage.Name, err)
+		}
+		activations, err = add(activations, logits)
+		if err != nil {
+			return 0, fmt.Errorf("stage %s training workspace memory: %w", stage.Name, err)
 		}
 		if activations > maxActivations {
 			maxActivations = activations

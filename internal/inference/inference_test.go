@@ -86,6 +86,12 @@ done
 	}
 }
 
+func TestMLXInferenceDisablesComposeDropout(t *testing.T) {
+	if !strings.Contains(string(mlxChatWorker), "self.model.eval()") {
+		t.Fatal("MLX inference must disable training dropout")
+	}
+}
+
 func TestPyTorchSessionConsumesStreamingProtocol(t *testing.T) {
 	python := filepath.Join(t.TempDir(), "fake-python")
 	script := `#!/bin/sh

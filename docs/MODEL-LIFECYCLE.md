@@ -284,7 +284,9 @@ stages:
 
 Weights define relative tokenizer-target exposure, not sampling probabilities
 or duplicated source records. They are preserved in the run BOM and exact
-consumption remains backend-validated.
+consumption remains backend-validated. Built-in MLX and PyTorch workers apply
+dropout to attention and feed-forward residual branches during training and
+disable it during evaluation and inference.
 
 Run it with:
 
@@ -293,10 +295,10 @@ waldo model train example model.yaml
 ```
 
 Unknown fields, additional YAML documents, incomplete architecture, unsupported
-objectives, empty corpus selections, duplicate stage names, and invalid
-parameters are rejected. Corpus values are index paths, never raw directories
-or corpus exports. Explicit paths discover their checkout; logical paths use
-the current or configured checkout.
+objectives, empty or duplicate corpus selections, incomplete weighted corpus
+maps, duplicate stage names, and invalid parameters are rejected. Corpus values
+are index paths, never raw directories or corpus exports. Explicit paths
+discover their checkout; logical paths use the current or configured checkout.
 
 When `base` is present, it must name a pulled model whose origin remains
 its current weights. WALDO verifies every origin artifact, checks the optional
@@ -439,9 +441,11 @@ GPUS  MFR     ACCELERATOR                    MEMORY/GPU  APPROX. TIME
    8  NVIDIA  H100 SXM                           80 GB       44 hours
 ```
 
-The estimate uses planned tokens, approximate parameters, optimizer and
-activation memory, device headroom, and conservative effective throughput from
-a versioned hardware catalog. WALDO also verifies completed, non-simulated
+The estimate uses planned tokens, approximate parameters, sharded optimizer
+state, full physical-batch activations and vocabulary logits, device headroom,
+and conservative effective throughput from a versioned hardware catalog. It
+does not assume activation checkpointing or split a declared batch across FSDP
+ranks. WALDO also verifies completed, non-simulated
 runs beneath `model.root` and measures their active attempt time. Evidence is
 aggregated only for the exact accelerator model and GPU count observed; that
 row uses measured throughput, while every unmatched row retains its dated

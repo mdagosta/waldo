@@ -18,8 +18,10 @@ forms compare the workload with a versioned catalog of exact Apple, NVIDIA, and
 AMD accelerators and create no model or run state.
 
 The memory model includes sharded parameters, gradients, FP32 master weights,
-Adam moments, checkpointed activations, a fixed runtime reserve, and ten
-percent device headroom. Configurations that do not fit are omitted.
+Adam moments, the built-in workers' full physical batch activations, BF16 and
+FP32 vocabulary-logit workspace, a fixed runtime reserve, and ten percent
+device headroom. It does not assume activation checkpointing or divide the
+physical batch across FSDP ranks. Configurations that do not fit are omitted.
 
 Runtime uses the transparent approximation:
 

@@ -431,6 +431,7 @@ func TestWorkerProtocolStreamsBeginRecordsEndAndValidatesOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 	var kinds []string
+	var decodedBegin WorkerBegin
 	scanner := bufio.NewScanner(bytes.NewReader(encoded.Bytes()))
 	for scanner.Scan() {
 		var frame WorkerInputFrame
@@ -438,9 +439,15 @@ func TestWorkerProtocolStreamsBeginRecordsEndAndValidatesOutput(t *testing.T) {
 			t.Fatal(err)
 		}
 		kinds = append(kinds, frame.Kind)
+		if frame.Begin != nil {
+			decodedBegin = *frame.Begin
+		}
 	}
 	if !reflect.DeepEqual(kinds, []string{"begin", "evaluation_record", "record", "end"}) {
 		t.Fatalf("frame kinds = %v", kinds)
+	}
+	if !reflect.DeepEqual(decodedBegin, begin) {
+		t.Fatalf("worker begin lost compose settings:\n got  %+v\n want %+v", decodedBegin, begin)
 	}
 
 	output := "{\"kind\":\"event\",\"schema\":1,\"event\":{\"kind\":\"progress\",\"step\":1}}\n" +

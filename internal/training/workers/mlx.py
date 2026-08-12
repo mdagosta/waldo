@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r5"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r6"
 
 
 def emit(kind, **payload):
