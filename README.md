@@ -9,7 +9,7 @@ contributors can help shape the project through frequent, incremental
 releases. Expect interfaces and formats outside the documented compatibility
 contract to evolve.
 
-## What works
+## What works today
 
 - Inspect, verify, audit, ingest, update, and export indexed corpora.
 - Read and publish canonical Parquet objects through local or S3 lookaside
