@@ -43,7 +43,7 @@ func TestManagedIndexAutoClonesForDefaultRead(t *testing.T) {
 	commitFixtureIndexFile(t, upstream, "upstream-note.txt", "updated\n")
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"index", "list"}, &stdout, &stderr); code != 0 || !strings.Contains(stderr.String(), "updated index checkout "+managed) {
+	if code := Run([]string{"index", "list"}, &stdout, &stderr); code != 0 || !strings.Contains(stderr.String(), "updated managed index checkout "+managed) {
 		t.Fatalf("auto pull code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	state, err := managedgit.CheckoutStatus(managed)
@@ -60,6 +60,34 @@ func TestManagedIndexAutoClonesForDefaultRead(t *testing.T) {
 	state, err = managedgit.CheckoutStatus(managed)
 	if err != nil || state.Commit != currentCommit {
 		t.Fatalf("offline verify changed checkout: state=%+v err=%v", state, err)
+	}
+}
+
+func TestManagedIndexAutoRecoversRewrittenUpstream(t *testing.T) {
+	upstream := fixtureGitIndex(t)
+	commitFixtureIndexFile(t, upstream, "obsolete.txt", "obsolete\n")
+	useTestIndexManager(t, upstream)
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WALDO_CONFIG", filepath.Join(home, "config.json"))
+	t.Chdir(t.TempDir())
+
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"index", "list"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("initial list code=%d stderr=%q", code, stderr.String())
+	}
+	rewriteFixtureIndex(t, upstream, "replacement.txt", "replacement\n")
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"index", "list"}, &stdout, &stderr); code != 0 || !strings.Contains(stderr.String(), "recovered managed index checkout") {
+		t.Fatalf("recovery list code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	managed := filepath.Join(home, ".waldo", "index")
+	if _, err := os.Stat(filepath.Join(managed, "replacement.txt")); err != nil {
+		t.Fatalf("replacement file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(managed, "obsolete.txt")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete rewritten file remains: %v", err)
 	}
 }
 
@@ -194,4 +222,32 @@ func commitFixtureIndexFile(t *testing.T, root, name, contents string) {
 	if _, err := worktree.Commit("update", &git.CommitOptions{Author: &object.Signature{Name: "WALDO Test", Email: "test@example.invalid", When: time.Unix(2, 0).UTC()}}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func rewriteFixtureIndex(t *testing.T, root, name, contents string) {
+	t.Helper()
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repository.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := repository.CommitObject(head.Hash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := commit.Parent(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worktree.Reset(&git.ResetOptions{Commit: parent.Hash, Mode: git.HardReset}); err != nil {
+		t.Fatal(err)
+	}
+	commitFixtureIndexFile(t, root, name, contents)
 }

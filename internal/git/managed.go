@@ -76,12 +76,65 @@ func CheckoutFetch(ctx context.Context, destination string, _ io.Writer) (Result
 	if err != nil {
 		return Result{}, err
 	}
-	err = selected.repository.FetchContext(ctx, &git.FetchOptions{RemoteName: selected.remoteName, Prune: true})
+	err = selected.repository.FetchContext(ctx, &git.FetchOptions{RemoteName: selected.remoteName, Prune: true, Force: true})
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return Result{}, fmt.Errorf("fetch index checkout %s: %w", destination, err)
 	}
 	state, err := checkoutStatus(selected, destination)
 	return Result{Action: "fetched", State: state}, err
+}
+
+// PullManaged synchronizes the canonical read-only managed checkout. Unlike an
+// ordinary contributor checkout, a clean managed checkout contains no
+// user-authored history, so WALDO may recover from rewritten upstream history
+// by resetting it to the freshly fetched canonical branch. Dirty worktrees are
+// always refused.
+func (manager Manager) PullManaged(ctx context.Context, destination string, progress io.Writer) (Result, error) {
+	repository, err := manager.open(destination)
+	if err != nil {
+		return Result{}, err
+	}
+	state, err := manager.status(repository, destination)
+	if err != nil {
+		return Result{}, err
+	}
+	if state.Dirty {
+		return Result{}, fmt.Errorf("managed index checkout %s is dirty; restore its changes before running `waldo index pull`", destination)
+	}
+	err = repository.FetchContext(ctx, &git.FetchOptions{RemoteName: "origin", Prune: true, Force: true})
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return Result{}, fmt.Errorf("fetch managed index checkout %s: %w", destination, err)
+	}
+	state, err = manager.status(repository, destination)
+	if err != nil {
+		return Result{}, err
+	}
+	if state.Dirty {
+		return Result{}, fmt.Errorf("managed index checkout %s became dirty while fetching; restore its changes before running `waldo index pull`", destination)
+	}
+	if state.Relation == "current" {
+		return Result{Action: "current", State: state}, nil
+	}
+	if state.Relation == "unknown" {
+		return Result{}, fmt.Errorf("managed index checkout %s has no fetched origin/%s reference", destination, manager.Branch)
+	}
+	upstream, err := repository.Reference(plumbing.NewRemoteReferenceName("origin", manager.Branch), true)
+	if err != nil {
+		return Result{}, fmt.Errorf("resolve managed index origin/%s: %w", manager.Branch, err)
+	}
+	worktree, err := repository.Worktree()
+	if err != nil {
+		return Result{}, fmt.Errorf("open managed index worktree %s: %w", destination, err)
+	}
+	action := "updated"
+	if state.Relation == "ahead" || state.Relation == "diverged" {
+		action = "recovered"
+	}
+	if err := worktree.Reset(&git.ResetOptions{Commit: upstream.Hash(), Mode: git.HardReset}); err != nil {
+		return Result{}, fmt.Errorf("%s managed index checkout %s: %w", action, destination, err)
+	}
+	state, err = manager.status(repository, destination)
+	return Result{Action: action, State: state}, err
 }
 
 // CheckoutPull fetches and fast-forwards any clean checkout. Dirty, ahead,

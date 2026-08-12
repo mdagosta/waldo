@@ -141,6 +141,41 @@ func TestCheckoutPullFastForwardsConfiguredTrackingBranch(t *testing.T) {
 	}
 }
 
+func TestManagedPullRecoversRewrittenUpstreamOnlyWhenClean(t *testing.T) {
+	upstream := fixtureUpstream(t)
+	commitFile(t, upstream, "obsolete.yaml", "obsolete: true\n")
+	manager := Manager{URL: upstream, Branch: "main"}
+	destination := filepath.Join(t.TempDir(), "managed")
+	if _, err := manager.Clone(context.Background(), destination, nil); err != nil {
+		t.Fatal(err)
+	}
+	rewriteUpstream(t, upstream, "replacement.yaml", "replacement: true\n")
+	result, err := manager.PullManaged(context.Background(), destination, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Action != "recovered" || result.State.Relation != "current" || result.State.Dirty {
+		t.Fatalf("managed recovery = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "replacement.yaml")); err != nil {
+		t.Fatalf("replacement file missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(destination, "obsolete.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("obsolete file remains after recovery: %v", err)
+	}
+
+	dirty := filepath.Join(t.TempDir(), "dirty-managed")
+	if _, err := manager.Clone(context.Background(), dirty, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dirty, "local.txt"), []byte("local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.PullManaged(context.Background(), dirty, nil); err == nil || !strings.Contains(err.Error(), "is dirty") {
+		t.Fatalf("dirty managed recovery error = %v", err)
+	}
+}
+
 func fixtureUpstream(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "upstream")
@@ -187,6 +222,34 @@ func commitFile(t *testing.T, root, name, contents string) {
 	if _, err := worktree.Commit("update", &git.CommitOptions{Author: testSignature()}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func rewriteUpstream(t *testing.T, root, name, contents string) {
+	t.Helper()
+	repository, err := git.PlainOpen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, err := repository.Head()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, err := repository.CommitObject(head.Hash())
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := commit.Parent(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	worktree, err := repository.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := worktree.Reset(&git.ResetOptions{Commit: parent.Hash, Mode: git.HardReset}); err != nil {
+		t.Fatal(err)
+	}
+	commitFile(t, root, name, contents)
 }
 
 func testSignature() *object.Signature {

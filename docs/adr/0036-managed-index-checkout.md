@@ -23,7 +23,8 @@ checkout. The first read workflow that needs it clones
 consume an index automatically fetch and fast-forward the selected checkout
 when it is clean and behind its configured tracking branch. This applies to a
 configured or explicitly supplied checkout as well as the managed default;
-synchronization policy is based on Git state, not filesystem location.
+synchronization policy is normally based on Git state, not filesystem
+location.
 
 The managed checkout is read-only from the corpus-authoring perspective.
 `index init`, `index ingest`, and `index update` reject it. Contributors use an
@@ -35,6 +36,13 @@ remote references only. Pull derives the current branch's tracking remote and
 performs only a clean fast-forward; it refuses dirty worktrees, local commits,
 divergence, detached HEAD, and missing tracking configuration.
 
+The managed default is the one deliberate exception for rewritten upstream
+history. Its origin URL and branch are fixed and authoring commands cannot use
+it. After force-refreshing its remote-tracking reference, WALDO may reset a
+clean managed checkout to the canonical upstream commit when the histories are
+ahead or diverged. A dirty managed checkout is refused. Configured and explicit
+contributor checkouts continue to refuse ahead or diverged states.
+
 Only `waldo index pull` is exposed as a synchronization command. WALDO does not
 recapitulate Git with public `index clone`, `index fetch`, or `index status`
 commands. Read commands invoke the same safe update policy automatically, and
@@ -43,6 +51,8 @@ the managed checkout is created automatically when absent.
 ## Consequences
 
 The normal read workflow works without prior configuration and normally uses
-the latest clean fast-forward revision. Every BOM still pins the exact commit
-used. The lookaside object cache and managed Git index remain distinct
-concepts. WALDO never overwrites contributor changes or resolves divergence.
+the latest canonical revision. Every BOM still pins the exact commit used. The
+lookaside object cache and managed Git index remain distinct concepts. WALDO
+never overwrites contributor changes or resolves divergence in a contributor
+checkout; only a clean read-only managed checkout automatically recovers from
+an upstream rewrite.

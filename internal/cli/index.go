@@ -529,7 +529,7 @@ func resolveIndexSelection(execution context.Context, args []string, progress io
 			return resolvedIndexSelection{}, err
 		}
 		if ensured.Action != "cloned" {
-			if err := refreshIndexCheckout(execution, knownRoot, progress); err != nil {
+			if err := refreshManagedIndexCheckout(execution, knownRoot, progress); err != nil {
 				return resolvedIndexSelection{}, err
 			}
 		}
@@ -561,6 +561,25 @@ func resolveIndexSelection(execution context.Context, args []string, progress io
 		targets = append(targets, target)
 	}
 	return resolvedIndexSelection{Targets: targets}, nil
+}
+
+func refreshManagedIndexCheckout(execution context.Context, root string, progress io.Writer) error {
+	result, err := indexGitManager.PullManaged(execution, root, progress)
+	if err != nil {
+		return fmt.Errorf("refresh managed index checkout %s: %w", root, err)
+	}
+	if (result.Action == "updated" || result.Action == "recovered") && progress != nil {
+		commit := result.State.Commit
+		if len(commit) > 12 {
+			commit = commit[:12]
+		}
+		verb := "updated"
+		if result.Action == "recovered" {
+			verb = "recovered"
+		}
+		fmt.Fprintf(progress, "%s managed index checkout %s at %s\n", verb, root, commit)
+	}
+	return nil
 }
 
 func refreshIndexCheckout(execution context.Context, root string, progress io.Writer) error {

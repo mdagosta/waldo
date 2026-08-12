@@ -18,7 +18,12 @@ func runIndexPull(context Context, _ []string, stdout, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	result, err := managedgit.CheckoutPull(context.Execution, root, stderr)
+	var result managedgit.Result
+	if label == "managed index" {
+		result, err = indexGitManager.PullManaged(context.Execution, root, stderr)
+	} else {
+		result, err = managedgit.CheckoutPull(context.Execution, root, stderr)
+	}
 	if err != nil {
 		return err
 	}

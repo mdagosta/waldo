@@ -62,7 +62,10 @@ There is no top-level `waldo bom` command. Corpus BOM operations are under
 
 When `config.index` is unset, read-only index commands use a managed checkout
 at `~/.waldo/index`. WALDO creates it on first use and safely fast-forwards it
-when the checkout is clean and behind its tracking branch.
+when the checkout is clean and behind its tracking branch. If upstream history
+was rewritten, WALDO also resets this clean, read-only managed checkout to the
+new canonical branch. It never applies that recovery to a configured
+contributor checkout.
 
 Set `config.index` to use a writable contributor checkout:
 
