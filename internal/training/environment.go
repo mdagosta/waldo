@@ -33,11 +33,25 @@ type pythonPackage struct {
 	Version string
 }
 
+// Cluster is the machine-local, per-invocation topology for distributed
+// training. The zero value is a single node. It is never part of a model
+// compose (which stays framework- and topology-neutral); it is supplied like
+// model.backend, from machine-local config and CLI flags.
+type Cluster struct {
+	Nodes        int    // total nodes participating; 0 or 1 means single-node
+	NodeRank     int    // this node's rank in [0, Nodes)
+	Rendezvous   string // static rendezvous endpoint, host:port (split into --master-addr/--master-port)
+	RendezvousID string // run label shared across nodes; names the run's scratch, not enforced by the launcher
+	Interface    string // NCCL_SOCKET_IFNAME (RoCE/Ethernet interface)
+	HCA          string // NCCL_IB_HCA (RDMA device)
+}
+
 // EnvironmentResolver keeps host policy separate from framework adapters.
 // A new adapter only needs to be registered in Resolvers; automatic host and
 // installation selection remains here.
 type EnvironmentResolver struct {
 	Preference string
+	Cluster    Cluster
 	OS         string
 	Arch       string
 	Candidates []string
@@ -46,11 +60,19 @@ type EnvironmentResolver struct {
 }
 
 func NewEnvironmentResolver(preference string) Resolver {
+	return NewEnvironmentResolverForCluster(preference, Cluster{})
+}
+
+// NewEnvironmentResolverForCluster is like NewEnvironmentResolver but also
+// carries a multi-node topology to the distributed (TorchTitan) adapter. The
+// zero Cluster is a single node, reproducing NewEnvironmentResolver.
+func NewEnvironmentResolverForCluster(preference string, cluster Cluster) Resolver {
 	return EnvironmentResolver{
 		Preference: preference,
+		Cluster:    cluster,
 		Resolvers: map[string]Resolver{
 			BackendMLX:        NewMLXResolver(),
-			BackendTorchTitan: NewTorchTitanResolver(),
+			BackendTorchTitan: NewTorchTitanResolverForCluster(cluster),
 			BackendPyTorch:    NewPyTorchResolver(),
 			BackendFake:       FakeResolver(),
 		},
@@ -78,6 +100,11 @@ func (resolver EnvironmentResolver) Resolve(ctx context.Context, request Resolve
 		if err != nil {
 			return Selection{}, err
 		}
+	}
+	// Only TorchTitan runs distributed. Fail closed rather than silently drop a
+	// multi-node request to a single-node run on a backend that ignores the topology.
+	if resolver.Cluster.Nodes > 1 && selected != BackendTorchTitan {
+		return Selection{}, fmt.Errorf("multi-node training (--nodes %d) requires the TorchTitan backend, but model.backend=%s resolved to %s; set model.backend=torchtitan or run single-node", resolver.Cluster.Nodes, preference, backendDisplayName(selected))
 	}
 	if selected == BackendMLX && (hostOS != "darwin" || hostArch != "arm64") {
 		return Selection{}, fmt.Errorf("model.backend=%s selected MLX, but MLX training requires macOS on Apple Silicon; use model.backend=auto on this %s/%s host", preference, hostOS, hostArch)
@@ -154,7 +181,7 @@ func (resolver EnvironmentResolver) resolver(name string) Resolver {
 		return NewPyTorchResolver()
 	}
 	if name == BackendTorchTitan {
-		return NewTorchTitanResolver()
+		return NewTorchTitanResolverForCluster(resolver.Cluster)
 	}
 	if name == BackendFake {
 		return FakeResolver()
@@ -166,7 +193,7 @@ func (resolver EnvironmentResolver) candidates() []string {
 	if len(resolver.Candidates) > 0 {
 		return resolver.Candidates
 	}
-	return mlxPythonCandidates()
+	return pythonCandidates()
 }
 
 func (resolver EnvironmentResolver) probe() func(context.Context, []string, string, string) (pythonPackage, error) {

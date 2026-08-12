@@ -20,7 +20,7 @@ import torch.nn.functional as functional
 
 PROTOCOL_SCHEMA = 1
 WORKER_REVISION = "builtin-pytorch-worker-schema-1-r6"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r6"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r7"
 IS_PRIMARY = True
 
 
@@ -256,15 +256,6 @@ class DecoderLM(nn.Module):
         return self.output(value)
 
 
-class ByteTokenizer:
-    pad_id = 0
-    bos_id = 1
-    eos_id = 2
-
-    def encode(self, text):
-        return [byte + 3 for byte in text.encode("utf-8")] + [self.eos_id]
-
-
 class FramingTokenizer:
     def __init__(self, specification):
         self.name = specification["name"]
@@ -304,6 +295,7 @@ class Trainer:
                 tp=1,
                 pp=1,
                 ep=1,
+                etp=1,
                 world_size=self.world_size,
             )
             self.parallel_dims.build_mesh()
@@ -545,7 +537,7 @@ class Trainer:
             os.makedirs(temporary)
         if self.distributed:
             values = [temporary]
-            torch.distributed.broadcast_object_list(values, src=0)
+            torch.distributed.broadcast_object_list(values, src=0, device=self.device)
             temporary = values[0]
         weights_path = os.path.join(temporary, "model.safetensors")
         runtime_path = os.path.join(temporary, "runtime.pt")
@@ -813,16 +805,25 @@ def run():
     device = sys.argv[3]
     global IS_PRIMARY
     distributed = device == "torchtitan"
+    broadcast_device = None
     if distributed:
         torch.distributed.init_process_group("nccl")
+        # Bind this rank to its local GPU before the first collective. The record
+        # broadcast below runs before the Trainer sets the device, and NCCL object
+        # broadcasts stage their tensor on the current CUDA device; without an
+        # explicit device every rank defaults to cuda:0 and the collective deadlocks.
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)
+        broadcast_device = torch.device(f"cuda:{local_rank}")
         IS_PRIMARY = torch.distributed.get_rank() == 0
+        emit("event", event={"kind": "info", "message": f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} process group ready on cuda:{local_rank}"})
     os.makedirs(artifact_directory, exist_ok=True)
     trainer = None
     ended = False
     while True:
         if distributed:
             value = [sys.stdin.readline() if IS_PRIMARY else None]
-            torch.distributed.broadcast_object_list(value, src=0)
+            torch.distributed.broadcast_object_list(value, src=0, device=broadcast_device)
             line = value[0]
         else:
             line = sys.stdin.readline()

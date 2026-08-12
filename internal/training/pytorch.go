@@ -94,7 +94,7 @@ func (resolver PyTorchResolver) Resolve(ctx context.Context, request ResolveRequ
 	}
 	candidates := resolver.Candidates
 	if len(candidates) == 0 {
-		candidates = mlxPythonCandidates()
+		candidates = pythonCandidates()
 	}
 	probe := resolver.Probe
 	if probe == nil {

@@ -91,7 +91,7 @@ func (resolver MLXResolver) Resolve(ctx context.Context, request ResolveRequest)
 	}
 	candidates := resolver.Candidates
 	if len(candidates) == 0 {
-		candidates = mlxPythonCandidates()
+		candidates = pythonCandidates()
 	}
 	probe := resolver.Probe
 	if probe == nil {
@@ -132,7 +132,7 @@ func FakeResolver() Resolver {
 	})
 }
 
-func mlxPythonCandidates() []string {
+func pythonCandidates() []string {
 	var candidates []string
 	for _, name := range []string{"python3", "python"} {
 		if path, err := exec.LookPath(name); err == nil {

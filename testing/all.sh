@@ -16,3 +16,4 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 "$script_dir/e2e/model-mlx.sh"
 "$script_dir/e2e/model-pytorch.sh"
 "$script_dir/e2e/model-torchtitan.sh"
+"$script_dir/e2e/model-torchtitan-multinode.sh"

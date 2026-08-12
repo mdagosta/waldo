@@ -13,9 +13,11 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -128,13 +130,15 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 		manufacturer string
 		accelerator  string
 		GPUs         string
+		nodes        string
 		memory       string
 		duration     string
 	}
 	rows := make([]row, 0, len(report.Configurations))
 	observedRuns := 0
 	manufacturerWidth, acceleratorWidth := len("MFR"), len("ACCELERATOR")
-	GPUsWidth, memoryWidth, durationWidth := len("GPUS"), len("MEMORY/GPU"), len("APPROX. TIME")
+	GPUsWidth, nodesWidth := len("GPUS"), len("NODES")
+	memoryWidth, durationWidth := len("MEMORY/GPU"), len("APPROX. TIME")
 	for _, configuration := range report.Configurations {
 		if configuration.EstimateSource == "observed-runs" {
 			observedRuns += configuration.ObservedRuns
@@ -143,6 +147,7 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 			manufacturer: configuration.Manufacturer,
 			accelerator:  configuration.Accelerator,
 			GPUs:         fmt.Sprintf("%d", configuration.GPUs),
+			nodes:        fmt.Sprintf("%d", configuration.Nodes),
 			memory:       hardwareMemory(configuration.MemoryPerGPUBytes),
 			duration:     approximateDuration(configuration.ApproximateSeconds),
 		}
@@ -150,6 +155,7 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 		manufacturerWidth = max(manufacturerWidth, len(candidate.manufacturer))
 		acceleratorWidth = max(acceleratorWidth, len(candidate.accelerator))
 		GPUsWidth = max(GPUsWidth, len(candidate.GPUs))
+		nodesWidth = max(nodesWidth, len(candidate.nodes))
 		memoryWidth = max(memoryWidth, len(candidate.memory))
 		durationWidth = max(durationWidth, len(candidate.duration))
 	}
@@ -160,9 +166,9 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 		}
 		fmt.Fprintf(stdout, "CALIBRATION: %d completed local %s applied\n\n", observedRuns, label)
 	}
-	fmt.Fprintf(stdout, "%*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, "GPUS", manufacturerWidth, "MFR", acceleratorWidth, "ACCELERATOR", memoryWidth, "MEMORY/GPU", durationWidth, "APPROX. TIME")
+	fmt.Fprintf(stdout, "%*s  %*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, "GPUS", nodesWidth, "NODES", manufacturerWidth, "MFR", acceleratorWidth, "ACCELERATOR", memoryWidth, "MEMORY/GPU", durationWidth, "APPROX. TIME")
 	for _, candidate := range rows {
-		fmt.Fprintf(stdout, "%*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, candidate.GPUs, manufacturerWidth, candidate.manufacturer, acceleratorWidth, candidate.accelerator, memoryWidth, candidate.memory, durationWidth, candidate.duration)
+		fmt.Fprintf(stdout, "%*s  %*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, candidate.GPUs, nodesWidth, candidate.nodes, manufacturerWidth, candidate.manufacturer, acceleratorWidth, candidate.accelerator, memoryWidth, candidate.memory, durationWidth, candidate.duration)
 	}
 }
 
@@ -444,12 +450,29 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 		if context.Command != nil && context.Command.Flags().Changed("epochs") {
 			return fmt.Errorf("--epochs cannot be used with compose %q; set each stage budget in the compose file", composePath)
 		}
+		// The compose path builds single-node with per-stage parameters, so the
+		// per-run training and topology flags would be silently ignored; reject
+		// them explicitly rather than accept a value that has no effect.
+		for _, flag := range []string{"batch-size", "learning-rate", "seed", "nodes", "rendezvous", "rendezvous-id"} {
+			if context.Command != nil && context.Command.Flags().Changed(flag) {
+				return fmt.Errorf("--%s cannot be used with compose %q; compose stages define their own parameters and run single-node", flag, composePath)
+			}
+		}
 		return runModelComposeTraining(context, name, composePath, stdout, stderr)
 	}
 	epochs := int64Option(context, "epochs")
 	if epochs < 1 || epochs > 1_000_000 {
 		return fmt.Errorf("--epochs must be an integer in 1..1000000")
 	}
+	batch := int64Option(context, "batch-size")
+	if batch < 1 || batch > 1_000_000 {
+		return fmt.Errorf("--batch-size must be an integer in 1..1000000")
+	}
+	learningRate := float64Option(context, "learning-rate")
+	if learningRate <= 0 || math.IsNaN(learningRate) || learningRate > 1 {
+		return fmt.Errorf("--learning-rate must be a positive number no greater than 1")
+	}
+	seed := uint64Option(context, "seed")
 	root, err := configuredModelRoot()
 	if err != nil {
 		return err
@@ -465,7 +488,14 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	builder, err := configuredModelBuilder(context, stderr)
+	// Validate the multi-node topology before any index resolution or preflight so an
+	// incomplete rendezvous (e.g. --nodes > 1 without --rendezvous-id) fails closed
+	// immediately instead of resolving the entire index first.
+	cluster, err := trainingClusterFromFlags(context, 0)
+	if err != nil {
+		return err
+	}
+	builder, err := configuredModelBuilderForCluster(context, stderr, cluster)
 	if err != nil {
 		return err
 	}
@@ -476,7 +506,7 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	stage, err := prepareDefaultTrainingStage(context, inspection, inputs, epochs, cache, stderr, boolOption(context, "audit"))
+	stage, err := prepareDefaultTrainingStage(context, inspection, inputs, epochs, batch, learningRate, seed, boolOption(context, "audit"), cache, stderr)
 	if err != nil {
 		return err
 	}
@@ -506,6 +536,79 @@ func trainingComposeInput(inputs []string) (string, error) {
 		composePath = input
 	}
 	return composePath, nil
+}
+
+// validRendezvousID constrains the operator-typed run label: it is joined into
+// filesystem paths on every node, so path separators and dot traversal must
+// never reach a join.
+var validRendezvousID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+func trainingClusterFromFlags(commandContext Context, nodeRank int) (training.Cluster, error) {
+	nodes := intOption(commandContext, "nodes")
+	if nodes < 1 {
+		return training.Cluster{}, fmt.Errorf("--nodes must be an integer greater than or equal to 1")
+	}
+	cluster := training.Cluster{
+		Nodes:        nodes,
+		NodeRank:     nodeRank,
+		Rendezvous:   strings.TrimSpace(stringOption(commandContext, "rendezvous")),
+		RendezvousID: strings.TrimSpace(stringOption(commandContext, "rendezvous-id")),
+	}
+	if nodes == 1 && (cluster.Rendezvous != "" || cluster.RendezvousID != "") {
+		return training.Cluster{}, fmt.Errorf("--rendezvous and --rendezvous-id require --nodes greater than 1; they would be silently ignored on a single-node run")
+	}
+	if nodes > 1 {
+		if cluster.Rendezvous == "" || cluster.RendezvousID == "" {
+			return training.Cluster{}, fmt.Errorf("multi-node training requires --rendezvous host:port and --rendezvous-id")
+		}
+		if _, _, err := net.SplitHostPort(cluster.Rendezvous); err != nil {
+			return training.Cluster{}, fmt.Errorf("--rendezvous %q must be host:port: %w", cluster.Rendezvous, err)
+		}
+		if !validRendezvousID.MatchString(cluster.RendezvousID) {
+			return training.Cluster{}, fmt.Errorf("--rendezvous-id %q must start with a letter or digit and contain only letters, digits, '.', '_', and '-'; it names shared per-run paths on every node", cluster.RendezvousID)
+		}
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		return training.Cluster{}, err
+	}
+	cluster.Interface = configuration.Model.NCCLInterface
+	cluster.HCA = configuration.Model.NCCLHCA
+	return cluster, nil
+}
+
+// runModelTrainWorker joins an existing multi-node rendezvous as a secondary
+// node. It authors no model lifecycle records; the primary (node 0) owns the
+// run BOM and artifacts, and the secondary's ranks receive the canonical record
+// stream from rank zero over NCCL.
+func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.Writer) error {
+	nodeRank := intOption(commandContext, "node-rank")
+	cluster, err := trainingClusterFromFlags(commandContext, nodeRank)
+	if err != nil {
+		return err
+	}
+	if cluster.Nodes < 2 {
+		return fmt.Errorf("model train-worker requires --nodes greater than 1")
+	}
+	if nodeRank < 1 || nodeRank >= cluster.Nodes {
+		return fmt.Errorf("--node-rank must be in 1..%d for a %d-node run", cluster.Nodes-1, cluster.Nodes)
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		return err
+	}
+	scratchRoot, err := config.EffectiveScratchRoot(configuration)
+	if err != nil {
+		return err
+	}
+	scratch := filepath.Join(scratchRoot, "train-worker", cluster.RendezvousID)
+	defer os.RemoveAll(scratch)
+	fmt.Fprintf(stderr, "joining rendezvous %s as node %d of %d\n", cluster.Rendezvous, nodeRank, cluster.Nodes)
+	if err := training.RunSecondaryTorchTitan(commandContext.Execution, cluster, scratch); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "secondary node completed")
+	return nil
 }
 
 func looksLikeIndexPath(value string) bool {
@@ -957,7 +1060,7 @@ func configuredModelRoot() (string, error) {
 	return config.EffectiveModelRoot(configuration)
 }
 
-func configuredModelBuilder(commandContext Context, progress io.Writer) (model.Builder, error) {
+func configuredModelBuilderForCluster(commandContext Context, progress io.Writer, cluster training.Cluster) (model.Builder, error) {
 	configuration, err := config.Load()
 	if err != nil {
 		return model.Builder{}, err
@@ -986,7 +1089,7 @@ func configuredModelBuilder(commandContext Context, progress io.Writer) (model.B
 		}
 	}}
 	backend := config.EffectiveModelBackend(configuration)
-	resolver := training.NewEnvironmentResolver(backend)
+	resolver := training.NewEnvironmentResolverForCluster(backend, cluster)
 	builder.Resolver = training.ResolverFunc(func(execution context.Context, request training.ResolveRequest) (training.Selection, error) {
 		selection, err := resolver.Resolve(execution, request)
 		if err != nil {
@@ -997,6 +1100,10 @@ func configuredModelBuilder(commandContext Context, progress io.Writer) (model.B
 		return selection, err
 	})
 	return builder, nil
+}
+
+func configuredModelBuilder(commandContext Context, progress io.Writer) (model.Builder, error) {
+	return configuredModelBuilderForCluster(commandContext, progress, training.Cluster{})
 }
 
 func modelProgressMessage(event model.Progress) string {
@@ -1025,10 +1132,10 @@ func compactDuration(seconds int64) string {
 	}
 }
 
-func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, epochs int64, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {
+func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, epochs int64, batch int64, learningRate float64, seed uint64, audit bool, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
 	architecture := inspection.Model.Architecture
-	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
-		return model.PreparedStage{}, fmt.Errorf("automatic one-pass training currently requires byte@builtin-byte-schema-1 with vocabulary_size 259")
+	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != training.ByteTokenizerRevision || architecture.VocabularySize != 259 {
+		return model.PreparedStage{}, fmt.Errorf("automatic one-pass training currently requires byte@%s with vocabulary_size 259; subword models train from a compose file, and compose training is currently single-node", training.ByteTokenizerRevision)
 	}
 	targets, err := resolveIndexArgumentsWithWarning(context.Execution, paths, progress)
 	if err != nil {
@@ -1042,7 +1149,6 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
-	batch := int64(8)
 	sequence := int64(inspection.Model.Architecture.ContextTokens)
 	stageName := fmt.Sprintf("train-%04d", len(inspection.Model.Runs)+1)
 	if len(inspection.Model.Runs) > 0 {
@@ -1054,7 +1160,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	stage := model.Stage{
 		Name: stageName, Type: "pre-training",
 		Objective: "causal-language-modeling", Corpora: append([]string(nil), paths...),
-		Parameters: training.Parameters{Epochs: epochs, Steps: 1, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
+		Parameters: training.Parameters{Epochs: epochs, Steps: 1, BatchSize: batch, SequenceLength: sequence, LearningRate: learningRate, Seed: seed},
 	}
 	prepared, err := materializeModelStage(context, stage, bom, cache, progress, audit)
 	if err != nil {

@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	forecastCatalog           = "openwaldo-training-hardware-2026-08-12"
+	forecastCatalog           = "openwaldo-training-hardware-2026-08-13"
 	forecastFormula           = "6 * parameters * planned_tokens / effective_throughput; catalog estimates include 8% run overhead and exact observed configurations use measured active run time"
 	forecastCalibrationSchema = 1
 )
@@ -45,6 +45,7 @@ type HardwareConfiguration struct {
 	Manufacturer        string  `json:"manufacturer"`
 	Accelerator         string  `json:"accelerator"`
 	GPUs                int     `json:"gpus"`
+	Nodes               int     `json:"nodes"`
 	MemoryPerGPUBytes   uint64  `json:"memory_per_gpu_bytes"`
 	RequiredPerGPUBytes uint64  `json:"required_per_gpu_bytes"`
 	EffectiveTFLOPS     float64 `json:"effective_tflops"`
@@ -59,8 +60,10 @@ type acceleratorProfile struct {
 	memoryBytes  uint64
 	counts       []int
 	throughput   float64
+	scale2       float64
 	scale4       float64
 	scale8       float64
+	gpusPerNode  int
 }
 
 var acceleratorCatalog = []acceleratorProfile{
@@ -70,6 +73,7 @@ var acceleratorCatalog = []acceleratorProfile{
 	{manufacturer: "NVIDIA", accelerator: "RTX PRO 6000 Blackwell", memoryBytes: 96 << 30, counts: []int{1, 4, 8}, throughput: 140, scale4: .65, scale8: .50},
 	{manufacturer: "NVIDIA", accelerator: "H100 SXM", memoryBytes: 80 << 30, counts: []int{1, 4, 8}, throughput: 300, scale4: .82, scale8: .76},
 	{manufacturer: "NVIDIA", accelerator: "H200 SXM", memoryBytes: 141 << 30, counts: []int{1, 4, 8}, throughput: 330, scale4: .84, scale8: .78},
+	{manufacturer: "NVIDIA", accelerator: "GB10 Grace Blackwell (DGX Spark)", memoryBytes: 128 << 30, counts: []int{1, 2, 4}, throughput: 40, scale2: .70, scale4: .50, gpusPerNode: 1},
 	{manufacturer: "AMD", accelerator: "Instinct MI325X", memoryBytes: 256 << 30, counts: []int{1, 4, 8}, throughput: 280, scale4: .80, scale8: .72},
 	{manufacturer: "AMD", accelerator: "Instinct MI350X", memoryBytes: 288 << 30, counts: []int{1, 4, 8}, throughput: 400, scale4: .82, scale8: .75},
 }
@@ -152,7 +156,7 @@ func forecastPlanWithCalibration(plan Plan, calibrations []ForecastCalibration) 
 			}
 			report.Configurations = append(report.Configurations, HardwareConfiguration{
 				Manufacturer: profile.manufacturer, Accelerator: profile.accelerator,
-				GPUs: count, MemoryPerGPUBytes: profile.memoryBytes,
+				GPUs: count, Nodes: nodesFor(profile, count), MemoryPerGPUBytes: profile.memoryBytes,
 				RequiredPerGPUBytes: required, EffectiveTFLOPS: effective,
 				ApproximateSeconds: seconds, EstimateSource: source, ObservedRuns: observedRuns,
 			})
@@ -262,6 +266,8 @@ func boolToUint64(value bool) uint64 {
 
 func scaling(profile acceleratorProfile, GPUs int) float64 {
 	switch GPUs {
+	case 2:
+		return profile.scale2
 	case 4:
 		return profile.scale4
 	case 8:
@@ -269,4 +275,15 @@ func scaling(profile acceleratorProfile, GPUs int) float64 {
 	default:
 		return 1
 	}
+}
+
+// nodesFor reports how many physical nodes a GPU count spans. Profiles that do
+// not set gpusPerNode are treated as single-node (every visible GPU on one host);
+// a profile with gpusPerNode > 0 (e.g. one GPU per DGX Spark) spans
+// GPUs/gpusPerNode nodes.
+func nodesFor(profile acceleratorProfile, GPUs int) int {
+	if profile.gpusPerNode <= 0 {
+		return 1
+	}
+	return int(divideRoundUp(uint64(GPUs), uint64(profile.gpusPerNode)))
 }

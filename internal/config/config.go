@@ -44,8 +44,10 @@ type Ingest struct {
 }
 
 type Model struct {
-	Root    string `json:"root,omitempty"`
-	Backend string `json:"backend,omitempty"`
+	Root          string `json:"root,omitempty"`
+	Backend       string `json:"backend,omitempty"`
+	NCCLInterface string `json:"nccl_interface,omitempty"`
+	NCCLHCA       string `json:"nccl_hca,omitempty"`
 }
 
 type AI struct {

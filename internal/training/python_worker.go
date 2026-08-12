@@ -156,3 +156,24 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 	}
 	return worker.observation, nil
 }
+
+// runWorkerJoin drives a secondary distributed node. It launches torchrun,
+// which joins the rendezvous and runs the local ranks; those ranks receive the
+// canonical record stream from global rank 0 over NCCL, so this side never
+// writes stdin nor waits for a completion observation. Only the primary node
+// authors artifacts and the run BOM.
+func runWorkerJoin(ctx context.Context, label string, command *exec.Cmd) (Observation, error) {
+	var output cappedBuffer
+	command.Stdout = &output
+	command.Stderr = &output
+	if err := command.Start(); err != nil {
+		return Observation{}, fmt.Errorf("start %s secondary node: %w", label, err)
+	}
+	if err := command.Wait(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Observation{}, ctxErr
+		}
+		return Observation{}, fmt.Errorf("%s secondary node exited: %w%s", label, err, workerStderr(output.String()))
+	}
+	return Observation{}, nil
+}

@@ -83,6 +83,45 @@ func TestEnvironmentResolverFallsBackToInstalledPyTorchOnLinux(t *testing.T) {
 	}
 }
 
+func TestEnvironmentResolverRejectsMultiNodeWithoutTorchTitan(t *testing.T) {
+	// A multi-node topology must fail closed on any backend but TorchTitan
+	// rather than silently drop the request to a single-node run.
+	cluster := Cluster{Nodes: 4, NodeRank: 0, Rendezvous: "primary:29500", RendezvousID: "run-A"}
+
+	// auto that would otherwise fall back to PyTorch on Linux.
+	autoResolver := EnvironmentResolver{
+		Preference: BackendAuto, OS: "linux", Arch: "arm64", Candidates: []string{"python3"}, Cluster: cluster,
+		Resolvers: map[string]Resolver{BackendPyTorch: ResolverFunc(func(_ context.Context, _ ResolveRequest) (Selection, error) {
+			return testSelection("pytorch"), nil
+		})},
+		Probe: func(_ context.Context, _ []string, _, module string) (pythonPackage, error) {
+			if module == "torchtitan" {
+				return pythonPackage{}, errPythonPackageNotFound
+			}
+			return pythonPackage{Python: "python3", Version: "2.9"}, nil
+		},
+	}
+	_, err := autoResolver.Resolve(context.Background(), ResolveRequest{})
+	if err == nil || !strings.Contains(err.Error(), "multi-node training") || !strings.Contains(err.Error(), "requires the TorchTitan backend") {
+		t.Fatalf("auto multi-node error = %v", err)
+	}
+
+	// explicit non-TorchTitan preference (fake) with a multi-node cluster.
+	fakeResolver := EnvironmentResolver{
+		Preference: BackendFake, OS: "linux", Arch: "amd64", Cluster: cluster,
+		Resolvers: map[string]Resolver{BackendFake: FakeResolver()},
+	}
+	if _, err := fakeResolver.Resolve(context.Background(), ResolveRequest{}); err == nil || !strings.Contains(err.Error(), "requires the TorchTitan backend") {
+		t.Fatalf("explicit fake multi-node error = %v", err)
+	}
+
+	// single node on the same non-TorchTitan backend still resolves.
+	fakeResolver.Cluster = Cluster{}
+	if _, err := fakeResolver.Resolve(context.Background(), ResolveRequest{}); err != nil {
+		t.Fatalf("single-node fake resolve = %v", err)
+	}
+}
+
 func TestEnvironmentResolverExplainsMissingBackends(t *testing.T) {
 	missing := func(context.Context, []string, string, string) (pythonPackage, error) {
 		return pythonPackage{}, errPythonPackageNotFound
