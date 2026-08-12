@@ -539,8 +539,8 @@ func trainingComposeInput(inputs []string) (string, error) {
 }
 
 // validRendezvousID constrains the operator-typed run label: it is joined into
-// filesystem paths on every node, so path separators and dot traversal must
-// never reach a join.
+// filesystem paths on every node (the plan handoff directory and secondary
+// scratch), so path separators and dot traversal must never reach a join.
 var validRendezvousID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func trainingClusterFromFlags(commandContext Context, nodeRank int) (training.Cluster, error) {
@@ -565,7 +565,7 @@ func trainingClusterFromFlags(commandContext Context, nodeRank int) (training.Cl
 			return training.Cluster{}, fmt.Errorf("--rendezvous %q must be host:port: %w", cluster.Rendezvous, err)
 		}
 		if !validRendezvousID.MatchString(cluster.RendezvousID) {
-			return training.Cluster{}, fmt.Errorf("--rendezvous-id %q must start with a letter or digit and contain only letters, digits, '.', '_', and '-'; it names shared per-run paths on every node", cluster.RendezvousID)
+			return training.Cluster{}, fmt.Errorf("--rendezvous-id %q must start with a letter or digit and contain only letters, digits, '.', '_', and '-'; it names the shared plan path on every node", cluster.RendezvousID)
 		}
 	}
 	configuration, err := config.Load()
@@ -578,9 +578,9 @@ func trainingClusterFromFlags(commandContext Context, nodeRank int) (training.Cl
 }
 
 // runModelTrainWorker joins an existing multi-node rendezvous as a secondary
-// node. It authors no model lifecycle records; the primary (node 0) owns the
-// run BOM and artifacts, and the secondary's ranks receive the canonical record
-// stream from rank zero over NCCL.
+// node: it awaits the primary's published plan, reconstructs the identical
+// record stream from shared storage, and streams it to its own local worker.
+// It authors no model lifecycle records; the primary owns the run BOM.
 func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.Writer) error {
 	nodeRank := intOption(commandContext, "node-rank")
 	cluster, err := trainingClusterFromFlags(commandContext, nodeRank)
@@ -593,7 +593,19 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if nodeRank < 1 || nodeRank >= cluster.Nodes {
 		return fmt.Errorf("--node-rank must be in 1..%d for a %d-node run", cluster.Nodes-1, cluster.Nodes)
 	}
+	planWaitValue := strings.TrimSpace(stringOption(commandContext, "plan-wait"))
+	planWait, err := time.ParseDuration(planWaitValue)
+	if err != nil {
+		return fmt.Errorf("--plan-wait %q must be a Go duration such as 30m: %w", planWaitValue, err)
+	}
+	if planWait <= 0 {
+		return fmt.Errorf("--plan-wait %q must be a positive duration such as 30m", planWaitValue)
+	}
 	configuration, err := config.Load()
+	if err != nil {
+		return err
+	}
+	modelRoot, err := config.EffectiveModelRoot(configuration)
 	if err != nil {
 		return err
 	}
@@ -602,13 +614,146 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 		return err
 	}
 	scratch := filepath.Join(scratchRoot, "train-worker", cluster.RendezvousID)
+	if err := os.MkdirAll(scratch, 0o755); err != nil {
+		return err
+	}
 	defer os.RemoveAll(scratch)
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stderr, "node %d/%d awaiting the primary node's training plan (rendezvous id %s)\n", nodeRank, cluster.Nodes, cluster.RendezvousID)
+	plan, err := awaitMultiNodePlan(commandContext.Execution, modelRoot, cluster.RendezvousID, planWait, stderr)
+	if err != nil {
+		return err
+	}
+	request, err := secondaryTrainingRequest(commandContext, plan, modelRoot, cache, scratch, stderr)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if _, purgeErr := cache.PurgeUsed(); purgeErr != nil {
+			fmt.Fprintf(stderr, "warning: purge secondary training scratch: %v\n", purgeErr)
+		}
+	}()
 	fmt.Fprintf(stderr, "joining rendezvous %s as node %d of %d\n", cluster.Rendezvous, nodeRank, cluster.Nodes)
-	if err := training.RunSecondaryTorchTitan(commandContext.Execution, cluster, scratch); err != nil {
+	if err := training.RunSecondaryTorchTitan(commandContext.Execution, cluster, request); err != nil {
 		return err
 	}
 	fmt.Fprintln(stdout, "secondary node completed")
 	return nil
+}
+
+func awaitMultiNodePlan(ctx context.Context, modelRoot, rendezvousID string, wait time.Duration, progress io.Writer) (model.MultiNodePlan, error) {
+	path := model.MultiNodePlanPath(modelRoot, rendezvousID)
+	const poll = time.Second
+	deadline := time.Now().Add(wait)
+	announced := false
+	for {
+		data, readErr := os.ReadFile(path)
+		if readErr == nil {
+			var plan model.MultiNodePlan
+			if err := json.Unmarshal(data, &plan); err != nil {
+				return model.MultiNodePlan{}, fmt.Errorf("decode multi-node plan %s: %w", path, err)
+			}
+			if plan.Kind != model.MultiNodePlanKind {
+				return model.MultiNodePlan{}, fmt.Errorf("multi-node plan %s has kind %q, expected %q", path, plan.Kind, model.MultiNodePlanKind)
+			}
+			if plan.Schema != model.MultiNodePlanSchema {
+				return model.MultiNodePlan{}, fmt.Errorf("multi-node plan %s has schema %d; this build supports %d — run the same waldo build on every node", path, plan.Schema, model.MultiNodePlanSchema)
+			}
+			return plan, nil
+		}
+		if !errors.Is(readErr, os.ErrNotExist) {
+			return model.MultiNodePlan{}, fmt.Errorf("read multi-node plan %s: %w", path, readErr)
+		}
+		if !announced {
+			fmt.Fprintf(progress, "  plan not published yet; polling %s\n", path)
+			announced = true
+		}
+		if time.Now().After(deadline) {
+			return model.MultiNodePlan{}, fmt.Errorf("primary node did not publish a multi-node plan for rendezvous id %s at %s within %s; check that the primary is running and that every node uses the same --rendezvous-id and model root", rendezvousID, path, wait)
+		}
+		select {
+		case <-ctx.Done():
+			return model.MultiNodePlan{}, ctx.Err()
+		case <-time.After(poll):
+		}
+	}
+}
+
+func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, modelRoot string, cache *lookaside.Cache, scratch string, progress io.Writer) (training.Request, error) {
+	fmt.Fprintf(progress, "  materializing %s shards for run %s\n", humanInteger(plan.CorpusBOM.Totals.Shards), plan.RunID)
+	materialized, err := corpus.Materialize(commandContext.Execution, plan.CorpusBOM, cache, modelMaterializeProgressPrinter(progress))
+	if err != nil {
+		return training.Request{}, err
+	}
+	inputs := verifiedTrainingInputs(materialized, plan.CorpusBOM.Paths)
+	if len(inputs) == 0 {
+		return training.Request{}, fmt.Errorf("primary plan resolved no verified shard inputs")
+	}
+	// Derive the tokenizer from the plan's architecture exactly as the primary
+	// does, so every rank partitions and frames the canonical stream identically.
+	var architecture struct {
+		VocabularySize uint64 `json:"vocabulary_size"`
+		Tokenizer      struct {
+			Name     string `json:"name"`
+			Revision string `json:"revision"`
+		} `json:"tokenizer"`
+	}
+	if err := json.Unmarshal(plan.Architecture, &architecture); err != nil {
+		return training.Request{}, fmt.Errorf("decode primary plan architecture: %w", err)
+	}
+	tokenizerSpec, codec, err := training.ResolveTokenizer(architecture.Tokenizer.Name, architecture.Tokenizer.Revision, architecture.VocabularySize)
+	if err != nil {
+		return training.Request{}, fmt.Errorf("resolve primary plan tokenizer: %w", err)
+	}
+	partition, err := training.NewRecordPartitionContextWithTokenizer(commandContext.Execution, inputs, plan.Parameters, codec, nil)
+	if err != nil {
+		return training.Request{}, fmt.Errorf("reselect held-out evaluation split: %w", err)
+	}
+	if plan.EvaluationSet != nil && partition.Evaluation.SHA256 != plan.EvaluationSet.SHA256 {
+		return training.Request{}, fmt.Errorf("secondary held-out split %s does not match the primary's %s; nodes would train on divergent data", partition.Evaluation.SHA256, plan.EvaluationSet.SHA256)
+	}
+	records, err := partition.TrainingRecords()
+	if err != nil {
+		return training.Request{}, err
+	}
+	initialization, err := secondaryInitialization(plan, modelRoot)
+	if err != nil {
+		return training.Request{}, err
+	}
+	return training.Request{
+		RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
+		ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: plan.Architecture,
+		Parameters: plan.Parameters, Records: records, EvaluationRecords: partition.EvaluationRecords(),
+		EvaluationSet: model.EvaluationSetValue(plan.EvaluationSet), Initialization: initialization,
+		Tokenizer:         tokenizerSpec,
+		ArtifactDirectory: scratch, ArtifactPrefix: "artifacts",
+	}, nil
+}
+
+func secondaryInitialization(plan model.MultiNodePlan, modelRoot string) (*training.Initialization, error) {
+	if plan.Initialization == nil {
+		if plan.InitializationPath != "" {
+			return nil, fmt.Errorf("plan carries an initialization path without initialization weights; run the same waldo build on every node")
+		}
+		return nil, nil
+	}
+	if plan.InitializationPath == "" {
+		return nil, fmt.Errorf("plan carries initialization weights without a portable path; run the same waldo build on every node")
+	}
+	relative := filepath.FromSlash(plan.InitializationPath)
+	if !filepath.IsLocal(relative) {
+		return nil, fmt.Errorf("plan initialization path %q escapes the model root", plan.InitializationPath)
+	}
+	path := filepath.Join(modelRoot, relative)
+	if err := model.VerifyArtifactFile(path, plan.Initialization.Artifact); err != nil {
+		return nil, fmt.Errorf("verify initialization weights on this node's model root: %w", err)
+	}
+	initialization := *plan.Initialization
+	initialization.Path = path
+	return &initialization, nil
 }
 
 func looksLikeIndexPath(value string) bool {
@@ -1099,6 +1244,9 @@ func configuredModelBuilderForCluster(commandContext Context, progress io.Writer
 		}
 		return selection, err
 	})
+	if cluster.Nodes > 1 && cluster.NodeRank == 0 {
+		builder.MultiNode = model.MultiNodeHandoff{RendezvousID: cluster.RendezvousID}
+	}
 	return builder, nil
 }
 
@@ -1214,16 +1362,10 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
-	seen := map[string]bool{}
-	var paths []string
-	var inputs []training.Input
-	for _, object := range materialized.Objects {
-		if seen[object.Shard.SHA256] {
-			continue
-		}
-		seen[object.Shard.SHA256] = true
-		paths = append(paths, object.Path)
-		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes, Records: object.Shard.Docs, Corpus: selectedCorpusGroup(object.Shard.Manifest, bom.Paths)})
+	inputs := verifiedTrainingInputs(materialized, bom.Paths)
+	paths := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		paths = append(paths, input.Path)
 	}
 	if audit {
 		fmt.Fprintf(progress, "preflight/%s          auditing %s materialized shards\n", stage.Name, humanInteger(int64(len(paths))))
@@ -1239,6 +1381,24 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 		}
 	}
 	return model.PrepareStage(stage, bom, inputs)
+}
+
+// verifiedTrainingInputs builds the deduplicated shard inputs for a training
+// run. It is the single definition shared by the primary (materializeModelStage)
+// and the secondary (secondaryTrainingRequest): held-out selection trusts the
+// BOM-declared record count and stratifies by corpus group, so the two paths
+// diverging here would train the ranks on divergent data.
+func verifiedTrainingInputs(materialized corpus.Materialized, selections []string) []training.Input {
+	seen := map[string]bool{}
+	var inputs []training.Input
+	for _, object := range materialized.Objects {
+		if seen[object.Shard.SHA256] {
+			continue
+		}
+		seen[object.Shard.SHA256] = true
+		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes, Records: object.Shard.Docs, Corpus: selectedCorpusGroup(object.Shard.Manifest, selections)})
+	}
+	return inputs
 }
 
 func selectedCorpusGroup(manifest string, selections []string) string {

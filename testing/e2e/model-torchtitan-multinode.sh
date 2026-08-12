@@ -117,4 +117,18 @@ grep -ERq '"nodes"[[:space:]]*:[[:space:]]*2' "$models/smoke/runs" || { echo "ru
 weights=$(find "$models/smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print)
 [ -n "$weights" ] && [ -s "$weights" ] || { echo "primary did not produce terminal weights" >&2; exit 1; }
 
-echo "E2E multi-node TorchTitan passed: 2-node rendezvous, aggregate world size 2, primary-authored weights"
+CUDA_VISIBLE_DEVICES=1 "$binary" model train-worker \
+  --nodes 2 --node-rank 1 --rendezvous "$rendezvous" --rendezvous-id "$rendezvous_id-r2" &
+secondary_pid=$!
+
+CUDA_VISIBLE_DEVICES=0 "$binary" model train smoke core/e2e/torchtitan \
+  --epochs 1 --nodes 2 --rendezvous "$rendezvous" --rendezvous-id "$rendezvous_id-r2"
+
+secondary_status=0
+wait "$secondary_pid" || secondary_status=$?
+secondary_pid=""
+[ "$secondary_status" -eq 0 ] || { echo "secondary node exited $secondary_status on initialized run" >&2; exit 1; }
+runs=$(find "$models/smoke/runs" -mindepth 1 -maxdepth 1 -type d | wc -l)
+[ "$runs" -eq 2 ] || { echo "expected 2 runs after initialized rerun, found $runs" >&2; exit 1; }
+
+echo "E2E multi-node TorchTitan passed: 2-node rendezvous, aggregate world size 2, primary-authored weights, initialized rerun"

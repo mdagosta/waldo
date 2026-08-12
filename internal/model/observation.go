@@ -45,7 +45,7 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 		}
 		seen[clean] = true
 		path := filepath.Join(runDirectory, filepath.FromSlash(clean))
-		return verifyArtifactFile(path, artifact)
+		return VerifyArtifactFile(path, artifact)
 	}
 	for _, artifact := range observation.Artifacts {
 		if err := validateArtifact(artifact); err != nil {
@@ -79,7 +79,7 @@ func validateBackendObservation(runDirectory string, planned PlannedStage, obser
 	return nil
 }
 
-func verifyArtifactFile(path string, artifact training.Artifact) error {
+func VerifyArtifactFile(path string, artifact training.Artifact) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("artifact %s: %w", artifact.Path, err)

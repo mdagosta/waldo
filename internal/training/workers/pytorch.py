@@ -333,6 +333,8 @@ class Trainer:
         self.model.initialize()
         self.initialization = begin.get("initialization")
         if self.initialization is not None:
+            if not self.initialization.get("path"):
+                raise ValueError("initialization weights frame is missing a path")
             missing, unexpected = self.model.load_state_dict(load_safetensors(self.initialization["path"]), strict=False)
             if missing or unexpected:
                 raise ValueError(f"initialization weights do not match architecture: missing={missing}, unexpected={unexpected}")
@@ -797,6 +799,49 @@ class Trainer:
         )
 
 
+def stream_lines(distributed):
+    """Yield the canonical input stream's lines on every rank.
+
+    Each node receives its own copy of the stream on the torchrun parent's
+    stdin. With one local rank the process reads the pipe directly. With
+    several local ranks a direct read would race on the shared inherited
+    pipe descriptor and tear frames apart, so local rank 0 reads and fans
+    each line out over a node-local process group.
+    """
+    local_world = int(os.environ.get("LOCAL_WORLD_SIZE", "1")) if distributed else 1
+    if distributed:
+        world = torch.distributed.get_world_size()
+        sizes = [None] * world
+        torch.distributed.all_gather_object(sizes, local_world)
+        if len(set(sizes)) != 1:
+            raise ValueError(f"local world sizes differ across nodes: {sorted(set(sizes))}")
+    if local_world <= 1:
+        while True:
+            line = sys.stdin.readline()
+            if not line:
+                return
+            yield line
+    rank = torch.distributed.get_rank()
+    world = torch.distributed.get_world_size()
+    if world % local_world != 0:
+        raise ValueError(f"world size {world} is not divisible by local world size {local_world}")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    # Every rank must create every node group, in the same order.
+    node_group = None
+    for first in range(0, world, local_world):
+        group = torch.distributed.new_group(list(range(first, first + local_world)))
+        if first <= rank < first + local_world:
+            node_group = group
+    source = (rank // local_world) * local_world
+    device = torch.device(f"cuda:{local_rank}")
+    while True:
+        values = [sys.stdin.readline() if local_rank == 0 else None]
+        torch.distributed.broadcast_object_list(values, src=source, group=node_group, device=device)
+        if not values[0]:
+            return
+        yield values[0]
+
+
 def run():
     if len(sys.argv) != 4:
         raise ValueError("worker requires artifact directory, artifact prefix, and device")
@@ -805,30 +850,16 @@ def run():
     device = sys.argv[3]
     global IS_PRIMARY
     distributed = device == "torchtitan"
-    broadcast_device = None
     if distributed:
         torch.distributed.init_process_group("nccl")
-        # Bind this rank to its local GPU before the first collective. The record
-        # broadcast below runs before the Trainer sets the device, and NCCL object
-        # broadcasts stage their tensor on the current CUDA device; without an
-        # explicit device every rank defaults to cuda:0 and the collective deadlocks.
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         torch.cuda.set_device(local_rank)
-        broadcast_device = torch.device(f"cuda:{local_rank}")
         IS_PRIMARY = torch.distributed.get_rank() == 0
-        emit("event", event={"kind": "info", "message": f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} process group ready on cuda:{local_rank}"})
+        emit("event", event={"kind": "log", "message": f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} process group ready on cuda:{local_rank}"})
     os.makedirs(artifact_directory, exist_ok=True)
     trainer = None
     ended = False
-    while True:
-        if distributed:
-            value = [sys.stdin.readline() if IS_PRIMARY else None]
-            torch.distributed.broadcast_object_list(value, src=0, device=broadcast_device)
-            line = value[0]
-        else:
-            line = sys.stdin.readline()
-        if not line:
-            break
+    for line in stream_lines(distributed):
         frame = json.loads(line)
         if frame.get("schema") != PROTOCOL_SCHEMA:
             raise ValueError(f"unsupported worker input schema {frame.get('schema')}")
@@ -836,6 +867,11 @@ def run():
         if kind == "begin":
             if trainer is not None:
                 raise ValueError("worker received duplicate begin frame")
+            if distributed:
+                run_ids = [None] * torch.distributed.get_world_size()
+                torch.distributed.all_gather_object(run_ids, frame["begin"].get("run_id"))
+                if len(set(run_ids)) != 1:
+                    raise ValueError(f"nodes joined the rendezvous with different runs: {sorted(set(run_ids))}")
             trainer = Trainer(frame["begin"], artifact_directory, artifact_prefix, device)
         elif kind == "record":
             if trainer is None or ended:

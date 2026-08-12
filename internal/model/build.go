@@ -41,6 +41,11 @@ type Builder struct {
 	Resolver    training.Resolver
 	Progress    func(Progress)
 	ComposeName string
+	MultiNode   MultiNodeHandoff
+}
+
+type MultiNodeHandoff struct {
+	RendezvousID string
 }
 
 // CheckBackend validates that this host can execute the requested portable
@@ -305,7 +310,7 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 		runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
 		for _, artifact := range resume.Checkpoint.Artifacts {
 			path := filepath.Join(runDirectory, filepath.FromSlash(artifact.Path))
-			if err := verifyArtifactFile(path, artifact); err != nil {
+			if err := VerifyArtifactFile(path, artifact); err != nil {
 				return Inspection{}, fmt.Errorf("resume run %s: %w", pin.ID, err)
 			}
 			resume.Paths = append(resume.Paths, path)
@@ -334,6 +339,12 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		if err != nil {
 			return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
 		}
+	}
+	if builder.MultiNode.RendezvousID != "" {
+		if err := builder.publishMultiNodePlan(pin, runBOM, prepared, architectureJSON, stage, resume); err != nil {
+			return Inspection{}, err
+		}
+		defer os.RemoveAll(filepath.Dir(MultiNodePlanPath(builder.Root, builder.MultiNode.RendezvousID)))
 	}
 	now := builder.clock()
 	runDirectory := filepath.Join(modelPath, "runs", runDirectoryName(pin))
@@ -375,7 +386,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
 		ArchitectureSHA256: record.ArchitectureSHA256,
 		Architecture:       architectureJSON, Tokenizer: tokenizerSpec, BOM: prepared.BOM, Inputs: prepared.Inputs,
-		Parameters: runBOM.Parameters, Records: records, EvaluationRecords: evaluationRecords, EvaluationSet: evaluationSetValue(runBOM.EvaluationSet), Initialization: initializationForAttempt(runBOM.Initialization, resume), Resume: resume,
+		Parameters: runBOM.Parameters, Records: records, EvaluationRecords: evaluationRecords, EvaluationSet: EvaluationSetValue(runBOM.EvaluationSet), Initialization: initializationForAttempt(runBOM.Initialization, resume), Resume: resume,
 		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix, Report: report,
 	})
 	progressMutex.Lock()
@@ -464,7 +475,7 @@ func resumeStep(resume *training.ResumePoint) int64 {
 	return resume.Step
 }
 
-func evaluationSetValue(value *training.EvaluationSet) training.EvaluationSet {
+func EvaluationSetValue(value *training.EvaluationSet) training.EvaluationSet {
 	if value == nil {
 		return training.EvaluationSet{}
 	}
@@ -476,6 +487,43 @@ func initializationForAttempt(initialization *training.Initialization, resume *t
 		return nil
 	}
 	return initialization
+}
+
+func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared PreparedStage, architectureJSON json.RawMessage, stage Stage, resume *training.ResumePoint) error {
+	if resume != nil {
+		return fmt.Errorf("stage %s: multi-node training cannot resume an interrupted run; restart it fresh", stage.Name)
+	}
+	path := MultiNodePlanPath(builder.Root, builder.MultiNode.RendezvousID)
+	// Fail closed on a leftover plan: a crashed primary skips its deferred
+	// cleanup, and a secondary polling this rendezvous id would consume the
+	// stale plan's corpus and parameters instead of this run's.
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("stage %s: a multi-node plan already exists at %s (leftover from a previous run); remove it or use a fresh --rendezvous-id", stage.Name, path)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("stage %s: check for an existing multi-node plan: %w", stage.Name, err)
+	}
+	plan := MultiNodePlan{
+		Kind: MultiNodePlanKind, Schema: MultiNodePlanSchema,
+		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
+		ArchitectureSHA256: runBOM.ArchitectureSHA256, Architecture: architectureJSON,
+		Parameters: runBOM.Parameters, CorpusBOM: prepared.BOM,
+		EvaluationSet: runBOM.EvaluationSet, Initialization: runBOM.Initialization,
+	}
+	if runBOM.Initialization != nil {
+		if runBOM.Initialization.Path == "" {
+			return fmt.Errorf("stage %s: initialization weights have no path to share with secondary nodes", stage.Name)
+		}
+		relative, err := filepath.Rel(builder.Root, runBOM.Initialization.Path)
+		if err != nil || !filepath.IsLocal(relative) {
+			return fmt.Errorf("stage %s: initialization weights at %s are outside the shared model root %s; secondary nodes cannot reach them", stage.Name, runBOM.Initialization.Path, builder.Root)
+		}
+		plan.InitializationPath = filepath.ToSlash(relative)
+	}
+	if err := writeJSONAtomic(path, plan); err != nil {
+		return fmt.Errorf("publish multi-node plan for secondary nodes: %w", err)
+	}
+	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunRunning, Message: "published multi-node plan for secondary nodes"})
+	return nil
 }
 
 func cloneResumePoint(value *training.ResumePoint) *training.ResumePoint {
@@ -524,7 +572,7 @@ func persistTrainingEvent(modelPath, runDirectory string, record *ModelRecord, p
 			if artifact.Path == "" || filepath.IsAbs(filepath.FromSlash(artifact.Path)) || clean != artifact.Path || !strings.HasPrefix(clean, "artifacts/checkpoints/") {
 				return fmt.Errorf("checkpoint step %d artifact path %q is not canonical beneath artifacts/checkpoints/", checkpoint.Step, artifact.Path)
 			}
-			if err := verifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
+			if err := VerifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
 				return fmt.Errorf("checkpoint step %d: %w", checkpoint.Step, err)
 			}
 		}
@@ -629,7 +677,7 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 				return nil, fmt.Errorf("initialize from run %s: model run pin is missing", run.ID)
 			}
 			path := filepath.Join(inspection.Path, "runs", runDirectoryName(pin), filepath.FromSlash(artifact.Path))
-			if err := verifyArtifactFile(path, artifact); err != nil {
+			if err := VerifyArtifactFile(path, artifact); err != nil {
 				return nil, fmt.Errorf("initialize from run %s: %w", run.ID, err)
 			}
 			return &training.Initialization{SourceType: "run", SourceID: run.ID, SourceRunID: run.ID, Artifact: artifact, Path: path}, nil
@@ -642,7 +690,7 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 			}
 			path := filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path))
 			trainingArtifact := training.Artifact{Path: artifact.Path, SHA256: artifact.SHA256, Bytes: artifact.Bytes}
-			if err := verifyArtifactFile(path, trainingArtifact); err != nil {
+			if err := VerifyArtifactFile(path, trainingArtifact); err != nil {
 				return nil, fmt.Errorf("initialize from model origin %s: %w", inspection.Model.OriginBOMSHA256, err)
 			}
 			return &training.Initialization{SourceType: "origin", SourceID: inspection.Model.OriginBOMSHA256, Artifact: trainingArtifact, Path: path}, nil

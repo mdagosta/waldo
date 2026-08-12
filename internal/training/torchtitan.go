@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -30,7 +31,7 @@ type TorchTitan struct {
 	Rendezvous string // host:port; split into --master-addr/--master-port for static rendezvous
 	Interface  string // NCCL_SOCKET_IFNAME
 	HCA        string // NCCL_IB_HCA
-	Secondary  bool   // a non-primary node: join-only, no record stream or observation
+	Secondary  bool   // a non-primary node: streams its own identical records, emits no observation
 }
 
 func (backend TorchTitan) Descriptor() Descriptor {
@@ -57,9 +58,6 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 		if backend.NodeRank < 0 || backend.NodeRank >= backend.Nodes {
 			return Observation{}, fmt.Errorf("TorchTitan node rank %d is out of range for %d nodes", backend.NodeRank, backend.Nodes)
 		}
-		// The primary owns the record stream broadcast from global rank 0, so a
-		// non-secondary backend must be node rank 0; otherwise rank 0 would land
-		// on a join-only node and the first broadcast would deadlock.
 		if !backend.Secondary && backend.NodeRank != 0 {
 			return Observation{}, fmt.Errorf("primary TorchTitan node must be rank 0, not %d", backend.NodeRank)
 		}
@@ -86,8 +84,12 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 	}
 	command := exec.CommandContext(ctx, backend.Python, backend.launchArguments(workerPath, request)...)
 	command.Env = backend.environment()
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error {
+		return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
 	if backend.Secondary {
-		return runWorkerJoin(ctx, "TorchTitan", command)
+		return runWorkerStreamJoin(ctx, "TorchTitan", command, request)
 	}
 	return runWorkerCommand(ctx, "TorchTitan", command, request)
 }
@@ -324,11 +326,13 @@ func probeTorchTitan(ctx context.Context, python string) (torchTitanProbe, error
 }
 
 // RunSecondaryTorchTitan launches a secondary distributed node that joins an
-// existing rendezvous and runs its local ranks. Those ranks receive WALDO's
-// canonical record stream from global rank 0 over NCCL, so this node neither
-// streams records nor authors lifecycle records; the primary node owns the run
-// BOM and artifacts. scratchDirectory holds only the ephemeral worker program.
-func RunSecondaryTorchTitan(ctx context.Context, cluster Cluster, scratchDirectory string) error {
+// existing rendezvous hosted by the primary, streams its own identical copy of
+// the canonical records to its local worker, and emits no observation; the
+// primary alone authors the run BOM and artifacts.
+func RunSecondaryTorchTitan(ctx context.Context, cluster Cluster, request Request) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("TorchTitan training requires Linux; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
 	if cluster.Nodes < 2 {
 		return fmt.Errorf("secondary TorchTitan requires at least two nodes")
 	}
@@ -337,6 +341,9 @@ func RunSecondaryTorchTitan(ctx context.Context, cluster Cluster, scratchDirecto
 	}
 	if cluster.Rendezvous == "" || cluster.RendezvousID == "" {
 		return fmt.Errorf("secondary TorchTitan requires a rendezvous endpoint and id")
+	}
+	if err := validateTorchArchitecture(request.Architecture, "TorchTitan"); err != nil {
+		return err
 	}
 	python, facts, failures := firstUsableTorchTitan(ctx, pythonCandidates(), probeTorchTitan)
 	if python == "" {
@@ -347,6 +354,6 @@ func RunSecondaryTorchTitan(ctx context.Context, cluster Cluster, scratchDirecto
 		return fmt.Errorf("no usable TorchTitan runtime found for the secondary node%s", detail)
 	}
 	backend := backendForCluster(python, facts, cluster, true)
-	_, err := backend.Run(ctx, Request{ArtifactDirectory: scratchDirectory, ArtifactPrefix: "artifacts"})
+	_, err := backend.Run(ctx, request)
 	return err
 }

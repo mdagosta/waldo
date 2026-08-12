@@ -168,29 +168,60 @@ func TestTorchTitanResolverAggregatesClusterNodes(t *testing.T) {
 	}
 }
 
-func TestTorchTitanSecondaryNodeJoinsWithoutStreaming(t *testing.T) {
+func TestTorchTitanSecondaryNodeStreamsIdenticalRecords(t *testing.T) {
 	worker := filepath.Join(t.TempDir(), "fake-python")
-	// A secondary node's ranks never read WALDO's stdin nor emit completion
-	// frames; torchrun just joins the rendezvous and exits. The fake asserts the
-	// join flags and that WALDO supplies no record stream to a secondary.
 	script := `#!/bin/sh
 case "$*" in
-  *'--nnodes=2'*'--node-rank=1'*'--master-addr=primary'*'--master-port=29500'*'--nproc-per-node=1'*'torchtitan'*) exit 0;;
+  *'--standalone'*) exit 3;;
+esac
+case "$*" in
+  *'--nnodes=2'*'--node-rank=1'*'--master-addr=primary'*'--master-port=29500'*'--max-restarts=0'*'--nproc-per-node=1'*'torchtitan'*) ;;
   *) exit 3;;
 esac
+seen_begin=0
+while IFS= read -r line; do
+  case "$line" in *'"kind":"begin"'*) seen_begin=1;; esac
+done
+[ "$seen_begin" -eq 1 ] || exit 4
+exit 0
 `
 	if err := os.WriteFile(worker, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 1})
+	if err != nil {
 		t.Fatal(err)
 	}
 	backend := TorchTitan{
 		Python: worker, LocalProcs: 1, Nodes: 2, NodeRank: 1,
 		Rendezvous: "primary:29500", Secondary: true,
 	}
-	observation, err := backend.Run(context.Background(), Request{ArtifactDirectory: t.TempDir(), ArtifactPrefix: "artifacts"})
+	observation, err := backend.Run(context.Background(), Request{
+		ArtifactDirectory: t.TempDir(), ArtifactPrefix: "artifacts",
+		Parameters: parameters, Architecture: json.RawMessage(`{"family":"decoder-transformer"}`),
+		Records: recordSourceFunc(func(_ context.Context, consume func(Record) error) error {
+			return consume(Record{ID: "one", Text: "hello"})
+		}),
+	})
 	if err != nil {
 		t.Fatalf("secondary run: %v", err)
 	}
 	if len(observation.Artifacts) != 0 || observation.Steps != 0 {
 		t.Fatalf("secondary observation = %+v", observation)
+	}
+}
+
+func TestTorchTitanSecondaryRejectsMissingRecordStream(t *testing.T) {
+	worker := filepath.Join(t.TempDir(), "fake-python")
+	if err := os.WriteFile(worker, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	backend := TorchTitan{
+		Python: worker, LocalProcs: 1, Nodes: 2, NodeRank: 1,
+		Rendezvous: "primary:29500", Secondary: true,
+	}
+	_, err := backend.Run(context.Background(), Request{ArtifactDirectory: t.TempDir(), ArtifactPrefix: "artifacts"})
+	if err == nil || !strings.Contains(err.Error(), "no canonical record stream") {
+		t.Fatalf("secondary missing-records error = %v", err)
 	}
 }
