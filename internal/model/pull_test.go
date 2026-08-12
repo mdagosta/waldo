@@ -22,7 +22,18 @@ import (
 	"github.com/openwaldo/waldo/internal/training"
 )
 
+// isolateHuggingFaceToken keeps the developer's ambient Hugging Face
+// credentials (HF_TOKEN, HF_TOKEN_PATH, ~/.cache/huggingface/token) out of the
+// puller's fallback chain, so tests behave identically on machines with a real
+// login and failures never print a live token.
+func isolateHuggingFaceToken(t *testing.T) {
+	t.Helper()
+	t.Setenv("HF_TOKEN", "")
+	t.Setenv("HF_TOKEN_PATH", filepath.Join(t.TempDir(), "absent"))
+}
+
 func TestDownloadHuggingFaceModelCreatesVerifiedOrigin(t *testing.T) {
+	isolateHuggingFaceToken(t)
 	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
 	files := huggingFaceFixture(t, architecture, "OpenWALDOByteTokenizer")
 	revision := strings.Repeat("a", 40)
@@ -65,6 +76,7 @@ func TestDownloadHuggingFaceModelCreatesVerifiedOrigin(t *testing.T) {
 }
 
 func TestDownloadRejectsUnsupportedTokenizerWithoutPublishing(t *testing.T) {
+	isolateHuggingFaceToken(t)
 	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
 	files := huggingFaceFixture(t, architecture, "LlamaTokenizerFast")
 	client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("b", 40))}
@@ -152,8 +164,10 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 func huggingFaceTransport(t *testing.T, files map[string][]byte, revision string) http.RoundTripper {
 	t.Helper()
 	return roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.Header.Get("Authorization") != "" && request.Header.Get("Authorization") != "Bearer secret" {
-			t.Errorf("authorization = %q", request.Header.Get("Authorization"))
+		// Never echo the header value: if isolation is missing, it can hold a
+		// developer's real Hugging Face token, and t.Errorf lands in CI logs.
+		if authorization := request.Header.Get("Authorization"); authorization != "" && authorization != "Bearer secret" {
+			t.Errorf("request carried an unexpected authorization header (%d bytes, redacted)", len(authorization))
 		}
 		if request.URL.Path == "/api/models/org/tiny/revision/main" || request.URL.Path == "/api/models/org/bad/revision/main" {
 			siblings := make([]map[string]any, 0, len(files))
