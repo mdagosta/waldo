@@ -9,11 +9,33 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
 )
+
+func TestModelComposeGuideNamesEverySchemaField(t *testing.T) {
+	guide, err := os.ReadFile(filepath.Join("..", "docs", "MODEL-COMPOSE.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []any{
+		model.Compose{}, model.ComposeBase{}, model.Architecture{}, model.Tokenizer{}, model.Stage{}, training.Parameters{},
+	} {
+		typeOf := reflect.TypeOf(value)
+		for index := 0; index < typeOf.NumField(); index++ {
+			name := strings.Split(typeOf.Field(index).Tag.Get("yaml"), ",")[0]
+			if name == "" || name == "-" {
+				continue
+			}
+			if !strings.Contains(string(guide), "`"+name+"`") && !strings.Contains(string(guide), name+":") {
+				t.Errorf("%s.%s YAML field %q is absent from MODEL-COMPOSE.md", typeOf.Name(), typeOf.Field(index).Name, name)
+			}
+		}
+	}
+}
 
 func TestEveryReferenceComposeSettingResolvesIntoTrainingContract(t *testing.T) {
 	files, err := filepath.Glob("*.yaml")

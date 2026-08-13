@@ -176,7 +176,8 @@ Run `forecast` before allocating substantial compute. Training and generation
 fail when the selected host lacks a compatible runtime or artifacts.
 
 Reference composes under `composes/` are test and experiment inputs, not model
-quality guarantees.
+quality guarantees. See the [model compose guide](MODEL-COMPOSE.md) for the
+complete schema, defaults, profiles, and validation rules.
 
 ## Output and help
 

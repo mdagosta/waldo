@@ -212,7 +212,9 @@ run BOM.
 ## Model compose
 
 A model compose is strict YAML or JSON. The command supplies the local model
-name, so the portable file contains no name and can be reused:
+name, so the portable file contains no name and can be reused. The
+[model compose guide](MODEL-COMPOSE.md) is the authoritative field reference;
+this section describes its place in the model lifecycle:
 
 ```yaml
 kind: waldo-model-compose

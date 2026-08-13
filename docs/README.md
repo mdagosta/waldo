@@ -22,6 +22,7 @@ The root README is a project overview. Maintained documentation lives here.
 
 ## Model contracts
 
+- [Model compose guide](MODEL-COMPOSE.md)
 - [Model lifecycle](MODEL-LIFECYCLE.md)
 - [Training and calibration](TRAINING-AND-CALIBRATION.md)
 - [Model exports](MODEL-EXPORTS.md)

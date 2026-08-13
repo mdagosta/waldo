@@ -3,7 +3,9 @@
 This directory contains measured reference baselines and the next candidates in
 their capability progression. A candidate becomes a validated baseline only
 after a complete real training run. Names describe intended milestones rather
-than general capability or quality guarantees.
+than general capability or quality guarantees. See the
+[model compose guide](../docs/MODEL-COMPOSE.md) for the complete schema and
+field reference.
 
 ```bash
 waldo model forecast composes/0000-canary.yaml
