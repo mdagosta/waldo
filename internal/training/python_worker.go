@@ -13,7 +13,31 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
+	"time"
 )
+
+var workerExitDrain = 5 * time.Second
+
+func awaitProcessExit(command *exec.Cmd) error {
+	state, err := command.Process.Wait()
+	if err != nil {
+		return err
+	}
+	if !state.Success() {
+		return fmt.Errorf("exit status %d", state.ExitCode())
+	}
+	return nil
+}
+
+func terminateWorkerGroup(command *exec.Cmd) {
+	if command.Process == nil {
+		return
+	}
+	if command.SysProcAttr != nil && command.SysProcAttr.Setpgid {
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
+}
 
 // runPythonWorker owns the common schema-1 process and stream lifecycle used
 // by framework adapters. Framework code receives canonical records only; it
@@ -86,6 +110,7 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 			err = fmt.Errorf("%s worker exited without a completion observation", label)
 		}
 		if err != nil && command.Process != nil {
+			terminateWorkerGroup(command)
 			_ = command.Process.Kill()
 		}
 		result <- workerResult{observation: observation, err: err}
@@ -98,13 +123,43 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		_ = command.Wait()
 		return Observation{}, tokenizerErr
 	}
+	exited := make(chan error, 1)
+	go func() {
+		exitErr := awaitProcessExit(command)
+		_ = stdin.Close()
+		exited <- exitErr
+	}()
 	writeErr := writeWorkerInputUntil(ctx, stdin, workerBeginFromRequest(request), records, evaluationRecords, stopRecords)
 	closeErr := stdin.Close()
-	// Join the output reader before Wait: Wait closes the stdout pipe, and a
-	// still-buffered completion frame would otherwise be lost, failing a
-	// successful run (os/exec documents this ordering requirement).
-	worker := <-result
-	waitErr := command.Wait()
+	if errors.Is(closeErr, os.ErrClosed) {
+		closeErr = nil
+	}
+	if errors.Is(writeErr, os.ErrClosed) {
+		writeErr = nil
+	}
+	var worker workerResult
+	var waitErr error
+	abandoned := false
+	select {
+	case worker = <-result:
+		waitErr = <-exited
+	case waitErr = <-exited:
+		select {
+		case worker = <-result:
+		case <-time.After(workerExitDrain):
+			abandoned = true
+			terminateWorkerGroup(command)
+			_ = stdout.Close()
+			worker = <-result
+		}
+	}
+	_ = stdout.Close()
+	if abandoned {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Observation{}, ctxErr
+		}
+		return Observation{}, fmt.Errorf("%s worker exited (%v) while leftover rank processes held its output stream open; killed them%s", label, waitErr, workerStderr(stderr.String()))
+	}
 	if worker.err != nil {
 		// CommandContext closes the worker pipes when cancellation kills the
 		// process. The output reader consequently observes EOF before a complete
@@ -206,9 +261,22 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 	if err := command.Start(); err != nil {
 		return Observation{}, fmt.Errorf("start %s secondary node: %w", label, err)
 	}
+	exited := make(chan error, 1)
+	go func() {
+		exitErr := awaitProcessExit(command)
+		_ = stdin.Close()
+		exited <- exitErr
+	}()
 	writeErr := WriteWorkerInput(ctx, stdin, workerBeginFromRequest(request), records, evaluationRecords)
 	closeErr := stdin.Close()
-	waitErr := command.Wait()
+	if errors.Is(closeErr, os.ErrClosed) {
+		closeErr = nil
+	}
+	if errors.Is(writeErr, os.ErrClosed) {
+		writeErr = nil
+	}
+	waitErr := <-exited
+	terminateWorkerGroup(command)
 	if waitErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Observation{}, ctxErr

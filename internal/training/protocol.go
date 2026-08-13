@@ -7,6 +7,7 @@ package training
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -117,8 +118,12 @@ func ReadWorkerOutput(input io.Reader, consume func(WorkerOutputFrame) error) er
 	buffer := make([]byte, 64*1024)
 	scanner.Buffer(buffer, 16*1024*1024)
 	for scanner.Scan() {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
 		var frame WorkerOutputFrame
-		if err := json.Unmarshal(scanner.Bytes(), &frame); err != nil {
+		if err := json.Unmarshal(line, &frame); err != nil {
 			return fmt.Errorf("decode worker output: %w", err)
 		}
 		if err := frame.Validate(); err != nil {
