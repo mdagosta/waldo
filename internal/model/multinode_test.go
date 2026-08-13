@@ -7,7 +7,9 @@ package model
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,7 +21,7 @@ import (
 
 func TestPublishMultiNodePlanRoundTrips(t *testing.T) {
 	root := t.TempDir()
-	builder := Builder{Root: root, MultiNode: MultiNodeHandoff{RendezvousID: "run-42"}}
+	builder := Builder{Root: root, MultiNode: MultiNodeHandoff{RendezvousID: "run-42", StageOrdinal: 1, StageCount: 1}}
 	evaluation := &training.EvaluationSet{Selection: "lowest-sha256-v1", Seed: 7, Records: 3, SHA256: strings.Repeat("a", 64)}
 	runBOM := RunBOM{
 		ArchitectureSHA256: strings.Repeat("b", 64),
@@ -80,7 +82,7 @@ func TestPublishMultiNodePlanRejectsUnportableInitialization(t *testing.T) {
 		"outside root": filepath.Join(t.TempDir(), "elsewhere", "model.safetensors"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			builder := Builder{Root: root, MultiNode: MultiNodeHandoff{RendezvousID: "run-" + strings.ReplaceAll(name, " ", "-")}}
+			builder := Builder{Root: root, MultiNode: MultiNodeHandoff{RendezvousID: "run-" + strings.ReplaceAll(name, " ", "-"), StageOrdinal: 1, StageCount: 1}}
 			runBOM := RunBOM{Initialization: &training.Initialization{SourceType: "run", Path: path}}
 			err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, runBOM, PreparedStage{}, nil, stage, nil)
 			if err == nil {
@@ -98,7 +100,7 @@ func TestPublishMultiNodePlanRejectsUnportableInitialization(t *testing.T) {
 // rendezvous id would otherwise consume the previous run's corpus and
 // parameters.
 func TestPublishMultiNodePlanRejectsLeftoverPlan(t *testing.T) {
-	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42"}}
+	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42", StageOrdinal: 1, StageCount: 1}}
 	stage := Stage{Name: "train-0001", Type: "pre-training", Objective: "causal-language-modeling"}
 	if err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, RunBOM{}, PreparedStage{}, nil, stage, nil); err != nil {
 		t.Fatalf("first publish: %v", err)
@@ -110,7 +112,7 @@ func TestPublishMultiNodePlanRejectsLeftoverPlan(t *testing.T) {
 }
 
 func TestPublishMultiNodePlanRejectsResume(t *testing.T) {
-	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42"}}
+	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42", StageOrdinal: 1, StageCount: 1}}
 	stage := Stage{Name: "train-0001"}
 	resume := &training.ResumePoint{Step: 5}
 	err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, RunBOM{}, PreparedStage{}, nil, stage, resume)
@@ -119,5 +121,56 @@ func TestPublishMultiNodePlanRejectsResume(t *testing.T) {
 	}
 	if _, statErr := os.Stat(MultiNodePlanPath(builder.Root, "run-42")); !os.IsNotExist(statErr) {
 		t.Fatalf("plan must not be written when a multi-node run is asked to resume; stat err = %v", statErr)
+	}
+}
+
+func TestComposePublishesPerStagePlans(t *testing.T) {
+	root := t.TempDir()
+	compose := validCompose()
+	compose.Stages = append(compose.Stages, testStage("refine"))
+	stages := []PreparedStage{preparedFixture(t, compose.Stages[0]), preparedFixture(t, compose.Stages[1])}
+	nextID := 0
+	type published struct {
+		runID   string
+		ordinal int
+		count   int
+	}
+	var seen []published
+	builder := Builder{
+		Root:      root,
+		MultiNode: MultiNodeHandoff{RendezvousID: "compose-42"},
+		NewID: func() (string, error) {
+			nextID++
+			return fmt.Sprintf("run%04d", nextID), nil
+		},
+		Resolver: training.FakeResolver(),
+		Progress: func(event Progress) {
+			if event.Message != "published multi-node plan for secondary nodes" {
+				return
+			}
+			data, err := os.ReadFile(MultiNodePlanPath(root, "compose-42"))
+			if err != nil {
+				t.Errorf("read plan during publish event: %v", err)
+				return
+			}
+			var plan MultiNodePlan
+			if err := json.Unmarshal(data, &plan); err != nil {
+				t.Errorf("decode plan during publish event: %v", err)
+				return
+			}
+			seen = append(seen, published{runID: plan.RunID, ordinal: plan.StageOrdinal, count: plan.StageCount})
+		},
+	}
+	if _, err := builder.Compose(context.Background(), "smoke", compose, stages); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || seen[0].ordinal != 1 || seen[0].count != 2 || seen[1].ordinal != 2 || seen[1].count != 2 {
+		t.Fatalf("published plans = %+v", seen)
+	}
+	if seen[0].runID == seen[1].runID || seen[0].runID == "" {
+		t.Fatalf("stage runIDs = %+v", seen)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".multinode", "compose-42")); !os.IsNotExist(err) {
+		t.Fatalf("plan directory must be removed after compose; stat err = %v", err)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/corpus"
@@ -167,7 +168,7 @@ func multiNodePlanForTest(t *testing.T, bom corpus.BOM, architecture string) mod
 	}
 	return model.MultiNodePlan{
 		Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
-		RunID: "run0001", Stage: "train-0001", Objective: "causal-language-modeling",
+		RunID: "run0001", Stage: "train-0001", StageOrdinal: 1, StageCount: 1, Objective: "causal-language-modeling",
 		ArchitectureSHA256: strings.Repeat("b", 64), Architecture: json.RawMessage(architecture),
 		Parameters: parameters, CorpusBOM: bom,
 	}
@@ -295,6 +296,159 @@ func TestSecondaryInitializationRejoinsModelRoot(t *testing.T) {
 		initialization, err := secondaryInitialization(plan, modelRoot)
 		if err != nil || initialization != nil {
 			t.Fatalf("initialization = %+v, err = %v", initialization, err)
+		}
+	})
+}
+
+func TestRunSecondaryStagesFollowsCompose(t *testing.T) {
+	bom := seedMultiNodeCorpus(t)
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelRoot, err := config.EffectiveModelRoot(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byteArchitecture := `{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`
+	stagePlan := func(runID string, ordinal, count int) model.MultiNodePlan {
+		plan := multiNodePlanForTest(t, bom, byteArchitecture)
+		plan.RunID = runID
+		plan.StageOrdinal = ordinal
+		plan.StageCount = count
+		return plan
+	}
+	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "primary:29500", RendezvousID: "loop-42"}
+	scratch := t.TempDir()
+
+	t.Run("two stages then done", func(t *testing.T) {
+		seedPlan(t, modelRoot, "loop-42", stagePlan("runA", 1, 2))
+		var runs []string
+		runner := func(_ training.Cluster, request training.Request) error {
+			runs = append(runs, request.RunID)
+			if request.RunID == "runA" {
+				seedPlan(t, modelRoot, "loop-42", stagePlan("runB", 2, 2))
+			}
+			if request.ArtifactDirectory != filepath.Join(scratch, request.RunID) {
+				t.Errorf("stage scratch = %q", request.ArtifactDirectory)
+			}
+			return nil
+		}
+		var stdout bytes.Buffer
+		if err := runSecondaryStages(Context{Execution: context.Background()}, cluster, modelRoot, scratch, cache, time.Minute, runner, &stdout, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if len(runs) != 2 || runs[0] != "runA" || runs[1] != "runB" {
+			t.Fatalf("runs = %v", runs)
+		}
+		if !strings.Contains(stdout.String(), "secondary node completed") {
+			t.Fatalf("stdout = %q", stdout.String())
+		}
+	})
+
+	t.Run("single stage stays one shot", func(t *testing.T) {
+		seedPlan(t, modelRoot, "loop-43", stagePlan("runC", 1, 1))
+		single := cluster
+		single.RendezvousID = "loop-43"
+		count := 0
+		runner := func(training.Cluster, training.Request) error {
+			count++
+			return nil
+		}
+		var stdout bytes.Buffer
+		if err := runSecondaryStages(Context{Execution: context.Background()}, single, modelRoot, t.TempDir(), cache, time.Minute, runner, &stdout, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		if count != 1 {
+			t.Fatalf("runner calls = %d", count)
+		}
+	})
+
+	t.Run("stage failure exits immediately", func(t *testing.T) {
+		seedPlan(t, modelRoot, "loop-44", stagePlan("runD", 1, 3))
+		failing := cluster
+		failing.RendezvousID = "loop-44"
+		runner := func(training.Cluster, training.Request) error {
+			return fmt.Errorf("rendezvous exploded")
+		}
+		var stdout bytes.Buffer
+		err := runSecondaryStages(Context{Execution: context.Background()}, failing, modelRoot, t.TempDir(), cache, time.Minute, runner, &stdout, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "rendezvous exploded") {
+			t.Fatalf("error = %v", err)
+		}
+	})
+}
+
+func TestComposeTrainingAcceptsTopologyFlags(t *testing.T) {
+	seedMultiNodeCorpus(t)
+	composePath := filepath.Join(t.TempDir(), "compose.yaml")
+	composeYAML := `kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 128
+  vocabulary_size: 259
+  hidden_size: 64
+  intermediate_size: 192
+  layers: 2
+  attention_heads: 4
+  key_value_heads: 2
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - books
+    parameters:
+      steps: 1
+      batch_size: 1
+      sequence_length: 64
+      learning_rate: 0.001
+      seed: 7
+`
+	if err := os.WriteFile(composePath, []byte(composeYAML), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) (string, int) {
+		var stdout, stderr bytes.Buffer
+		code := Run(args, &stdout, &stderr)
+		return stderr.String(), code
+	}
+
+	t.Run("topology threads into backend check", func(t *testing.T) {
+		stderr, code := run("model", "train", "cm1", composePath, "--nodes", "2", "--rendezvous", "primary:29500", "--rendezvous-id", "cm1")
+		if code == 0 || !strings.Contains(stderr, "TorchTitan backend") {
+			t.Fatalf("code = %d, stderr = %q", code, stderr)
+		}
+	})
+
+	t.Run("invalid topology fails before compose work", func(t *testing.T) {
+		stderr, code := run("model", "train", "cm2", composePath, "--nodes", "2", "--rendezvous", "hostonly", "--rendezvous-id", "cm2")
+		if code == 0 || !strings.Contains(stderr, "must be host:port") {
+			t.Fatalf("code = %d, stderr = %q", code, stderr)
+		}
+	})
+
+	t.Run("stage parameters still rejected", func(t *testing.T) {
+		stderr, code := run("model", "train", "cm3", composePath, "--batch-size", "4")
+		if code == 0 || !strings.Contains(stderr, "--batch-size cannot be used with compose") {
+			t.Fatalf("code = %d, stderr = %q", code, stderr)
+		}
+	})
+
+	t.Run("single node compose still trains", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if code := Run([]string{"model", "train", "cm4", composePath}, &stdout, &stderr); code != 0 {
+			t.Fatalf("single-node compose failed: %s", stderr.String())
 		}
 	})
 }

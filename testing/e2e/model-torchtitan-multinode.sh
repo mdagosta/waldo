@@ -131,4 +131,64 @@ secondary_pid=""
 runs=$(find "$models/smoke/runs" -mindepth 1 -maxdepth 1 -type d | wc -l)
 [ "$runs" -eq 2 ] || { echo "expected 2 runs after initialized rerun, found $runs" >&2; exit 1; }
 
-echo "E2E multi-node TorchTitan passed: 2-node rendezvous, aggregate world size 2, primary-authored weights, initialized rerun"
+cat > "$work/compose.yaml" <<COMPOSE
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 128
+  vocabulary_size: $vocabulary
+  hidden_size: 64
+  intermediate_size: 192
+  layers: 2
+  attention_heads: 4
+  key_value_heads: 2
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: $tokenizer_name
+    revision: $tokenizer_revision
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - core/e2e/torchtitan
+    parameters:
+      steps: 2
+      batch_size: 1
+      sequence_length: 64
+      learning_rate: 0.001
+      seed: 7
+  - name: refine
+    type: fine-tuning
+    objective: causal-language-modeling
+    corpora:
+      - core/e2e/torchtitan
+    parameters:
+      steps: 2
+      batch_size: 1
+      sequence_length: 64
+      learning_rate: 0.0005
+      seed: 8
+COMPOSE
+
+CUDA_VISIBLE_DEVICES=1 "$binary" model train-worker \
+  --nodes 2 --node-rank 1 --rendezvous "$rendezvous" --rendezvous-id "$rendezvous_id-compose" > "$work/compose-worker.log" 2>&1 &
+secondary_pid=$!
+
+CUDA_VISIBLE_DEVICES=0 "$binary" model train composed "$work/compose.yaml" \
+  --nodes 2 --rendezvous "$rendezvous" --rendezvous-id "$rendezvous_id-compose"
+
+secondary_status=0
+wait "$secondary_pid" || secondary_status=$?
+secondary_pid=""
+[ "$secondary_status" -eq 0 ] || { echo "secondary node exited $secondary_status on compose run" >&2; cat "$work/compose-worker.log" >&2; exit 1; }
+grep -q "stage 1/2" "$work/compose-worker.log" || { echo "worker did not report stage 1/2" >&2; exit 1; }
+grep -q "secondary node completed" "$work/compose-worker.log" || { echo "worker did not complete" >&2; exit 1; }
+compose_runs=$(find "$models/composed/runs" -mindepth 1 -maxdepth 1 -type d | wc -l)
+[ "$compose_runs" -eq 2 ] || { echo "expected 2 compose runs, found $compose_runs" >&2; exit 1; }
+grep -ERq '"nodes"[[:space:]]*:[[:space:]]*2' "$models/composed/runs" || { echo "compose runs did not record nodes 2" >&2; exit 1; }
+[ ! -e "$models/.multinode/$rendezvous_id-compose" ] || { echo "compose left a plan behind" >&2; exit 1; }
+
+echo "E2E multi-node TorchTitan passed: 2-node rendezvous, aggregate world size 2, primary-authored weights, initialized rerun, 2-stage compose"

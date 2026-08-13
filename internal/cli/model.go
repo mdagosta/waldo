@@ -450,15 +450,19 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 		if context.Command != nil && context.Command.Flags().Changed("epochs") {
 			return fmt.Errorf("--epochs cannot be used with compose %q; set each stage budget in the compose file", composePath)
 		}
-		// The compose path builds single-node with per-stage parameters, so the
-		// per-run training and topology flags would be silently ignored; reject
-		// them explicitly rather than accept a value that has no effect.
-		for _, flag := range []string{"batch-size", "learning-rate", "seed", "nodes", "rendezvous", "rendezvous-id"} {
+		// The compose path trains with per-stage parameters, so the per-run
+		// training flags would be silently ignored; reject them explicitly
+		// rather than accept a value that has no effect.
+		for _, flag := range []string{"batch-size", "learning-rate", "seed"} {
 			if context.Command != nil && context.Command.Flags().Changed(flag) {
-				return fmt.Errorf("--%s cannot be used with compose %q; compose stages define their own parameters and run single-node", flag, composePath)
+				return fmt.Errorf("--%s cannot be used with compose %q; compose stages define their own parameters", flag, composePath)
 			}
 		}
-		return runModelComposeTraining(context, name, composePath, stdout, stderr)
+		cluster, err := trainingClusterFromFlags(context, 0)
+		if err != nil {
+			return err
+		}
+		return runModelComposeTraining(context, name, composePath, cluster, stdout, stderr)
 	}
 	epochs := int64Option(context, "epochs")
 	if epochs < 1 || epochs > 1_000_000 {
@@ -622,33 +626,53 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stderr, "node %d/%d awaiting the primary node's training plan (rendezvous id %s)\n", nodeRank, cluster.Nodes, cluster.RendezvousID)
-	plan, err := awaitMultiNodePlan(commandContext.Execution, modelRoot, cluster.RendezvousID, planWait, stderr)
-	if err != nil {
-		return err
-	}
-	request, err := secondaryTrainingRequest(commandContext, plan, modelRoot, cache, scratch, stderr)
-	if err != nil {
-		return err
-	}
 	defer func() {
 		if _, purgeErr := cache.PurgeUsed(); purgeErr != nil {
 			fmt.Fprintf(stderr, "warning: purge secondary training scratch: %v\n", purgeErr)
 		}
 	}()
-	fmt.Fprintf(stderr, "joining rendezvous %s as node %d of %d\n", cluster.Rendezvous, nodeRank, cluster.Nodes)
-	if err := training.RunSecondaryTorchTitan(commandContext.Execution, cluster, request); err != nil {
-		return err
+	run := func(runCluster training.Cluster, request training.Request) error {
+		return training.RunSecondaryTorchTitan(commandContext.Execution, runCluster, request)
 	}
-	fmt.Fprintln(stdout, "secondary node completed")
-	return nil
+	return runSecondaryStages(commandContext, cluster, modelRoot, scratch, cache, planWait, run, stdout, stderr)
 }
 
-func awaitMultiNodePlan(ctx context.Context, modelRoot, rendezvousID string, wait time.Duration, progress io.Writer) (model.MultiNodePlan, error) {
+func runSecondaryStages(commandContext Context, cluster training.Cluster, modelRoot, scratch string, cache *lookaside.Cache, planWait time.Duration, run func(training.Cluster, training.Request) error, stdout, stderr io.Writer) error {
+	lastRunID := ""
+	for {
+		fmt.Fprintf(stderr, "node %d/%d awaiting the primary node's training plan (rendezvous id %s)\n", cluster.NodeRank, cluster.Nodes, cluster.RendezvousID)
+		plan, err := awaitMultiNodePlan(commandContext.Execution, modelRoot, cluster.RendezvousID, planWait, lastRunID, stderr)
+		if err != nil {
+			return err
+		}
+		stageScratch := filepath.Join(scratch, plan.RunID)
+		if err := os.MkdirAll(stageScratch, 0o755); err != nil {
+			return err
+		}
+		request, err := secondaryTrainingRequest(commandContext, plan, modelRoot, cache, stageScratch, stderr)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(stderr, "joining rendezvous %s as node %d of %d for stage %d/%d\n", cluster.Rendezvous, cluster.NodeRank, cluster.Nodes, plan.StageOrdinal, plan.StageCount)
+		if err := run(cluster, request); err != nil {
+			return err
+		}
+		_ = os.RemoveAll(stageScratch)
+		lastRunID = plan.RunID
+		if plan.StageOrdinal == plan.StageCount {
+			fmt.Fprintln(stdout, "secondary node completed")
+			return nil
+		}
+		fmt.Fprintf(stderr, "stage %d/%d complete; awaiting the next stage plan\n", plan.StageOrdinal, plan.StageCount)
+	}
+}
+
+func awaitMultiNodePlan(ctx context.Context, modelRoot, rendezvousID string, wait time.Duration, skipRunID string, progress io.Writer) (model.MultiNodePlan, error) {
 	path := model.MultiNodePlanPath(modelRoot, rendezvousID)
 	const poll = time.Second
 	deadline := time.Now().Add(wait)
 	announced := false
+	announcedStale := false
 	for {
 		data, readErr := os.ReadFile(path)
 		if readErr == nil {
@@ -662,17 +686,25 @@ func awaitMultiNodePlan(ctx context.Context, modelRoot, rendezvousID string, wai
 			if plan.Schema != model.MultiNodePlanSchema {
 				return model.MultiNodePlan{}, fmt.Errorf("multi-node plan %s has schema %d; this build supports %d — run the same waldo build on every node", path, plan.Schema, model.MultiNodePlanSchema)
 			}
-			return plan, nil
-		}
-		if !errors.Is(readErr, os.ErrNotExist) {
+			if skipRunID != "" && plan.RunID == skipRunID {
+				if !announcedStale {
+					fmt.Fprintf(progress, "  previous stage's plan is still on disk; awaiting the next stage\n")
+					announcedStale = true
+				}
+			} else {
+				if plan.StageOrdinal < 1 || plan.StageCount < plan.StageOrdinal {
+					return model.MultiNodePlan{}, fmt.Errorf("multi-node plan %s has stage accounting %d/%d; run the same waldo build on every node", path, plan.StageOrdinal, plan.StageCount)
+				}
+				return plan, nil
+			}
+		} else if !errors.Is(readErr, os.ErrNotExist) {
 			return model.MultiNodePlan{}, fmt.Errorf("read multi-node plan %s: %w", path, readErr)
-		}
-		if !announced {
+		} else if !announced {
 			fmt.Fprintf(progress, "  plan not published yet; polling %s\n", path)
 			announced = true
 		}
 		if time.Now().After(deadline) {
-			return model.MultiNodePlan{}, fmt.Errorf("primary node did not publish a multi-node plan for rendezvous id %s at %s within %s; check that the primary is running and that every node uses the same --rendezvous-id and model root", rendezvousID, path, wait)
+			return model.MultiNodePlan{}, fmt.Errorf("primary node did not publish a multi-node plan for rendezvous id %s at %s within %s; check that every node uses the same --rendezvous-id and model root, and that the primary is still running — a primary that failed or finished removes its plan and publishes nothing further", rendezvousID, path, wait)
 		}
 		select {
 		case <-ctx.Done():
@@ -760,12 +792,12 @@ func looksLikeIndexPath(value string) bool {
 	return value == "." || value == ".." || value == "~" || strings.ContainsAny(value, `/\\`)
 }
 
-func runModelComposeTraining(context Context, name, path string, stdout, stderr io.Writer) error {
+func runModelComposeTraining(context Context, name, path string, cluster training.Cluster, stdout, stderr io.Writer) error {
 	compose, composePath, err := model.LoadCompose(path)
 	if err != nil {
 		return err
 	}
-	builder, err := configuredModelBuilder(context, stderr)
+	builder, err := configuredModelBuilderForCluster(context, stderr, cluster)
 	if err != nil {
 		return err
 	}
@@ -834,12 +866,15 @@ func runModelContinue(context Context, args []string, stdout, stderr io.Writer) 
 		}
 		fmt.Fprintf(stderr, "continue               recovering checkpoint-backed finalization failure for %s\n", name)
 	}
+	if pending && len(inspection.RunBOMs) > 0 && inspection.RunBOMs[len(inspection.RunBOMs)-1].Execution.Nodes > 1 {
+		return fmt.Errorf("model %q has an interrupted multi-node compose; continue runs single-node and would silently change the topology — re-run `waldo model train %s <compose>` with the original --nodes, --rendezvous, and --rendezvous-id", name, name)
+	}
 	composePath, err := model.LatestComposePath(inspection.Path)
 	if err != nil {
 		return fmt.Errorf("locate last compose for model %q: %w", name, err)
 	}
 	fmt.Fprintf(stderr, "continue               resuming %s from %s\n", name, composePath)
-	return runModelComposeTraining(context, name, composePath, stdout, stderr)
+	return runModelComposeTraining(context, name, composePath, training.Cluster{}, stdout, stderr)
 }
 
 func runModelExport(context Context, args []string, stdout, stderr io.Writer) error {
@@ -1245,7 +1280,7 @@ func configuredModelBuilderForCluster(commandContext Context, progress io.Writer
 		return selection, err
 	})
 	if cluster.Nodes > 1 && cluster.NodeRank == 0 {
-		builder.MultiNode = model.MultiNodeHandoff{RendezvousID: cluster.RendezvousID}
+		builder.MultiNode = model.MultiNodeHandoff{RendezvousID: cluster.RendezvousID, StageOrdinal: 1, StageCount: 1}
 	}
 	return builder, nil
 }
@@ -1283,7 +1318,7 @@ func compactDuration(seconds int64) string {
 func prepareDefaultTrainingStage(context Context, inspection model.Inspection, paths []string, epochs int64, batch int64, learningRate float64, seed uint64, audit bool, cache *lookaside.Cache, progress io.Writer) (model.PreparedStage, error) {
 	architecture := inspection.Model.Architecture
 	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != training.ByteTokenizerRevision || architecture.VocabularySize != 259 {
-		return model.PreparedStage{}, fmt.Errorf("automatic one-pass training currently requires byte@%s with vocabulary_size 259; subword models train from a compose file, and compose training is currently single-node", training.ByteTokenizerRevision)
+		return model.PreparedStage{}, fmt.Errorf("automatic one-pass training currently requires byte@%s with vocabulary_size 259; subword models train from a compose file", training.ByteTokenizerRevision)
 	}
 	targets, err := resolveIndexArgumentsWithWarning(context.Execution, paths, progress)
 	if err != nil {

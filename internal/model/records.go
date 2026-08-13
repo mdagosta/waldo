@@ -138,7 +138,7 @@ type RunBOM struct {
 	Initialization     *training.Initialization    `json:"initialization,omitempty"`
 }
 
-const MultiNodePlanSchema = 1
+const MultiNodePlanSchema = 2
 
 const MultiNodePlanKind = "openwaldo-multinode-plan"
 
@@ -147,6 +147,8 @@ type MultiNodePlan struct {
 	Schema             int                         `json:"schema"`
 	RunID              string                      `json:"run_id"`
 	Stage              string                      `json:"stage"`
+	StageOrdinal       int                         `json:"stage_ordinal"`
+	StageCount         int                         `json:"stage_count"`
 	Objective          string                      `json:"objective"`
 	ArchitectureSHA256 string                      `json:"architecture_sha256"`
 	Architecture       json.RawMessage             `json:"architecture"`

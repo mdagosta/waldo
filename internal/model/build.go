@@ -46,6 +46,8 @@ type Builder struct {
 
 type MultiNodeHandoff struct {
 	RendezvousID string
+	StageOrdinal int
+	StageCount   int
 }
 
 // CheckBackend validates that this host can execute the requested portable
@@ -493,6 +495,9 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 	if resume != nil {
 		return fmt.Errorf("stage %s: multi-node training cannot resume an interrupted run; restart it fresh", stage.Name)
 	}
+	if builder.MultiNode.StageOrdinal < 1 || builder.MultiNode.StageCount < builder.MultiNode.StageOrdinal {
+		return fmt.Errorf("stage %s: multi-node stage accounting %d/%d is invalid", stage.Name, builder.MultiNode.StageOrdinal, builder.MultiNode.StageCount)
+	}
 	path := MultiNodePlanPath(builder.Root, builder.MultiNode.RendezvousID)
 	// Fail closed on a leftover plan: a crashed primary skips its deferred
 	// cleanup, and a secondary polling this rendezvous id would consume the
@@ -504,7 +509,7 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 	}
 	plan := MultiNodePlan{
 		Kind: MultiNodePlanKind, Schema: MultiNodePlanSchema,
-		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
+		RunID: pin.ID, Stage: stage.Name, StageOrdinal: builder.MultiNode.StageOrdinal, StageCount: builder.MultiNode.StageCount, Objective: stage.Objective,
 		ArchitectureSHA256: runBOM.ArchitectureSHA256, Architecture: architectureJSON,
 		Parameters: runBOM.Parameters, CorpusBOM: prepared.BOM,
 		EvaluationSet: runBOM.EvaluationSet, Initialization: runBOM.Initialization,
@@ -978,7 +983,12 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 				return Inspection{}, fmt.Errorf("compose stage %s ended %s and cannot be resumed", stage.Stage.Name, staged.Runs[runIndex].State)
 			}
 		}
-		if _, err := builder.Train(ctx, name, stage); err != nil {
+		stageBuilder := builder
+		if stageBuilder.MultiNode.RendezvousID != "" {
+			stageBuilder.MultiNode.StageOrdinal = index + 1
+			stageBuilder.MultiNode.StageCount = len(stages)
+		}
+		if _, err := stageBuilder.Train(ctx, name, stage); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				builder.report(Progress{Phase: "compose", Message: fmt.Sprintf("retained transaction %s; repeat the exact command to resume", transactionID[:12])})
 			} else {

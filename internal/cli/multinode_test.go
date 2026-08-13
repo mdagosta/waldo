@@ -38,9 +38,9 @@ func TestAwaitMultiNodePlanReadsPublishedPlan(t *testing.T) {
 	root := t.TempDir()
 	seedPlan(t, root, "run-42", model.MultiNodePlan{
 		Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
-		RunID: "run0001", Stage: "train-0001", Objective: "causal-language-modeling",
+		RunID: "run0001", Stage: "train-0001", StageOrdinal: 1, StageCount: 1, Objective: "causal-language-modeling",
 	})
-	plan, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, io.Discard)
+	plan, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard)
 	if err != nil {
 		t.Fatalf("await: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestAwaitMultiNodePlanReadsPublishedPlan(t *testing.T) {
 func TestAwaitMultiNodePlanRejectsUnsupportedSchema(t *testing.T) {
 	root := t.TempDir()
 	seedPlan(t, root, "run-42", model.MultiNodePlan{Kind: model.MultiNodePlanKind, Schema: 999})
-	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, io.Discard); err == nil || !strings.Contains(err.Error(), "has schema 999; this build supports 1") {
+	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard); err == nil || !strings.Contains(err.Error(), "has schema 999; this build supports 2") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 }
@@ -60,7 +60,7 @@ func TestAwaitMultiNodePlanRejectsUnsupportedSchema(t *testing.T) {
 func TestAwaitMultiNodePlanRejectsWrongKind(t *testing.T) {
 	root := t.TempDir()
 	seedPlan(t, root, "run-42", model.MultiNodePlan{Kind: "openwaldo-bom", Schema: model.MultiNodePlanSchema})
-	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, io.Discard); err == nil || !strings.Contains(err.Error(), `kind "openwaldo-bom"`) {
+	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard); err == nil || !strings.Contains(err.Error(), `kind "openwaldo-bom"`) {
 		t.Fatalf("kind guard error = %v", err)
 	}
 }
@@ -68,7 +68,7 @@ func TestAwaitMultiNodePlanRejectsWrongKind(t *testing.T) {
 func TestAwaitMultiNodePlanHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := awaitMultiNodePlan(ctx, t.TempDir(), "run-42", time.Minute, io.Discard); err == nil {
+	if _, err := awaitMultiNodePlan(ctx, t.TempDir(), "run-42", time.Minute, "", io.Discard); err == nil {
 		t.Fatal("expected cancellation error for an unpublished plan")
 	}
 }
@@ -80,5 +80,41 @@ func TestEvaluationSetValueZeroWhenAbsent(t *testing.T) {
 	value := &training.EvaluationSet{SHA256: strings.Repeat("a", 64), Records: 5}
 	if got := model.EvaluationSetValue(value); got.SHA256 != value.SHA256 || got.Records != 5 {
 		t.Fatalf("evaluation set = %+v", got)
+	}
+}
+
+func TestAwaitMultiNodePlanSkipsConsumedRun(t *testing.T) {
+	root := t.TempDir()
+	seedPlan(t, root, "run-42", model.MultiNodePlan{
+		Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
+		RunID: "runA", Stage: "pretrain", StageOrdinal: 1, StageCount: 2, Objective: "causal-language-modeling",
+	})
+	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", 2*time.Second, "runA", io.Discard); err == nil || !strings.Contains(err.Error(), "did not publish a multi-node plan") {
+		t.Fatalf("stale plan skip error = %v", err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		time.Sleep(300 * time.Millisecond)
+		seedPlan(t, root, "run-42", model.MultiNodePlan{
+			Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
+			RunID: "runB", Stage: "refine", StageOrdinal: 2, StageCount: 2, Objective: "causal-language-modeling",
+		})
+	}()
+	plan, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "runA", io.Discard)
+	<-done
+	if err != nil || plan.RunID != "runB" || plan.StageOrdinal != 2 {
+		t.Fatalf("plan = %+v, err = %v", plan, err)
+	}
+}
+
+func TestAwaitMultiNodePlanRejectsMalformedStageAccounting(t *testing.T) {
+	root := t.TempDir()
+	seedPlan(t, root, "run-42", model.MultiNodePlan{
+		Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
+		RunID: "runA", StageOrdinal: 0, StageCount: 0,
+	})
+	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard); err == nil || !strings.Contains(err.Error(), "stage accounting") {
+		t.Fatalf("stage accounting error = %v", err)
 	}
 }
