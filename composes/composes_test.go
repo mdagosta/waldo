@@ -161,7 +161,7 @@ func TestIntermediateHasTwoDayScalingBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 5 || compose.Architecture.Dropout != 0.1 {
+	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 4 || compose.Architecture.Dropout != 0.1 {
 		t.Fatalf("intermediate architecture/stage is incomplete: %+v", compose)
 	}
 	forecast, err := model.ForecastCompose(compose)

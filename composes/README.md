@@ -23,7 +23,7 @@ waldo model train intermediate-test composes/0003-intermediate.yaml
 | `0000-canary.yaml` | 13.6M parameters | 4.1M | Four small prose, technical, and dialogue selections | Release-gate CUDA/MLX, artifact reload, accounting, and chat |
 | `0001-babble.yaml` | 49.9M parameters | 1.05B | Gutenberg and PLOS, balanced by token exposure | Coherent local continuations from a compact base model |
 | `0002-basic.yaml` | 114.1M parameters | 3.93B | Gutenberg, Wikimedia, and PLOS, balanced by token exposure | Basic cross-domain language-model capability over a longer context |
-| `0003-intermediate.yaml` | 336.6M parameters | 12.0B | Books, encyclopedic, technical Q&A, civic, and scientific text with declared weights | Broader intermediate base-model capability over a 2,048-token context |
+| `0003-intermediate.yaml` | 336.6M parameters | 12.0B | Books, encyclopedic, civic, and scientific text with declared weights | Broader intermediate base-model capability over a 2,048-token context |
 
 `0000-canary.yaml` has been validated end to end on a single H200. The first
 babble experiment used `cl100k_base`, which spent 80% of its 47.9M parameters

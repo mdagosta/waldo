@@ -22,7 +22,6 @@ stages:
     objective: causal-language-modeling
     corpora:
       - core/books/gutenberg
-      - core/common-pile/stackexchange
       - core/common-pile/wikimedia
       - government/regulations
       - science/plos
@@ -38,8 +37,7 @@ stages:
       shuffle_buffer_records: 65536
       shuffle_buffer_bytes: 2147483648
       corpus_weights:
-        core/books/gutenberg: 2
-        core/common-pile/stackexchange: 1
+        core/books/gutenberg: 3
         core/common-pile/wikimedia: 4
         government/regulations: 1
         science/plos: 2
