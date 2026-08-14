@@ -20,7 +20,7 @@ import torch.nn.functional as functional
 
 PROTOCOL_SCHEMA = 1
 WORKER_REVISION = "builtin-pytorch-worker-schema-1-r6"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r6"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r7"
 IS_PRIMARY = True
 
 
@@ -256,15 +256,6 @@ class DecoderLM(nn.Module):
         return self.output(value)
 
 
-class ByteTokenizer:
-    pad_id = 0
-    bos_id = 1
-    eos_id = 2
-
-    def encode(self, text):
-        return [byte + 3 for byte in text.encode("utf-8")] + [self.eos_id]
-
-
 class FramingTokenizer:
     def __init__(self, specification):
         self.name = specification["name"]
@@ -304,6 +295,7 @@ class Trainer:
                 tp=1,
                 pp=1,
                 ep=1,
+                etp=1,
                 world_size=self.world_size,
             )
             self.parallel_dims.build_mesh()
@@ -341,6 +333,8 @@ class Trainer:
         self.model.initialize()
         self.initialization = begin.get("initialization")
         if self.initialization is not None:
+            if not self.initialization.get("path"):
+                raise ValueError("initialization weights frame is missing a path")
             missing, unexpected = self.model.load_state_dict(load_safetensors(self.initialization["path"]), strict=False)
             if missing or unexpected:
                 raise ValueError(f"initialization weights do not match architecture: missing={missing}, unexpected={unexpected}")
@@ -545,7 +539,7 @@ class Trainer:
             os.makedirs(temporary)
         if self.distributed:
             values = [temporary]
-            torch.distributed.broadcast_object_list(values, src=0)
+            torch.distributed.broadcast_object_list(values, src=0, device=self.device)
             temporary = values[0]
         weights_path = os.path.join(temporary, "model.safetensors")
         runtime_path = os.path.join(temporary, "runtime.pt")
@@ -805,6 +799,48 @@ class Trainer:
         )
 
 
+def stream_lines(distributed):
+    """Yield the canonical input stream's lines on every rank.
+
+    Each node receives its own copy of the stream on the torchrun parent's
+    stdin. With one local rank the process reads the pipe directly. With
+    several local ranks a direct read would race on the shared inherited
+    pipe descriptor and tear frames apart, so local rank 0 reads and fans
+    each line out over a node-local process group.
+    """
+    local_world = int(os.environ.get("LOCAL_WORLD_SIZE", "1")) if distributed else 1
+    if distributed:
+        world = torch.distributed.get_world_size()
+        sizes = [None] * world
+        torch.distributed.all_gather_object(sizes, local_world)
+        if len(set(sizes)) != 1:
+            raise ValueError(f"local world sizes differ across nodes: {sorted(set(sizes))}")
+    if local_world <= 1:
+        while True:
+            line = sys.stdin.readline()
+            if not line:
+                return
+            yield line
+    rank = torch.distributed.get_rank()
+    world = torch.distributed.get_world_size()
+    if world % local_world != 0:
+        raise ValueError(f"world size {world} is not divisible by local world size {local_world}")
+    local_rank = int(os.environ["LOCAL_RANK"])
+    node_group = None
+    for first in range(0, world, local_world):
+        group = torch.distributed.new_group(list(range(first, first + local_world)))
+        if first <= rank < first + local_world:
+            node_group = group
+    source = (rank // local_world) * local_world
+    device = torch.device(f"cuda:{local_rank}")
+    while True:
+        values = [sys.stdin.readline() if local_rank == 0 else None]
+        torch.distributed.broadcast_object_list(values, src=source, group=node_group, device=device)
+        if not values[0]:
+            return
+        yield values[0]
+
+
 def run():
     if len(sys.argv) != 4:
         raise ValueError("worker requires artifact directory, artifact prefix, and device")
@@ -815,19 +851,14 @@ def run():
     distributed = device == "torchtitan"
     if distributed:
         torch.distributed.init_process_group("nccl")
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)
         IS_PRIMARY = torch.distributed.get_rank() == 0
+        emit("event", event={"kind": "log", "message": f"rank {torch.distributed.get_rank()}/{torch.distributed.get_world_size()} process group ready on cuda:{local_rank}"})
     os.makedirs(artifact_directory, exist_ok=True)
     trainer = None
     ended = False
-    while True:
-        if distributed:
-            value = [sys.stdin.readline() if IS_PRIMARY else None]
-            torch.distributed.broadcast_object_list(value, src=0)
-            line = value[0]
-        else:
-            line = sys.stdin.readline()
-        if not line:
-            break
+    for line in stream_lines(distributed):
         frame = json.loads(line)
         if frame.get("schema") != PROTOCOL_SCHEMA:
             raise ValueError(f"unsupported worker input schema {frame.get('schema')}")
@@ -835,6 +866,11 @@ def run():
         if kind == "begin":
             if trainer is not None:
                 raise ValueError("worker received duplicate begin frame")
+            if distributed:
+                run_ids = [None] * torch.distributed.get_world_size()
+                torch.distributed.all_gather_object(run_ids, frame["begin"].get("run_id"))
+                if len(set(run_ids)) != 1:
+                    raise ValueError(f"nodes joined the rendezvous with different runs: {sorted(set(run_ids))}")
             trainer = Trainer(frame["begin"], artifact_directory, artifact_prefix, device)
         elif kind == "record":
             if trainer is None or ended:

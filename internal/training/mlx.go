@@ -91,7 +91,7 @@ func (resolver MLXResolver) Resolve(ctx context.Context, request ResolveRequest)
 	}
 	candidates := resolver.Candidates
 	if len(candidates) == 0 {
-		candidates = mlxPythonCandidates()
+		candidates = pythonCandidates()
 	}
 	probe := resolver.Probe
 	if probe == nil {
@@ -132,7 +132,7 @@ func FakeResolver() Resolver {
 	})
 }
 
-func mlxPythonCandidates() []string {
+func pythonCandidates() []string {
 	var candidates []string
 	for _, name := range []string{"python3", "python"} {
 		if path, err := exec.LookPath(name); err == nil {
@@ -200,25 +200,43 @@ func probeMLX(ctx context.Context, python string) (mlxProbe, error) {
 }
 
 type cappedBuffer struct {
-	mutex sync.Mutex
-	data  []byte
+	mutex     sync.Mutex
+	data      []byte
+	truncated bool
 }
 
 func (buffer *cappedBuffer) Write(data []byte) (int, error) {
 	buffer.mutex.Lock()
 	defer buffer.mutex.Unlock()
 	const limit = 64 * 1024
-	remaining := limit - len(buffer.data)
-	if remaining > 0 {
-		buffer.data = append(buffer.data, data[:min(len(data), remaining)]...)
+	written := len(data)
+	if len(data) > limit {
+		data = data[len(data)-limit:]
+		buffer.truncated = true
 	}
-	return len(data), nil
+	buffer.data = append(buffer.data, data...)
+	if overflow := len(buffer.data) - limit; overflow > 0 {
+		buffer.data = append(buffer.data[:0], buffer.data[overflow:]...)
+		buffer.truncated = true
+	}
+	return written, nil
 }
 
 func (buffer *cappedBuffer) String() string {
 	buffer.mutex.Lock()
 	defer buffer.mutex.Unlock()
+	if buffer.truncated {
+		return "[earlier output truncated] " + string(buffer.data)
+	}
 	return string(buffer.data)
+}
+
+func workerSkipped(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return "; non-protocol worker output: " + value
 }
 
 func workerStderr(value string) string {

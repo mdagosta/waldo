@@ -11,19 +11,27 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
-const TorchTitanRevision = "builtin-torchtitan-worker-schema-1-r6"
+const TorchTitanRevision = "builtin-torchtitan-worker-schema-1-r7"
 
 type TorchTitan struct {
-	Python    string
-	Version   string
-	WorldSize int
+	Python     string
+	Version    string
+	LocalProcs int
+	Nodes      int
+	NodeRank   int
+	Rendezvous string
+	Interface  string
+	HCA        string
+	Secondary  bool
 }
 
 func (backend TorchTitan) Descriptor() Descriptor {
@@ -40,8 +48,19 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 	if backend.Python == "" {
 		return Observation{}, fmt.Errorf("TorchTitan Python runtime is required")
 	}
-	if backend.WorldSize < 1 {
-		return Observation{}, fmt.Errorf("TorchTitan world size must be positive")
+	if backend.LocalProcs < 1 {
+		return Observation{}, fmt.Errorf("TorchTitan requires at least one local process")
+	}
+	if backend.Nodes > 1 {
+		if _, _, err := net.SplitHostPort(backend.Rendezvous); err != nil {
+			return Observation{}, fmt.Errorf("multi-node TorchTitan rendezvous %q must be host:port: %w", backend.Rendezvous, err)
+		}
+		if backend.NodeRank < 0 || backend.NodeRank >= backend.Nodes {
+			return Observation{}, fmt.Errorf("TorchTitan node rank %d is out of range for %d nodes", backend.NodeRank, backend.Nodes)
+		}
+		if !backend.Secondary && backend.NodeRank != 0 {
+			return Observation{}, fmt.Errorf("primary TorchTitan node must be rank 0, not %d", backend.NodeRank)
+		}
 	}
 	if err := os.MkdirAll(request.ArtifactDirectory, 0o755); err != nil {
 		return Observation{}, fmt.Errorf("create TorchTitan artifact directory: %w", err)
@@ -63,12 +82,47 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 	if err := worker.Close(); err != nil {
 		return Observation{}, err
 	}
-	command := exec.CommandContext(ctx, backend.Python,
-		"-m", "torch.distributed.run", "--standalone",
-		fmt.Sprintf("--nproc-per-node=%d", backend.WorldSize),
+	command := exec.CommandContext(ctx, backend.Python, backend.launchArguments(workerPath, request)...)
+	command.Env = backend.environment()
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error {
+		return syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
+	if backend.Secondary {
+		return runWorkerStreamJoin(ctx, "TorchTitan", command, request)
+	}
+	return runWorkerCommand(ctx, "TorchTitan", command, request)
+}
+
+func (backend TorchTitan) launchArguments(workerPath string, request Request) []string {
+	arguments := []string{"-m", "torch.distributed.run"}
+	if backend.Nodes > 1 {
+		host, port, _ := net.SplitHostPort(backend.Rendezvous)
+		arguments = append(arguments,
+			fmt.Sprintf("--nnodes=%d", backend.Nodes),
+			fmt.Sprintf("--node-rank=%d", backend.NodeRank),
+			fmt.Sprintf("--master-addr=%s", host),
+			fmt.Sprintf("--master-port=%s", port),
+			"--max-restarts=0",
+		)
+	} else {
+		arguments = append(arguments, "--standalone")
+	}
+	return append(arguments,
+		fmt.Sprintf("--nproc-per-node=%d", backend.LocalProcs),
 		workerPath, request.ArtifactDirectory, request.ArtifactPrefix, "torchtitan",
 	)
-	return runWorkerCommand(ctx, "TorchTitan", command, request)
+}
+
+func (backend TorchTitan) environment() []string {
+	environment := append(os.Environ(), "PYTHONUNBUFFERED=1")
+	if backend.Interface != "" {
+		environment = append(environment, "NCCL_SOCKET_IFNAME="+backend.Interface)
+	}
+	if backend.HCA != "" {
+		environment = append(environment, "NCCL_IB_HCA="+backend.HCA, "NCCL_IB_DISABLE=0")
+	}
+	return environment
 }
 
 type torchTitanDevice struct {
@@ -89,9 +143,37 @@ type TorchTitanResolver struct {
 	Probe      func(context.Context, string) (torchTitanProbe, error)
 	OS         string
 	Arch       string
+	Cluster    Cluster
 }
 
-func NewTorchTitanResolver() Resolver { return TorchTitanResolver{} }
+func NewTorchTitanResolverForCluster(cluster Cluster) Resolver {
+	return TorchTitanResolver{Cluster: cluster}
+}
+
+func backendForCluster(python string, facts torchTitanProbe, cluster Cluster, secondary bool) TorchTitan {
+	nodes := cluster.Nodes
+	if nodes < 1 {
+		nodes = 1
+	}
+	return TorchTitan{
+		Python: python, Version: facts.TorchTitanVersion, LocalProcs: len(facts.Devices),
+		Nodes: nodes, NodeRank: cluster.NodeRank, Rendezvous: cluster.Rendezvous,
+		Interface: cluster.Interface, HCA: cluster.HCA, Secondary: secondary,
+	}
+}
+
+func firstUsableTorchTitan(ctx context.Context, candidates []string, probe func(context.Context, string) (torchTitanProbe, error)) (string, torchTitanProbe, []string) {
+	var failures []string
+	for _, candidate := range candidates {
+		facts, err := probe(ctx, candidate)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", candidate, err))
+			continue
+		}
+		return candidate, facts, nil
+	}
+	return "", torchTitanProbe{}, failures
+}
 
 func (resolver TorchTitanResolver) Resolve(ctx context.Context, request ResolveRequest) (Selection, error) {
 	hostOS, hostArch := resolver.OS, resolver.Arch
@@ -109,36 +191,34 @@ func (resolver TorchTitanResolver) Resolve(ctx context.Context, request ResolveR
 	}
 	candidates := resolver.Candidates
 	if len(candidates) == 0 {
-		candidates = mlxPythonCandidates()
+		candidates = pythonCandidates()
 	}
 	probe := resolver.Probe
 	if probe == nil {
 		probe = probeTorchTitan
 	}
-	var failures []string
-	for _, candidate := range candidates {
-		facts, err := probe(ctx, candidate)
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", candidate, err))
-			continue
+	python, facts, failures := firstUsableTorchTitan(ctx, candidates, probe)
+	if python == "" {
+		detail := strings.Join(failures, "; ")
+		if detail != "" {
+			detail = ": " + detail
 		}
-		backend := TorchTitan{Python: candidate, Version: facts.TorchTitanVersion, WorldSize: len(facts.Devices)}
-		descriptor := backend.Descriptor()
-		execution := Execution{
-			Backend: descriptor.Identity, Framework: descriptor.Framework,
-			Runtime: fmt.Sprintf("%s; Python %s; TorchTitan %s; PyTorch %s", candidate, facts.PythonVersion, facts.TorchTitanVersion, facts.TorchVersion),
-			Host:    Host{OS: hostOS, Architecture: hostArch}, Nodes: 1, WorldSize: len(facts.Devices),
-		}
+		return Selection{}, fmt.Errorf("no usable TorchTitan runtime found; install a matching TorchTitan and PyTorch build from https://github.com/pytorch/torchtitan#installation%s", detail)
+	}
+	backend := backendForCluster(python, facts, resolver.Cluster, false)
+	nodes, localProcs := backend.Nodes, backend.LocalProcs
+	descriptor := backend.Descriptor()
+	execution := Execution{
+		Backend: descriptor.Identity, Framework: descriptor.Framework,
+		Runtime: fmt.Sprintf("%s; Python %s; TorchTitan %s; PyTorch %s", python, facts.PythonVersion, facts.TorchTitanVersion, facts.TorchVersion),
+		Host:    Host{OS: hostOS, Architecture: hostArch}, Nodes: nodes, WorldSize: nodes * localProcs,
+	}
+	for node := 0; node < nodes; node++ {
 		for _, device := range facts.Devices {
 			execution.Accelerators = append(execution.Accelerators, Accelerator{Manufacturer: device.Manufacturer, Model: device.Model, MemoryBytes: device.MemoryBytes})
 		}
-		return Selection{Backend: backend, Execution: execution}, nil
 	}
-	detail := strings.Join(failures, "; ")
-	if detail != "" {
-		detail = ": " + detail
-	}
-	return Selection{}, fmt.Errorf("no usable TorchTitan runtime found; install a matching TorchTitan and PyTorch build from https://github.com/pytorch/torchtitan#installation%s", detail)
+	return Selection{Backend: backend, Execution: execution}, nil
 }
 
 func validateTorchArchitecture(raw json.RawMessage, label string) error {
@@ -215,4 +295,33 @@ func probeTorchTitan(ctx context.Context, python string) (torchTitanProbe, error
 		}
 	}
 	return facts, nil
+}
+
+func RunSecondaryTorchTitan(ctx context.Context, cluster Cluster, request Request) error {
+	if runtime.GOOS != "linux" {
+		return fmt.Errorf("TorchTitan training requires Linux; this host is %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+	if cluster.Nodes < 2 {
+		return fmt.Errorf("secondary TorchTitan requires at least two nodes")
+	}
+	if cluster.NodeRank < 1 || cluster.NodeRank >= cluster.Nodes {
+		return fmt.Errorf("secondary TorchTitan node rank %d is out of range for %d nodes", cluster.NodeRank, cluster.Nodes)
+	}
+	if cluster.Rendezvous == "" || cluster.RendezvousID == "" {
+		return fmt.Errorf("secondary TorchTitan requires a rendezvous endpoint and id")
+	}
+	if err := validateTorchArchitecture(request.Architecture, "TorchTitan"); err != nil {
+		return err
+	}
+	python, facts, failures := firstUsableTorchTitan(ctx, pythonCandidates(), probeTorchTitan)
+	if python == "" {
+		detail := strings.Join(failures, "; ")
+		if detail != "" {
+			detail = ": " + detail
+		}
+		return fmt.Errorf("no usable TorchTitan runtime found for the secondary node%s", detail)
+	}
+	backend := backendForCluster(python, facts, cluster, true)
+	_, err := backend.Run(ctx, request)
+	return err
 }

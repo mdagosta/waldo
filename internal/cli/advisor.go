@@ -27,6 +27,7 @@ import (
 	"github.com/openwaldo/waldo/internal/config"
 	waldoindex "github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/training"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 )
@@ -736,7 +737,7 @@ func runAdvisorBuild(commandContext Context, name, composePath string, selected 
 	monitor := newAdvisorCheckpointMonitor(commandContext.Execution, root, name, selected, index, transcript, lockedOutput, lockedProgress)
 	buildContext := commandContext
 	buildContext.Progress = monitor.Observe
-	buildErr := runModelComposeTraining(buildContext, name, composePath, lockedOutput, lockedProgress)
+	buildErr := runModelComposeTraining(buildContext, name, composePath, training.Cluster{}, lockedOutput, lockedProgress)
 	monitor.Close()
 	result := "Build completed."
 	if buildErr != nil {

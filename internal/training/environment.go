@@ -33,11 +33,21 @@ type pythonPackage struct {
 	Version string
 }
 
+type Cluster struct {
+	Nodes        int
+	NodeRank     int
+	Rendezvous   string
+	RendezvousID string
+	Interface    string
+	HCA          string
+}
+
 // EnvironmentResolver keeps host policy separate from framework adapters.
 // A new adapter only needs to be registered in Resolvers; automatic host and
 // installation selection remains here.
 type EnvironmentResolver struct {
 	Preference string
+	Cluster    Cluster
 	OS         string
 	Arch       string
 	Candidates []string
@@ -46,11 +56,16 @@ type EnvironmentResolver struct {
 }
 
 func NewEnvironmentResolver(preference string) Resolver {
+	return NewEnvironmentResolverForCluster(preference, Cluster{})
+}
+
+func NewEnvironmentResolverForCluster(preference string, cluster Cluster) Resolver {
 	return EnvironmentResolver{
 		Preference: preference,
+		Cluster:    cluster,
 		Resolvers: map[string]Resolver{
 			BackendMLX:        NewMLXResolver(),
-			BackendTorchTitan: NewTorchTitanResolver(),
+			BackendTorchTitan: NewTorchTitanResolverForCluster(cluster),
 			BackendPyTorch:    NewPyTorchResolver(),
 			BackendFake:       FakeResolver(),
 		},
@@ -78,6 +93,9 @@ func (resolver EnvironmentResolver) Resolve(ctx context.Context, request Resolve
 		if err != nil {
 			return Selection{}, err
 		}
+	}
+	if resolver.Cluster.Nodes > 1 && selected != BackendTorchTitan {
+		return Selection{}, fmt.Errorf("multi-node training (--nodes %d) requires the TorchTitan backend, but model.backend=%s resolved to %s; set model.backend=torchtitan or run single-node", resolver.Cluster.Nodes, preference, backendDisplayName(selected))
 	}
 	if selected == BackendMLX && (hostOS != "darwin" || hostArch != "arm64") {
 		return Selection{}, fmt.Errorf("model.backend=%s selected MLX, but MLX training requires macOS on Apple Silicon; use model.backend=auto on this %s/%s host", preference, hostOS, hostArch)
@@ -154,7 +172,7 @@ func (resolver EnvironmentResolver) resolver(name string) Resolver {
 		return NewPyTorchResolver()
 	}
 	if name == BackendTorchTitan {
-		return NewTorchTitanResolver()
+		return NewTorchTitanResolverForCluster(resolver.Cluster)
 	}
 	if name == BackendFake {
 		return FakeResolver()
@@ -166,7 +184,7 @@ func (resolver EnvironmentResolver) candidates() []string {
 	if len(resolver.Candidates) > 0 {
 		return resolver.Candidates
 	}
-	return mlxPythonCandidates()
+	return pythonCandidates()
 }
 
 func (resolver EnvironmentResolver) probe() func(context.Context, []string, string, string) (pythonPackage, error) {

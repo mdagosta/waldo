@@ -30,6 +30,8 @@ var configKeys = []string{
 	"ingest.staging",
 	"model.root",
 	"model.backend",
+	"model.nccl.interface",
+	"model.nccl.hca",
 	"ai.provider",
 	"ai.model",
 	"ai.api-key",
@@ -272,6 +274,16 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 			return oneConfigValue(key)
 		}
 		configuration.AI.APIKey = values[0]
+	case "model.nccl.interface":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		configuration.Model.NCCLInterface = values[0]
+	case "model.nccl.hca":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		configuration.Model.NCCLHCA = values[0]
 	case "disclosure.provider":
 		if len(values) != 1 {
 			return oneConfigValue(key)
@@ -358,6 +370,10 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.AI.Model = ""
 	case "ai.api-key":
 		configuration.AI.APIKey = ""
+	case "model.nccl.interface":
+		configuration.Model.NCCLInterface = ""
+	case "model.nccl.hca":
+		configuration.Model.NCCLHCA = ""
 	case "disclosure.provider":
 		configuration.Disclosure.Provider = ""
 	case "signing.method":
@@ -458,6 +474,16 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 			return nil, false, nil
 		}
 		return "(set)", true, nil
+	case "model.nccl.interface":
+		if configuration.Model.NCCLInterface == "" {
+			return nil, false, nil
+		}
+		return configuration.Model.NCCLInterface, true, nil
+	case "model.nccl.hca":
+		if configuration.Model.NCCLHCA == "" {
+			return nil, false, nil
+		}
+		return configuration.Model.NCCLHCA, true, nil
 	case "disclosure.provider":
 		if configuration.Disclosure.Provider == "" {
 			return nil, false, nil

@@ -138,6 +138,32 @@ type RunBOM struct {
 	Initialization     *training.Initialization    `json:"initialization,omitempty"`
 }
 
+const MultiNodePlanSchema = 1
+
+const MultiNodePlanKind = "openwaldo-multinode-plan"
+
+type MultiNodePlan struct {
+	Kind               string                      `json:"kind"`
+	Schema             int                         `json:"schema"`
+	RunID              string                      `json:"run_id"`
+	Stage              string                      `json:"stage"`
+	StageOrdinal       int                         `json:"stage_ordinal"`
+	StageCount         int                         `json:"stage_count"`
+	Nodes              int                         `json:"nodes"`
+	Objective          string                      `json:"objective"`
+	ArchitectureSHA256 string                      `json:"architecture_sha256"`
+	Architecture       json.RawMessage             `json:"architecture"`
+	Parameters         training.ResolvedParameters `json:"parameters"`
+	CorpusBOM          corpus.BOM                  `json:"corpus_bom"`
+	EvaluationSet      *training.EvaluationSet     `json:"evaluation_set,omitempty"`
+	Initialization     *training.Initialization    `json:"initialization,omitempty"`
+	InitializationPath string                      `json:"initialization_path,omitempty"`
+}
+
+func MultiNodePlanPath(root, rendezvousID string) string {
+	return filepath.Join(root, ".multinode", rendezvousID, "plan.json")
+}
+
 type RunRecord struct {
 	Kind        string                `json:"kind"`
 	Schema      int                   `json:"schema"`
@@ -330,7 +356,7 @@ func Inspect(root, nameOrPath string) (Inspection, error) {
 					if artifact.Path == "" || filepath.IsAbs(filepath.FromSlash(artifact.Path)) || clean != artifact.Path || !strings.HasPrefix(clean, "artifacts/checkpoints/") {
 						return Inspection{}, fmt.Errorf("run %s checkpoint artifact path %q is invalid", pin.ID, artifact.Path)
 					}
-					if err := verifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
+					if err := VerifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
 						return Inspection{}, fmt.Errorf("run %s checkpoint: %w", pin.ID, err)
 					}
 				}
@@ -551,7 +577,7 @@ func verifyOriginArtifact(root string, artifact OriginArtifact) error {
 	if clean != artifact.Path || clean == "." || strings.HasPrefix(clean, "../") {
 		return fmt.Errorf("artifact path %q escapes the model root", artifact.Path)
 	}
-	return verifyArtifactFile(filepath.Join(root, filepath.FromSlash(clean)), training.Artifact{Path: artifact.Path, SHA256: artifact.SHA256, Bytes: artifact.Bytes})
+	return VerifyArtifactFile(filepath.Join(root, filepath.FromSlash(clean)), training.Artifact{Path: artifact.Path, SHA256: artifact.SHA256, Bytes: artifact.Bytes})
 }
 
 func artifactRole(path string) string {

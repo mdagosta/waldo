@@ -91,8 +91,8 @@ func TestModelForecastAcceptsConfiguredMultipleIndexPaths(t *testing.T) {
 
 func TestWriteModelForecastUsesApprovedCompactColumns(t *testing.T) {
 	report := model.ResourceForecast{ApproximateParameters: 9_543_210, PlannedTokens: 1_048_576_000, Configurations: []model.HardwareConfiguration{
-		{Manufacturer: "Apple", Accelerator: "M4 Max 40-core GPU", GPUs: 1, MemoryPerGPUBytes: 128 << 30, ApproximateSeconds: 48 * 24 * 60 * 60},
-		{Manufacturer: "NVIDIA", Accelerator: "H100 SXM", GPUs: 8, MemoryPerGPUBytes: 80 << 30, ApproximateSeconds: 44 * 60 * 60},
+		{Manufacturer: "Apple", Accelerator: "M4 Max 40-core GPU", GPUs: 1, Nodes: 1, MemoryPerGPUBytes: 128 << 30, ApproximateSeconds: 48 * 24 * 60 * 60},
+		{Manufacturer: "NVIDIA", Accelerator: "H100 SXM", GPUs: 8, Nodes: 1, MemoryPerGPUBytes: 80 << 30, ApproximateSeconds: 44 * 60 * 60},
 	}}
 	var output bytes.Buffer
 	writeModelForecast(&output, report)
@@ -107,7 +107,7 @@ func TestWriteModelForecastUsesApprovedCompactColumns(t *testing.T) {
 			t.Errorf("line %d does not lead with %q:\n%s", lineNumber+1, want, lines[lineNumber])
 		}
 	}
-	for _, want := range []string{"PARAMETERS:  9.5M (9,543,210)", "TOKENS:      1.0B", "MFR", "ACCELERATOR", "GPUS", "MEMORY/GPU", "APPROX. TIME", "Apple", "128 GB", "48 days", "NVIDIA", "80 GB", "44 hours"} {
+	for _, want := range []string{"PARAMETERS:  9.5M (9,543,210)", "TOKENS:      1.0B", "MFR", "ACCELERATOR", "GPUS", "NODES", "MEMORY/GPU", "APPROX. TIME", "Apple", "128 GB", "48 days", "NVIDIA", "80 GB", "44 hours"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("output missing %q:\n%s", want, output.String())
 		}

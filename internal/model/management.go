@@ -231,7 +231,7 @@ func verifyModelArtifacts(inspection Inspection) error {
 			artifacts = append(artifacts, checkpoint.Artifacts...)
 		}
 		for _, artifact := range artifacts {
-			if err := verifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
+			if err := VerifyArtifactFile(filepath.Join(runDirectory, filepath.FromSlash(artifact.Path)), artifact); err != nil {
 				return fmt.Errorf("run %s: %w", run.ID, err)
 			}
 		}
