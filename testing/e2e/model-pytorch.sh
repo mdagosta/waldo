@@ -26,6 +26,8 @@ fi
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
+revision=$(sed -n 's/.*PyTorchRevision = "\(.*\)".*/\1/p' "$repo_root/internal/training/pytorch.go")
+[ -n "$revision" ] || { echo "could not read PyTorchRevision from internal/training/pytorch.go" >&2; exit 1; }
 temporary_base=${TMPDIR:-/tmp}
 work=$(mktemp -d "$temporary_base/waldo-pytorch-e2e.XXXXXX")
 
@@ -127,13 +129,13 @@ EOF
 
 output=$("$binary" model train pytorch-smoke "$compose")
 printf '%s\n' "$output"
-printf '%s\n' "$output" | grep -q 'backend       pytorch@builtin-pytorch-worker-schema-1-r2'
+printf '%s\n' "$output" | grep -q 'backend       pytorch@'"$revision"''
 summary=$("$binary" --json model summary pytorch-smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"pytorch"'
 
 train_output=$("$binary" model train pytorch-smoke core/e2e/pytorch --epochs 2)
-printf '%s\n' "$train_output" | grep -q 'backend       pytorch@builtin-pytorch-worker-schema-1-r2'
+printf '%s\n' "$train_output" | grep -q 'backend       pytorch@'"$revision"''
 run_count=$(find "$models/pytorch-smoke/runs" -type f -name RUN.json -print | wc -l | tr -d ' ')
 [ "$run_count" -eq 2 ] || { echo "found $run_count PyTorch runs, want 2" >&2; exit 1; }
 grep -ERq '"initialization"[[:space:]]*:' "$models/pytorch-smoke/runs" || { echo "continued PyTorch run did not pin initialization" >&2; exit 1; }
