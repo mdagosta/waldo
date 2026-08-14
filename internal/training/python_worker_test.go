@@ -222,3 +222,34 @@ printf '%s\n' '{"kind":"complete","schema":1,"observation":{"simulated":false,"s
 		t.Fatalf("observation = %+v, reported = %v", observation, reported)
 	}
 }
+
+func TestWorkerCommandKeepsCompletionWhenWorkerExitsImmediately(t *testing.T) {
+	worker := filepath.Join(t.TempDir(), "fake-python")
+	script := `#!/bin/sh
+while IFS= read -r line; do :; done
+printf '%s\n' '{"kind":"event","schema":1,"event":{"kind":"progress","message":"step 1","step":1,"tokens":2}}'
+printf '%s\n' '{"kind":"complete","schema":1,"observation":{"simulated":false,"steps":1,"consumed_tokens":2,"final_loss":1.0,"artifacts":[]}}'
+exit 0
+`
+	if err := os.WriteFile(worker, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 40; attempt++ {
+		observation, err := runWorkerCommand(context.Background(), "MLX", exec.Command(worker), Request{
+			ArtifactDirectory: t.TempDir(), ArtifactPrefix: "artifacts", Parameters: parameters,
+			Records: recordSourceFunc(func(_ context.Context, consume func(Record) error) error {
+				return consume(Record{ID: "one", Text: "hello"})
+			}),
+		})
+		if err != nil {
+			t.Fatalf("attempt %d: worker that exits right after completing must not fail: %v", attempt, err)
+		}
+		if observation.Steps != 1 {
+			t.Fatalf("attempt %d: observation = %+v", attempt, observation)
+		}
+	}
+}

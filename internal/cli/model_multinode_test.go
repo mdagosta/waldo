@@ -166,11 +166,24 @@ func multiNodePlanForTest(t *testing.T, bom corpus.BOM, architecture string) mod
 	if err != nil {
 		t.Fatal(err)
 	}
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialized, err := corpus.Materialize(context.Background(), bom, cache, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := training.NewRecordPartition(verifiedTrainingInputs(materialized, bom.Paths), parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluation := partition.Evaluation
 	return model.MultiNodePlan{
 		Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
-		RunID: "run0001", Stage: "train-0001", StageOrdinal: 1, StageCount: 1, Objective: "causal-language-modeling",
+		RunID: "run0001", Stage: "train-0001", StageOrdinal: 1, StageCount: 1, Nodes: 2, Objective: "causal-language-modeling",
 		ArchitectureSHA256: strings.Repeat("b", 64), Architecture: json.RawMessage(architecture),
-		Parameters: parameters, CorpusBOM: bom,
+		Parameters: parameters, CorpusBOM: bom, EvaluationSet: &evaluation,
 	}
 }
 
@@ -451,4 +464,55 @@ stages:
 			t.Fatalf("single-node compose failed: %s", stderr.String())
 		}
 	})
+}
+
+func TestRunSecondaryStagesRejectsTopologyMismatch(t *testing.T) {
+	bom := seedMultiNodeCorpus(t)
+	cache, err := lookaside.DefaultCache()
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelRoot, err := config.EffectiveModelRoot(configuration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := multiNodePlanForTest(t, bom, `{"family":"decoder-transformer","vocabulary_size":259,"tokenizer":{"name":"byte","revision":"builtin-byte-schema-1"}}`)
+	plan.Nodes = 4
+	seedPlan(t, modelRoot, "mismatch", plan)
+	cluster := training.Cluster{Nodes: 2, NodeRank: 1, Rendezvous: "primary:29500", RendezvousID: "mismatch"}
+	launched := false
+	runner := func(training.Cluster, training.Request) error {
+		launched = true
+		return nil
+	}
+	err = runSecondaryStages(Context{Execution: context.Background()}, cluster, modelRoot, t.TempDir(), cache, time.Minute, runner, io.Discard, io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "every node must agree on the topology") {
+		t.Fatalf("topology mismatch error = %v", err)
+	}
+	if launched {
+		t.Fatal("worker must not launch when the topology disagrees")
+	}
+}
+
+func TestSecondaryScratchIsNodeUnique(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	scratchRoot := t.TempDir()
+	seen := map[string]bool{}
+	for rank := 1; rank <= 3; rank++ {
+		path := filepath.Join(scratchRoot, "train-worker", "rid", fmt.Sprintf("node-%d", rank))
+		if seen[path] {
+			t.Fatalf("rank %d reuses another node's scratch path %s", rank, path)
+		}
+		seen[path] = true
+		if err := os.MkdirAll(filepath.Join(path, "run0001"), 0o755); err != nil {
+			t.Fatalf("rank %d scratch: %v", rank, err)
+		}
+	}
+	if len(seen) != 3 {
+		t.Fatalf("expected three distinct scratch paths, got %d", len(seen))
+	}
 }

@@ -111,6 +111,10 @@ func writeWorkerInputUntil(ctx context.Context, output io.Writer, begin WorkerBe
 }
 
 func ReadWorkerOutput(input io.Reader, consume func(WorkerOutputFrame) error) error {
+	return ReadWorkerOutputWithSkipped(input, io.Discard, consume)
+}
+
+func ReadWorkerOutputWithSkipped(input io.Reader, skipped io.Writer, consume func(WorkerOutputFrame) error) error {
 	if consume == nil {
 		return fmt.Errorf("worker output consumer is required")
 	}
@@ -119,8 +123,14 @@ func ReadWorkerOutput(input io.Reader, consume func(WorkerOutputFrame) error) er
 	scanner.Buffer(buffer, 16*1024*1024)
 	for scanner.Scan() {
 		line := bytes.TrimSpace(scanner.Bytes())
-		if len(line) == 0 || line[0] != '{' {
+		if start := bytes.IndexByte(line, '{'); start < 0 {
+			if len(line) > 0 {
+				fmt.Fprintf(skipped, "%s\n", line)
+			}
 			continue
+		} else if start > 0 {
+			fmt.Fprintf(skipped, "%s\n", line[:start])
+			line = line[start:]
 		}
 		var frame WorkerOutputFrame
 		if err := json.Unmarshal(line, &frame); err != nil {

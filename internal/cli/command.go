@@ -197,7 +197,7 @@ func newModelCommand(state *cobraState) *cobra.Command {
 		leaf(state, "continue <name>", "Resume an interrupted compose build", "Loads the model's latest numbered compose and resumes its retained transaction from the newest verified checkpoint. Completed, failed, and untrained models are rejected.", cobra.ExactArgs(1), runModelContinue),
 		leaf(state, "train-worker", "Join a multi-node training run as a secondary node", "Runs on every non-primary node of a multi-node run: it joins the rendezvous started by `model train --nodes N` on the primary and runs this node's local ranks. It authors no model records; the primary owns the run BOM. A compose-driven run publishes one plan per stage, and the worker follows every stage before exiting. --node-rank is this node's rank in 1..N-1. --rendezvous must be the primary's host:port (this is what couples the nodes); --rendezvous-id must match the primary's exactly — it names the shared plan path this node polls for the primary's training plan.", cobra.NoArgs, runModelTrainWorker,
 			integerFlag("nodes", 2, "total nodes in the run (>= 2)"),
-			integerFlag("node-rank", 0, "this node's rank (1..nodes-1)"),
+			integerFlag("node-rank", 1, "this node's rank (1..nodes-1)"),
 			textFlag("rendezvous", "", "the primary's host:port the nodes rendezvous on"),
 			textFlag("rendezvous-id", "", "run label matching the primary's; names the shared plan path this node polls"),
 			textFlag("plan-wait", "30m", "how long to wait for each stage's published training plan (Go duration)")),

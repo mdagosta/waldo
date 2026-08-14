@@ -542,10 +542,7 @@ func trainingComposeInput(inputs []string) (string, error) {
 	return composePath, nil
 }
 
-// validRendezvousID constrains the operator-typed run label: it is joined into
-// filesystem paths on every node (the plan handoff directory and secondary
-// scratch), so path separators and dot traversal must never reach a join.
-var validRendezvousID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var validRunLabel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 func trainingClusterFromFlags(commandContext Context, nodeRank int) (training.Cluster, error) {
 	nodes := intOption(commandContext, "nodes")
@@ -568,7 +565,7 @@ func trainingClusterFromFlags(commandContext Context, nodeRank int) (training.Cl
 		if _, _, err := net.SplitHostPort(cluster.Rendezvous); err != nil {
 			return training.Cluster{}, fmt.Errorf("--rendezvous %q must be host:port: %w", cluster.Rendezvous, err)
 		}
-		if !validRendezvousID.MatchString(cluster.RendezvousID) {
+		if !validRunLabel.MatchString(cluster.RendezvousID) {
 			return training.Cluster{}, fmt.Errorf("--rendezvous-id %q must start with a letter or digit and contain only letters, digits, '.', '_', and '-'; it names the shared plan path on every node", cluster.RendezvousID)
 		}
 	}
@@ -617,7 +614,7 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if err != nil {
 		return err
 	}
-	scratch := filepath.Join(scratchRoot, "train-worker", cluster.RendezvousID)
+	scratch := filepath.Join(scratchRoot, "train-worker", cluster.RendezvousID, fmt.Sprintf("node-%d", cluster.NodeRank))
 	if err := os.MkdirAll(scratch, 0o755); err != nil {
 		return err
 	}
@@ -644,6 +641,9 @@ func runSecondaryStages(commandContext Context, cluster training.Cluster, modelR
 		plan, err := awaitMultiNodePlan(commandContext.Execution, modelRoot, cluster.RendezvousID, planWait, lastRunID, stderr)
 		if err != nil {
 			return err
+		}
+		if plan.Nodes != cluster.Nodes {
+			return fmt.Errorf("primary published a %d-node run but this worker was started with --nodes %d; every node must agree on the topology", plan.Nodes, cluster.Nodes)
 		}
 		stageScratch := filepath.Join(scratch, plan.RunID)
 		if err := os.MkdirAll(stageScratch, 0o755); err != nil {
@@ -695,6 +695,9 @@ func awaitMultiNodePlan(ctx context.Context, modelRoot, rendezvousID string, wai
 				if plan.StageOrdinal < 1 || plan.StageCount < plan.StageOrdinal {
 					return model.MultiNodePlan{}, fmt.Errorf("multi-node plan %s has stage accounting %d/%d; run the same waldo build on every node", path, plan.StageOrdinal, plan.StageCount)
 				}
+				if !validRunLabel.MatchString(plan.RunID) {
+					return model.MultiNodePlan{}, fmt.Errorf("multi-node plan %s has run id %q, which is not a safe path component", path, plan.RunID)
+				}
 				return plan, nil
 			}
 		} else if !errors.Is(readErr, os.ErrNotExist) {
@@ -744,7 +747,10 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 	if err != nil {
 		return training.Request{}, fmt.Errorf("reselect held-out evaluation split: %w", err)
 	}
-	if plan.EvaluationSet != nil && partition.Evaluation.SHA256 != plan.EvaluationSet.SHA256 {
+	if plan.EvaluationSet == nil {
+		return training.Request{}, fmt.Errorf("multi-node plan carries no held-out split to verify against; nodes could train on divergent data")
+	}
+	if partition.Evaluation.SHA256 != plan.EvaluationSet.SHA256 {
 		return training.Request{}, fmt.Errorf("secondary held-out split %s does not match the primary's %s; nodes would train on divergent data", partition.Evaluation.SHA256, plan.EvaluationSet.SHA256)
 	}
 	records, err := partition.TrainingRecords()
@@ -1280,7 +1286,7 @@ func configuredModelBuilderForCluster(commandContext Context, progress io.Writer
 		return selection, err
 	})
 	if cluster.Nodes > 1 && cluster.NodeRank == 0 {
-		builder.MultiNode = model.MultiNodeHandoff{RendezvousID: cluster.RendezvousID, StageOrdinal: 1, StageCount: 1}
+		builder.MultiNode = model.MultiNodeHandoff{RendezvousID: cluster.RendezvousID, Nodes: cluster.Nodes, StageOrdinal: 1, StageCount: 1}
 	}
 	return builder, nil
 }

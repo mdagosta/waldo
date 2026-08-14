@@ -52,7 +52,7 @@ func TestAwaitMultiNodePlanReadsPublishedPlan(t *testing.T) {
 func TestAwaitMultiNodePlanRejectsUnsupportedSchema(t *testing.T) {
 	root := t.TempDir()
 	seedPlan(t, root, "run-42", model.MultiNodePlan{Kind: model.MultiNodePlanKind, Schema: 999})
-	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard); err == nil || !strings.Contains(err.Error(), "has schema 999; this build supports 2") {
+	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard); err == nil || !strings.Contains(err.Error(), "has schema 999; this build supports 1") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 }
@@ -116,5 +116,26 @@ func TestAwaitMultiNodePlanRejectsMalformedStageAccounting(t *testing.T) {
 	})
 	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard); err == nil || !strings.Contains(err.Error(), "stage accounting") {
 		t.Fatalf("stage accounting error = %v", err)
+	}
+}
+
+func TestAwaitMultiNodePlanRejectsUnsafeRunID(t *testing.T) {
+	for name, runID := range map[string]string{
+		"traversal": "../escape",
+		"separator": "a/b",
+		"dot":       "..",
+		"empty":     "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			seedPlan(t, root, "run-42", model.MultiNodePlan{
+				Kind: model.MultiNodePlanKind, Schema: model.MultiNodePlanSchema,
+				RunID: runID, Stage: "pretrain", StageOrdinal: 1, StageCount: 1, Nodes: 2,
+			})
+			_, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard)
+			if err == nil || !strings.Contains(err.Error(), "not a safe path component") {
+				t.Fatalf("run id %q error = %v", runID, err)
+			}
+		})
 	}
 }

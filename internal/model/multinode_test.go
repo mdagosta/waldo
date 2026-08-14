@@ -21,7 +21,7 @@ import (
 
 func TestPublishMultiNodePlanRoundTrips(t *testing.T) {
 	root := t.TempDir()
-	builder := Builder{Root: root, MultiNode: MultiNodeHandoff{RendezvousID: "run-42", StageOrdinal: 1, StageCount: 1}}
+	builder := Builder{Root: root, MultiNode: MultiNodeHandoff{RendezvousID: "run-42", Nodes: 4, StageOrdinal: 1, StageCount: 1}}
 	evaluation := &training.EvaluationSet{Selection: "lowest-sha256-v1", Seed: 7, Records: 3, SHA256: strings.Repeat("a", 64)}
 	runBOM := RunBOM{
 		ArchitectureSHA256: strings.Repeat("b", 64),
@@ -82,7 +82,7 @@ func TestPublishMultiNodePlanRejectsUnportableInitialization(t *testing.T) {
 		"outside root": filepath.Join(t.TempDir(), "elsewhere", "model.safetensors"),
 	} {
 		t.Run(name, func(t *testing.T) {
-			builder := Builder{Root: root, MultiNode: MultiNodeHandoff{RendezvousID: "run-" + strings.ReplaceAll(name, " ", "-"), StageOrdinal: 1, StageCount: 1}}
+			builder := Builder{Root: root, MultiNode: MultiNodeHandoff{RendezvousID: "run-" + strings.ReplaceAll(name, " ", "-"), Nodes: 4, StageOrdinal: 1, StageCount: 1}}
 			runBOM := RunBOM{Initialization: &training.Initialization{SourceType: "run", Path: path}}
 			err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, runBOM, PreparedStage{}, nil, stage, nil)
 			if err == nil {
@@ -100,7 +100,7 @@ func TestPublishMultiNodePlanRejectsUnportableInitialization(t *testing.T) {
 // rendezvous id would otherwise consume the previous run's corpus and
 // parameters.
 func TestPublishMultiNodePlanRejectsLeftoverPlan(t *testing.T) {
-	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42", StageOrdinal: 1, StageCount: 1}}
+	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42", Nodes: 4, StageOrdinal: 1, StageCount: 1}}
 	stage := Stage{Name: "train-0001", Type: "pre-training", Objective: "causal-language-modeling"}
 	if err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, RunBOM{}, PreparedStage{}, nil, stage, nil); err != nil {
 		t.Fatalf("first publish: %v", err)
@@ -112,7 +112,7 @@ func TestPublishMultiNodePlanRejectsLeftoverPlan(t *testing.T) {
 }
 
 func TestPublishMultiNodePlanRejectsResume(t *testing.T) {
-	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42", StageOrdinal: 1, StageCount: 1}}
+	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42", Nodes: 4, StageOrdinal: 1, StageCount: 1}}
 	stage := Stage{Name: "train-0001"}
 	resume := &training.ResumePoint{Step: 5}
 	err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, RunBOM{}, PreparedStage{}, nil, stage, resume)
@@ -138,7 +138,7 @@ func TestComposePublishesPerStagePlans(t *testing.T) {
 	var seen []published
 	builder := Builder{
 		Root:      root,
-		MultiNode: MultiNodeHandoff{RendezvousID: "compose-42"},
+		MultiNode: MultiNodeHandoff{RendezvousID: "compose-42", Nodes: 4},
 		NewID: func() (string, error) {
 			nextID++
 			return fmt.Sprintf("run%04d", nextID), nil

@@ -25,18 +25,23 @@ func awaitProcessExit(command *exec.Cmd) error {
 		return err
 	}
 	if !state.Success() {
-		return fmt.Errorf("exit status %d", state.ExitCode())
+		return &exec.ExitError{ProcessState: state}
 	}
 	return nil
 }
 
-func terminateWorkerGroup(command *exec.Cmd) {
-	if command.Process == nil {
-		return
+func terminateWorkerGroup(command *exec.Cmd) string {
+	if command.Process == nil || command.SysProcAttr == nil || !command.SysProcAttr.Setpgid {
+		return "left running"
 	}
-	if command.SysProcAttr != nil && command.SysProcAttr.Setpgid {
-		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	if err := syscall.Kill(-command.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Sprintf("could not be killed: %v", err)
 	}
+	return "killed"
+}
+
+func writeStoppedByWorkerExit(err error) bool {
+	return errors.Is(err, os.ErrClosed) || errors.Is(err, io.ErrClosedPipe) || errors.Is(err, syscall.EPIPE)
 }
 
 // runPythonWorker owns the common schema-1 process and stream lifecycle used
@@ -69,6 +74,11 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 	}
 	var stderr cappedBuffer
 	command.Stderr = &stderr
+	command.WaitDelay = workerExitDrain
+	if command.SysProcAttr == nil {
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
+	var skipped cappedBuffer
 	if err := command.Start(); err != nil {
 		return Observation{}, fmt.Errorf("start %s worker: %w", label, err)
 	}
@@ -86,7 +96,7 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 	go func() {
 		var observation Observation
 		completed := false
-		err := ReadWorkerOutput(stdout, func(frame WorkerOutputFrame) error {
+		err := ReadWorkerOutputWithSkipped(stdout, &skipped, func(frame WorkerOutputFrame) error {
 			switch frame.Kind {
 			case "event":
 				if frame.Event.Step >= request.Parameters.Steps {
@@ -129,17 +139,18 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		_ = stdin.Close()
 		exited <- exitErr
 	}()
+	defer func() { go func() { _ = command.Wait() }() }()
 	writeErr := writeWorkerInputUntil(ctx, stdin, workerBeginFromRequest(request), records, evaluationRecords, stopRecords)
 	closeErr := stdin.Close()
 	if errors.Is(closeErr, os.ErrClosed) {
 		closeErr = nil
 	}
-	if errors.Is(writeErr, os.ErrClosed) {
+	if writeStoppedByWorkerExit(writeErr) {
 		writeErr = nil
 	}
 	var worker workerResult
 	var waitErr error
-	abandoned := false
+	abandoned := ""
 	select {
 	case worker = <-result:
 		waitErr = <-exited
@@ -147,18 +158,16 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		select {
 		case worker = <-result:
 		case <-time.After(workerExitDrain):
-			abandoned = true
-			terminateWorkerGroup(command)
+			abandoned = terminateWorkerGroup(command)
 			_ = stdout.Close()
 			worker = <-result
 		}
 	}
-	_ = stdout.Close()
-	if abandoned {
+	if abandoned != "" {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Observation{}, ctxErr
 		}
-		return Observation{}, fmt.Errorf("%s worker exited (%v) while leftover rank processes held its output stream open; killed them%s", label, waitErr, workerStderr(stderr.String()))
+		return Observation{}, fmt.Errorf("%s worker exited while leftover rank processes held its output stream open (%s)%s%s", label, abandoned, workerSkipped(skipped.String()), workerStderr(stderr.String()))
 	}
 	if worker.err != nil {
 		// CommandContext closes the worker pipes when cancellation kills the
@@ -168,7 +177,7 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Observation{}, ctxErr
 		}
-		return Observation{}, fmt.Errorf("%s worker: %w%s", label, worker.err, workerStderr(stderr.String()))
+		return Observation{}, fmt.Errorf("%s worker: %w%s%s", label, worker.err, workerSkipped(skipped.String()), workerStderr(stderr.String()))
 	}
 	if writeErr != nil && !errors.Is(writeErr, io.ErrClosedPipe) {
 		return Observation{}, fmt.Errorf("stream records to %s worker: %w%s", label, writeErr, workerStderr(stderr.String()))
@@ -258,6 +267,10 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 	var output cappedBuffer
 	command.Stdout = &output
 	command.Stderr = &output
+	command.WaitDelay = workerExitDrain
+	if command.SysProcAttr == nil {
+		command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	}
 	if err := command.Start(); err != nil {
 		return Observation{}, fmt.Errorf("start %s secondary node: %w", label, err)
 	}
@@ -267,17 +280,18 @@ func runWorkerStreamJoin(ctx context.Context, label string, command *exec.Cmd, r
 		_ = stdin.Close()
 		exited <- exitErr
 	}()
+	defer func() { go func() { _ = command.Wait() }() }()
 	writeErr := WriteWorkerInput(ctx, stdin, workerBeginFromRequest(request), records, evaluationRecords)
 	closeErr := stdin.Close()
 	if errors.Is(closeErr, os.ErrClosed) {
 		closeErr = nil
 	}
-	if errors.Is(writeErr, os.ErrClosed) {
+	if writeStoppedByWorkerExit(writeErr) {
 		writeErr = nil
 	}
 	waitErr := <-exited
-	terminateWorkerGroup(command)
 	if waitErr != nil {
+		terminateWorkerGroup(command)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Observation{}, ctxErr
 		}

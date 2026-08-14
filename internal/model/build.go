@@ -46,6 +46,7 @@ type Builder struct {
 
 type MultiNodeHandoff struct {
 	RendezvousID string
+	Nodes        int
 	StageOrdinal int
 	StageCount   int
 }
@@ -498,6 +499,9 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 	if builder.MultiNode.StageOrdinal < 1 || builder.MultiNode.StageCount < builder.MultiNode.StageOrdinal {
 		return fmt.Errorf("stage %s: multi-node stage accounting %d/%d is invalid", stage.Name, builder.MultiNode.StageOrdinal, builder.MultiNode.StageCount)
 	}
+	if builder.MultiNode.Nodes < 2 {
+		return fmt.Errorf("stage %s: multi-node plan would publish %d nodes; a multi-node run needs at least two", stage.Name, builder.MultiNode.Nodes)
+	}
 	path := MultiNodePlanPath(builder.Root, builder.MultiNode.RendezvousID)
 	// Fail closed on a leftover plan: a crashed primary skips its deferred
 	// cleanup, and a secondary polling this rendezvous id would consume the
@@ -509,7 +513,8 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 	}
 	plan := MultiNodePlan{
 		Kind: MultiNodePlanKind, Schema: MultiNodePlanSchema,
-		RunID: pin.ID, Stage: stage.Name, StageOrdinal: builder.MultiNode.StageOrdinal, StageCount: builder.MultiNode.StageCount, Objective: stage.Objective,
+		RunID: pin.ID, Stage: stage.Name, StageOrdinal: builder.MultiNode.StageOrdinal, StageCount: builder.MultiNode.StageCount,
+		Nodes: builder.MultiNode.Nodes, Objective: stage.Objective,
 		ArchitectureSHA256: runBOM.ArchitectureSHA256, Architecture: architectureJSON,
 		Parameters: runBOM.Parameters, CorpusBOM: prepared.BOM,
 		EvaluationSet: runBOM.EvaluationSet, Initialization: runBOM.Initialization,

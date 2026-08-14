@@ -131,6 +131,10 @@ secondary_pid=""
 runs=$(find "$models/smoke/runs" -mindepth 1 -maxdepth 1 -type d | wc -l)
 [ "$runs" -eq 2 ] || { echo "expected 2 runs after initialized rerun, found $runs" >&2; exit 1; }
 
+tokenizer_name=byte
+tokenizer_revision=builtin-byte-schema-1
+vocabulary=259
+
 cat > "$work/compose.yaml" <<COMPOSE
 kind: waldo-model-compose
 schema: 1

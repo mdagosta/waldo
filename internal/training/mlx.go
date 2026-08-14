@@ -234,6 +234,14 @@ func (buffer *cappedBuffer) String() string {
 	return string(buffer.data)
 }
 
+func workerSkipped(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return "; non-protocol worker output: " + value
+}
+
 func workerStderr(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
