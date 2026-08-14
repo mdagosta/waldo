@@ -29,8 +29,6 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
-// TestModelTrainWorkerRejectsInvalidTopology covers the secondary-node flag
-// validation, which fails closed before any rendezvous is attempted.
 func TestModelTrainWorkerRejectsInvalidTopology(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	var out, errs bytes.Buffer
@@ -64,7 +62,6 @@ func TestModelTrainWorkerRejectsInvalidTopology(t *testing.T) {
 	}
 }
 
-// TestConfigNCCLKeysRoundTrip covers the machine-local NCCL configuration keys.
 func TestConfigNCCLKeysRoundTrip(t *testing.T) {
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
 	run := func(args ...string) (string, string, int) {

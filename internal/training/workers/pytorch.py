@@ -826,7 +826,6 @@ def stream_lines(distributed):
     if world % local_world != 0:
         raise ValueError(f"world size {world} is not divisible by local world size {local_world}")
     local_rank = int(os.environ["LOCAL_RANK"])
-    # Every rank must create every node group, in the same order.
     node_group = None
     for first in range(0, world, local_world):
         group = torch.distributed.new_group(list(range(first, first + local_world)))

@@ -91,8 +91,6 @@ cp -R "$contribution"/. "$index_root"/
 
 "$binary" model init smoke --preset 10m >/dev/null
 
-# Two nodes on one host, one visible GPU each. The secondary joins the
-# rendezvous the primary hosts; only the primary (rank 0) authors model records.
 CUDA_VISIBLE_DEVICES=1 "$binary" model train-worker \
   --nodes 2 --node-rank 1 --rendezvous "$rendezvous" --rendezvous-id "$rendezvous_id" &
 secondary_pid=$!
@@ -109,11 +107,9 @@ summary=$("$binary" --json model summary smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"torchtitan"'
 
-# The run BOM must pin the aggregate cluster: two nodes, world size two.
 grep -ERq '"world_size"[[:space:]]*:[[:space:]]*2' "$models/smoke/runs" || { echo "run did not record world_size 2" >&2; exit 1; }
 grep -ERq '"nodes"[[:space:]]*:[[:space:]]*2' "$models/smoke/runs" || { echo "run did not record nodes 2" >&2; exit 1; }
 
-# Only the primary authors weights; the secondary writes no model records.
 weights=$(find "$models/smoke/runs" -type f -name model.safetensors ! -path '*/checkpoints/*' -print)
 [ -n "$weights" ] && [ -s "$weights" ] || { echo "primary did not produce terminal weights" >&2; exit 1; }
 

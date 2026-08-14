@@ -131,8 +131,6 @@ printf '%s\n' '{"kind":"complete","schema":1,"observation":{"simulated":false,"s
 }
 
 func TestTorchTitanRejectsPrimaryWithNonZeroRank(t *testing.T) {
-	// A non-secondary (primary) backend must be node rank 0; the check fires
-	// during validation, before any Python is invoked.
 	backend := TorchTitan{Python: "unused", LocalProcs: 1, Nodes: 4, NodeRank: 2, Rendezvous: "primary:29500"}
 	_, err := backend.Run(context.Background(), Request{ArtifactDirectory: t.TempDir(), ArtifactPrefix: "artifacts"})
 	if err == nil || !strings.Contains(err.Error(), "primary TorchTitan node must be rank 0") {

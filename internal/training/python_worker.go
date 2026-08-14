@@ -194,9 +194,6 @@ func runWorkerCommand(ctx context.Context, label string, command *exec.Cmd, requ
 	return worker.observation, nil
 }
 
-// defaultedTokenizer fills the byte tokenizer for requests that predate
-// explicit tokenizer framing, so both the primary and secondary worker paths
-// share one definition of the default.
 func defaultedTokenizer(spec TokenizerSpec) TokenizerSpec {
 	if spec.Name == "" {
 		return TokenizerSpec{Name: "byte", Revision: ByteTokenizerRevision, VocabularySize: 259, PadID: 0, BOSID: 1, EOSID: 2}
@@ -229,10 +226,6 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 	return begin
 }
 
-// tokenizedWorkerSources wraps the request's record sources so subword
-// tokenizers reach the worker as pre-tokenized IDs; byte records pass through.
-// Shared by the primary and secondary node paths so every rank frames the
-// canonical stream identically.
 func tokenizedWorkerSources(request Request) (RecordSource, RecordSource, error) {
 	records, evaluationRecords := request.Records, request.EvaluationRecords
 	if request.Tokenizer.Name != "byte" {

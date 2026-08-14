@@ -503,9 +503,6 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 		return fmt.Errorf("stage %s: multi-node plan would publish %d nodes; a multi-node run needs at least two", stage.Name, builder.MultiNode.Nodes)
 	}
 	path := MultiNodePlanPath(builder.Root, builder.MultiNode.RendezvousID)
-	// Fail closed on a leftover plan: a crashed primary skips its deferred
-	// cleanup, and a secondary polling this rendezvous id would consume the
-	// stale plan's corpus and parameters instead of this run's.
 	if _, err := os.Stat(path); err == nil {
 		return fmt.Errorf("stage %s: a multi-node plan already exists at %s (leftover from a previous run); remove it or use a fresh --rendezvous-id", stage.Name, path)
 	} else if !errors.Is(err, os.ErrNotExist) {

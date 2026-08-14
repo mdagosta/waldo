@@ -277,10 +277,6 @@ func scaling(profile acceleratorProfile, GPUs int) float64 {
 	}
 }
 
-// nodesFor reports how many physical nodes a GPU count spans. Profiles that do
-// not set gpusPerNode are treated as single-node (every visible GPU on one host);
-// a profile with gpusPerNode > 0 (e.g. one GPU per DGX Spark) spans
-// GPUs/gpusPerNode nodes.
 func nodesFor(profile acceleratorProfile, GPUs int) int {
 	if profile.gpusPerNode <= 0 {
 		return 1

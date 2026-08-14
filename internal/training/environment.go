@@ -33,17 +33,13 @@ type pythonPackage struct {
 	Version string
 }
 
-// Cluster is the machine-local, per-invocation topology for distributed
-// training. The zero value is a single node. It is never part of a model
-// compose (which stays framework- and topology-neutral); it is supplied like
-// model.backend, from machine-local config and CLI flags.
 type Cluster struct {
-	Nodes        int    // total nodes participating; 0 or 1 means single-node
-	NodeRank     int    // this node's rank in [0, Nodes)
-	Rendezvous   string // static rendezvous endpoint, host:port (split into --master-addr/--master-port)
-	RendezvousID string // run label shared across nodes; names the run's scratch, not enforced by the launcher
-	Interface    string // NCCL_SOCKET_IFNAME (RoCE/Ethernet interface)
-	HCA          string // NCCL_IB_HCA (RDMA device)
+	Nodes        int
+	NodeRank     int
+	Rendezvous   string
+	RendezvousID string
+	Interface    string
+	HCA          string
 }
 
 // EnvironmentResolver keeps host policy separate from framework adapters.
@@ -63,9 +59,6 @@ func NewEnvironmentResolver(preference string) Resolver {
 	return NewEnvironmentResolverForCluster(preference, Cluster{})
 }
 
-// NewEnvironmentResolverForCluster is like NewEnvironmentResolver but also
-// carries a multi-node topology to the distributed (TorchTitan) adapter. The
-// zero Cluster is a single node, reproducing NewEnvironmentResolver.
 func NewEnvironmentResolverForCluster(preference string, cluster Cluster) Resolver {
 	return EnvironmentResolver{
 		Preference: preference,
@@ -101,8 +94,6 @@ func (resolver EnvironmentResolver) Resolve(ctx context.Context, request Resolve
 			return Selection{}, err
 		}
 	}
-	// Only TorchTitan runs distributed. Fail closed rather than silently drop a
-	// multi-node request to a single-node run on a backend that ignores the topology.
 	if resolver.Cluster.Nodes > 1 && selected != BackendTorchTitan {
 		return Selection{}, fmt.Errorf("multi-node training (--nodes %d) requires the TorchTitan backend, but model.backend=%s resolved to %s; set model.backend=torchtitan or run single-node", resolver.Cluster.Nodes, preference, backendDisplayName(selected))
 	}

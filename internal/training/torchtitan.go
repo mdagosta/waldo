@@ -25,13 +25,13 @@ const TorchTitanRevision = "builtin-torchtitan-worker-schema-1-r7"
 type TorchTitan struct {
 	Python     string
 	Version    string
-	LocalProcs int    // procs per node (local visible GPUs); --nproc-per-node
-	Nodes      int    // --nnodes; 0 or 1 keeps the single-node --standalone launch
-	NodeRank   int    // --node-rank
-	Rendezvous string // host:port; split into --master-addr/--master-port for static rendezvous
-	Interface  string // NCCL_SOCKET_IFNAME
-	HCA        string // NCCL_IB_HCA
-	Secondary  bool   // a non-primary node: streams its own identical records, emits no observation
+	LocalProcs int
+	Nodes      int
+	NodeRank   int
+	Rendezvous string
+	Interface  string
+	HCA        string
+	Secondary  bool
 }
 
 func (backend TorchTitan) Descriptor() Descriptor {
@@ -94,21 +94,9 @@ func (backend TorchTitan) Run(ctx context.Context, request Request) (Observation
 	return runWorkerCommand(ctx, "TorchTitan", command, request)
 }
 
-// launchArguments builds the torch.distributed.run invocation. A single node
-// keeps the original --standalone rendezvous; multiple nodes use a static
-// rendezvous pinned to master-addr/master-port and disable elastic restarts so
-// WALDO owns retry and resume.
-//
-// Static (not c10d) is deliberate: the c10d backend elects the worker-group
-// master and advertises it via socket.getfqdn(), which on a containerized
-// cluster resolves to the underlying host name and a random port that the
-// other nodes' containers cannot reach, so every collective hangs. A static
-// rendezvous binds the caller-supplied endpoint on rank 0 unconditionally and
-// every secondary connects to exactly that address.
 func (backend TorchTitan) launchArguments(workerPath string, request Request) []string {
 	arguments := []string{"-m", "torch.distributed.run"}
 	if backend.Nodes > 1 {
-		// The endpoint was validated as host:port by Run before launch.
 		host, port, _ := net.SplitHostPort(backend.Rendezvous)
 		arguments = append(arguments,
 			fmt.Sprintf("--nnodes=%d", backend.Nodes),
@@ -126,11 +114,6 @@ func (backend TorchTitan) launchArguments(workerPath string, request Request) []
 	)
 }
 
-// environment builds the worker environment. PYTHONUNBUFFERED keeps
-// torch.distributed.run from block-buffering the worker's progress frames, so
-// WALDO's reader sees step progress live rather than only at process exit. It
-// also adds the NCCL settings a multi-node run needs to reach the
-// ConnectX/RoCE fabric when an interface or HCA is configured.
 func (backend TorchTitan) environment() []string {
 	environment := append(os.Environ(), "PYTHONUNBUFFERED=1")
 	if backend.Interface != "" {
@@ -163,16 +146,10 @@ type TorchTitanResolver struct {
 	Cluster    Cluster
 }
 
-// NewTorchTitanResolverForCluster resolves the TorchTitan backend for a
-// specific multi-node topology. The zero Cluster is a single node.
 func NewTorchTitanResolverForCluster(cluster Cluster) Resolver {
 	return TorchTitanResolver{Cluster: cluster}
 }
 
-// backendForCluster builds the TorchTitan backend for one probed Python runtime
-// and topology. It is shared by the resolver (primary) and the secondary-node
-// launcher so the field set stays in lockstep. A Cluster with fewer than one
-// node is treated as a single node.
 func backendForCluster(python string, facts torchTitanProbe, cluster Cluster, secondary bool) TorchTitan {
 	nodes := cluster.Nodes
 	if nodes < 1 {
@@ -185,9 +162,6 @@ func backendForCluster(python string, facts torchTitanProbe, cluster Cluster, se
 	}
 }
 
-// firstUsableTorchTitan probes candidates in order and returns the first that
-// succeeds. When none do, it returns an empty python and the accumulated
-// per-candidate failures for an actionable error.
 func firstUsableTorchTitan(ctx context.Context, candidates []string, probe func(context.Context, string) (torchTitanProbe, error)) (string, torchTitanProbe, []string) {
 	var failures []string
 	for _, candidate := range candidates {
@@ -239,8 +213,6 @@ func (resolver TorchTitanResolver) Resolve(ctx context.Context, request ResolveR
 		Runtime: fmt.Sprintf("%s; Python %s; TorchTitan %s; PyTorch %s", python, facts.PythonVersion, facts.TorchTitanVersion, facts.TorchVersion),
 		Host:    Host{OS: hostOS, Architecture: hostArch}, Nodes: nodes, WorldSize: nodes * localProcs,
 	}
-	// One accelerator entry per rank across every node (ADR 0025). Nodes are
-	// assumed homogeneous, which holds for a DGX Spark cluster (1 GPU each).
 	for node := 0; node < nodes; node++ {
 		for _, device := range facts.Devices {
 			execution.Accelerators = append(execution.Accelerators, Accelerator{Manufacturer: device.Manufacturer, Model: device.Model, MemoryBytes: device.MemoryBytes})
@@ -325,10 +297,6 @@ func probeTorchTitan(ctx context.Context, python string) (torchTitanProbe, error
 	return facts, nil
 }
 
-// RunSecondaryTorchTitan launches a secondary distributed node that joins an
-// existing rendezvous hosted by the primary, streams its own identical copy of
-// the canonical records to its local worker, and emits no observation; the
-// primary alone authors the run BOM and artifacts.
 func RunSecondaryTorchTitan(ctx context.Context, cluster Cluster, request Request) error {
 	if runtime.GOOS != "linux" {
 		return fmt.Errorf("TorchTitan training requires Linux; this host is %s/%s", runtime.GOOS, runtime.GOARCH)

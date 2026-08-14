@@ -95,10 +95,6 @@ func TestPublishMultiNodePlanRejectsUnportableInitialization(t *testing.T) {
 	}
 }
 
-// TestPublishMultiNodePlanRejectsLeftoverPlan guards the stale-plan fence: a
-// crashed primary skips its deferred cleanup, and a secondary polling the same
-// rendezvous id would otherwise consume the previous run's corpus and
-// parameters.
 func TestPublishMultiNodePlanRejectsLeftoverPlan(t *testing.T) {
 	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42", Nodes: 4, StageOrdinal: 1, StageCount: 1}}
 	stage := Stage{Name: "train-0001", Type: "pre-training", Objective: "causal-language-modeling"}

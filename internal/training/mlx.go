@@ -199,9 +199,6 @@ func probeMLX(ctx context.Context, python string) (mlxProbe, error) {
 	return facts, nil
 }
 
-// cappedBuffer keeps the most recent 64 KiB of output. A failing worker's
-// diagnosis (the traceback) arrives last, so overflow discards the oldest
-// bytes rather than the newest.
 type cappedBuffer struct {
 	mutex     sync.Mutex
 	data      []byte

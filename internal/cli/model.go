@@ -450,9 +450,6 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 		if context.Command != nil && context.Command.Flags().Changed("epochs") {
 			return fmt.Errorf("--epochs cannot be used with compose %q; set each stage budget in the compose file", composePath)
 		}
-		// The compose path trains with per-stage parameters, so the per-run
-		// training flags would be silently ignored; reject them explicitly
-		// rather than accept a value that has no effect.
 		for _, flag := range []string{"batch-size", "learning-rate", "seed"} {
 			if context.Command != nil && context.Command.Flags().Changed(flag) {
 				return fmt.Errorf("--%s cannot be used with compose %q; compose stages define their own parameters", flag, composePath)
@@ -492,9 +489,6 @@ func runModelTrain(context Context, args []string, stdout, stderr io.Writer) err
 	if err != nil {
 		return err
 	}
-	// Validate the multi-node topology before any index resolution or preflight so an
-	// incomplete rendezvous (e.g. --nodes > 1 without --rendezvous-id) fails closed
-	// immediately instead of resolving the entire index first.
 	cluster, err := trainingClusterFromFlags(context, 0)
 	if err != nil {
 		return err
@@ -578,10 +572,6 @@ func trainingClusterFromFlags(commandContext Context, nodeRank int) (training.Cl
 	return cluster, nil
 }
 
-// runModelTrainWorker joins an existing multi-node rendezvous as a secondary
-// node: it awaits the primary's published plan, reconstructs the identical
-// record stream from shared storage, and streams it to its own local worker.
-// It authors no model lifecycle records; the primary owns the run BOM.
 func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.Writer) error {
 	nodeRank := intOption(commandContext, "node-rank")
 	cluster, err := trainingClusterFromFlags(commandContext, nodeRank)
@@ -727,8 +717,6 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 	if len(inputs) == 0 {
 		return training.Request{}, fmt.Errorf("primary plan resolved no verified shard inputs")
 	}
-	// Derive the tokenizer from the plan's architecture exactly as the primary
-	// does, so every rank partitions and frames the canonical stream identically.
 	var architecture struct {
 		VocabularySize uint64 `json:"vocabulary_size"`
 		Tokenizer      struct {
@@ -1424,11 +1412,6 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 	return model.PrepareStage(stage, bom, inputs)
 }
 
-// verifiedTrainingInputs builds the deduplicated shard inputs for a training
-// run. It is the single definition shared by the primary (materializeModelStage)
-// and the secondary (secondaryTrainingRequest): held-out selection trusts the
-// BOM-declared record count and stratifies by corpus group, so the two paths
-// diverging here would train the ranks on divergent data.
 func verifiedTrainingInputs(materialized corpus.Materialized, selections []string) []training.Input {
 	seen := map[string]bool{}
 	var inputs []training.Input

@@ -22,10 +22,6 @@ import (
 	"github.com/openwaldo/waldo/internal/training"
 )
 
-// isolateHuggingFaceToken keeps the developer's ambient Hugging Face
-// credentials (HF_TOKEN, HF_TOKEN_PATH, ~/.cache/huggingface/token) out of the
-// puller's fallback chain, so tests behave identically on machines with a real
-// login and failures never print a live token.
 func isolateHuggingFaceToken(t *testing.T) {
 	t.Helper()
 	t.Setenv("HF_TOKEN", "")
@@ -164,8 +160,6 @@ func (function roundTripFunc) RoundTrip(request *http.Request) (*http.Response, 
 func huggingFaceTransport(t *testing.T, files map[string][]byte, revision string) http.RoundTripper {
 	t.Helper()
 	return roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		// Never echo the header value: if isolation is missing, it can hold a
-		// developer's real Hugging Face token, and t.Errorf lands in CI logs.
 		if authorization := request.Header.Get("Authorization"); authorization != "" && authorization != "Bearer secret" {
 			t.Errorf("request carried an unexpected authorization header (%d bytes, redacted)", len(authorization))
 		}

@@ -30,10 +30,6 @@ func TestEmbeddedWorkerEmitsOnlyRecognizedEventKinds(t *testing.T) {
 	}
 }
 
-// TestEmbeddedWorkerEmitsOnlyRecognizedFrameKinds guards emit()'s positional
-// frame kind: the event-kind scan above cannot see it, and a reintroduced
-// emit("info", ...) would be rejected at runtime by WorkerOutputFrame.Validate,
-// killing the run.
 func TestEmbeddedWorkerEmitsOnlyRecognizedFrameKinds(t *testing.T) {
 	framePattern := regexp.MustCompile(`emit\(\s*"([a-z_]+)"`)
 	matches := framePattern.FindAllStringSubmatch(string(pyTorchWorker), -1)

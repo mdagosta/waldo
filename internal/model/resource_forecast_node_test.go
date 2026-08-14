@@ -10,11 +10,6 @@ import (
 	"testing"
 )
 
-// TestForecastAddsNodeAwareDGXSpark covers Phase 3 of the multi-node work: the
-// GB10 (DGX Spark) catalog row and the node dimension. A DGX Spark has one GPU
-// per node, so a 2- or 4-GPU configuration is a 2- or 4-node cluster, and its
-// effective throughput reflects the inter-node (RoCE) scaling factors. Every
-// single-node accelerator must continue to report exactly one node.
 func TestForecastAddsNodeAwareDGXSpark(t *testing.T) {
 	if forecastCatalog != "openwaldo-training-hardware-2026-08-13" {
 		t.Fatalf("forecast catalog id not bumped for the DGX Spark row: %s", forecastCatalog)
@@ -50,8 +45,6 @@ func TestForecastAddsNodeAwareDGXSpark(t *testing.T) {
 		t.Fatal("expected at least one single-node accelerator configuration")
 	}
 
-	// 40 effective TFLOPS/node, scaled by the inter-node factors: 1 -> 40,
-	// 2 -> 40*2*0.70 = 56, 4 -> 40*4*0.50 = 80.
 	for gpus, wantEffective := range map[int]float64{1: 40, 2: 56, 4: 80} {
 		configuration, ok := spark[gpus]
 		if !ok {
