@@ -39,10 +39,13 @@ weights.
 kind: waldo-model-compose
 schema: 1
 
-# Optional: initialize from either a managed pulled model or a pinned source.
+# Optional: choose one base form, never both.
 # base:
 #   model: llama-base
 #   origin_sha256: <expected-origin-bom-sha256> # optional assertion
+#
+# Or acquire a supported external origin directly. With this form only,
+# architecture may be omitted and inherited from the verified origin.
 # base:
 #   source: huggingface://organization/model@<commit>
 
@@ -123,10 +126,89 @@ field names and structure.
 | `base.source` | exactly one of `model` or `source` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
 | `base.origin_sha256` | no | SHA-256 | Asserts the expected origin BOM. WALDO always resolves and pins the actual value. |
 
-With `base.model`, the complete compose architecture must exactly equal the
-managed base architecture. With `base.source`, architecture may be omitted and
-is inherited from the verified source; when supplied, it is an exact assertion.
-A base initializes a new model and is never mutated by training.
+## Base initialization
+
+`base` controls the weights used to initialize a model before its first stage.
+It does not name the destination model; the destination is the first argument
+to `waldo model train`. A compose supports three initialization modes:
+
+| Compose declaration | Initial weights | Architecture rule |
+| --- | --- | --- |
+| no `base` | Newly initialized weights | `architecture` is required. |
+| `base.model` | Verified origin weights from a named managed model | `architecture` is required and must exactly match the managed model. |
+| `base.source` | Verified origin weights acquired from an external source | `architecture` may be omitted and inherited; when present, it must exactly match. |
+
+`model` and `source` are mutually exclusive. A base initializes the destination
+model and is never mutated by its training. `origin_sha256` is an optional
+fail-closed assertion against the canonical origin BOM hash. WALDO always pins
+the resolved hash in the destination plan and model BOM whether or not the
+assertion is declared.
+
+### Named managed base
+
+```yaml
+base:
+  model: llama-base
+  origin_sha256: <expected-origin-bom-sha256>
+```
+
+The named model must still expose its pulled origin as its current weights. The
+compose must contain a complete, exactly matching `architecture`. Use this form
+when the base should be visible to `waldo model list` and independently
+inspectable with `waldo model summary llama-base`.
+
+### Direct external base
+
+The smallest complete source-based compose is:
+
+```yaml
+kind: waldo-model-compose
+schema: 1
+
+base:
+  source: huggingface://organization/model@0123456789abcdef0123456789abcdef01234567
+
+stages:
+  - name: adapt
+    type: fine-tuning
+    objective: causal-language-modeling
+    corpora: [core/books/gutenberg]
+    parameters:
+      profile: causal-pretrain-shuffled
+      steps: 1000
+      batch_size: 8
+      sequence_length: 512
+      learning_rate: 0.00005
+      seed: 42
+```
+
+Run it normally:
+
+```bash
+waldo model forecast model.yaml
+waldo model train adapted-model model.yaml
+```
+
+The source must pin a 40- to 64-character hexadecimal commit. Branches and tags
+are rejected because they can move. `forecast` downloads only repository
+metadata, `config.json`, and `tokenizer_config.json`; it does not download model
+weights. `train` acquires and verifies the complete origin through the same
+importer as `waldo model pull`.
+
+Private or gated Hugging Face repositories use `HF_TOKEN` or the standard
+Hugging Face token file. Verified direct origins are cached beneath
+`<model.root>/.origins`, reused by later composes, and excluded from
+`waldo model list`. The destination hard-links cached artifacts when possible
+and copies them otherwise. Its `ORIGIN-BOM.json` records the repository,
+requested and resolved revisions, declared license when available, source-file
+hashes, and normalized artifact hashes.
+
+Schema 1 currently accepts standard bias-free Llama Safetensors with
+`OpenWALDOByteTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors—the
+format produced by WALDO's Hugging Face export. Other tokenizers, architectures,
+tensor layouts, and source providers fail before the destination model is
+published. `base.source` and `model pull` intentionally share this same
+compatibility boundary.
 
 ## Architecture fields
 
@@ -369,12 +451,9 @@ base:
   source: huggingface://organization/model@0123456789abcdef0123456789abcdef01234567
 ```
 
-This uses the same importer and compatibility checks as `waldo model pull`.
-WALDO caches the verified origin beneath the managed model root, initializes
-the new model using hard links when possible, and records the resolved origin
-BOM in the compose, plan, and model BOM. Branches and tags are rejected because
-they can move. Schema 1 currently supports the Hugging Face model subset
-documented in the model lifecycle guide.
+See [Base initialization](#base-initialization) for the complete source-based
+compose, acquisition behavior, authentication, cache, provenance, and current
+compatibility boundary.
 
 ### Multiple ordered stages
 
