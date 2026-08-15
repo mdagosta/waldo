@@ -55,10 +55,12 @@ uses a correspondingly gentler learning rate.
 `0004-conversation.yaml` is an unvalidated two-stage candidate. Its 6.0B-token
 pretraining stage establishes a compact language base without Wikimedia talk
 pages; its 40.0M-token fine-tuning stage then repeats three human-written
-dialogue corpora under a lower learning rate. WALDO currently applies causal
-loss to the complete formatted dialogue rather than masking user tokens, and
-does not yet persist a chat prompt template. Test the learned training format
-explicitly with a prompt such as `User: Hello\n\nAssistant:`.
+dialogue corpora under a lower learning rate. It requires main content but does
+not require schema-2 content assessments, so it remains executable against the
+published index while older shards are being rebuilt. WALDO currently applies
+causal loss to the complete formatted dialogue rather than masking user tokens,
+and does not yet persist a chat prompt template. Test the learned training
+format explicitly with a prompt such as `User: Hello\n\nAssistant:`.
 
 The babble compose uses equal-exposure `causal-pretrain-balanced`. Later
 composes use `causal-pretrain-weighted`, which applies declared integer corpus

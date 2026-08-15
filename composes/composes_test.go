@@ -155,6 +155,11 @@ func TestConversationHasOrderedPretrainingAndInstructionTuning(t *testing.T) {
 	if compose.Stages[0].Filter == nil || compose.Stages[0].Filter.MainContent == nil || !*compose.Stages[0].Filter.MainContent {
 		t.Fatalf("conversation pretraining does not require main content: %+v", compose.Stages[0].Filter)
 	}
+	for _, stage := range compose.Stages {
+		if stage.Filter == nil || stage.Filter.Exclude != nil {
+			t.Fatalf("conversation stage %s requires unavailable content assessments: %+v", stage.Name, stage.Filter)
+		}
+	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)

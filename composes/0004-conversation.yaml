@@ -22,9 +22,6 @@ stages:
     objective: causal-language-modeling
     filter:
       main_content: true
-      exclude:
-        repetitive_content: true
-        boilerplate_content: true
     corpora:
       - path: core/books/gutenberg
         weight: 3
@@ -53,9 +50,6 @@ stages:
     objective: causal-language-modeling
     filter:
       main_content: true
-      exclude:
-        repetitive_content: true
-        boilerplate_content: true
     corpora:
       - path: post-train/sft/dolly
         weight: 2
