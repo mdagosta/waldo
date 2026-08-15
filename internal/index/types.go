@@ -54,10 +54,22 @@ type Manifest struct {
 	Sources      []Source              `json:"sources"`
 	ConvertedBy  Conversion            `json:"converted_by"`
 	RecordSchema int                   `json:"record_schema,omitempty"`
+	Assessment   *ContentAssessment    `json:"assessment,omitempty"`
 	Processing   *Processing           `json:"processing,omitempty"`
 	ComposedBy   *IngestRecipeEvidence `json:"composed_by,omitempty"`
 	Shards       []Shard               `json:"-"`
 	Rollup       *Rollup               `json:"-"`
+}
+
+// ContentAssessment summarizes deterministic row-level flags. Records counts
+// are additive; Detector pins the exact classifier used during ingestion.
+type ContentAssessment struct {
+	EmailAddresses *DetectionMeasure `json:"email_addresses,omitempty" yaml:"email_addresses,omitempty"`
+}
+
+type DetectionMeasure struct {
+	Detector string `json:"detector" yaml:"detector"`
+	Records  int64  `json:"records" yaml:"records"`
 }
 
 // UnmarshalJSON accepts the schema-1 polymorphic shards field: an inline
@@ -257,6 +269,7 @@ type Shard struct {
 	Bytes        int64               `json:"bytes"`
 	RecordsRoot  string              `json:"records_root,omitempty"`
 	Modalities   Modalities          `json:"modalities,omitempty"`
+	Assessment   *ContentAssessment  `json:"assessment,omitempty"`
 }
 
 // Rollup describes an external submanifest tree. Its aggregate counts are

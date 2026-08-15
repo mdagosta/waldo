@@ -70,9 +70,9 @@ stages:
     type: pre-training
     objective: causal-language-modeling
     filter:
-      licenses:
-        include: [CC-BY-*, CC0-*]
-        exclude: [CC-BY-NC-*]
+      exclude:
+        email_addresses: true
+        licenses: [CC-BY-NC-*]
     corpora:
       - path: core/books/gutenberg
         weight: 1
@@ -279,12 +279,14 @@ corpora:
   - core/books/gutenberg
 ```
 
-Use the object form when a corpus needs configuration:
+Use the object form when a corpus needs configuration. The canonical exclusion
+form is a single deny list whose conditions are ORed:
 
 ```yaml
 filter:                         # stage-wide
-  licenses:
-    include: [CC-BY-*, CC0-*]
+  exclude:
+    email_addresses: true
+    licenses: [CC-BY-NC-*, LicenseRef-Restricted-*]
 corpora:
   - path: core/books/gutenberg
     weight: 2
@@ -303,6 +305,8 @@ corpora:
 | `path` | yes in object form | Logical index path. |
 | `weight` | only for `causal-pretrain-weighted` | Positive integer relative token exposure. It replaces the legacy map entry for this corpus. |
 | `filter` | no | Record filter local to this corpus. |
+| `filter.exclude.email_addresses` | no | Excludes rows whose schema-2 email-address flag equals the declared boolean. The normal policy is `true`. |
+| `filter.exclude.licenses` | no | Excludes rows whose normalized license matches any listed shell-style pattern. |
 | `licenses` | no | Matches the canonical row's normalized license. |
 | `languages` | no | Matches the canonical row's language. |
 | `sources` | no | Matches either the canonical source identifier or source name. |
@@ -312,10 +316,19 @@ corpora:
 | `from` | no | Inclusive lower date bound: `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, or RFC 3339. |
 | `to` | no | Inclusive upper date bound in the same formats. |
 
-Every declared filter must contain at least one condition. A stage-wide
+Every declared filter must contain at least one condition. Within the canonical
+`filter.exclude` object, a match on any declared boolean or license pattern
+rejects the row. A stage-wide
 `filter` and a corpus-local `filter` are combined with AND; the local filter
-cannot loosen the global one. Conditions within one filter are also ANDed.
-Missing or malformed row values do not satisfy an include or date condition.
+cannot loosen the global one. Other filter fields are ANDed with the exclusion
+decision. Missing or malformed row values do not satisfy an include or date
+condition.
+
+The older `filter.licenses.include`/`exclude` representation remains accepted.
+It cannot be combined with `filter.exclude.licenses` in the same filter. Email
+filtering requires assessed record schema 2; selecting an unassessed schema-1
+shard fails before held-out selection or training and directs the user to
+rebuild the affected corpus. No filter causes email text to be removed.
 
 Filtering happens while WALDO streams canonical rows, before deterministic
 held-out selection and training shuffle. The versioned effective policy is

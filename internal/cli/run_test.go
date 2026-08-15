@@ -19,6 +19,7 @@ import (
 
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/lookaside"
+	"github.com/openwaldo/waldo/internal/shard"
 )
 
 type cliPublisher struct{ objects map[string]int64 }
@@ -103,7 +104,7 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	if len(output.Identity) != 64 || output.Plan.Kind != "waldo-ingest-plan" || output.Plan.Destination != "core/example" || output.Plan.Writer.RecordSchema != 1 || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Adapter != "markdown" {
+	if len(output.Identity) != 64 || output.Plan.Kind != "waldo-ingest-plan" || output.Plan.Destination != "core/example" || output.Plan.Writer.RecordSchema != shard.TextRecordSchema || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Adapter != "markdown" {
 		t.Fatalf("index ingest output = %+v", output)
 	}
 }

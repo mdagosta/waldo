@@ -15,17 +15,36 @@ import (
 )
 
 const (
-	TextRecordSchema  = 1
-	TextWriterRecipe  = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v5-bom"
-	FormerTextRecipe  = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v4"
-	TextRowGroupBytes = 64 << 20
-	TextPageBytes     = 1 << 20
+	TextRecordSchema       = 2
+	FormerTextRecordSchema = 1
+	TextWriterRecipe       = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v6-email-assessment"
+	FormerTextBOMRecipe    = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v5-bom"
+	FormerTextRecipe       = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v4"
+	EmailDetector          = "waldo/email-address-v1"
+	TextRowGroupBytes      = 64 << 20
+	TextPageBytes          = 1 << 20
 )
 
 // TextRow is the canonical tokenizer-neutral pretraining row for record schema
-// 1. Pointer fields are true Parquet nulls; empty strings and zero values are
+// 2. Pointer fields are true Parquet nulls; empty strings and zero values are
 // not overloaded to mean absence.
 type TextRow struct {
+	ContentSHA256  [32]byte `parquet:"content_sha256"`
+	Text           string   `parquet:"text"`
+	Source         string   `parquet:"source"`
+	SourceName     *string  `parquet:"source_name,dict"`
+	License        string   `parquet:"license,dict"`
+	LicenseRaw     *string  `parquet:"license_raw,dict"`
+	Language       *string  `parquet:"language,dict"`
+	LanguageScore  *int32   `parquet:"language_score"`
+	Date           *string  `parquet:"date,dict"`
+	TokenCount     *int64   `parquet:"token_count"`
+	Meta           *string  `parquet:"meta"`
+	EmailAddresses bool     `parquet:"email_addresses"`
+}
+
+// textRowV1 preserves the established schema-1 physical contract for reads.
+type textRowV1 struct {
 	ContentSHA256 [32]byte `parquet:"content_sha256"`
 	Text          string   `parquet:"text"`
 	Source        string   `parquet:"source"`
@@ -39,7 +58,7 @@ type TextRow struct {
 	Meta          *string  `parquet:"meta"`
 }
 
-// NewTextParquetWriter returns the canonical schema-1 writer. Callers control
+// NewTextParquetWriter returns the canonical schema-2 writer. Callers control
 // row-group boundaries explicitly with Flush and write directly to the final
 // temporary-file stream; this function never introduces a whole-shard buffer.
 func NewTextParquetWriter(output io.Writer) *parquet.GenericWriter[TextRow] {

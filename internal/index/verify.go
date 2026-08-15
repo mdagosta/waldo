@@ -167,6 +167,11 @@ func verifyManifest(path string, manifest Manifest) error {
 	if len(manifest.Shards) > 0 && manifest.Rollup != nil {
 		return fmt.Errorf("%s: shards and rollup are mutually exclusive", path)
 	}
+	if manifest.RecordSchema >= 2 {
+		if err := validateContentAssessment(manifest.Assessment, -1); err != nil {
+			return fmt.Errorf("%s: manifest assessment: %w", path, err)
+		}
+	}
 
 	sources := map[string]bool{}
 	for i, source := range manifest.Sources {
@@ -194,6 +199,7 @@ func verifyManifest(path string, manifest Manifest) error {
 			return fmt.Errorf("%s: composed_by: %w", path, err)
 		}
 	}
+	var assessedEmailRecords int64
 	for i, shard := range manifest.Shards {
 		if shard.URL == "" || !sha256Pattern.MatchString(shard.SHA256) {
 			return fmt.Errorf("%s: shard %d requires a URL and lowercase 64-character sha256", path, i+1)
@@ -239,6 +245,15 @@ func verifyManifest(path string, manifest Manifest) error {
 		if shard.ConvertedBy != nil && !validConversion(*shard.ConvertedBy) {
 			return fmt.Errorf("%s: shard %s has an incomplete converted_by override", path, shard.SHA256[:12])
 		}
+		if manifest.RecordSchema >= 2 {
+			if err := validateContentAssessment(shard.Assessment, shard.Docs); err != nil {
+				return fmt.Errorf("%s: shard %s assessment: %w", path, shard.SHA256[:12], err)
+			}
+			assessedEmailRecords += shard.Assessment.EmailAddresses.Records
+		}
+	}
+	if manifest.RecordSchema >= 2 && manifest.Rollup == nil && manifest.Assessment.EmailAddresses.Records != assessedEmailRecords {
+		return fmt.Errorf("%s: manifest email-address assessment does not equal shard counts", path)
 	}
 	if manifest.Rollup != nil {
 		if manifest.Rollup.URL == "" || !sha256Pattern.MatchString(manifest.Rollup.SHA256) {
@@ -250,6 +265,17 @@ func verifyManifest(path string, manifest Manifest) error {
 	}
 	if err := validateManifestProvenance(manifest); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
+func validateContentAssessment(assessment *ContentAssessment, documents int64) error {
+	if assessment == nil || assessment.EmailAddresses == nil {
+		return fmt.Errorf("email_addresses assessment is required")
+	}
+	measure := assessment.EmailAddresses
+	if measure.Detector == "" || measure.Records < 0 || documents >= 0 && measure.Records > documents {
+		return fmt.Errorf("email_addresses requires a detector and a valid record count")
 	}
 	return nil
 }

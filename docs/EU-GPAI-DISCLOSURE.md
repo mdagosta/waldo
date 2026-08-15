@@ -316,9 +316,10 @@ OpenWALDO BOM remain schema 1:
   logical rows and encoded bytes.
 
 Old manifests remain readable and produce the same existing totals. New writers
-declare `format: "parquet"`, record schema 1, the exact writer recipe, and the additive provenance
+declare `format: "parquet"`, the versioned record schema, the exact writer recipe, and the additive provenance
 facts. Unknown additive fields continue to be accepted by older readers.
-Parquet records and OpenWALDO BOMs remain at schema 1; ingest recipes support
+New canonical Parquet records use record schema 2 while schema-1 shards remain
+readable and unassessed; OpenWALDO BOMs remain schema 1. Ingest recipes support
 schema 1 for a single source and schema 2 for grouped sources.
 
 The remaining disclosure fixtures should cover:

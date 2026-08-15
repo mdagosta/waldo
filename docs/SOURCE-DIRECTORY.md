@@ -18,6 +18,11 @@ contains no WALDO-specific manifest.
   source facts in the CLI/recipe declaration and per-record facts in the
   records themselves.
 
+During canonical assembly WALDO automatically flags, but does not alter, rows
+containing common email-shaped strings. This applies uniformly to every input
+type, including books, mailing lists, and source code. The result is stored in
+record schema 2; acquisition scripts must not add their own assessment sidecar.
+
 Recipe acquisition may leave empty regular files; WALDO ignores them. Each
 declared source must still produce at least one supported non-empty input.
 
@@ -66,3 +71,13 @@ steps receive its directory as `WALDO_FETCH_DIR`; its metadata, license, and
 profile apply only to records beneath that directory. WALDO may pack records
 from several source directories into the same size-bounded Parquet shard while
 preserving source path, source identity, and license on every row.
+
+## Automatic row assessment
+
+Every newly ingested row is assessed with the versioned
+`waldo/email-address-v1` detector. The canonical Parquet
+`email_addresses` boolean is `true` when the detector matches and `false`
+otherwise. Detection does not redact text and does not assert that an address
+is personal data. Manifests preserve the detector identity and aggregate number
+of flagged rows. Existing schema-1 shards remain readable but unassessed and
+are upgraded only through an explicit corpus rebuild.

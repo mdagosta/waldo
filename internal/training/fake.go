@@ -41,21 +41,6 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 	if request.Resume != nil && request.Resume.Step > request.Parameters.Steps {
 		return Observation{}, fmt.Errorf("fake resume step %d is beyond target step %d", request.Resume.Step, request.Parameters.Steps)
 	}
-	payload, err := json.MarshalIndent(struct {
-		Kind         string             `json:"kind"`
-		Schema       int                `json:"schema"`
-		Warning      string             `json:"warning"`
-		Architecture string             `json:"architecture_sha256"`
-		BOM          corpus.BOM         `json:"corpus_bom"`
-		Parameters   ResolvedParameters `json:"parameters"`
-	}{
-		Kind: "waldo-fake-artifact", Schema: 1,
-		Warning:      "simulation only; this file contains no trained model weights",
-		Architecture: request.ArchitectureSHA256, BOM: request.BOM, Parameters: request.Parameters,
-	}, "", "  ")
-	if err != nil {
-		return Observation{}, err
-	}
 	if request.Records == nil {
 		return Observation{}, fmt.Errorf("fake backend received no canonical record stream")
 	}
@@ -66,9 +51,13 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 	}); err != nil {
 		return Observation{}, err
 	}
-	expectedTrainingRecords := (request.BOM.Totals.Docs - request.EvaluationSet.Records) * request.Parameters.Epochs
-	if records != expectedTrainingRecords {
-		return Observation{}, fmt.Errorf("canonical training stream contains %d records, expected %d after held-out selection", records, expectedTrainingRecords)
+	if request.BOM.RecordFilter == nil {
+		expectedTrainingRecords := (request.BOM.Totals.Docs - request.EvaluationSet.Records) * request.Parameters.Epochs
+		if records != expectedTrainingRecords {
+			return Observation{}, fmt.Errorf("canonical training stream contains %d records, expected %d after held-out selection", records, expectedTrainingRecords)
+		}
+	} else if records == 0 {
+		return Observation{}, fmt.Errorf("canonical record filters select no training records")
 	}
 	var evaluationRecords int64
 	if request.EvaluationRecords != nil {
@@ -78,6 +67,25 @@ func (Fake) Run(ctx context.Context, request Request) (Observation, error) {
 	}
 	if evaluationRecords != request.EvaluationSet.Records {
 		return Observation{}, fmt.Errorf("canonical evaluation stream contains %d records, run BOM pins %d", evaluationRecords, request.EvaluationSet.Records)
+	}
+	payload, err := json.MarshalIndent(struct {
+		Kind            string             `json:"kind"`
+		Schema          int                `json:"schema"`
+		Warning         string             `json:"warning"`
+		Architecture    string             `json:"architecture_sha256"`
+		BOM             corpus.BOM         `json:"corpus_bom"`
+		Parameters      ResolvedParameters `json:"parameters"`
+		TrainingRecords int64              `json:"training_records"`
+	}{
+		Kind: "waldo-fake-artifact", Schema: 1,
+		Warning:         "simulation only; this file contains no trained model weights",
+		Architecture:    request.ArchitectureSHA256,
+		BOM:             request.BOM,
+		Parameters:      request.Parameters,
+		TrainingRecords: records,
+	}, "", "  ")
+	if err != nil {
+		return Observation{}, err
 	}
 	payload = append(payload, '\n')
 	artifactName := "fake-model.json"

@@ -71,7 +71,7 @@ echo "building WALDO and the E2E validator"
 
 echo "generating UTF-8, multiline, and duplicate source content"
 mkdir -p "$fixture"
-printf 'Plain UTF-8: café, 東京, and 🚀.\nSecond line preserved exactly.\n' > "$fixture/01-plain.txt"
+printf 'Plain UTF-8: café, 東京, and 🚀.\nContact maintainer@example.org.\nSecond line preserved exactly.\n' > "$fixture/01-plain.txt"
 printf '# Markdown title\n\nA paragraph with "quotes", a backslash \\, and trailing punctuation!\n\n- one\n- two\n' > "$fixture/02-markdown.md"
 cp "$fixture/01-plain.txt" "$fixture/03-duplicate.txt"
 
@@ -231,6 +231,16 @@ fi
 
 echo "applying review overlay to disposable index"
 cp -R "$contribution"/. "$index_root"/
+
+manifest_path="$index_root/core/e2e/tiny/tiny.yaml"
+grep -q 'detector: waldo/email-address-v1' "$manifest_path" || {
+  echo "manifest does not pin the email-address detector" >&2
+  exit 1
+}
+grep -A2 'email_addresses:' "$manifest_path" | grep -q 'records: 1' || {
+  echo "manifest does not report the one retained email-address row" >&2
+  exit 1
+}
 
 echo "verifying new corpus recursively"
 "$binary" index verify "$destination" --offline

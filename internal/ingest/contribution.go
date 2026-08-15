@@ -43,6 +43,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default,
 		},
 	}
+	manifest.Assessment = &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{Detector: shard.EmailDetector}}
 	planSources := plan.Sources
 	if len(planSources) == 0 {
 		legacy := plan.Source
@@ -82,7 +83,9 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			URL: objectURL, SHA256: object.SHA256, Sources: object.Sources,
 			Docs: object.Docs, Tokens: object.Tokens, Bytes: object.Bytes,
 			LicenseUsage: object.LicenseUsage,
+			Assessment:   &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{Detector: shard.EmailDetector, Records: object.EmailAddressRecords}},
 		})
+		manifest.Assessment.EmailAddresses.Records += object.EmailAddressRecords
 		if len(licenses) == 1 {
 			manifest.Shards[len(manifest.Shards)-1].License = licenses[0]
 		} else {
@@ -175,11 +178,11 @@ func conversionProfile(plan Plan) string {
 		configured = configured || input.Profile.Type != ""
 	}
 	if !configured {
-		return "canonical-text-schema-1"
+		return "canonical-text-schema-2"
 	}
 	encoded, _ := json.Marshal(profiles)
 	digest := sha256.Sum256(encoded)
-	return "canonical-text-schema-1@sha256:" + hex.EncodeToString(digest[:])
+	return "canonical-text-schema-2@sha256:" + hex.EncodeToString(digest[:])
 }
 
 func writeIdentityString(destination hash.Hash, value string) {

@@ -115,6 +115,22 @@ func BuildUpdatedManifest(plan Plan, existing index.Manifest, assembly AssemblyR
 	if len(updated.Licenses) == 1 {
 		updated.License, updated.Licenses = updated.Licenses[0], nil
 	}
+	if updated.RecordSchema >= 2 {
+		assessment := &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{}}
+		for _, shard := range updated.Shards {
+			if shard.Assessment == nil || shard.Assessment.EmailAddresses == nil {
+				return index.Manifest{}, fmt.Errorf("schema-%d shard %s is missing email-address assessment", updated.RecordSchema, shard.SHA256[:12])
+			}
+			measure := shard.Assessment.EmailAddresses
+			if assessment.EmailAddresses.Detector == "" {
+				assessment.EmailAddresses.Detector = measure.Detector
+			} else if assessment.EmailAddresses.Detector != measure.Detector {
+				return index.Manifest{}, fmt.Errorf("schema-%d shards use different email-address detectors", updated.RecordSchema)
+			}
+			assessment.EmailAddresses.Records += measure.Records
+		}
+		updated.Assessment = assessment
+	}
 	updated.Schema = index.ManifestSchema
 	if err := index.ValidateManifest(manifestPath, updated); err != nil {
 		return index.Manifest{}, err

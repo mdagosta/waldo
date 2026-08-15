@@ -122,6 +122,7 @@ source evidence provides the logical attribution boundary.
 | `date` | UTF-8 string | no | upstream date as observed; partial dates remain representable |
 | `token_count` | signed 64-bit integer | no | count from the shard's explicitly named counting recipe |
 | `meta` | UTF-8 string containing canonical JSON | no | source-specific evidence not promoted to a core column |
+| `email_addresses` | boolean | yes in schema 2 | `true` when WALDO's pinned detector found an email-shaped string in `text`; the text is not changed |
 
 For recipe-driven whole-file text and Markdown inputs, `meta.source_path`
 preserves the validated acquisition-relative path. This keeps file-level
@@ -146,9 +147,18 @@ remain training-tokenizer neutral because they contain text rather than token
 IDs; changing the reference counter does change object identity and therefore
 requires a new recorded writer recipe.
 
-Record schema 1 remains the canonical logical contract. The physical writer
-recipe and footer metadata distinguish this representation from older
-schema-1 objects; it must not claim the identity of an existing shard recipe.
+Record schema 2 is the current canonical logical contract. Schema-1 objects
+remain valid, readable, and unassessed; they are not rewritten. New ingestion
+always evaluates every retained row with `waldo/email-address-v1`, writes the
+boolean result, and records detector identity plus flagged-record counts in the
+shard footer, embedded shard BOM, manifest shard, and manifest aggregate. The
+detector recognizes common Internet email-shaped strings. It does not determine
+whether an address identifies a natural person or establish a legal conclusion.
+
+Because canonical objects are immutable, adding this column does not migrate
+existing shards. A corpus is upgraded only by an explicit rebuild. A compose
+that requests email-address exclusion fails closed if any selected shard uses
+schema 1, identifying the unassessed shard and required schema.
 
 ### Other logical record kinds
 

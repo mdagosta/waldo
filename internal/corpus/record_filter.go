@@ -32,10 +32,18 @@ type RecordFilterPolicy struct {
 }
 
 type RecordFilter struct {
-	Licenses  *ValueFilter `json:"licenses,omitempty" yaml:"licenses,omitempty"`
-	Languages *ValueFilter `json:"languages,omitempty" yaml:"languages,omitempty"`
-	Sources   *ValueFilter `json:"sources,omitempty" yaml:"sources,omitempty"`
-	Date      *DateFilter  `json:"date,omitempty" yaml:"date,omitempty"`
+	Exclude   *ExclusionFilter `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+	Licenses  *ValueFilter     `json:"licenses,omitempty" yaml:"licenses,omitempty"`
+	Languages *ValueFilter     `json:"languages,omitempty" yaml:"languages,omitempty"`
+	Sources   *ValueFilter     `json:"sources,omitempty" yaml:"sources,omitempty"`
+	Date      *DateFilter      `json:"date,omitempty" yaml:"date,omitempty"`
+}
+
+// ExclusionFilter is the canonical deny-list form. A record is excluded when
+// any declared condition matches.
+type ExclusionFilter struct {
+	EmailAddresses *bool    `json:"email_addresses,omitempty" yaml:"email_addresses,omitempty"`
+	Licenses       []string `json:"licenses,omitempty" yaml:"licenses,omitempty"`
 }
 
 type ValueFilter struct {
@@ -76,6 +84,14 @@ func (policy RecordFilterPolicy) Validate(paths []string) error {
 }
 
 func (filter RecordFilter) Validate() error {
+	if filter.Exclude != nil {
+		if err := filter.Exclude.Validate(); err != nil {
+			return fmt.Errorf("exclude: %w", err)
+		}
+		if len(filter.Exclude.Licenses) > 0 && filter.Licenses != nil {
+			return fmt.Errorf("exclude.licenses cannot be combined with legacy licenses filtering")
+		}
+	}
 	for _, field := range []struct {
 		name   string
 		values *ValueFilter
@@ -98,15 +114,26 @@ func (filter RecordFilter) Validate() error {
 }
 
 func (filter RecordFilter) empty() bool {
-	return filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && filter.Date == nil
+	return filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && filter.Date == nil
+}
+
+func (filter ExclusionFilter) Validate() error {
+	if filter.EmailAddresses == nil && len(filter.Licenses) == 0 {
+		return fmt.Errorf("at least one exclusion is required")
+	}
+	return validatePatterns(filter.Licenses)
 }
 
 func (filter ValueFilter) Validate() error {
 	if len(filter.Include) == 0 && len(filter.Exclude) == 0 {
 		return fmt.Errorf("include or exclude is required")
 	}
+	return validatePatterns(append(append([]string(nil), filter.Include...), filter.Exclude...))
+}
+
+func validatePatterns(patterns []string) error {
 	seen := map[string]bool{}
-	for _, pattern := range append(append([]string(nil), filter.Include...), filter.Exclude...) {
+	for _, pattern := range patterns {
 		if pattern == "" {
 			return fmt.Errorf("patterns must not be empty")
 		}
@@ -155,6 +182,9 @@ func (policy RecordFilterPolicy) Allows(corpusPath string, record shard.RecordVi
 }
 
 func (filter RecordFilter) Allows(record shard.RecordView) bool {
+	if filter.Exclude != nil && filter.Exclude.Matches(record) {
+		return false
+	}
 	if filter.Licenses != nil && !filter.Licenses.Allows(record.License) {
 		return false
 	}
@@ -165,6 +195,34 @@ func (filter RecordFilter) Allows(record shard.RecordView) bool {
 		return false
 	}
 	return filter.Date == nil || filter.Date.Allows(record.Date)
+}
+
+func (filter ExclusionFilter) Matches(record shard.RecordView) bool {
+	if filter.EmailAddresses != nil && record.EmailAddresses != nil && *filter.EmailAddresses == *record.EmailAddresses {
+		return true
+	}
+	for _, pattern := range filter.Licenses {
+		if matched, _ := path.Match(pattern, record.License); matched {
+			return true
+		}
+	}
+	return false
+}
+
+func (filter RecordFilter) RequiresEmailAssessment() bool {
+	return filter.Exclude != nil && filter.Exclude.EmailAddresses != nil
+}
+
+func (policy RecordFilterPolicy) RequiresEmailAssessment() bool {
+	if policy.Global != nil && policy.Global.RequiresEmailAssessment() {
+		return true
+	}
+	for _, filter := range policy.Corpora {
+		if filter.RequiresEmailAssessment() {
+			return true
+		}
+	}
+	return false
 }
 
 func (filter ValueFilter) Allows(value string) bool {

@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/openwaldo/waldo/internal/tokenizer"
 )
 
@@ -40,7 +41,7 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Schema != index.ManifestSchema || manifest.RecordSchema != 1 || len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Shards[0].Tokens <= 0 {
+	if manifest.Schema != index.ManifestSchema || manifest.RecordSchema != shard.TextRecordSchema || len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Shards[0].Tokens <= 0 {
 		t.Fatalf("manifest = %+v", manifest)
 	}
 	if manifest.Format != "" || manifest.Processing != nil || manifest.ComposedBy != nil || len(manifest.Sources[0].Files) != 0 || len(manifest.Sources[0].Usage) != 0 || manifest.Sources[0].Content != nil || len(manifest.Shards[0].Modalities) != 0 {
@@ -64,6 +65,50 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	}
 	if len(roundTrip.Shards) != 1 || roundTrip.Shards[0].SHA256 != manifest.Shards[0].SHA256 {
 		t.Fatalf("round-trip manifest = %+v", roundTrip)
+	}
+}
+
+func TestIngestionFlagsEmailRowsAndSummarizesManifest(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture(t, filepath.Join(directory, "email.txt"), "Contact maintainer@example.org for details.\n")
+	writeFixture(t, filepath.Join(directory, "plain.txt"), "No contact address in this record.\n")
+	probe, err := ProbePaths(context.Background(), []string{directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "core/email-fixture", Title: "Email fixture", Description: "Email assessment fixture.", License: "CC0-1.0",
+		Source: PlanSource{Name: "fixture", URL: "https://example.test/data", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assembly, err := AssembleTextObjects(context.Background(), plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := BuildManifest(plan, assembly, "https://objects.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Assessment == nil || manifest.Assessment.EmailAddresses == nil || manifest.Assessment.EmailAddresses.Detector != shard.EmailDetector || manifest.Assessment.EmailAddresses.Records != 1 {
+		t.Fatalf("manifest assessment = %+v", manifest.Assessment)
+	}
+	var flagged, assessed int
+	if err := shard.WalkRecords(assembly.Objects[0].Path, func(_ int64, view shard.RecordView) error {
+		if view.EmailAddresses == nil {
+			t.Fatal("schema-2 row has no email assessment")
+		}
+		assessed++
+		if *view.EmailAddresses {
+			flagged++
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if assessed != 2 || flagged != 1 {
+		t.Fatalf("assessed/flagged rows = %d/%d", assessed, flagged)
 	}
 }
 

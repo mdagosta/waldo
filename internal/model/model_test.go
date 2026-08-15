@@ -136,6 +136,29 @@ func TestComposeAcceptsConfiguredCorporaWithoutBreakingScalarForm(t *testing.T) 
 	}
 }
 
+func TestComposeAcceptsUnifiedExclusionFilterStrictly(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exclude.yaml")
+	document := strings.Replace(composeYAML(""), "    corpora:\n", "    filter:\n      exclude:\n        email_addresses: true\n        licenses: [CC-BY-NC-*, LicenseRef-Restricted-*]\n    corpora:\n", 1)
+	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compose, _, err := LoadCompose(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exclude := compose.Stages[0].Filter.Exclude
+	if exclude == nil || exclude.EmailAddresses == nil || !*exclude.EmailAddresses || len(exclude.Licenses) != 2 {
+		t.Fatalf("exclude filter = %+v", exclude)
+	}
+	unknown := strings.Replace(document, "email_addresses: true", "unknown: true", 1)
+	if err := os.WriteFile(path, []byte(unknown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompose(path); err == nil || !strings.Contains(err.Error(), "field unknown not found") {
+		t.Fatalf("unknown exclusion error = %v", err)
+	}
+}
+
 func TestCorpusSelectionJSONIsStrictAndAcceptsScalarWhitespace(t *testing.T) {
 	var scalar CorpusSelection
 	if err := json.Unmarshal([]byte(`  "core/books" `), &scalar); err != nil || scalar.Path != "core/books" {

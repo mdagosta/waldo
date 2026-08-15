@@ -27,33 +27,36 @@ import (
 	"go.etcd.io/bbolt"
 )
 
-var canonicalColumns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta"}
+var canonicalColumns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses"}
+var canonicalV1Columns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta"}
 var legacyColumns = []string{"sha256", "kind", "text", "source", "source_name", "license", "license_raw", "lang", "lang_score", "date", "tokens", "meta"}
 
 type RecordView struct {
-	ID            string `json:"id"`
-	Text          string `json:"-"`
-	Source        string `json:"source"`
-	SourceName    string `json:"source_name,omitempty"`
-	License       string `json:"license"`
-	Language      string `json:"language,omitempty"`
-	LanguageScore int64  `json:"language_score,omitempty"`
-	Date          string `json:"date,omitempty"`
-	Tokens        int64  `json:"tokens"`
-	Bytes         int64  `json:"bytes"`
+	ID             string `json:"id"`
+	Text           string `json:"-"`
+	Source         string `json:"source"`
+	SourceName     string `json:"source_name,omitempty"`
+	License        string `json:"license"`
+	Language       string `json:"language,omitempty"`
+	LanguageScore  int64  `json:"language_score,omitempty"`
+	Date           string `json:"date,omitempty"`
+	Tokens         int64  `json:"tokens"`
+	Bytes          int64  `json:"bytes"`
+	EmailAddresses *bool  `json:"email_addresses,omitempty"`
 }
 
 type Summary struct {
-	Shards       int64    `json:"shards"`
-	Attested     int64    `json:"attested_shards,omitempty"`
-	DeepScanned  int64    `json:"deep_scanned_shards,omitempty"`
-	Records      int64    `json:"records"`
-	Tokens       int64    `json:"tokens"`
-	ContentBytes int64    `json:"content_bytes"`
-	EncodedBytes int64    `json:"encoded_bytes"`
-	RowGroups    int64    `json:"row_groups"`
-	Licenses     []string `json:"licenses"`
-	Recipes      []string `json:"writer_recipes"`
+	Shards              int64    `json:"shards"`
+	Attested            int64    `json:"attested_shards,omitempty"`
+	DeepScanned         int64    `json:"deep_scanned_shards,omitempty"`
+	Records             int64    `json:"records"`
+	Tokens              int64    `json:"tokens"`
+	ContentBytes        int64    `json:"content_bytes"`
+	EncodedBytes        int64    `json:"encoded_bytes"`
+	RowGroups           int64    `json:"row_groups"`
+	Licenses            []string `json:"licenses"`
+	Recipes             []string `json:"writer_recipes"`
+	EmailAddressRecords int64    `json:"email_address_records,omitempty"`
 }
 
 type AuditOptions struct {
@@ -274,7 +277,7 @@ func verifyAttestedOne(path string) (Summary, error) {
 	}
 	recipe, _ := parquetFile.Lookup("waldo.recipe")
 	switch recipe {
-	case TextWriterRecipe:
+	case TextWriterRecipe, FormerTextBOMRecipe:
 		if _, ok := parquetFile.Lookup(BOMMetadataKey); !ok {
 			return Summary{}, errDeepScanRequired
 		}
@@ -282,7 +285,7 @@ func verifyAttestedOne(path string) (Summary, error) {
 		if err != nil {
 			return Summary{}, err
 		}
-		if bom.Records != one.Records || bom.Tokens != one.Tokens || bom.ContentBytes != one.ContentBytes || !slices.Equal(bom.Licenses, one.Licenses) {
+		if bom.Records != one.Records || bom.Tokens != one.Tokens || bom.ContentBytes != one.ContentBytes || bom.EmailAddressRecords != one.EmailAddressRecords || !slices.Equal(bom.Licenses, one.Licenses) {
 			return Summary{}, fmt.Errorf("embedded shard BOM differs from Parquet footer aggregates")
 		}
 	case FormerTextRecipe:
@@ -305,6 +308,7 @@ func addSummary(total *Summary, one Summary, licenses, recipes map[string]bool) 
 	total.ContentBytes += one.ContentBytes
 	total.EncodedBytes += one.EncodedBytes
 	total.RowGroups += one.RowGroups
+	total.EmailAddressRecords += one.EmailAddressRecords
 	for _, value := range one.Licenses {
 		licenses[value] = true
 	}
@@ -483,9 +487,9 @@ func auditOne(ctx context.Context, path string, counter tokenizer.Counter, addID
 	if err == nil {
 		footer, complete := footerSummary(parquetFile, size)
 		recipe, _ := parquetFile.Lookup("waldo.recipe")
-		if recipe == TextWriterRecipe && !complete {
+		if (recipe == TextWriterRecipe || recipe == FormerTextBOMRecipe) && !complete {
 			err = fmt.Errorf("current writer recipe is missing valid aggregate footer metadata")
-		} else if complete && (footer.Records != one.Records || footer.Tokens != one.Tokens || footer.ContentBytes != one.ContentBytes || !slices.Equal(footer.Licenses, one.Licenses)) {
+		} else if complete && (footer.Records != one.Records || footer.Tokens != one.Tokens || footer.ContentBytes != one.ContentBytes || footer.EmailAddressRecords != one.EmailAddressRecords || !slices.Equal(footer.Licenses, one.Licenses)) {
 			err = fmt.Errorf("footer aggregates do not match streamed records")
 		}
 	}
@@ -600,6 +604,29 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 		}
 		return nil
 	}
+	if slices.Equal(columnNames(parquetFile), canonicalV1Columns) {
+		reader := parquet.NewGenericReader[textRowV1](parquetFile)
+		defer reader.Close()
+		rows := make([]textRowV1, 1)
+		for _, position := range positions {
+			if err := reader.SeekToRow(position); err != nil {
+				return fmt.Errorf("seek to record %d: %w", position, err)
+			}
+			count, readErr := reader.Read(rows)
+			if count != 1 {
+				if readErr == nil {
+					readErr = io.ErrUnexpectedEOF
+				}
+				return fmt.Errorf("read record %d: %w", position, readErr)
+			}
+			row := rows[0]
+			view := recordViewV1(row)
+			if err := callback(position, view); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	reader := parquet.NewGenericReader[TextRow](parquetFile)
 	defer reader.Close()
 	rows := make([]TextRow, 1)
@@ -615,7 +642,8 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 			return fmt.Errorf("read record %d: %w", position, readErr)
 		}
 		row := rows[0]
-		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text))}
+		emailAddresses := row.EmailAddresses
+		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &emailAddresses}
 		if err := callback(position, view); err != nil {
 			return err
 		}
@@ -684,12 +712,14 @@ func openShard(path string) (*os.File, *parquet.File, int64, error) {
 		got[i] = column[0]
 	}
 	canonical := slices.Equal(got, canonicalColumns)
+	canonicalV1 := slices.Equal(got, canonicalV1Columns)
 	legacy := slices.Equal(got, legacyColumns)
-	if !canonical && !legacy {
+	if !canonical && !canonicalV1 && !legacy {
 		file.Close()
-		return nil, nil, 0, fmt.Errorf("columns are %v, want canonical %v or established schema-1 %v", got, canonicalColumns, legacyColumns)
+		return nil, nil, 0, fmt.Errorf("columns are %v, want schema-2 %v or established schema-1 %v", got, canonicalColumns, canonicalV1Columns)
 	}
-	if value, ok := pf.Lookup("waldo.record_schema"); (canonical && (!ok || value != strconv.Itoa(TextRecordSchema))) || (legacy && ok && value != strconv.Itoa(TextRecordSchema)) {
+	value, ok := pf.Lookup("waldo.record_schema")
+	if canonical && (!ok || value != strconv.Itoa(TextRecordSchema)) || canonicalV1 && (!ok || value != strconv.Itoa(FormerTextRecordSchema)) || legacy && ok && value != strconv.Itoa(FormerTextRecordSchema) {
 		file.Close()
 		return nil, nil, 0, fmt.Errorf("unsupported or missing waldo.record_schema")
 	}
@@ -715,7 +745,17 @@ func footerSummary(file *parquet.File, size int64) (Summary, bool) {
 		return Summary{}, false
 	}
 	recipe, _ := file.Lookup("waldo.recipe")
-	return Summary{Records: values["waldo.records"], Tokens: values["waldo.tokens"], ContentBytes: values["waldo.content_bytes"], EncodedBytes: size, RowGroups: int64(len(file.RowGroups())), Licenses: licenses, Recipes: []string{recipe}}, true
+	emailAddressRecords := int64(0)
+	if raw, ok := file.Lookup("waldo.email_address_records"); ok {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || parsed < 0 || parsed > values["waldo.records"] {
+			return Summary{}, false
+		}
+		emailAddressRecords = parsed
+	} else if schema, _ := file.Lookup("waldo.record_schema"); schema == strconv.Itoa(TextRecordSchema) {
+		return Summary{}, false
+	}
+	return Summary{Records: values["waldo.records"], Tokens: values["waldo.tokens"], ContentBytes: values["waldo.content_bytes"], EncodedBytes: size, RowGroups: int64(len(file.RowGroups())), Licenses: licenses, Recipes: []string{recipe}, EmailAddressRecords: emailAddressRecords}, true
 }
 
 func scan(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
@@ -726,7 +766,10 @@ func scan(file *parquet.File, validate bool, callback func(int64, RecordView, re
 	if slices.Equal(columns, canonicalColumns) {
 		return scanCanonical(file, validate, callback)
 	}
-	return Summary{}, fmt.Errorf("unsupported schema-1 physical columns %v", columns)
+	if slices.Equal(columns, canonicalV1Columns) {
+		return scanCanonicalV1(file, validate, callback)
+	}
+	return Summary{}, fmt.Errorf("unsupported canonical physical columns %v", columns)
 }
 
 func scanCanonical(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
@@ -739,7 +782,32 @@ func scanCanonical(file *parquet.File, validate bool, callback func(int64, Recor
 		for i := 0; i < count; i++ {
 			row := rows[i]
 			canonical := canonicalTextRow(row)
-			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil); err != nil {
+			emailAddresses := row.EmailAddresses
+			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil, &emailAddresses); err != nil {
+				return consumer.finish(), err
+			}
+		}
+		if errors.Is(readErr, io.EOF) || (readErr == nil && count == 0) {
+			break
+		}
+		if readErr != nil {
+			return consumer.finish(), readErr
+		}
+	}
+	return consumer.finish(), nil
+}
+
+func scanCanonicalV1(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
+	reader := parquet.NewGenericReader[textRowV1](file)
+	defer reader.Close()
+	rows := make([]textRowV1, 512)
+	consumer := newRowConsumer(file, validate, callback)
+	for {
+		count, readErr := reader.Read(rows)
+		for i := 0; i < count; i++ {
+			row := rows[i]
+			canonical := canonicalTextRowV1(row)
+			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil, nil); err != nil {
 				return consumer.finish(), err
 			}
 		}
@@ -781,6 +849,20 @@ func canonicalTextRow(row TextRow) record.Record {
 	}
 }
 
+func canonicalTextRowV1(row textRowV1) record.Record {
+	return record.Record{
+		SHA256: hex.EncodeToString(row.ContentSHA256[:]), Kind: record.KindPretrain,
+		Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName),
+		License: row.License, LicenseRaw: stringValue(row.LicenseRaw),
+		Lang: stringValue(row.Language), LangScore: int64(int32Value(row.LanguageScore)),
+		Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount),
+	}
+}
+
+func recordViewV1(row textRowV1) RecordView {
+	return RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text))}
+}
+
 func scanLegacy(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
 	reader := parquet.NewGenericReader[Row](file)
 	defer reader.Close()
@@ -791,7 +873,7 @@ func scanLegacy(file *parquet.File, validate bool, callback func(int64, RecordVi
 		for i := 0; i < count; i++ {
 			row := rows[i]
 			canonical := record.Record{SHA256: row.SHA256, Kind: row.Kind, Text: row.Text, Source: row.Source, SourceName: row.SourceName, License: row.License, LicenseRaw: row.LicenseRaw, Lang: row.Lang, LangScore: row.LangScore, Date: row.Date, Tokens: row.Tokens}
-			if err := consumer.add(canonical, row.Meta, true); err != nil {
+			if err := consumer.add(canonical, row.Meta, true, nil); err != nil {
 				return consumer.finish(), err
 			}
 		}
@@ -817,7 +899,7 @@ func newRowConsumer(file *parquet.File, validate bool, callback func(int64, Reco
 	return &rowConsumer{validate: validate, callback: callback, result: Summary{Recipes: []string{recipe}}, licenses: map[string]bool{}}
 }
 
-func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPresent bool) error {
+func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPresent bool, emailAddresses *bool) error {
 	position := consumer.result.Records
 	if consumer.validate {
 		if !tokenPresent {
@@ -830,7 +912,7 @@ func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPres
 			return fmt.Errorf("record %d (%s): meta is not a JSON object", position, canonical.SHA256)
 		}
 	}
-	view := RecordView{ID: canonical.SHA256, Text: canonical.Text, Source: canonical.Source, SourceName: canonical.SourceName, License: canonical.License, Language: canonical.Lang, LanguageScore: canonical.LangScore, Date: canonical.Date, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text))}
+	view := RecordView{ID: canonical.SHA256, Text: canonical.Text, Source: canonical.Source, SourceName: canonical.SourceName, License: canonical.License, Language: canonical.Lang, LanguageScore: canonical.LangScore, Date: canonical.Date, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text)), EmailAddresses: emailAddresses}
 	if consumer.callback != nil {
 		if err := consumer.callback(position, view, canonical, meta); err != nil {
 			return err
@@ -839,6 +921,9 @@ func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPres
 	consumer.result.Records++
 	consumer.result.Tokens += canonical.Tokens
 	consumer.result.ContentBytes += int64(len(canonical.Text))
+	if emailAddresses != nil && *emailAddresses {
+		consumer.result.EmailAddressRecords++
+	}
 	consumer.licenses[canonical.License] = true
 	return nil
 }

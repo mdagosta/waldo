@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/index"
@@ -30,7 +31,7 @@ func TestAppendSeedDropsExistingContentWithoutProducingShard(t *testing.T) {
 	}
 }
 
-func TestAppendResolvesLegacyInheritedLicenseBeforeAddingAnother(t *testing.T) {
+func TestAppendRequiresRebuildAcrossRecordSchemas(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "document.txt")
 	writeFixture(t, input, "new document")
 	plan := textFixturePlan(t, input)
@@ -47,12 +48,39 @@ func TestAppendResolvesLegacyInheritedLicenseBeforeAddingAnother(t *testing.T) {
 		ConvertedBy: index.Conversion{Tool: "waldo", Version: "1", Profile: "text", Recipe: "parquet-v1"},
 		Shards:      []index.Shard{{URL: "https://example.test/object", SHA256: fmt.Sprintf("%064x", 2), Sources: []string{"legacy"}, Docs: 1, Tokens: 2, Bytes: 3}},
 	}
-	updated, err := BuildUpdatedManifest(plan, existing, assembly, "https://example.test/objects", "example.yaml")
+	_, err = BuildUpdatedManifest(plan, existing, assembly, "https://example.test/objects", "example.yaml")
+	if err == nil || !strings.Contains(err.Error(), "cannot append schema") {
+		t.Fatalf("schema migration error = %v", err)
+	}
+}
+
+func TestAppendRecomputesEmailAssessment(t *testing.T) {
+	firstInput := filepath.Join(t.TempDir(), "first.txt")
+	writeFixture(t, firstInput, "contact maintainer@example.org")
+	firstPlan := textFixturePlan(t, firstInput)
+	firstAssembly, err := AssembleTextObjects(context.Background(), firstPlan, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Schema != index.ManifestSchema || updated.Shards[0].License != "CC0-1.0" || len(updated.Licenses) != 2 {
-		t.Fatalf("updated = %+v", updated)
+	existing, err := BuildManifest(firstPlan, firstAssembly, "https://example.test/objects")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secondInput := filepath.Join(t.TempDir(), "second.txt")
+	writeFixture(t, secondInput, "no contact details")
+	secondPlan := textFixturePlan(t, secondInput)
+	secondPlan.Update = &UpdatePlan{Manifest: "example.json", ManifestSHA256: fmt.Sprintf("%064x", 3), Mode: "append"}
+	secondAssembly, err := AssembleTextObjects(context.Background(), secondPlan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := BuildUpdatedManifest(secondPlan, existing, secondAssembly, "https://example.test/objects", "example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Shards) != 2 || updated.Assessment == nil || updated.Assessment.EmailAddresses == nil || updated.Assessment.EmailAddresses.Records != 1 {
+		t.Fatalf("updated assessment = %+v across %d shards", updated.Assessment, len(updated.Shards))
 	}
 }
 

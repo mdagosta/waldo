@@ -38,6 +38,7 @@ func TestIndexAuditComparesStreamedShardTotalsWithManifest(t *testing.T) {
 	writer.SetKeyValueMetadata("waldo.records", "1")
 	writer.SetKeyValueMetadata("waldo.tokens", fmt.Sprint(tokens))
 	writer.SetKeyValueMetadata("waldo.content_bytes", fmt.Sprint(len(text)))
+	writer.SetKeyValueMetadata("waldo.email_address_records", "0")
 	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
 	bom, err := shard.EncodeBOM(shard.NewBOM(strings.Repeat("b", 64), tokenizer.Default, 1, tokens, int64(len(text)), []string{"CC0-1.0"}))
 	if err != nil {
@@ -95,10 +96,11 @@ func TestIndexAuditRejectsRetainedCacheSmallerThanSelection(t *testing.T) {
 func writeAuditManifest(t *testing.T, root, objectPath, digest string, bytes, tokens int64) {
 	t.Helper()
 	manifest := fmt.Sprintf(`{
-  "kind":"manifest", "schema":1, "name":"tiny", "title":"Tiny", "description":"Audit fixture.", "license":"CC0-1.0",
+  "kind":"manifest", "schema":1, "name":"tiny", "title":"Tiny", "description":"Audit fixture.", "license":"CC0-1.0", "record_schema":2,
+  "assessment":{"email_addresses":{"detector":"%s","records":0}},
   "sources":[{"name":"fixture","source":"Fixture","url":"https://example.invalid/audit","sha256":"%s"}],
   "converted_by":{"tool":"waldo","version":"test","profile":"text","recipe":"%s","tokenizer":"%s"},
-  "shards":[{"url":%q,"sha256":%q,"sources":["fixture"],"docs":1,"tokens":%d,"bytes":%d}]
-}`, strings.Repeat("a", 64), shard.TextWriterRecipe, tokenizer.Default, objectPath, digest, tokens, bytes)
+  "shards":[{"url":%q,"sha256":%q,"sources":["fixture"],"docs":1,"tokens":%d,"bytes":%d,"assessment":{"email_addresses":{"detector":"%s","records":0}}}]
+}`, shard.EmailDetector, strings.Repeat("a", 64), shard.TextWriterRecipe, tokenizer.Default, objectPath, digest, tokens, bytes, shard.EmailDetector)
 	writeCLIFile(t, filepath.Join(root, "tiny", "tiny.json"), manifest)
 }

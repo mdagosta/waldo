@@ -65,6 +65,24 @@ func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {
 	}
 }
 
+func TestEmailExclusionRejectsUnassessedSchemaOneSelection(t *testing.T) {
+	root := bomFixture(t)
+	target, err := index.Resolve(root, "books")
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, _ := NewLicensePolicy(nil, nil)
+	bom, err := BuildBOM(context.Background(), []index.Target{target}, policy, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	present := true
+	bom.RecordFilter = &RecordFilterPolicy{Schema: RecordFilterSchema, Global: &RecordFilter{Exclude: &ExclusionFilter{EmailAddresses: &present}}}
+	if err := bom.Validate(); err == nil || !strings.Contains(err.Error(), "unassessed record schema") {
+		t.Fatalf("schema-one filter error = %v", err)
+	}
+}
+
 func TestBuildBOMExpandsNestedSubManifests(t *testing.T) {
 	root, rootHash, childHash := rollupBOMFixture(t, 50)
 	target, err := index.Resolve(root, "books")

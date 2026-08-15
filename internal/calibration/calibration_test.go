@@ -103,6 +103,7 @@ func calibrationShard(t *testing.T, texts []string) (string, string, int64, int6
 	writer.SetKeyValueMetadata("waldo.records", fmt.Sprint(len(rows)))
 	writer.SetKeyValueMetadata("waldo.tokens", fmt.Sprint(tokens))
 	writer.SetKeyValueMetadata("waldo.content_bytes", fmt.Sprint(contentBytes))
+	writer.SetKeyValueMetadata("waldo.email_address_records", "0")
 	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
@@ -119,15 +120,16 @@ func calibrationShard(t *testing.T, texts []string) (string, string, int64, int6
 }
 
 func calibrationCorpus(object, objectSHA string, objectBytes, tokens, records int64) corpus.BOM {
-	conversion := index.Conversion{Tool: "waldo", Version: "test", Profile: "text", Recipe: shard.TextWriterRecipe}
+	conversion := index.Conversion{Tool: "waldo", Version: "test", Profile: "text", Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default}
 	measure := index.Measures{Shards: 1, Docs: records, Tokens: tokens, Bytes: objectBytes}
 	licenses := map[string]index.Measures{"CC0-1.0": measure}
+	assessment := &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{Detector: shard.EmailDetector}}
 	manifest := corpus.ManifestPin{
 		Path: "core/test.json", SHA256: fmt.Sprintf("%064x", 1), Name: "test", Title: "Test", Description: "Calibration fixture.",
-		License: "CC0-1.0", Format: "parquet", RecordSchema: 1, ConvertedBy: conversion,
+		License: "CC0-1.0", Format: "parquet", RecordSchema: shard.TextRecordSchema, ConvertedBy: conversion, Assessment: assessment,
 		Sources: []index.Source{{Name: "fixture", Source: "Fixture", URL: "https://example.invalid/source", SHA256: fmt.Sprintf("%064x", 2)}},
 		Totals:  measure, Licenses: licenses,
 	}
-	pin := corpus.ShardPin{Manifest: manifest.Path, URL: object, SHA256: objectSHA, Format: "parquet", RecordSchema: 1, License: "CC0-1.0", ConvertedBy: conversion, Docs: records, Tokens: tokens, Bytes: objectBytes}
+	pin := corpus.ShardPin{Manifest: manifest.Path, URL: object, SHA256: objectSHA, Format: "parquet", RecordSchema: shard.TextRecordSchema, License: "CC0-1.0", ConvertedBy: conversion, Docs: records, Tokens: tokens, Bytes: objectBytes, Assessment: assessment}
 	return corpus.BOM{Kind: "openwaldo-bom", Schema: 1, Subject: "corpus", Paths: []string{"core/test"}, Manifests: []corpus.ManifestPin{manifest}, Shards: []corpus.ShardPin{pin}, Totals: measure, Licenses: licenses}
 }

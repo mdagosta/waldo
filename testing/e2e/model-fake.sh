@@ -31,7 +31,7 @@ scratch="$work/scratch"
 staging="$work/staging"
 models="$work/models"
 model_export="$work/model-export"
-input="$work/training.jsonl"
+input="$work/training"
 compose="$work/model.yaml"
 disclosure="$work/eu-gpai.json"
 provider="$work/provider.json"
@@ -39,10 +39,10 @@ export WALDO_CONFIG="$work/config.json"
 
 echo "testing: complete fake-model lifecycle"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
-printf '%s\n' \
-  '{"text":"Small deterministic training record."}' \
-  '{"text":"A second preserved training record."}' \
-  '{"text":"A third record reserved for deterministic evaluation."}' > "$input"
+mkdir -p "$input"
+printf '%s\n' 'Contact test@example.org; this assessed row must be excluded.' > "$input/01-email.txt"
+printf '%s\n' 'A second preserved training record.' > "$input/02-training.txt"
+printf '%s\n' 'A third record reserved for deterministic evaluation.' > "$input/03-evaluation.txt"
 
 "$binary" index init "$index_root"
 "$binary" config set lookaside "file://$lookaside"
@@ -107,6 +107,9 @@ stages:
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
+    filter:
+      exclude:
+        email_addresses: true
     corpora:
       - core/e2e/model-corpus
     parameters:
@@ -156,8 +159,11 @@ run_bom=$(find "$models/smoke/runs" -type f -name RUN-BOM.json -print -quit)
 [ -n "$run_bom" ] || { echo "missing training run BOM" >&2; exit 1; }
 grep -Eq '"attestation"[[:space:]]*:' "$run_bom" || { echo "run BOM omitted shard attestation evidence" >&2; exit 1; }
 grep -Eq '"status"[[:space:]]*:[[:space:]]*"embedded"' "$run_bom" || { echo "run BOM omitted embedded shard BOM status" >&2; exit 1; }
+grep -Eq '"email_addresses"[[:space:]]*:[[:space:]]*true' "$run_bom" || { echo "run BOM omitted the applied email-address exclusion" >&2; exit 1; }
 artifact_count=$(find "$models/smoke/runs" -type f -name fake-model.json -print | wc -l | tr -d ' ')
 [ "$artifact_count" -eq 1 ] || { echo "found $artifact_count fake artifacts, want 1" >&2; exit 1; }
+fake_artifact=$(find "$models/smoke/runs" -type f -name fake-model.json -print -quit)
+grep -Eq '"training_records"[[:space:]]*:[[:space:]]*1' "$fake_artifact" || { echo "email-address exclusion did not leave exactly one training record" >&2; exit 1; }
 checkpoint_count=$(find "$models/smoke/runs" -type f -name 'step-*.json' -print | wc -l | tr -d ' ')
 [ "$checkpoint_count" -eq 1 ] || { echo "found $checkpoint_count fake checkpoints, want 1" >&2; exit 1; }
 

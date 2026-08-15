@@ -26,18 +26,19 @@ const (
 // metadata. The enclosing lookaside SHA-256 supplies object identity; a shard
 // cannot include its own object hash without a circular dependency.
 type BOM struct {
-	Kind         string     `json:"kind"`
-	Schema       int        `json:"schema"`
-	Subject      string     `json:"subject"`
-	PlanSHA256   string     `json:"plan_sha256"`
-	RecordSchema int        `json:"record_schema"`
-	WriterRecipe string     `json:"writer_recipe"`
-	Tokenizer    string     `json:"tokenizer"`
-	Records      int64      `json:"records"`
-	Tokens       int64      `json:"tokens"`
-	ContentBytes int64      `json:"content_bytes"`
-	Licenses     []string   `json:"licenses"`
-	Validation   Validation `json:"validation"`
+	Kind                string     `json:"kind"`
+	Schema              int        `json:"schema"`
+	Subject             string     `json:"subject"`
+	PlanSHA256          string     `json:"plan_sha256"`
+	RecordSchema        int        `json:"record_schema"`
+	WriterRecipe        string     `json:"writer_recipe"`
+	Tokenizer           string     `json:"tokenizer"`
+	Records             int64      `json:"records"`
+	Tokens              int64      `json:"tokens"`
+	ContentBytes        int64      `json:"content_bytes"`
+	EmailAddressRecords int64      `json:"email_address_records,omitempty"`
+	Licenses            []string   `json:"licenses"`
+	Validation          Validation `json:"validation"`
 }
 
 type Validation struct {
@@ -76,11 +77,15 @@ func (bom BOM) Validate() error {
 	if !validDigest(bom.PlanSHA256) {
 		return fmt.Errorf("shard BOM plan_sha256 must be 64 lowercase hexadecimal characters")
 	}
-	if bom.RecordSchema != TextRecordSchema || bom.WriterRecipe != TextWriterRecipe || bom.Tokenizer == "" {
+	supported := bom.RecordSchema == TextRecordSchema && bom.WriterRecipe == TextWriterRecipe || bom.RecordSchema == FormerTextRecordSchema && bom.WriterRecipe == FormerTextBOMRecipe
+	if !supported || bom.Tokenizer == "" {
 		return fmt.Errorf("shard BOM has unsupported record, writer, or tokenizer identity")
 	}
 	if bom.Records <= 0 || bom.Tokens < 0 || bom.ContentBytes <= 0 || len(bom.Licenses) == 0 || !slices.IsSorted(bom.Licenses) {
 		return fmt.Errorf("shard BOM has invalid totals or licenses")
+	}
+	if bom.EmailAddressRecords < 0 || bom.EmailAddressRecords > bom.Records {
+		return fmt.Errorf("shard BOM has invalid email-address record count")
 	}
 	for position, license := range bom.Licenses {
 		if license == "" || position > 0 && license == bom.Licenses[position-1] {
@@ -133,7 +138,7 @@ func InspectAttestation(path string) (Attestation, error) {
 	defer file.Close()
 	recipe, _ := parquetFile.Lookup("waldo.recipe")
 	switch recipe {
-	case TextWriterRecipe:
+	case TextWriterRecipe, FormerTextBOMRecipe:
 		if _, err := verifyAttestedOne(path); err != nil {
 			return Attestation{}, err
 		}

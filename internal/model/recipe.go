@@ -147,13 +147,17 @@ func validateCorpusSelectionYAML(node *yaml.Node) error {
 }
 
 func validateRecordFilterYAML(node *yaml.Node) error {
-	if err := knownYAMLFields(node, map[string]bool{"licenses": true, "languages": true, "sources": true, "date": true}); err != nil {
+	if err := knownYAMLFields(node, map[string]bool{"exclude": true, "licenses": true, "languages": true, "sources": true, "date": true}); err != nil {
 		return err
 	}
 	for index := 0; index < len(node.Content); index += 2 {
 		key, value := node.Content[index].Value, node.Content[index+1]
 		if key == "date" {
 			if err := knownYAMLFields(value, map[string]bool{"from": true, "to": true}); err != nil {
+				return err
+			}
+		} else if key == "exclude" {
+			if err := knownYAMLFields(value, map[string]bool{"email_addresses": true, "licenses": true}); err != nil {
 				return err
 			}
 		} else if err := knownYAMLFields(value, map[string]bool{"include": true, "exclude": true}); err != nil {

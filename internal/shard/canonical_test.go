@@ -77,6 +77,36 @@ func TestTargetedRecordReadsSeekWithoutWalkingShard(t *testing.T) {
 	}
 }
 
+func TestEstablishedSchemaOneRowsRemainReadableAndUnassessed(t *testing.T) {
+	text := "legacy schema one"
+	tokens := tokenCount(t, text)
+	digest := sha256.Sum256([]byte(text))
+	path := filepath.Join(t.TempDir(), "schema-one.parquet")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := parquet.NewGenericWriter[textRowV1](file, proposedTextWriterOptions()...)
+	writer.SetKeyValueMetadata("waldo.record_schema", strconv.Itoa(FormerTextRecordSchema))
+	writer.SetKeyValueMetadata("waldo.recipe", FormerTextBOMRecipe)
+	if _, err := writer.Write([]textRowV1{{ContentSHA256: digest, Text: text, Source: "fixture", License: "CC0-1.0", TokenCount: &tokens}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var got RecordView
+	if err := ReadRecordsAt(path, []int64{0}, func(_ int64, view RecordView) error { got = view; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got.Text != text || got.EmailAddresses != nil {
+		t.Fatalf("schema-one view = %+v", got)
+	}
+}
+
 func TestInspectEmbeddedShardBOM(t *testing.T) {
 	text := "embedded BOM fixture"
 	tokens := tokenCount(t, text)
@@ -92,6 +122,7 @@ func TestInspectEmbeddedShardBOM(t *testing.T) {
 	writer.SetKeyValueMetadata("waldo.records", "1")
 	writer.SetKeyValueMetadata("waldo.tokens", strconv.FormatInt(tokens, 10))
 	writer.SetKeyValueMetadata("waldo.content_bytes", strconv.Itoa(len(text)))
+	writer.SetKeyValueMetadata("waldo.email_address_records", "0")
 	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
 	bom := NewBOM(strings.Repeat("a", 64), tokenizer.Default, 1, tokens, int64(len(text)), []string{"CC0-1.0"})
 	encoded, err := EncodeBOM(bom)
@@ -320,18 +351,21 @@ func writeCanonicalFixture(t *testing.T, path string, rows []TextRow, footer boo
 		t.Fatal(err)
 	}
 	if footer {
-		var tokens, content int64
+		var tokens, content, emailRecords int64
 		licenses := map[string]bool{}
 		for _, row := range rows {
 			tokens += int64Value(row.TokenCount)
 			content += int64(len(row.Text))
 			licenses[row.License] = true
+			if row.EmailAddresses {
+				emailRecords++
+			}
 		}
-		values := map[string]string{"waldo.records": strconv.Itoa(len(rows)), "waldo.tokens": strconv.FormatInt(tokens, 10), "waldo.content_bytes": strconv.FormatInt(content, 10), "waldo.licenses": `[` + quotedKeys(licenses) + `]`}
+		values := map[string]string{"waldo.records": strconv.Itoa(len(rows)), "waldo.tokens": strconv.FormatInt(tokens, 10), "waldo.content_bytes": strconv.FormatInt(content, 10), "waldo.email_address_records": strconv.FormatInt(emailRecords, 10), "waldo.licenses": `[` + quotedKeys(licenses) + `]`}
 		for key, value := range overrides {
 			values[key] = value
 		}
-		for _, key := range []string{"waldo.records", "waldo.tokens", "waldo.content_bytes", "waldo.licenses"} {
+		for _, key := range []string{"waldo.records", "waldo.tokens", "waldo.content_bytes", "waldo.email_address_records", "waldo.licenses"} {
 			writer.SetKeyValueMetadata(key, values[key])
 		}
 	}

@@ -67,6 +67,7 @@ type ManifestPin struct {
 	Sources      []index.Source              `json:"sources"`
 	Processing   *index.Processing           `json:"processing,omitempty"`
 	ComposedBy   *index.IngestRecipeEvidence `json:"composed_by,omitempty"`
+	Assessment   *index.ContentAssessment    `json:"assessment,omitempty"`
 	Totals       index.Measures              `json:"totals"`
 	Modalities   index.Modalities            `json:"modalities,omitempty"`
 	Licenses     map[string]index.Measures   `json:"licenses"`
@@ -90,6 +91,7 @@ type ShardPin struct {
 	Bytes             int64                     `json:"bytes"`
 	Modalities        index.Modalities          `json:"modalities,omitempty"`
 	Attestation       *shard.Attestation        `json:"attestation,omitempty"`
+	Assessment        *index.ContentAssessment  `json:"assessment,omitempty"`
 }
 
 // BuildBOM resolves targets from one checkout into immutable manifest and
@@ -159,6 +161,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 		Sources:      append([]index.Source(nil), corpus.Manifest.Sources...),
 		Processing:   corpus.Manifest.Processing,
 		ComposedBy:   corpus.Manifest.ComposedBy,
+		Assessment:   corpus.Manifest.Assessment,
 		Licenses:     map[string]index.Measures{},
 	}
 	addShard := func(shard index.Shard, subManifestSHA256 string) {
@@ -187,6 +190,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 			Tokens:            shard.Tokens,
 			Bytes:             shard.Bytes,
 			Modalities:        cloneModalities(shard.Modalities),
+			Assessment:        shard.Assessment,
 		}
 		if len(licenses) == 1 {
 			shardPin.License = licenses[0]

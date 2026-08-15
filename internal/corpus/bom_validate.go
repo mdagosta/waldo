@@ -41,6 +41,13 @@ func (bom BOM) Validate() error {
 		if err := bom.RecordFilter.Validate(bom.Paths); err != nil {
 			return err
 		}
+		if bom.RecordFilter.RequiresEmailAssessment() {
+			for _, shard := range bom.Shards {
+				if shard.RecordSchema < waldoshard.TextRecordSchema {
+					return fmt.Errorf("record filter excludes email-address assessment, but shard %s uses unassessed record schema %d; reingest its corpus with record schema %d", shard.SHA256, shard.RecordSchema, waldoshard.TextRecordSchema)
+				}
+			}
+		}
 	}
 
 	manifests := make(map[string]ManifestPin, len(bom.Manifests))
@@ -48,6 +55,7 @@ func (bom BOM) Validate() error {
 	manifestTotals := make(map[string]index.Measures, len(bom.Manifests))
 	manifestModalities := make(map[string]index.Modalities, len(bom.Manifests))
 	manifestLicenses := make(map[string]map[string]index.Measures, len(bom.Manifests))
+	manifestEmailRecords := make(map[string]int64, len(bom.Manifests))
 	for _, manifest := range bom.Manifests {
 		if manifest.Path == "" || manifests[manifest.Path].Path != "" {
 			return fmt.Errorf("manifest paths must be non-empty and unique: %q", manifest.Path)
@@ -87,6 +95,11 @@ func (bom BOM) Validate() error {
 		if manifest.ComposedBy != nil {
 			if err := index.ValidateIngestRecipeEvidence(*manifest.ComposedBy); err != nil {
 				return fmt.Errorf("manifest %s composed_by: %w", manifest.Path, err)
+			}
+		}
+		if manifest.RecordSchema >= waldoshard.TextRecordSchema {
+			if err := validateAssessment(manifest.Assessment, manifest.Totals.Docs); err != nil {
+				return fmt.Errorf("manifest %s assessment: %w", manifest.Path, err)
 			}
 		}
 		if err := index.ValidateModalities("manifest "+manifest.Path, manifest.Modalities); err != nil {
@@ -132,6 +145,12 @@ func (bom BOM) Validate() error {
 		}
 		if len(shard.Modalities) > 0 && modalityTokens(shard.Modalities) != shard.Tokens {
 			return fmt.Errorf("shard %s modality tokens do not match its token total", shard.SHA256[:12])
+		}
+		if shard.RecordSchema >= waldoshard.TextRecordSchema {
+			if err := validateAssessment(shard.Assessment, shard.Docs); err != nil {
+				return fmt.Errorf("shard %s assessment: %w", shard.SHA256[:12], err)
+			}
+			manifestEmailRecords[shard.Manifest] += shard.Assessment.EmailAddresses.Records
 		}
 		seenSources := map[string]bool{}
 		for _, source := range shard.Sources {
@@ -207,6 +226,19 @@ func (bom BOM) Validate() error {
 		if manifest.Totals != manifestTotals[path] || !maps.Equal(manifest.Licenses, manifestLicenses[path]) || !maps.Equal(manifest.Modalities, manifestModalities[path]) {
 			return fmt.Errorf("manifest %s totals do not match its selected shards", path)
 		}
+		if manifest.RecordSchema >= waldoshard.TextRecordSchema && manifest.Assessment.EmailAddresses.Records != manifestEmailRecords[path] {
+			return fmt.Errorf("manifest %s assessment does not match its selected shards", path)
+		}
+	}
+	return nil
+}
+
+func validateAssessment(assessment *index.ContentAssessment, documents int64) error {
+	if assessment == nil || assessment.EmailAddresses == nil || assessment.EmailAddresses.Detector == "" {
+		return fmt.Errorf("email_addresses detector is required")
+	}
+	if assessment.EmailAddresses.Records < 0 || assessment.EmailAddresses.Records > documents {
+		return fmt.Errorf("email_addresses record count is invalid")
 	}
 	return nil
 }
@@ -236,7 +268,11 @@ func validateShardAttestation(pin ShardPin) error {
 		if len(licenses) == 0 {
 			licenses = []string{pin.License}
 		}
-		if attestation.WriterRecipe != attestation.BOM.WriterRecipe || attestation.BOM.RecordSchema != pin.RecordSchema || attestation.BOM.Records != pin.Docs || attestation.BOM.Tokens != pin.Tokens || !slices.Equal(attestation.BOM.Licenses, licenses) {
+		emailRecords := int64(0)
+		if pin.Assessment != nil && pin.Assessment.EmailAddresses != nil {
+			emailRecords = pin.Assessment.EmailAddresses.Records
+		}
+		if attestation.WriterRecipe != attestation.BOM.WriterRecipe || attestation.BOM.RecordSchema != pin.RecordSchema || attestation.BOM.Records != pin.Docs || attestation.BOM.Tokens != pin.Tokens || attestation.BOM.EmailAddressRecords != emailRecords || !slices.Equal(attestation.BOM.Licenses, licenses) {
 			return fmt.Errorf("shard %s embedded BOM differs from its corpus pin", pin.SHA256[:12])
 		}
 	case "implicit-v4":

@@ -37,8 +37,8 @@ func PrepareStage(stage Stage, bom corpus.BOM, inputs []training.Input) (Prepare
 		return PreparedStage{}, fmt.Errorf("stage %s corpus selection contains no training records", stage.Name)
 	}
 	for _, selected := range bom.Shards {
-		if selected.Format != "parquet" || selected.RecordSchema != shard.TextRecordSchema {
-			return PreparedStage{}, fmt.Errorf("stage %s shard %s is %s record schema %d; causal-language-modeling requires Parquet record schema %d", stage.Name, selected.SHA256[:12], selected.Format, selected.RecordSchema, shard.TextRecordSchema)
+		if selected.Format != "parquet" || selected.RecordSchema < shard.FormerTextRecordSchema || selected.RecordSchema > shard.TextRecordSchema {
+			return PreparedStage{}, fmt.Errorf("stage %s shard %s is %s record schema %d; causal-language-modeling requires supported Parquet record schema", stage.Name, selected.SHA256[:12], selected.Format, selected.RecordSchema)
 		}
 	}
 	if len(inputs) == 0 {
