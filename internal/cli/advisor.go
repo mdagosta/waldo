@@ -488,7 +488,7 @@ func advisorAllowedCorpora(original *model.Compose, corpora []waldoindex.CorpusI
 	if original != nil {
 		for _, stage := range original.Stages {
 			for _, corpus := range stage.Corpora {
-				allowed[corpus] = true
+				allowed[corpus.Path] = true
 			}
 		}
 	}
@@ -602,8 +602,8 @@ func parseAdvisorReply(response string, original *model.Compose, allowedCorpora 
 	}
 	for _, stage := range reply.Compose.Stages {
 		for _, corpus := range stage.Corpora {
-			if !allowedCorpora[corpus] {
-				return advisorReply{}, fmt.Errorf("proposed compose introduces corpus %q that is not in the configured index", corpus)
+			if !allowedCorpora[corpus.Path] {
+				return advisorReply{}, fmt.Errorf("proposed compose introduces corpus %q that is not in the configured index", corpus.Path)
 			}
 		}
 	}

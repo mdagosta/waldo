@@ -100,7 +100,8 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 	if policy == nil {
 		policy = &EvaluationPolicy{Selection: "none-v1"}
 	}
-	if policy.Fraction == 0 || policy.MaxRecords == 0 || policy.MaxBytes == 0 {
+	evaluationDisabled := policy.Fraction == 0 || policy.MaxRecords == 0 || policy.MaxBytes == 0
+	if evaluationDisabled && !inputsHaveRecordFilters(ordered) {
 		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.Seed, SHA256: emptyEvaluationDigest()}
 		return partition, nil
 	}
@@ -122,11 +123,14 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 		if physicalRecords != input.Records {
 			return RecordPartition{}, fmt.Errorf("shard %s contains %d records, corpus BOM declares %d", input.SHA256, physicalRecords, input.Records)
 		}
-		for row := int64(0); row < input.Records; row++ {
+		addCandidate := func(row int64) error {
 			if err := ctx.Err(); err != nil {
-				return RecordPartition{}, err
+				return err
 			}
 			records++
+			if evaluationDisabled {
+				return nil
+			}
 			key := selectionID(input.SHA256, row)
 			score := evaluationScore(parameters.Seed, key)
 			candidate := evaluationCandidate{key: key, corpus: input.Corpus, score: score, input: inputPosition, row: row}
@@ -145,11 +149,33 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 				heap.Pop(candidateHeap)
 				heap.Push(candidateHeap, candidate)
 			}
+			return nil
+		}
+		if input.RecordFilter == nil {
+			for row := int64(0); row < input.Records; row++ {
+				if err := addCandidate(row); err != nil {
+					return RecordPartition{}, err
+				}
+			}
+		} else if err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
+			if !inputAllows(input, view) {
+				return nil
+			}
+			return addCandidate(row)
+		}); err != nil {
+			return RecordPartition{}, fmt.Errorf("apply record filters to shard %s: %w", input.SHA256, err)
 		}
 		completedBytes += input.Bytes
 		if progress != nil {
 			progress(PartitionProgress{CurrentShard: inputPosition + 1, TotalShards: len(ordered), Records: records, Bytes: completedBytes, TotalBytes: totalBytes})
 		}
+	}
+	if records == 0 {
+		return RecordPartition{}, fmt.Errorf("record filters select no training records")
+	}
+	if evaluationDisabled {
+		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.Seed, SHA256: emptyEvaluationDigest()}
+		return partition, nil
 	}
 	desired := int(math.Ceil(float64(records) * policy.Fraction))
 	if records < 2 {
@@ -383,6 +409,9 @@ func (source rawRecordSource) Stream(ctx context.Context, consume func(Record) e
 			if err := ctx.Err(); err != nil {
 				return err
 			}
+			if !inputAllows(input, view) {
+				return nil
+			}
 			record := recordFromView(input, row, view)
 			if source.include != nil && !source.include(record) {
 				return nil
@@ -423,6 +452,9 @@ func CountByteTargets(ctx context.Context, inputs []Input) (int64, error) {
 		err := shard.WalkRecords(input.Path, func(_ int64, view shard.RecordView) error {
 			if err := ctx.Err(); err != nil {
 				return err
+			}
+			if !inputAllows(input, view) {
+				return nil
 			}
 			recordTokens := int64(len(view.Text)) + 1 // UTF-8 bytes plus EOS.
 			if tokens > math.MaxInt64-recordTokens {
@@ -535,6 +567,9 @@ func (source *canonicalRecordSource) streamInputGroup(ctx context.Context, epoch
 	}
 	for _, input := range inputs {
 		err := shard.WalkRecords(input.Path, func(row int64, view shard.RecordView) error {
+			if !inputAllows(input, view) {
+				return nil
+			}
 			record := recordFromView(input, row, view)
 			recordBytes := recordMemoryBytes(record)
 			if recordBytes > source.bufferBytes {
@@ -687,6 +722,19 @@ func weightedBefore(leftTokens int64, leftWeight uint64, rightTokens int64, righ
 
 func recordFromView(input Input, row int64, view shard.RecordView) Record {
 	return Record{SelectionID: selectionID(input.SHA256, row), ID: view.ID, Text: view.Text, Source: view.Source, License: view.License, Language: view.Language, Corpus: input.Corpus}
+}
+
+func inputsHaveRecordFilters(inputs []Input) bool {
+	for _, input := range inputs {
+		if input.RecordFilter != nil {
+			return true
+		}
+	}
+	return false
+}
+
+func inputAllows(input Input, view shard.RecordView) bool {
+	return input.RecordFilter == nil || input.RecordFilter.Allows(input.Corpus, view)
 }
 
 // recordMemoryBytes accounts for retained string data and the five string

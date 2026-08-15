@@ -64,9 +64,23 @@ stages:
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
+    filter:
+      licenses:
+        include: [CC-BY-*, CC0-*]
+        exclude: [CC-BY-NC-*]
     corpora:
-      - core/books/gutenberg
-      - core/common-pile/wikimedia
+      - path: core/books/gutenberg
+        weight: 1
+        filter:
+          languages:
+            include: [en]
+          date:
+            from: "1900"
+      - path: core/common-pile/wikimedia
+        weight: 2
+        filter:
+          sources:
+            exclude: [deprecated-*]
     parameters:
       profile: causal-pretrain-v3
       epochs: 1
@@ -81,9 +95,6 @@ stages:
       evaluate_every: 6000
       shuffle_buffer_records: 32768
       shuffle_buffer_bytes: 1073741824
-      corpus_weights:
-        core/books/gutenberg: 1
-        core/common-pile/wikimedia: 2
       evaluation_fraction: 0.01
       evaluation_max_records: 512
       evaluation_max_bytes: 16777216
@@ -155,7 +166,8 @@ backends receive identical token IDs.
 | `name` | yes | `^[a-z0-9][a-z0-9._-]{0,63}$` | Unique durable stage and run label. |
 | `type` | yes | `pre-training`, `fine-tuning`, `alignment`, or `other` | Records the stage's intended role in provenance. |
 | `objective` | yes | `causal-language-modeling` | The only currently executable objective. |
-| `corpora` | yes | non-empty list of unique index paths | Selects canonical corpus records for the stage. |
+| `filter` | no | record filter | Applies one record-level condition to every selected corpus. |
+| `corpora` | yes | non-empty list of unique scalar paths or configured corpus objects | Selects canonical corpus records for the stage. |
 | `parameters` | yes | object | Declares the portable training budget and controls. |
 
 Relative corpus values are logical paths beneath the selected WALDO index.
@@ -170,6 +182,65 @@ transaction and its latest verified checkpoint.
 Stage `type` currently records intent; it does not select a different loss or
 framework algorithm. `objective` selects executable behavior, and schema 1
 supports only causal language modeling.
+
+## Corpus selection and record filters
+
+A `corpora` entry may remain a path string, preserving every existing
+schema-1 compose:
+
+```yaml
+corpora:
+  - core/books/gutenberg
+```
+
+Use the object form when a corpus needs configuration:
+
+```yaml
+filter:                         # stage-wide
+  licenses:
+    include: [CC-BY-*, CC0-*]
+corpora:
+  - path: core/books/gutenberg
+    weight: 2
+    filter:                     # only this corpus
+      languages:
+        include: [en]
+      sources:
+        exclude: [deprecated-*]
+      date:
+        from: "1900"
+        to: "2025-06-30"
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `path` | yes in object form | Logical index path. |
+| `weight` | only for `causal-pretrain-v3` | Positive integer relative token exposure. It replaces the legacy map entry for this corpus. |
+| `filter` | no | Record filter local to this corpus. |
+| `licenses` | no | Matches the canonical row's normalized license. |
+| `languages` | no | Matches the canonical row's language. |
+| `sources` | no | Matches either the canonical source identifier or source name. |
+| `date` | no | Selects canonical dates that overlap the inclusive `from`/`to` interval. |
+| `include` | no | At least one shell-style, case-sensitive pattern must match. |
+| `exclude` | no | Any matching pattern rejects the record and takes precedence over `include`. |
+| `from` | no | Inclusive lower date bound: `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, or RFC 3339. |
+| `to` | no | Inclusive upper date bound in the same formats. |
+
+Every declared filter must contain at least one condition. A stage-wide
+`filter` and a corpus-local `filter` are combined with AND; the local filter
+cannot loosen the global one. Conditions within one filter are also ANDed.
+Missing or malformed row values do not satisfy an include or date condition.
+
+Filtering happens while WALDO streams canonical rows, before deterministic
+held-out selection and training shuffle. The versioned effective policy is
+pinned in the corpus OpenWALDO BOM, so a resume or distributed node cannot
+silently train on a different subset. The BOM's manifest totals remain the
+indexed reference totals; run and evaluation evidence describe actual training
+consumption.
+
+For `causal-pretrain-v3`, prefer inline `weight` fields. Existing
+`parameters.corpus_weights` maps remain valid for compatibility, but a stage
+must use one representation or the other, never both.
 
 ## Training parameter fields
 
@@ -188,7 +259,7 @@ supports only causal language modeling.
 | `evaluate_every` | no | `min(500, steps)`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation. |
 | `shuffle_buffer_records` | no | default `1024`; `1..1000000` | Maximum records retained by deterministic bounded shuffle. |
 | `shuffle_buffer_bytes` | no | default 64 MiB; `1 B..16 GiB` | Maximum record text retained by deterministic bounded shuffle. |
-| `corpus_weights` | only for v3 | each weight `1..1000000` | Integer relative token exposure keyed by every selected corpus path. |
+| `corpus_weights` | only for v3; legacy form | each weight `1..1000000` | Integer relative token exposure keyed by every selected corpus path. Configured corpus `weight` fields are preferred. |
 | `evaluation_fraction` | no | default `0.01`; `0 <= value < 1` | Candidate fraction for deterministic held-out selection. |
 | `evaluation_max_records` | no | default `256`; `0..1000000` | Held-out record cap. |
 | `evaluation_max_bytes` | no | default 1 MiB; `0 B..16 GiB` | Held-out text-byte cap. |

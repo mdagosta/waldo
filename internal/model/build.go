@@ -140,7 +140,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if len(prepared.Inputs) == 0 {
 		return Inspection{}, fmt.Errorf("stage %s has no verified shard inputs", stage.Name)
 	}
-	resolvedParameters, err := training.ResolveParameters(stage.Parameters)
+	resolvedParameters, err := stage.ResolveParameters()
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
 	}
@@ -1164,7 +1164,7 @@ func validateStagedComposeRun(inspection Inspection, index int, prepared Prepare
 	if err != nil {
 		return err
 	}
-	parameters, err := training.ResolveParameters(prepared.Stage.Parameters)
+	parameters, err := prepared.Stage.ResolveParameters()
 	if err != nil {
 		return err
 	}

@@ -36,7 +36,7 @@ func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.
 		t.Fatalf("proposal = %+v, err = %v", parsed, err)
 	}
 	bad := advisorTestCompose()
-	bad.Stages[0].Corpora = []string{"invented/corpus"}
+	bad.Stages[0].Corpora = model.NewCorpusSelections([]string{"invented/corpus"})
 	proposed.Compose = &bad
 	encoded, err = json.Marshal(proposed)
 	if err != nil {
@@ -46,7 +46,7 @@ func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.
 		t.Fatalf("corpus boundary error = %v", err)
 	}
 	indexed := advisorTestCompose()
-	indexed.Stages[0].Corpora = []string{"core/code"}
+	indexed.Stages[0].Corpora = model.NewCorpusSelections([]string{"core/code"})
 	proposed.Compose = &indexed
 	encoded, err = json.Marshal(proposed)
 	if err != nil {
@@ -181,7 +181,7 @@ func advisorTestCompose() model.Compose {
 		},
 		Stages: []model.Stage{{
 			Name: "pretrain", Type: "pre-training", Objective: "causal-language-modeling",
-			Corpora:    []string{"core/books/gutenberg"},
+			Corpora:    model.NewCorpusSelections([]string{"core/books/gutenberg"}),
 			Parameters: training.Parameters{Steps: 2, BatchSize: 1, SequenceLength: 64, LearningRate: 0.001, Seed: 7},
 		}},
 	}

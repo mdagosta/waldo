@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
 )
@@ -22,7 +23,7 @@ func TestModelComposeGuideNamesEverySchemaField(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, value := range []any{
-		model.Compose{}, model.ComposeBase{}, model.Architecture{}, model.Tokenizer{}, model.Stage{}, training.Parameters{},
+		model.Compose{}, model.ComposeBase{}, model.Architecture{}, model.Tokenizer{}, model.Stage{}, model.CorpusSelection{}, corpus.RecordFilter{}, corpus.ValueFilter{}, corpus.DateFilter{}, training.Parameters{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		for index := 0; index < typeOf.NumField(); index++ {
@@ -50,7 +51,7 @@ func TestEveryReferenceComposeSettingResolvesIntoTrainingContract(t *testing.T) 
 			}
 			for _, stage := range compose.Stages {
 				raw := stage.Parameters
-				resolved, err := training.ResolveParameters(raw)
+				resolved, err := stage.ResolveParameters()
 				if err != nil {
 					t.Fatalf("stage %s: %v", stage.Name, err)
 				}

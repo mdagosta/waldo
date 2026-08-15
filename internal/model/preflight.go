@@ -8,6 +8,7 @@ package model
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/corpus"
@@ -56,7 +57,7 @@ func PrepareStage(stage Stage, bom corpus.BOM, inputs []training.Input) (Prepare
 		expected[selected.SHA256] = value
 	}
 	seen := make(map[string]bool, len(inputs))
-	resolved, err := training.ResolveParameters(stage.Parameters)
+	resolved, err := stage.ResolveParameters()
 	if err != nil {
 		return PreparedStage{}, fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
 	}
@@ -73,7 +74,7 @@ func PrepareStage(stage Stage, bom corpus.BOM, inputs []training.Input) (Prepare
 	}
 	for _, input := range inputs {
 		expectedInput, exists := expected[input.SHA256]
-		if input.Path == "" || !exists || input.Bytes != expectedInput.bytes || input.Records != expectedInput.records || seen[input.SHA256] {
+		if input.Path == "" || !exists || input.Bytes != expectedInput.bytes || input.Records != expectedInput.records || seen[input.SHA256] || !reflect.DeepEqual(input.RecordFilter, bom.RecordFilter) {
 			return PreparedStage{}, fmt.Errorf("stage %s has an invalid or duplicate materialized input %s", stage.Name, input.SHA256)
 		}
 		if (resolved.Data.Order == "corpus-balanced-shuffle-v1" || resolved.Data.Order == "corpus-weighted-shuffle-v1") && !selected[input.Corpus] {
@@ -171,7 +172,7 @@ func validateStage(stage Stage, architecture Architecture) error {
 		return fmt.Errorf("stage %s has unsupported objective %q", stage.Name, stage.Objective)
 	}
 	parameters := stage.Parameters
-	if _, err := training.ResolveParameters(parameters); err != nil {
+	if _, err := stage.ResolveParameters(); err != nil {
 		return fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
 	}
 	if architecture.ContextTokens > 0 && uint64(parameters.SequenceLength) > architecture.ContextTokens {

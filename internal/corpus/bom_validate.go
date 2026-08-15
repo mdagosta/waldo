@@ -37,6 +37,11 @@ func (bom BOM) Validate() error {
 	if !slices.Equal(policy.Include, bom.Policy.Include) || !slices.Equal(policy.Exclude, bom.Policy.Exclude) {
 		return fmt.Errorf("license policy patterns must be non-empty and unique")
 	}
+	if bom.RecordFilter != nil {
+		if err := bom.RecordFilter.Validate(bom.Paths); err != nil {
+			return err
+		}
+	}
 
 	manifests := make(map[string]ManifestPin, len(bom.Manifests))
 	sourceNames := make(map[string]map[string]bool, len(bom.Manifests))

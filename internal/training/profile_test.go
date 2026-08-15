@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/parquet-go/parquet-go"
@@ -139,6 +140,48 @@ func TestRecordPartitionPinsAndExcludesHeldOutRecords(t *testing.T) {
 	}
 	if targets, err := first.TrainingByteTargets(context.Background()); err != nil || targets <= 0 {
 		t.Fatalf("training targets = %d, err = %v", targets, err)
+	}
+}
+
+func TestRecordFiltersApplyToPartitionTargetsAndTrainingStream(t *testing.T) {
+	input := writeTrainingRows(t, []shard.Row{
+		{SHA256: record.TextHash("keep"), Kind: record.KindPretrain, Text: "keep", Source: "source-a", SourceName: "project-a", License: "CC-BY-4.0", Lang: "en", Date: "2024", Tokens: 1},
+		{SHA256: record.TextHash("wrong language"), Kind: record.KindPretrain, Text: "wrong language", Source: "source-a", SourceName: "project-a", License: "CC-BY-4.0", Lang: "fr", Date: "2024", Tokens: 1},
+		{SHA256: record.TextHash("wrong license"), Kind: record.KindPretrain, Text: "wrong license", Source: "source-a", SourceName: "project-a", License: "GPL-2.0-only", Lang: "en", Date: "2024", Tokens: 1},
+	})
+	input.Corpus = "example"
+	input.RecordFilter = &corpus.RecordFilterPolicy{
+		Schema:  corpus.RecordFilterSchema,
+		Global:  &corpus.RecordFilter{Languages: &corpus.ValueFilter{Include: []string{"en"}}},
+		Corpora: map[string]corpus.RecordFilter{"example": {Licenses: &corpus.ValueFilter{Include: []string{"CC-BY-*"}}, Date: &corpus.DateFilter{From: "2020"}}},
+	}
+	zeroFraction := 0.0
+	zeroRecords := 0
+	zeroBytes := int64(0)
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 42, EvaluationFraction: &zeroFraction, EvaluationMaxRecords: &zeroRecords, EvaluationMaxBytes: &zeroBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartition([]Input{input}, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := partition.TrainingRecords()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	if err := source.Stream(context.Background(), func(value Record) error {
+		texts = append(texts, value.Text)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(texts, []string{"keep"}) {
+		t.Fatalf("filtered training texts = %v", texts)
+	}
+	if targets, err := CountByteTargets(context.Background(), []Input{input}); err != nil || targets != int64(len("keep")) {
+		t.Fatalf("filtered byte targets = %d, err = %v", targets, err)
 	}
 }
 
@@ -517,12 +560,17 @@ func collectRecords(t *testing.T, inputs []Input, parameters ResolvedParameters)
 
 func writeTrainingShard(t *testing.T, texts []string) Input {
 	t.Helper()
-	var encoded bytes.Buffer
-	writer := parquet.NewGenericWriter[shard.Row](&encoded)
 	rows := make([]shard.Row, 0, len(texts))
 	for _, text := range texts {
 		rows = append(rows, shard.Row{SHA256: record.TextHash(text), Kind: record.KindPretrain, Text: text, Source: "fixture", License: "CC0-1.0", Tokens: 1})
 	}
+	return writeTrainingRows(t, rows)
+}
+
+func writeTrainingRows(t *testing.T, rows []shard.Row) Input {
+	t.Helper()
+	var encoded bytes.Buffer
+	writer := parquet.NewGenericWriter[shard.Row](&encoded)
 	if _, err := writer.Write(rows); err != nil {
 		t.Fatal(err)
 	}
@@ -536,5 +584,5 @@ func writeTrainingShard(t *testing.T, texts []string) Input {
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return Input{Path: path, SHA256: digest, Bytes: int64(len(data)), Records: int64(len(texts))}
+	return Input{Path: path, SHA256: digest, Bytes: int64(len(data)), Records: int64(len(rows))}
 }

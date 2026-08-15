@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/openwaldo/waldo/internal/training"
 	"github.com/parquet-go/parquet-go"
+	"gopkg.in/yaml.v3"
 )
 
 type backendFunc func(context.Context, training.Request) (training.Observation, error)
@@ -50,7 +52,7 @@ func TestLoadComposeIsStrictAndKeepsIndexPathsLogical(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded != path || !reflect.DeepEqual(compose.Stages[0].Corpora, []string{"core/books", "science/papers"}) {
+	if loaded != path || !reflect.DeepEqual(CorpusPaths(compose.Stages[0].Corpora), []string{"core/books", "science/papers"}) {
 		t.Fatalf("loaded = %q, corpora = %v", loaded, compose.Stages[0].Corpora)
 	}
 	if err := os.WriteFile(path, []byte(composeYAML("backend:\n  name: fake\n")), 0o644); err != nil {
@@ -58,6 +60,77 @@ func TestLoadComposeIsStrictAndKeepsIndexPathsLogical(t *testing.T) {
 	}
 	if _, _, err := LoadCompose(path); err == nil || !strings.Contains(err.Error(), "field backend not found") {
 		t.Fatalf("LoadCompose backend error = %v", err)
+	}
+}
+
+func TestComposeAcceptsConfiguredCorporaWithoutBreakingScalarForm(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "configured.yaml")
+	configured := strings.Replace(composeYAML(""), "      - core/books\n      - science/papers", `      - path: core/books
+        weight: 2
+        filter:
+          licenses:
+            include: [CC-BY-*]
+      - path: science/papers
+        weight: 1`, 1)
+	configured = strings.Replace(configured, "    corpora:\n", "    filter:\n      languages:\n        include: [en]\n    corpora:\n", 1)
+	configured = strings.Replace(configured, "    parameters:\n", "    parameters:\n      profile: causal-pretrain-v3\n", 1)
+	if err := os.WriteFile(path, []byte(configured), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compose, _, err := LoadCompose(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage := compose.Stages[0]
+	resolved, err := stage.ResolveParameters()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(resolved.Data.CorpusWeights, map[string]uint64{"core/books": 2, "science/papers": 1}) {
+		t.Fatalf("inline weights = %v", resolved.Data.CorpusWeights)
+	}
+	policy, err := stage.RecordFilterPolicy([]string{"core/books.yaml", "science/papers"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if policy.Global == nil || policy.Corpora["core/books.yaml"].Licenses == nil {
+		t.Fatalf("resolved filters = %+v", policy)
+	}
+	encoded, err := yaml.Marshal(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte("- path: core/books")) || !bytes.Contains(encoded, []byte("- path: science/papers")) {
+		t.Fatalf("configured corpus form was not preserved:\n%s", encoded)
+	}
+
+	bad := strings.Replace(configured, "include: [CC-BY-*]", "unknown: true", 1)
+	if err := os.WriteFile(path, []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompose(path); err == nil || !strings.Contains(err.Error(), "field unknown not found") {
+		t.Fatalf("nested unknown field error = %v", err)
+	}
+}
+
+func TestCorpusSelectionJSONIsStrictAndAcceptsScalarWhitespace(t *testing.T) {
+	var scalar CorpusSelection
+	if err := json.Unmarshal([]byte(`  "core/books" `), &scalar); err != nil || scalar.Path != "core/books" {
+		t.Fatalf("scalar JSON selection = %+v, err = %v", scalar, err)
+	}
+	var configured CorpusSelection
+	if err := json.Unmarshal([]byte(`{"path":"core/books","unknown":true}`), &configured); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("configured JSON unknown-field error = %v", err)
+	}
+}
+
+func TestComposeRejectsMixedInlineAndLegacyWeights(t *testing.T) {
+	compose := validCompose()
+	weight := uint64(2)
+	compose.Stages[0].Corpora[0].Weight = &weight
+	compose.Stages[0].Parameters.CorpusWeights = map[string]uint64{"example": 2}
+	if err := compose.Validate(); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+		t.Fatalf("mixed weight error = %v", err)
 	}
 }
 
@@ -71,7 +144,7 @@ func TestArchitectureRejectsInvalidDropout(t *testing.T) {
 
 func TestComposeRejectsDuplicateAndMismatchedWeightedCorpora(t *testing.T) {
 	compose := validCompose()
-	compose.Stages[0].Corpora = []string{"example", "example"}
+	compose.Stages[0].Corpora = NewCorpusSelections([]string{"example", "example"})
 	if err := compose.Validate(); err == nil || !strings.Contains(err.Error(), "duplicate corpus") {
 		t.Fatalf("duplicate corpus error = %v", err)
 	}
@@ -158,6 +231,40 @@ func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "no trained model weights") {
 		t.Fatalf("artifact = %q", data)
+	}
+}
+
+func TestTrainingRunPinsConfiguredRecordFilter(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root, NewID: func() (string, error) { return "filtered1", nil }, Resolver: training.FakeResolver()}
+	if _, err := builder.Initialize("filtered", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("pretrain")
+	stage.Filter = &corpus.RecordFilter{Licenses: &corpus.ValueFilter{Include: []string{"CC0-*"}}}
+	prepared := preparedFixture(t, testStage("pretrain"))
+	policy, err := stage.RecordFilterPolicy(prepared.BOM.Paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared.Stage = stage
+	prepared.BOM.RecordFilter = policy
+	for index := range prepared.Inputs {
+		prepared.Inputs[index].RecordFilter = policy
+	}
+	inspection, err := builder.Train(context.Background(), "filtered", prepared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inspection.RunBOMs) != 1 || !reflect.DeepEqual(inspection.RunBOMs[0].CorpusBOM.RecordFilter, policy) {
+		t.Fatalf("run corpus filter = %+v", inspection.RunBOMs)
+	}
+	runBOMData, err := os.ReadFile(filepath.Join(inspection.Path, "runs", "0001-pretrain-filtered1", "RUN-BOM.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(runBOMData, []byte(`"record_filter"`)) || !bytes.Contains(runBOMData, []byte(`"CC0-*"`)) {
+		t.Fatalf("persisted run BOM omits filter: %s", runBOMData)
 	}
 }
 
@@ -725,7 +832,7 @@ func testArchitecture() Architecture {
 }
 
 func testStage(name string) Stage {
-	return Stage{Name: name, Type: "pre-training", Objective: "causal-language-modeling", Corpora: []string{"example"}, Parameters: training.Parameters{Steps: 2, BatchSize: 1, SequenceLength: 64, LearningRate: 0.001, Seed: 7}}
+	return Stage{Name: name, Type: "pre-training", Objective: "causal-language-modeling", Corpora: NewCorpusSelections([]string{"example"}), Parameters: training.Parameters{Steps: 2, BatchSize: 1, SequenceLength: 64, LearningRate: 0.001, Seed: 7}}
 }
 
 func preparedFixture(t *testing.T, stage Stage) PreparedStage {

@@ -31,6 +31,7 @@ type BOM struct {
 	Index        index.Identity            `json:"index"`
 	Paths        []string                  `json:"paths"`
 	Policy       LicensePolicy             `json:"license_policy,omitempty"`
+	RecordFilter *RecordFilterPolicy       `json:"record_filter,omitempty"`
 	Manifests    []ManifestPin             `json:"manifests"`
 	SubManifests []SubManifestPin          `json:"sub_manifests,omitempty"`
 	Shards       []ShardPin                `json:"shards"`

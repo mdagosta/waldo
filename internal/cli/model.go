@@ -713,7 +713,7 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 	if err != nil {
 		return training.Request{}, err
 	}
-	inputs := verifiedTrainingInputs(materialized, plan.CorpusBOM.Paths)
+	inputs := verifiedTrainingInputs(materialized, plan.CorpusBOM)
 	if len(inputs) == 0 {
 		return training.Request{}, fmt.Errorf("primary plan resolved no verified shard inputs")
 	}
@@ -1336,14 +1336,14 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	}
 	stage := model.Stage{
 		Name: stageName, Type: "pre-training",
-		Objective: "causal-language-modeling", Corpora: append([]string(nil), paths...),
+		Objective: "causal-language-modeling", Corpora: model.NewCorpusSelections(paths),
 		Parameters: training.Parameters{Epochs: epochs, Steps: 1, BatchSize: batch, SequenceLength: sequence, LearningRate: learningRate, Seed: seed},
 	}
 	prepared, err := materializeModelStage(context, stage, bom, cache, progress, audit)
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
-	resolved, err := training.ResolveParameters(prepared.Stage.Parameters)
+	resolved, err := prepared.Stage.ResolveParameters()
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
@@ -1370,7 +1370,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 }
 
 func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {
-	targets, err := resolveIndexArguments(context.Execution, stage.Corpora, progress)
+	targets, err := resolveIndexArguments(context.Execution, model.CorpusPaths(stage.Corpora), progress)
 	if err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
 	}
@@ -1382,6 +1382,14 @@ func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cach
 	if err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
 	}
+	recordFilter, err := stage.RecordFilterPolicy(bom.Paths)
+	if err != nil {
+		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
+	}
+	bom.RecordFilter = recordFilter
+	if err := bom.Validate(); err != nil {
+		return model.PreparedStage{}, fmt.Errorf("stage %s filtered corpus BOM: %w", stage.Name, err)
+	}
 	return materializeModelStage(context, stage, bom, cache, progress, audit)
 }
 
@@ -1391,7 +1399,7 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 	if err != nil {
 		return model.PreparedStage{}, err
 	}
-	inputs := verifiedTrainingInputs(materialized, bom.Paths)
+	inputs := verifiedTrainingInputs(materialized, bom)
 	paths := make([]string, 0, len(inputs))
 	for _, input := range inputs {
 		paths = append(paths, input.Path)
@@ -1412,7 +1420,7 @@ func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, c
 	return model.PrepareStage(stage, bom, inputs)
 }
 
-func verifiedTrainingInputs(materialized corpus.Materialized, selections []string) []training.Input {
+func verifiedTrainingInputs(materialized corpus.Materialized, bom corpus.BOM) []training.Input {
 	seen := map[string]bool{}
 	var inputs []training.Input
 	for _, object := range materialized.Objects {
@@ -1420,18 +1428,22 @@ func verifiedTrainingInputs(materialized corpus.Materialized, selections []strin
 			continue
 		}
 		seen[object.Shard.SHA256] = true
-		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes, Records: object.Shard.Docs, Corpus: selectedCorpusGroup(object.Shard.Manifest, selections)})
+		inputs = append(inputs, training.Input{Path: object.Path, SHA256: object.Shard.SHA256, Bytes: object.Shard.Bytes, Records: object.Shard.Docs, Corpus: selectedCorpusGroup(object.Shard.Manifest, bom.Paths), RecordFilter: bom.RecordFilter})
 	}
 	return inputs
 }
 
 func selectedCorpusGroup(manifest string, selections []string) string {
 	best := ""
+	bestLogicalLength := 0
+	manifestLogical := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(manifest), ".yaml"), ".json")
 	for _, selection := range selections {
 		selection = strings.TrimSuffix(strings.TrimSpace(selection), "/")
-		if manifest == selection || strings.HasPrefix(manifest, selection+"/") {
-			if len(selection) > len(best) {
+		logical := strings.TrimSuffix(strings.TrimSuffix(selection, ".yaml"), ".json")
+		if manifestLogical == logical || strings.HasPrefix(manifestLogical, logical+"/") {
+			if len(logical) > bestLogicalLength {
 				best = selection
+				bestLogicalLength = len(logical)
 			}
 		}
 	}

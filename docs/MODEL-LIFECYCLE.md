@@ -277,11 +277,13 @@ architecture:
   dropout: 0.1
 stages:
   - name: pretrain
+    corpora:
+      - path: core/books/gutenberg
+        weight: 1
+      - path: core/common-pile/wikimedia
+        weight: 2
     parameters:
       profile: causal-pretrain-v3
-      corpus_weights:
-        core/books/gutenberg: 1
-        core/common-pile/wikimedia: 2
 ```
 
 Weights define relative tokenizer-target exposure, not sampling probabilities
@@ -289,6 +291,11 @@ or duplicated source records. They are preserved in the run BOM and exact
 consumption remains backend-validated. Built-in MLX and PyTorch workers apply
 dropout to attention and feed-forward residual branches during training and
 disable it during evaluation and inference.
+
+Scalar corpus paths and the older `parameters.corpus_weights` map remain
+accepted. A configured corpus entry can also carry license, language, source,
+and date filters; stage-wide and corpus-local filters are combined and pinned
+in the corpus BOM before held-out selection and training.
 
 Run it with:
 

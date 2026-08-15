@@ -17,7 +17,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
+	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/training"
 	"gopkg.in/yaml.v3"
 )
@@ -60,11 +62,202 @@ type Tokenizer struct {
 }
 
 type Stage struct {
-	Name       string              `json:"name" yaml:"name"`
-	Type       string              `json:"type" yaml:"type"`
-	Objective  string              `json:"objective" yaml:"objective"`
-	Corpora    []string            `json:"corpora" yaml:"corpora"`
-	Parameters training.Parameters `json:"parameters" yaml:"parameters"`
+	Name       string               `json:"name" yaml:"name"`
+	Type       string               `json:"type" yaml:"type"`
+	Objective  string               `json:"objective" yaml:"objective"`
+	Filter     *corpus.RecordFilter `json:"filter,omitempty" yaml:"filter,omitempty"`
+	Corpora    []CorpusSelection    `json:"corpora" yaml:"corpora"`
+	Parameters training.Parameters  `json:"parameters" yaml:"parameters"`
+}
+
+// CorpusSelection preserves the compact scalar form while allowing a corpus
+// to carry its own portable training configuration.
+type CorpusSelection struct {
+	Path   string               `json:"path" yaml:"path"`
+	Weight *uint64              `json:"weight,omitempty" yaml:"weight,omitempty"`
+	Filter *corpus.RecordFilter `json:"filter,omitempty" yaml:"filter,omitempty"`
+}
+
+func (selection *CorpusSelection) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '"' {
+		return json.Unmarshal(trimmed, &selection.Path)
+	}
+	type plain CorpusSelection
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode((*plain)(selection)); err != nil {
+		return err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = fmt.Errorf("corpus selection contains trailing JSON")
+		}
+		return err
+	}
+	return nil
+}
+
+func (selection CorpusSelection) MarshalJSON() ([]byte, error) {
+	if selection.Weight == nil && selection.Filter == nil {
+		return json.Marshal(selection.Path)
+	}
+	type plain CorpusSelection
+	return json.Marshal(plain(selection))
+}
+
+func (selection *CorpusSelection) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		if node.Tag != "!!str" {
+			return fmt.Errorf("corpus selection must be a path string or mapping")
+		}
+		selection.Path = node.Value
+		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("corpus selection must be a path string or mapping")
+	}
+	if err := validateCorpusSelectionYAML(node); err != nil {
+		return err
+	}
+	type plain CorpusSelection
+	return node.Decode((*plain)(selection))
+}
+
+func (selection CorpusSelection) MarshalYAML() (any, error) {
+	if selection.Weight == nil && selection.Filter == nil {
+		return selection.Path, nil
+	}
+	type plain CorpusSelection
+	return plain(selection), nil
+}
+
+func validateCorpusSelectionYAML(node *yaml.Node) error {
+	if err := knownYAMLFields(node, map[string]bool{"path": true, "weight": true, "filter": true}); err != nil {
+		return err
+	}
+	for index := 0; index < len(node.Content); index += 2 {
+		if node.Content[index].Value == "filter" {
+			return validateRecordFilterYAML(node.Content[index+1])
+		}
+	}
+	return nil
+}
+
+func validateRecordFilterYAML(node *yaml.Node) error {
+	if err := knownYAMLFields(node, map[string]bool{"licenses": true, "languages": true, "sources": true, "date": true}); err != nil {
+		return err
+	}
+	for index := 0; index < len(node.Content); index += 2 {
+		key, value := node.Content[index].Value, node.Content[index+1]
+		if key == "date" {
+			if err := knownYAMLFields(value, map[string]bool{"from": true, "to": true}); err != nil {
+				return err
+			}
+		} else if err := knownYAMLFields(value, map[string]bool{"include": true, "exclude": true}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func knownYAMLFields(node *yaml.Node, allowed map[string]bool) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("expected a mapping")
+	}
+	seen := map[string]bool{}
+	for index := 0; index < len(node.Content); index += 2 {
+		name := node.Content[index].Value
+		if !allowed[name] {
+			return fmt.Errorf("field %s not found", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("field %s appears more than once", name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+func CorpusPaths(selections []CorpusSelection) []string {
+	paths := make([]string, len(selections))
+	for index, selection := range selections {
+		paths[index] = selection.Path
+	}
+	return paths
+}
+
+func NewCorpusSelections(paths []string) []CorpusSelection {
+	selections := make([]CorpusSelection, len(paths))
+	for index, corpusPath := range paths {
+		selections[index] = CorpusSelection{Path: corpusPath}
+	}
+	return selections
+}
+
+func (stage Stage) ResolveParameters() (training.ResolvedParameters, error) {
+	parameters := stage.Parameters
+	inline := false
+	for _, selection := range stage.Corpora {
+		inline = inline || selection.Weight != nil
+	}
+	if inline && len(parameters.CorpusWeights) != 0 {
+		return training.ResolvedParameters{}, fmt.Errorf("inline corpus weights cannot be combined with parameters.corpus_weights")
+	}
+	if inline {
+		parameters.CorpusWeights = make(map[string]uint64, len(stage.Corpora))
+		for _, selection := range stage.Corpora {
+			if selection.Weight != nil {
+				parameters.CorpusWeights[selection.Path] = *selection.Weight
+			}
+		}
+	}
+	return training.ResolveParameters(parameters)
+}
+
+func (stage Stage) RecordFilterPolicy(paths []string) (*corpus.RecordFilterPolicy, error) {
+	configured := stage.Filter != nil
+	policy := corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema, Global: stage.Filter}
+	for _, selection := range stage.Corpora {
+		if selection.Filter == nil {
+			continue
+		}
+		configured = true
+		resolved, err := resolveSelectedPath(selection.Path, paths)
+		if err != nil {
+			return nil, err
+		}
+		if policy.Corpora == nil {
+			policy.Corpora = map[string]corpus.RecordFilter{}
+		}
+		policy.Corpora[resolved] = *selection.Filter
+	}
+	if !configured {
+		return nil, nil
+	}
+	if err := policy.Validate(paths); err != nil {
+		return nil, err
+	}
+	return &policy, nil
+}
+
+func resolveSelectedPath(declared string, paths []string) (string, error) {
+	var resolved string
+	for _, actual := range paths {
+		logical := strings.TrimSuffix(strings.TrimSuffix(actual, ".yaml"), ".json")
+		if declared != actual && declared != logical {
+			continue
+		}
+		if resolved != "" {
+			return "", fmt.Errorf("corpus path %q resolves ambiguously", declared)
+		}
+		resolved = actual
+	}
+	if resolved == "" {
+		return "", fmt.Errorf("corpus path %q is not in the resolved selection", declared)
+	}
+	return resolved, nil
 }
 
 type ArchitectureForecast struct {
@@ -154,7 +347,8 @@ func (compose Compose) Validate() error {
 			return fmt.Errorf("stage %s requires at least one index path in corpora", stage.Name)
 		}
 		corpora := make(map[string]bool, len(stage.Corpora))
-		for _, corpusPath := range stage.Corpora {
+		for _, selection := range stage.Corpora {
+			corpusPath := selection.Path
 			if corpusPath == "" {
 				return fmt.Errorf("stage %s contains an empty corpus index path", stage.Name)
 			}
@@ -162,25 +356,34 @@ func (compose Compose) Validate() error {
 				return fmt.Errorf("stage %s contains duplicate corpus path %q", stage.Name, corpusPath)
 			}
 			corpora[corpusPath] = true
+			if selection.Filter != nil {
+				if err := selection.Filter.Validate(); err != nil {
+					return fmt.Errorf("stage %s corpus %s filter: %w", stage.Name, corpusPath, err)
+				}
+			}
 		}
-		parameters := stage.Parameters
-		resolved, err := training.ResolveParameters(parameters)
+		if stage.Filter != nil {
+			if err := stage.Filter.Validate(); err != nil {
+				return fmt.Errorf("stage %s filter: %w", stage.Name, err)
+			}
+		}
+		resolved, err := stage.ResolveParameters()
 		if err != nil {
 			return fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
 		}
 		if resolved.Data.Order == "corpus-weighted-shuffle-v1" {
 			for corpusPath := range corpora {
-				if parameters.CorpusWeights[corpusPath] == 0 {
+				if resolved.Data.CorpusWeights[corpusPath] == 0 {
 					return fmt.Errorf("stage %s corpus_weights does not declare corpus %q", stage.Name, corpusPath)
 				}
 			}
-			for corpusPath := range parameters.CorpusWeights {
+			for corpusPath := range resolved.Data.CorpusWeights {
 				if !corpora[corpusPath] {
 					return fmt.Errorf("stage %s corpus_weights declares unselected corpus %q", stage.Name, corpusPath)
 				}
 			}
 		}
-		if uint64(parameters.SequenceLength) > compose.Architecture.ContextTokens {
+		if uint64(stage.Parameters.SequenceLength) > compose.Architecture.ContextTokens {
 			return fmt.Errorf("stage %s sequence_length exceeds architecture context_tokens", stage.Name)
 		}
 	}

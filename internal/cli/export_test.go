@@ -215,7 +215,7 @@ stages:
 		t.Fatalf("generated advisor compose = %+v, err = %v, stdout = %q, stderr = %q", generated, err, stdout.String(), stderr.String())
 	}
 	newCompose := advisorTestCompose()
-	newCompose.Stages[0].Corpora = []string{"books"}
+	newCompose.Stages[0].Corpora = model.NewCorpusSelections([]string{"books"})
 	newProposal, err := json.Marshal(advisorReply{
 		Reply:   "I have enough information to propose a small test model.",
 		Changes: []string{"train a small byte-level model on the indexed books corpus"}, Compose: &newCompose,

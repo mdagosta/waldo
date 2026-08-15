@@ -171,7 +171,7 @@ func multiNodePlanForTest(t *testing.T, bom corpus.BOM, architecture string) mod
 	if err != nil {
 		t.Fatal(err)
 	}
-	partition, err := training.NewRecordPartition(verifiedTrainingInputs(materialized, bom.Paths), parameters)
+	partition, err := training.NewRecordPartition(verifiedTrainingInputs(materialized, bom), parameters)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -511,5 +511,12 @@ func TestSecondaryScratchIsNodeUnique(t *testing.T) {
 	}
 	if len(seen) != 3 {
 		t.Fatalf("expected three distinct scratch paths, got %d", len(seen))
+	}
+}
+
+func TestSelectedCorpusGroupPreservesCanonicalManifestPath(t *testing.T) {
+	selections := []string{"core", "core/peps.yaml"}
+	if got := selectedCorpusGroup("core/peps", selections); got != "core/peps.yaml" {
+		t.Fatalf("selected corpus group = %q", got)
 	}
 }

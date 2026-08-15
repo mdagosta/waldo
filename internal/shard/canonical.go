@@ -31,13 +31,16 @@ var canonicalColumns = []string{"content_sha256", "text", "source", "source_name
 var legacyColumns = []string{"sha256", "kind", "text", "source", "source_name", "license", "license_raw", "lang", "lang_score", "date", "tokens", "meta"}
 
 type RecordView struct {
-	ID       string `json:"id"`
-	Text     string `json:"-"`
-	Source   string `json:"source"`
-	License  string `json:"license"`
-	Language string `json:"language,omitempty"`
-	Tokens   int64  `json:"tokens"`
-	Bytes    int64  `json:"bytes"`
+	ID            string `json:"id"`
+	Text          string `json:"-"`
+	Source        string `json:"source"`
+	SourceName    string `json:"source_name,omitempty"`
+	License       string `json:"license"`
+	Language      string `json:"language,omitempty"`
+	LanguageScore int64  `json:"language_score,omitempty"`
+	Date          string `json:"date,omitempty"`
+	Tokens        int64  `json:"tokens"`
+	Bytes         int64  `json:"bytes"`
 }
 
 type Summary struct {
@@ -590,7 +593,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 				return fmt.Errorf("read record %d: %w", position, readErr)
 			}
 			row := rows[0]
-			view := RecordView{ID: row.SHA256, Text: row.Text, Source: row.Source, License: row.License, Language: row.Lang, Tokens: row.Tokens, Bytes: int64(len(row.Text))}
+			view := RecordView{ID: row.SHA256, Text: row.Text, Source: row.Source, SourceName: row.SourceName, License: row.License, Language: row.Lang, LanguageScore: row.LangScore, Date: row.Date, Tokens: row.Tokens, Bytes: int64(len(row.Text))}
 			if err := callback(position, view); err != nil {
 				return err
 			}
@@ -612,7 +615,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 			return fmt.Errorf("read record %d: %w", position, readErr)
 		}
 		row := rows[0]
-		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, License: row.License, Language: stringValue(row.Language), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text))}
+		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text))}
 		if err := callback(position, view); err != nil {
 			return err
 		}
@@ -827,7 +830,7 @@ func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPres
 			return fmt.Errorf("record %d (%s): meta is not a JSON object", position, canonical.SHA256)
 		}
 	}
-	view := RecordView{ID: canonical.SHA256, Text: canonical.Text, Source: canonical.Source, License: canonical.License, Language: canonical.Lang, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text))}
+	view := RecordView{ID: canonical.SHA256, Text: canonical.Text, Source: canonical.Source, SourceName: canonical.SourceName, License: canonical.License, Language: canonical.Lang, LanguageScore: canonical.LangScore, Date: canonical.Date, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text))}
 	if consumer.callback != nil {
 		if err := consumer.callback(position, view, canonical, meta); err != nil {
 			return err
