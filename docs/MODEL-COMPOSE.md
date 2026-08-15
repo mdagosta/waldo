@@ -72,6 +72,8 @@ stages:
     filter:
       exclude:
         email_addresses: true
+        repetitive_content: true
+        boilerplate_content: true
         licenses: [CC-BY-NC-*]
     corpora:
       - path: core/books/gutenberg
@@ -286,6 +288,8 @@ form is a single deny list whose conditions are ORed:
 filter:                         # stage-wide
   exclude:
     email_addresses: true
+    repetitive_content: true
+    boilerplate_content: true
     licenses: [CC-BY-NC-*, LicenseRef-Restricted-*]
 corpora:
   - path: core/books/gutenberg
@@ -306,6 +310,8 @@ corpora:
 | `weight` | only for `causal-pretrain-weighted` | Positive integer relative token exposure. It replaces the legacy map entry for this corpus. |
 | `filter` | no | Record filter local to this corpus. |
 | `filter.exclude.email_addresses` | no | Excludes rows whose schema-2 email-address flag equals the declared boolean. The normal policy is `true`. |
+| `filter.exclude.repetitive_content` | no | Excludes rows whose schema-2 repeated-token flag equals the declared boolean. The normal policy is `true`. |
+| `filter.exclude.boilerplate_content` | no | Excludes rows whose schema-2 duplicated-structure flag equals the declared boolean. The normal policy is `true`. |
 | `filter.exclude.licenses` | no | Excludes rows whose normalized license matches any listed shell-style pattern. |
 | `licenses` | no | Matches the canonical row's normalized license. |
 | `languages` | no | Matches the canonical row's language. |
@@ -325,10 +331,11 @@ decision. Missing or malformed row values do not satisfy an include or date
 condition.
 
 The older `filter.licenses.include`/`exclude` representation remains accepted.
-It cannot be combined with `filter.exclude.licenses` in the same filter. Email
-filtering requires assessed record schema 2; selecting an unassessed schema-1
-shard fails before held-out selection or training and directs the user to
-rebuild the affected corpus. No filter causes email text to be removed.
+It cannot be combined with `filter.exclude.licenses` in the same filter.
+Content-assessment filtering requires record schema 2; selecting an unassessed
+schema-1 shard fails before held-out selection or training and directs the user
+to rebuild the affected corpus. Assessment filters exclude complete rows; they
+never redact or rewrite their text.
 
 Filtering happens while WALDO streams canonical rows, before deterministic
 held-out selection and training shuffle. The versioned effective policy is

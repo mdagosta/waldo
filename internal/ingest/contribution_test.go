@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/index"
@@ -68,10 +69,12 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	}
 }
 
-func TestIngestionFlagsEmailRowsAndSummarizesManifest(t *testing.T) {
+func TestIngestionFlagsContentAssessmentsAndSummarizesManifest(t *testing.T) {
 	directory := t.TempDir()
 	writeFixture(t, filepath.Join(directory, "email.txt"), "Contact maintainer@example.org for details.\n")
 	writeFixture(t, filepath.Join(directory, "plain.txt"), "No contact address in this record.\n")
+	writeFixture(t, filepath.Join(directory, "boilerplate.txt"), strings.Repeat("Repeated navigation and footer line.\n", 8))
+	writeFixture(t, filepath.Join(directory, "repetitive.txt"), strings.Repeat("alpha beta gamma delta epsilon zeta eta theta ", 12))
 	probe, err := ProbePaths(context.Background(), []string{directory})
 	if err != nil {
 		t.Fatal(err)
@@ -94,21 +97,33 @@ func TestIngestionFlagsEmailRowsAndSummarizesManifest(t *testing.T) {
 	if manifest.Assessment == nil || manifest.Assessment.EmailAddresses == nil || manifest.Assessment.EmailAddresses.Detector != shard.EmailDetector || manifest.Assessment.EmailAddresses.Records != 1 {
 		t.Fatalf("manifest assessment = %+v", manifest.Assessment)
 	}
-	var flagged, assessed int
+	if manifest.Assessment.RepetitiveContent == nil || manifest.Assessment.RepetitiveContent.Detector != shard.RepetitionDetector || manifest.Assessment.RepetitiveContent.Records != 1 {
+		t.Fatalf("repetitive assessment = %+v", manifest.Assessment)
+	}
+	if manifest.Assessment.BoilerplateContent == nil || manifest.Assessment.BoilerplateContent.Detector != shard.BoilerplateDetector || manifest.Assessment.BoilerplateContent.Records != 1 {
+		t.Fatalf("boilerplate assessment = %+v", manifest.Assessment)
+	}
+	var emailFlagged, repetitiveFlagged, boilerplateFlagged, assessed int
 	if err := shard.WalkRecords(assembly.Objects[0].Path, func(_ int64, view shard.RecordView) error {
-		if view.EmailAddresses == nil {
-			t.Fatal("schema-2 row has no email assessment")
+		if view.EmailAddresses == nil || view.RepetitiveContent == nil || view.BoilerplateContent == nil {
+			t.Fatal("schema-2 row has incomplete content assessment")
 		}
 		assessed++
 		if *view.EmailAddresses {
-			flagged++
+			emailFlagged++
+		}
+		if *view.RepetitiveContent {
+			repetitiveFlagged++
+		}
+		if *view.BoilerplateContent {
+			boilerplateFlagged++
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if assessed != 2 || flagged != 1 {
-		t.Fatalf("assessed/flagged rows = %d/%d", assessed, flagged)
+	if assessed != 4 || emailFlagged != 1 || repetitiveFlagged != 1 || boilerplateFlagged != 1 {
+		t.Fatalf("assessed/email/repetitive/boilerplate rows = %d/%d/%d/%d", assessed, emailFlagged, repetitiveFlagged, boilerplateFlagged)
 	}
 }
 

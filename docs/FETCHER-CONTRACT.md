@@ -215,10 +215,11 @@ facts, user data requires service/interaction facts, and synthetic data
 requires generator identity. Unknown categories and incomplete mandatory
 category evidence are rejected.
 
-Fetchers do not detect, redact, or annotate email addresses. WALDO applies its
-general versioned detector to every retained canonical row after acquisition,
-writes the schema-2 `email_addresses` boolean without changing the text, and
-records aggregate detector evidence in the generated manifest.
+Fetchers do not detect, redact, or annotate email addresses, repetition, or
+boilerplate. WALDO applies its general versioned detectors to every retained
+canonical row after acquisition, writes the schema-2 `email_addresses`,
+`repetitive_content`, and `boilerplate_content` booleans without changing the
+text, and records aggregate detector evidence in the generated manifest.
 
 ```yaml
 input:

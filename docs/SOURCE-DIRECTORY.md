@@ -18,10 +18,11 @@ contains no WALDO-specific manifest.
   source facts in the CLI/recipe declaration and per-record facts in the
   records themselves.
 
-During canonical assembly WALDO automatically flags, but does not alter, rows
-containing common email-shaped strings. This applies uniformly to every input
-type, including books, mailing lists, and source code. The result is stored in
-record schema 2; acquisition scripts must not add their own assessment sidecar.
+During canonical assembly WALDO automatically assesses, but does not alter,
+every row for common email-shaped strings, repetitive token sequences, and
+duplicated structural boilerplate. This applies uniformly to every input type,
+including books, mailing lists, and source code. The booleans are stored in
+record schema 2; acquisition scripts must not add assessment sidecars.
 
 Recipe acquisition may leave empty regular files; WALDO ignores them. Each
 declared source must still produce at least one supported non-empty input.
@@ -74,10 +75,25 @@ preserving source path, source identity, and license on every row.
 
 ## Automatic row assessment
 
-Every newly ingested row is assessed with the versioned
-`waldo/email-address-v1` detector. The canonical Parquet
-`email_addresses` boolean is `true` when the detector matches and `false`
-otherwise. Detection does not redact text and does not assert that an address
-is personal data. Manifests preserve the detector identity and aggregate number
-of flagged rows. Existing schema-1 shards remain readable but unassessed and
-are upgraded only through an explicit corpus rebuild.
+Every newly ingested row receives three required booleans:
+
+| Column | Detector | Meaning |
+| --- | --- | --- |
+| `email_addresses` | `waldo/email-address-v1` | A common Internet email-shaped string was found. |
+| `repetitive_content` | `waldo/gopher-ngram-repetition-v1` | Repeated token n-grams exceeded a pinned within-document threshold. |
+| `boilerplate_content` | `waldo/gopher-structural-duplication-v1` | Duplicate lines or paragraphs exceeded a pinned within-document threshold. |
+
+The repetition rules are a deterministic, language-neutral adaptation of the
+[Gopher quality filters](https://arxiv.org/abs/2112.11446). Documents with fewer than 50 alphanumeric tokens are
+not marked repetitive. Longer documents are marked when the most frequent
+trigram covers more than 18% of tokens or non-overlapping duplicate 8-grams
+cover more than 12%. At least four non-empty lines or paragraphs are required
+for structural assessment; a document is marked as boilerplate when duplicates
+exceed 30% of those elements or 20% of the source bytes. Whitespace is
+normalized for structural comparison and tokens are Unicode letters/numbers
+lowercased for n-gram comparison.
+
+Assessment never redacts text or makes a legal, safety, or overall-quality
+determination. Manifests preserve detector identities and aggregate flagged-row
+counts. Existing schema-1 shards remain readable but unassessed and are upgraded
+only through an explicit corpus rebuild.

@@ -69,14 +69,19 @@ func TestRecordFilterValidationAndBOMRoundTrip(t *testing.T) {
 
 func TestUnifiedExclusionFilterMatchesEmailFlagsOrLicenses(t *testing.T) {
 	present, absent := true, false
-	filter := RecordFilter{Exclude: &ExclusionFilter{EmailAddresses: &present, Licenses: []string{"CC-BY-NC-*", "LicenseRef-Restricted-*"}}}
+	filter := RecordFilter{Exclude: &ExclusionFilter{
+		EmailAddresses: &present, RepetitiveContent: &present, BoilerplateContent: &present,
+		Licenses: []string{"CC-BY-NC-*", "LicenseRef-Restricted-*"},
+	}}
 	if err := filter.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for name, record := range map[string]shard.RecordView{
-		"email":      {License: "CC0-1.0", EmailAddresses: &present},
-		"license":    {License: "CC-BY-NC-4.0", EmailAddresses: &absent},
-		"restricted": {License: "LicenseRef-Restricted-Example", EmailAddresses: &absent},
+		"email":       {License: "CC0-1.0", EmailAddresses: &present, RepetitiveContent: &absent, BoilerplateContent: &absent},
+		"repetitive":  {License: "CC0-1.0", EmailAddresses: &absent, RepetitiveContent: &present, BoilerplateContent: &absent},
+		"boilerplate": {License: "CC0-1.0", EmailAddresses: &absent, RepetitiveContent: &absent, BoilerplateContent: &present},
+		"license":     {License: "CC-BY-NC-4.0", EmailAddresses: &absent, RepetitiveContent: &absent, BoilerplateContent: &absent},
+		"restricted":  {License: "LicenseRef-Restricted-Example", EmailAddresses: &absent, RepetitiveContent: &absent, BoilerplateContent: &absent},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if filter.Allows(record) {
@@ -84,7 +89,7 @@ func TestUnifiedExclusionFilterMatchesEmailFlagsOrLicenses(t *testing.T) {
 			}
 		})
 	}
-	if !filter.Allows(shard.RecordView{License: "CC0-1.0", EmailAddresses: &absent}) {
+	if !filter.Allows(shard.RecordView{License: "CC0-1.0", EmailAddresses: &absent, RepetitiveContent: &absent, BoilerplateContent: &absent}) {
 		t.Fatal("clean record was excluded")
 	}
 	if !filter.Allows(shard.RecordView{License: "CC0-1.0"}) {

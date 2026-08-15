@@ -65,7 +65,7 @@ func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {
 	}
 }
 
-func TestEmailExclusionRejectsUnassessedSchemaOneSelection(t *testing.T) {
+func TestContentAssessmentExclusionsRejectUnassessedSchemaOneSelection(t *testing.T) {
 	root := bomFixture(t)
 	target, err := index.Resolve(root, "books")
 	if err != nil {
@@ -77,9 +77,17 @@ func TestEmailExclusionRejectsUnassessedSchemaOneSelection(t *testing.T) {
 		t.Fatal(err)
 	}
 	present := true
-	bom.RecordFilter = &RecordFilterPolicy{Schema: RecordFilterSchema, Global: &RecordFilter{Exclude: &ExclusionFilter{EmailAddresses: &present}}}
-	if err := bom.Validate(); err == nil || !strings.Contains(err.Error(), "unassessed record schema") {
-		t.Fatalf("schema-one filter error = %v", err)
+	for name, exclusion := range map[string]ExclusionFilter{
+		"email":       {EmailAddresses: &present},
+		"repetitive":  {RepetitiveContent: &present},
+		"boilerplate": {BoilerplateContent: &present},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bom.RecordFilter = &RecordFilterPolicy{Schema: RecordFilterSchema, Global: &RecordFilter{Exclude: &exclusion}}
+			if err := bom.Validate(); err == nil || !strings.Contains(err.Error(), "unassessed record schema") {
+				t.Fatalf("schema-one filter error = %v", err)
+			}
+		})
 	}
 }
 

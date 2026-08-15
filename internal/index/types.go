@@ -64,7 +64,9 @@ type Manifest struct {
 // ContentAssessment summarizes deterministic row-level flags. Records counts
 // are additive; Detector pins the exact classifier used during ingestion.
 type ContentAssessment struct {
-	EmailAddresses *DetectionMeasure `json:"email_addresses,omitempty" yaml:"email_addresses,omitempty"`
+	EmailAddresses     *DetectionMeasure `json:"email_addresses,omitempty" yaml:"email_addresses,omitempty"`
+	RepetitiveContent  *DetectionMeasure `json:"repetitive_content,omitempty" yaml:"repetitive_content,omitempty"`
+	BoilerplateContent *DetectionMeasure `json:"boilerplate_content,omitempty" yaml:"boilerplate_content,omitempty"`
 }
 
 type DetectionMeasure struct {

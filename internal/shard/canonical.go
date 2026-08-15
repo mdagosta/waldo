@@ -27,36 +27,40 @@ import (
 	"go.etcd.io/bbolt"
 )
 
-var canonicalColumns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses"}
+var canonicalColumns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content"}
 var canonicalV1Columns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta"}
 var legacyColumns = []string{"sha256", "kind", "text", "source", "source_name", "license", "license_raw", "lang", "lang_score", "date", "tokens", "meta"}
 
 type RecordView struct {
-	ID             string `json:"id"`
-	Text           string `json:"-"`
-	Source         string `json:"source"`
-	SourceName     string `json:"source_name,omitempty"`
-	License        string `json:"license"`
-	Language       string `json:"language,omitempty"`
-	LanguageScore  int64  `json:"language_score,omitempty"`
-	Date           string `json:"date,omitempty"`
-	Tokens         int64  `json:"tokens"`
-	Bytes          int64  `json:"bytes"`
-	EmailAddresses *bool  `json:"email_addresses,omitempty"`
+	ID                 string `json:"id"`
+	Text               string `json:"-"`
+	Source             string `json:"source"`
+	SourceName         string `json:"source_name,omitempty"`
+	License            string `json:"license"`
+	Language           string `json:"language,omitempty"`
+	LanguageScore      int64  `json:"language_score,omitempty"`
+	Date               string `json:"date,omitempty"`
+	Tokens             int64  `json:"tokens"`
+	Bytes              int64  `json:"bytes"`
+	EmailAddresses     *bool  `json:"email_addresses,omitempty"`
+	RepetitiveContent  *bool  `json:"repetitive_content,omitempty"`
+	BoilerplateContent *bool  `json:"boilerplate_content,omitempty"`
 }
 
 type Summary struct {
-	Shards              int64    `json:"shards"`
-	Attested            int64    `json:"attested_shards,omitempty"`
-	DeepScanned         int64    `json:"deep_scanned_shards,omitempty"`
-	Records             int64    `json:"records"`
-	Tokens              int64    `json:"tokens"`
-	ContentBytes        int64    `json:"content_bytes"`
-	EncodedBytes        int64    `json:"encoded_bytes"`
-	RowGroups           int64    `json:"row_groups"`
-	Licenses            []string `json:"licenses"`
-	Recipes             []string `json:"writer_recipes"`
-	EmailAddressRecords int64    `json:"email_address_records,omitempty"`
+	Shards                    int64    `json:"shards"`
+	Attested                  int64    `json:"attested_shards,omitempty"`
+	DeepScanned               int64    `json:"deep_scanned_shards,omitempty"`
+	Records                   int64    `json:"records"`
+	Tokens                    int64    `json:"tokens"`
+	ContentBytes              int64    `json:"content_bytes"`
+	EncodedBytes              int64    `json:"encoded_bytes"`
+	RowGroups                 int64    `json:"row_groups"`
+	Licenses                  []string `json:"licenses"`
+	Recipes                   []string `json:"writer_recipes"`
+	EmailAddressRecords       int64    `json:"email_address_records,omitempty"`
+	RepetitiveContentRecords  int64    `json:"repetitive_content_records,omitempty"`
+	BoilerplateContentRecords int64    `json:"boilerplate_content_records,omitempty"`
 }
 
 type AuditOptions struct {
@@ -285,7 +289,7 @@ func verifyAttestedOne(path string) (Summary, error) {
 		if err != nil {
 			return Summary{}, err
 		}
-		if bom.Records != one.Records || bom.Tokens != one.Tokens || bom.ContentBytes != one.ContentBytes || bom.EmailAddressRecords != one.EmailAddressRecords || !slices.Equal(bom.Licenses, one.Licenses) {
+		if bom.Records != one.Records || bom.Tokens != one.Tokens || bom.ContentBytes != one.ContentBytes || bom.EmailAddressRecords != one.EmailAddressRecords || bom.RepetitiveContentRecords != one.RepetitiveContentRecords || bom.BoilerplateContentRecords != one.BoilerplateContentRecords || !slices.Equal(bom.Licenses, one.Licenses) {
 			return Summary{}, fmt.Errorf("embedded shard BOM differs from Parquet footer aggregates")
 		}
 	case FormerTextRecipe:
@@ -309,6 +313,8 @@ func addSummary(total *Summary, one Summary, licenses, recipes map[string]bool) 
 	total.EncodedBytes += one.EncodedBytes
 	total.RowGroups += one.RowGroups
 	total.EmailAddressRecords += one.EmailAddressRecords
+	total.RepetitiveContentRecords += one.RepetitiveContentRecords
+	total.BoilerplateContentRecords += one.BoilerplateContentRecords
 	for _, value := range one.Licenses {
 		licenses[value] = true
 	}
@@ -489,7 +495,7 @@ func auditOne(ctx context.Context, path string, counter tokenizer.Counter, addID
 		recipe, _ := parquetFile.Lookup("waldo.recipe")
 		if (recipe == TextWriterRecipe || recipe == FormerTextBOMRecipe) && !complete {
 			err = fmt.Errorf("current writer recipe is missing valid aggregate footer metadata")
-		} else if complete && (footer.Records != one.Records || footer.Tokens != one.Tokens || footer.ContentBytes != one.ContentBytes || footer.EmailAddressRecords != one.EmailAddressRecords || !slices.Equal(footer.Licenses, one.Licenses)) {
+		} else if complete && (footer.Records != one.Records || footer.Tokens != one.Tokens || footer.ContentBytes != one.ContentBytes || footer.EmailAddressRecords != one.EmailAddressRecords || footer.RepetitiveContentRecords != one.RepetitiveContentRecords || footer.BoilerplateContentRecords != one.BoilerplateContentRecords || !slices.Equal(footer.Licenses, one.Licenses)) {
 			err = fmt.Errorf("footer aggregates do not match streamed records")
 		}
 	}
@@ -643,7 +649,9 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 		}
 		row := rows[0]
 		emailAddresses := row.EmailAddresses
-		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &emailAddresses}
+		repetitiveContent := row.RepetitiveContent
+		boilerplateContent := row.BoilerplateContent
+		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &emailAddresses, RepetitiveContent: &repetitiveContent, BoilerplateContent: &boilerplateContent}
 		if err := callback(position, view); err != nil {
 			return err
 		}
@@ -745,17 +753,22 @@ func footerSummary(file *parquet.File, size int64) (Summary, bool) {
 		return Summary{}, false
 	}
 	recipe, _ := file.Lookup("waldo.recipe")
-	emailAddressRecords := int64(0)
-	if raw, ok := file.Lookup("waldo.email_address_records"); ok {
-		parsed, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || parsed < 0 || parsed > values["waldo.records"] {
-			return Summary{}, false
-		}
-		emailAddressRecords = parsed
-	} else if schema, _ := file.Lookup("waldo.record_schema"); schema == strconv.Itoa(TextRecordSchema) {
+	emailAddressRecords, emailOK := footerAssessment(file, "waldo.email_address_records", values["waldo.records"])
+	repetitiveContentRecords, repetitiveOK := footerAssessment(file, "waldo.repetitive_content_records", values["waldo.records"])
+	boilerplateContentRecords, boilerplateOK := footerAssessment(file, "waldo.boilerplate_content_records", values["waldo.records"])
+	if schema, _ := file.Lookup("waldo.record_schema"); schema == strconv.Itoa(TextRecordSchema) && (!emailOK || !repetitiveOK || !boilerplateOK) {
 		return Summary{}, false
 	}
-	return Summary{Records: values["waldo.records"], Tokens: values["waldo.tokens"], ContentBytes: values["waldo.content_bytes"], EncodedBytes: size, RowGroups: int64(len(file.RowGroups())), Licenses: licenses, Recipes: []string{recipe}, EmailAddressRecords: emailAddressRecords}, true
+	return Summary{Records: values["waldo.records"], Tokens: values["waldo.tokens"], ContentBytes: values["waldo.content_bytes"], EncodedBytes: size, RowGroups: int64(len(file.RowGroups())), Licenses: licenses, Recipes: []string{recipe}, EmailAddressRecords: emailAddressRecords, RepetitiveContentRecords: repetitiveContentRecords, BoilerplateContentRecords: boilerplateContentRecords}, true
+}
+
+func footerAssessment(file *parquet.File, name string, records int64) (int64, bool) {
+	raw, ok := file.Lookup(name)
+	if !ok {
+		return 0, false
+	}
+	parsed, err := strconv.ParseInt(raw, 10, 64)
+	return parsed, err == nil && parsed >= 0 && parsed <= records
 }
 
 func scan(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
@@ -783,7 +796,9 @@ func scanCanonical(file *parquet.File, validate bool, callback func(int64, Recor
 			row := rows[i]
 			canonical := canonicalTextRow(row)
 			emailAddresses := row.EmailAddresses
-			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil, &emailAddresses); err != nil {
+			repetitiveContent := row.RepetitiveContent
+			boilerplateContent := row.BoilerplateContent
+			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil, &emailAddresses, &repetitiveContent, &boilerplateContent); err != nil {
 				return consumer.finish(), err
 			}
 		}
@@ -807,7 +822,7 @@ func scanCanonicalV1(file *parquet.File, validate bool, callback func(int64, Rec
 		for i := 0; i < count; i++ {
 			row := rows[i]
 			canonical := canonicalTextRowV1(row)
-			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil, nil); err != nil {
+			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil, nil, nil, nil); err != nil {
 				return consumer.finish(), err
 			}
 		}
@@ -873,7 +888,7 @@ func scanLegacy(file *parquet.File, validate bool, callback func(int64, RecordVi
 		for i := 0; i < count; i++ {
 			row := rows[i]
 			canonical := record.Record{SHA256: row.SHA256, Kind: row.Kind, Text: row.Text, Source: row.Source, SourceName: row.SourceName, License: row.License, LicenseRaw: row.LicenseRaw, Lang: row.Lang, LangScore: row.LangScore, Date: row.Date, Tokens: row.Tokens}
-			if err := consumer.add(canonical, row.Meta, true, nil); err != nil {
+			if err := consumer.add(canonical, row.Meta, true, nil, nil, nil); err != nil {
 				return consumer.finish(), err
 			}
 		}
@@ -899,7 +914,7 @@ func newRowConsumer(file *parquet.File, validate bool, callback func(int64, Reco
 	return &rowConsumer{validate: validate, callback: callback, result: Summary{Recipes: []string{recipe}}, licenses: map[string]bool{}}
 }
 
-func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPresent bool, emailAddresses *bool) error {
+func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPresent bool, emailAddresses, repetitiveContent, boilerplateContent *bool) error {
 	position := consumer.result.Records
 	if consumer.validate {
 		if !tokenPresent {
@@ -912,7 +927,7 @@ func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPres
 			return fmt.Errorf("record %d (%s): meta is not a JSON object", position, canonical.SHA256)
 		}
 	}
-	view := RecordView{ID: canonical.SHA256, Text: canonical.Text, Source: canonical.Source, SourceName: canonical.SourceName, License: canonical.License, Language: canonical.Lang, LanguageScore: canonical.LangScore, Date: canonical.Date, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text)), EmailAddresses: emailAddresses}
+	view := RecordView{ID: canonical.SHA256, Text: canonical.Text, Source: canonical.Source, SourceName: canonical.SourceName, License: canonical.License, Language: canonical.Lang, LanguageScore: canonical.LangScore, Date: canonical.Date, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text)), EmailAddresses: emailAddresses, RepetitiveContent: repetitiveContent, BoilerplateContent: boilerplateContent}
 	if consumer.callback != nil {
 		if err := consumer.callback(position, view, canonical, meta); err != nil {
 			return err
@@ -923,6 +938,12 @@ func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPres
 	consumer.result.ContentBytes += int64(len(canonical.Text))
 	if emailAddresses != nil && *emailAddresses {
 		consumer.result.EmailAddressRecords++
+	}
+	if repetitiveContent != nil && *repetitiveContent {
+		consumer.result.RepetitiveContentRecords++
+	}
+	if boilerplateContent != nil && *boilerplateContent {
+		consumer.result.BoilerplateContentRecords++
 	}
 	consumer.licenses[canonical.License] = true
 	return nil

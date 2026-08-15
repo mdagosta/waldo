@@ -41,10 +41,10 @@ func (bom BOM) Validate() error {
 		if err := bom.RecordFilter.Validate(bom.Paths); err != nil {
 			return err
 		}
-		if bom.RecordFilter.RequiresEmailAssessment() {
+		if bom.RecordFilter.RequiresContentAssessment() {
 			for _, shard := range bom.Shards {
 				if shard.RecordSchema < waldoshard.TextRecordSchema {
-					return fmt.Errorf("record filter excludes email-address assessment, but shard %s uses unassessed record schema %d; reingest its corpus with record schema %d", shard.SHA256, shard.RecordSchema, waldoshard.TextRecordSchema)
+					return fmt.Errorf("record filter excludes assessed content, but shard %s uses unassessed record schema %d; reingest its corpus with record schema %d", shard.SHA256, shard.RecordSchema, waldoshard.TextRecordSchema)
 				}
 			}
 		}
@@ -56,6 +56,8 @@ func (bom BOM) Validate() error {
 	manifestModalities := make(map[string]index.Modalities, len(bom.Manifests))
 	manifestLicenses := make(map[string]map[string]index.Measures, len(bom.Manifests))
 	manifestEmailRecords := make(map[string]int64, len(bom.Manifests))
+	manifestRepetitiveRecords := make(map[string]int64, len(bom.Manifests))
+	manifestBoilerplateRecords := make(map[string]int64, len(bom.Manifests))
 	for _, manifest := range bom.Manifests {
 		if manifest.Path == "" || manifests[manifest.Path].Path != "" {
 			return fmt.Errorf("manifest paths must be non-empty and unique: %q", manifest.Path)
@@ -151,6 +153,8 @@ func (bom BOM) Validate() error {
 				return fmt.Errorf("shard %s assessment: %w", shard.SHA256[:12], err)
 			}
 			manifestEmailRecords[shard.Manifest] += shard.Assessment.EmailAddresses.Records
+			manifestRepetitiveRecords[shard.Manifest] += shard.Assessment.RepetitiveContent.Records
+			manifestBoilerplateRecords[shard.Manifest] += shard.Assessment.BoilerplateContent.Records
 		}
 		seenSources := map[string]bool{}
 		for _, source := range shard.Sources {
@@ -226,7 +230,7 @@ func (bom BOM) Validate() error {
 		if manifest.Totals != manifestTotals[path] || !maps.Equal(manifest.Licenses, manifestLicenses[path]) || !maps.Equal(manifest.Modalities, manifestModalities[path]) {
 			return fmt.Errorf("manifest %s totals do not match its selected shards", path)
 		}
-		if manifest.RecordSchema >= waldoshard.TextRecordSchema && manifest.Assessment.EmailAddresses.Records != manifestEmailRecords[path] {
+		if manifest.RecordSchema >= waldoshard.TextRecordSchema && (manifest.Assessment.EmailAddresses.Records != manifestEmailRecords[path] || manifest.Assessment.RepetitiveContent.Records != manifestRepetitiveRecords[path] || manifest.Assessment.BoilerplateContent.Records != manifestBoilerplateRecords[path]) {
 			return fmt.Errorf("manifest %s assessment does not match its selected shards", path)
 		}
 	}
@@ -234,11 +238,23 @@ func (bom BOM) Validate() error {
 }
 
 func validateAssessment(assessment *index.ContentAssessment, documents int64) error {
-	if assessment == nil || assessment.EmailAddresses == nil || assessment.EmailAddresses.Detector == "" {
-		return fmt.Errorf("email_addresses detector is required")
+	if assessment == nil {
+		return fmt.Errorf("content assessment is required")
 	}
-	if assessment.EmailAddresses.Records < 0 || assessment.EmailAddresses.Records > documents {
-		return fmt.Errorf("email_addresses record count is invalid")
+	for _, field := range []struct {
+		name    string
+		measure *index.DetectionMeasure
+	}{
+		{name: "email_addresses", measure: assessment.EmailAddresses},
+		{name: "repetitive_content", measure: assessment.RepetitiveContent},
+		{name: "boilerplate_content", measure: assessment.BoilerplateContent},
+	} {
+		if field.measure == nil || field.measure.Detector == "" {
+			return fmt.Errorf("%s detector is required", field.name)
+		}
+		if field.measure.Records < 0 || field.measure.Records > documents {
+			return fmt.Errorf("%s record count is invalid", field.name)
+		}
 	}
 	return nil
 }
@@ -269,10 +285,18 @@ func validateShardAttestation(pin ShardPin) error {
 			licenses = []string{pin.License}
 		}
 		emailRecords := int64(0)
+		repetitiveRecords := int64(0)
+		boilerplateRecords := int64(0)
 		if pin.Assessment != nil && pin.Assessment.EmailAddresses != nil {
 			emailRecords = pin.Assessment.EmailAddresses.Records
 		}
-		if attestation.WriterRecipe != attestation.BOM.WriterRecipe || attestation.BOM.RecordSchema != pin.RecordSchema || attestation.BOM.Records != pin.Docs || attestation.BOM.Tokens != pin.Tokens || attestation.BOM.EmailAddressRecords != emailRecords || !slices.Equal(attestation.BOM.Licenses, licenses) {
+		if pin.Assessment != nil && pin.Assessment.RepetitiveContent != nil {
+			repetitiveRecords = pin.Assessment.RepetitiveContent.Records
+		}
+		if pin.Assessment != nil && pin.Assessment.BoilerplateContent != nil {
+			boilerplateRecords = pin.Assessment.BoilerplateContent.Records
+		}
+		if attestation.WriterRecipe != attestation.BOM.WriterRecipe || attestation.BOM.RecordSchema != pin.RecordSchema || attestation.BOM.Records != pin.Docs || attestation.BOM.Tokens != pin.Tokens || attestation.BOM.EmailAddressRecords != emailRecords || attestation.BOM.RepetitiveContentRecords != repetitiveRecords || attestation.BOM.BoilerplateContentRecords != boilerplateRecords || !slices.Equal(attestation.BOM.Licenses, licenses) {
 			return fmt.Errorf("shard %s embedded BOM differs from its corpus pin", pin.SHA256[:12])
 		}
 	case "implicit-v4":

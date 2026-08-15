@@ -26,19 +26,21 @@ const (
 // metadata. The enclosing lookaside SHA-256 supplies object identity; a shard
 // cannot include its own object hash without a circular dependency.
 type BOM struct {
-	Kind                string     `json:"kind"`
-	Schema              int        `json:"schema"`
-	Subject             string     `json:"subject"`
-	PlanSHA256          string     `json:"plan_sha256"`
-	RecordSchema        int        `json:"record_schema"`
-	WriterRecipe        string     `json:"writer_recipe"`
-	Tokenizer           string     `json:"tokenizer"`
-	Records             int64      `json:"records"`
-	Tokens              int64      `json:"tokens"`
-	ContentBytes        int64      `json:"content_bytes"`
-	EmailAddressRecords int64      `json:"email_address_records,omitempty"`
-	Licenses            []string   `json:"licenses"`
-	Validation          Validation `json:"validation"`
+	Kind                      string     `json:"kind"`
+	Schema                    int        `json:"schema"`
+	Subject                   string     `json:"subject"`
+	PlanSHA256                string     `json:"plan_sha256"`
+	RecordSchema              int        `json:"record_schema"`
+	WriterRecipe              string     `json:"writer_recipe"`
+	Tokenizer                 string     `json:"tokenizer"`
+	Records                   int64      `json:"records"`
+	Tokens                    int64      `json:"tokens"`
+	ContentBytes              int64      `json:"content_bytes"`
+	EmailAddressRecords       int64      `json:"email_address_records,omitempty"`
+	RepetitiveContentRecords  int64      `json:"repetitive_content_records,omitempty"`
+	BoilerplateContentRecords int64      `json:"boilerplate_content_records,omitempty"`
+	Licenses                  []string   `json:"licenses"`
+	Validation                Validation `json:"validation"`
 }
 
 type Validation struct {
@@ -86,6 +88,12 @@ func (bom BOM) Validate() error {
 	}
 	if bom.EmailAddressRecords < 0 || bom.EmailAddressRecords > bom.Records {
 		return fmt.Errorf("shard BOM has invalid email-address record count")
+	}
+	if bom.RepetitiveContentRecords < 0 || bom.RepetitiveContentRecords > bom.Records {
+		return fmt.Errorf("shard BOM has invalid repetitive-content record count")
+	}
+	if bom.BoilerplateContentRecords < 0 || bom.BoilerplateContentRecords > bom.Records {
+		return fmt.Errorf("shard BOM has invalid boilerplate-content record count")
 	}
 	for position, license := range bom.Licenses {
 		if license == "" || position > 0 && license == bom.Licenses[position-1] {

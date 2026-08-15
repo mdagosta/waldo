@@ -116,18 +116,23 @@ func BuildUpdatedManifest(plan Plan, existing index.Manifest, assembly AssemblyR
 		updated.License, updated.Licenses = updated.Licenses[0], nil
 	}
 	if updated.RecordSchema >= 2 {
-		assessment := &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{}}
+		assessment := &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{}, RepetitiveContent: &index.DetectionMeasure{}, BoilerplateContent: &index.DetectionMeasure{}}
 		for _, shard := range updated.Shards {
-			if shard.Assessment == nil || shard.Assessment.EmailAddresses == nil {
-				return index.Manifest{}, fmt.Errorf("schema-%d shard %s is missing email-address assessment", updated.RecordSchema, shard.SHA256[:12])
+			if shard.Assessment == nil || shard.Assessment.EmailAddresses == nil || shard.Assessment.RepetitiveContent == nil || shard.Assessment.BoilerplateContent == nil {
+				return index.Manifest{}, fmt.Errorf("schema-%d shard %s is missing content assessment", updated.RecordSchema, shard.SHA256[:12])
 			}
-			measure := shard.Assessment.EmailAddresses
-			if assessment.EmailAddresses.Detector == "" {
-				assessment.EmailAddresses.Detector = measure.Detector
-			} else if assessment.EmailAddresses.Detector != measure.Detector {
-				return index.Manifest{}, fmt.Errorf("schema-%d shards use different email-address detectors", updated.RecordSchema)
+			for _, pair := range []struct{ aggregate, incoming *index.DetectionMeasure }{
+				{assessment.EmailAddresses, shard.Assessment.EmailAddresses},
+				{assessment.RepetitiveContent, shard.Assessment.RepetitiveContent},
+				{assessment.BoilerplateContent, shard.Assessment.BoilerplateContent},
+			} {
+				if pair.aggregate.Detector == "" {
+					pair.aggregate.Detector = pair.incoming.Detector
+				} else if pair.aggregate.Detector != pair.incoming.Detector {
+					return index.Manifest{}, fmt.Errorf("schema-%d shards use different content-assessment detectors", updated.RecordSchema)
+				}
+				pair.aggregate.Records += pair.incoming.Records
 			}
-			assessment.EmailAddresses.Records += measure.Records
 		}
 		updated.Assessment = assessment
 	}

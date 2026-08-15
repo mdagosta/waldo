@@ -1,6 +1,6 @@
 # ADR 0010: Canonical text uses record schema 1 Parquet
 
-- Status: superseded for new writes by [ADR 0052](0052-row-level-email-assessment.md); schema 1 remains readable
+- Status: superseded for new writes by [ADR 0052](0052-row-level-content-assessment.md); schema 1 remains readable
 - Date: 2026-08-04
 
 ## Context

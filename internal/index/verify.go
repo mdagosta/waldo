@@ -200,6 +200,8 @@ func verifyManifest(path string, manifest Manifest) error {
 		}
 	}
 	var assessedEmailRecords int64
+	var assessedRepetitiveRecords int64
+	var assessedBoilerplateRecords int64
 	for i, shard := range manifest.Shards {
 		if shard.URL == "" || !sha256Pattern.MatchString(shard.SHA256) {
 			return fmt.Errorf("%s: shard %d requires a URL and lowercase 64-character sha256", path, i+1)
@@ -250,10 +252,12 @@ func verifyManifest(path string, manifest Manifest) error {
 				return fmt.Errorf("%s: shard %s assessment: %w", path, shard.SHA256[:12], err)
 			}
 			assessedEmailRecords += shard.Assessment.EmailAddresses.Records
+			assessedRepetitiveRecords += shard.Assessment.RepetitiveContent.Records
+			assessedBoilerplateRecords += shard.Assessment.BoilerplateContent.Records
 		}
 	}
-	if manifest.RecordSchema >= 2 && manifest.Rollup == nil && manifest.Assessment.EmailAddresses.Records != assessedEmailRecords {
-		return fmt.Errorf("%s: manifest email-address assessment does not equal shard counts", path)
+	if manifest.RecordSchema >= 2 && manifest.Rollup == nil && (manifest.Assessment.EmailAddresses.Records != assessedEmailRecords || manifest.Assessment.RepetitiveContent.Records != assessedRepetitiveRecords || manifest.Assessment.BoilerplateContent.Records != assessedBoilerplateRecords) {
+		return fmt.Errorf("%s: manifest content assessment does not equal shard counts", path)
 	}
 	if manifest.Rollup != nil {
 		if manifest.Rollup.URL == "" || !sha256Pattern.MatchString(manifest.Rollup.SHA256) {
@@ -270,12 +274,20 @@ func verifyManifest(path string, manifest Manifest) error {
 }
 
 func validateContentAssessment(assessment *ContentAssessment, documents int64) error {
-	if assessment == nil || assessment.EmailAddresses == nil {
-		return fmt.Errorf("email_addresses assessment is required")
+	if assessment == nil {
+		return fmt.Errorf("content assessment is required")
 	}
-	measure := assessment.EmailAddresses
-	if measure.Detector == "" || measure.Records < 0 || documents >= 0 && measure.Records > documents {
-		return fmt.Errorf("email_addresses requires a detector and a valid record count")
+	for _, field := range []struct {
+		name    string
+		measure *DetectionMeasure
+	}{
+		{name: "email_addresses", measure: assessment.EmailAddresses},
+		{name: "repetitive_content", measure: assessment.RepetitiveContent},
+		{name: "boilerplate_content", measure: assessment.BoilerplateContent},
+	} {
+		if field.measure == nil || field.measure.Detector == "" || field.measure.Records < 0 || documents >= 0 && field.measure.Records > documents {
+			return fmt.Errorf("%s requires a detector and a valid record count", field.name)
+		}
 	}
 	return nil
 }

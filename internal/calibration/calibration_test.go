@@ -104,6 +104,8 @@ func calibrationShard(t *testing.T, texts []string) (string, string, int64, int6
 	writer.SetKeyValueMetadata("waldo.tokens", fmt.Sprint(tokens))
 	writer.SetKeyValueMetadata("waldo.content_bytes", fmt.Sprint(contentBytes))
 	writer.SetKeyValueMetadata("waldo.email_address_records", "0")
+	writer.SetKeyValueMetadata("waldo.repetitive_content_records", "0")
+	writer.SetKeyValueMetadata("waldo.boilerplate_content_records", "0")
 	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
@@ -123,7 +125,11 @@ func calibrationCorpus(object, objectSHA string, objectBytes, tokens, records in
 	conversion := index.Conversion{Tool: "waldo", Version: "test", Profile: "text", Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default}
 	measure := index.Measures{Shards: 1, Docs: records, Tokens: tokens, Bytes: objectBytes}
 	licenses := map[string]index.Measures{"CC0-1.0": measure}
-	assessment := &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{Detector: shard.EmailDetector}}
+	assessment := &index.ContentAssessment{
+		EmailAddresses:     &index.DetectionMeasure{Detector: shard.EmailDetector},
+		RepetitiveContent:  &index.DetectionMeasure{Detector: shard.RepetitionDetector},
+		BoilerplateContent: &index.DetectionMeasure{Detector: shard.BoilerplateDetector},
+	}
 	manifest := corpus.ManifestPin{
 		Path: "core/test.json", SHA256: fmt.Sprintf("%064x", 1), Name: "test", Title: "Test", Description: "Calibration fixture.",
 		License: "CC0-1.0", Format: "parquet", RecordSchema: shard.TextRecordSchema, ConvertedBy: conversion, Assessment: assessment,

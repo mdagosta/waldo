@@ -123,6 +123,8 @@ func TestInspectEmbeddedShardBOM(t *testing.T) {
 	writer.SetKeyValueMetadata("waldo.tokens", strconv.FormatInt(tokens, 10))
 	writer.SetKeyValueMetadata("waldo.content_bytes", strconv.Itoa(len(text)))
 	writer.SetKeyValueMetadata("waldo.email_address_records", "0")
+	writer.SetKeyValueMetadata("waldo.repetitive_content_records", "0")
+	writer.SetKeyValueMetadata("waldo.boilerplate_content_records", "0")
 	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
 	bom := NewBOM(strings.Repeat("a", 64), tokenizer.Default, 1, tokens, int64(len(text)), []string{"CC0-1.0"})
 	encoded, err := EncodeBOM(bom)
@@ -351,7 +353,7 @@ func writeCanonicalFixture(t *testing.T, path string, rows []TextRow, footer boo
 		t.Fatal(err)
 	}
 	if footer {
-		var tokens, content, emailRecords int64
+		var tokens, content, emailRecords, repetitiveRecords, boilerplateRecords int64
 		licenses := map[string]bool{}
 		for _, row := range rows {
 			tokens += int64Value(row.TokenCount)
@@ -360,12 +362,18 @@ func writeCanonicalFixture(t *testing.T, path string, rows []TextRow, footer boo
 			if row.EmailAddresses {
 				emailRecords++
 			}
+			if row.RepetitiveContent {
+				repetitiveRecords++
+			}
+			if row.BoilerplateContent {
+				boilerplateRecords++
+			}
 		}
-		values := map[string]string{"waldo.records": strconv.Itoa(len(rows)), "waldo.tokens": strconv.FormatInt(tokens, 10), "waldo.content_bytes": strconv.FormatInt(content, 10), "waldo.email_address_records": strconv.FormatInt(emailRecords, 10), "waldo.licenses": `[` + quotedKeys(licenses) + `]`}
+		values := map[string]string{"waldo.records": strconv.Itoa(len(rows)), "waldo.tokens": strconv.FormatInt(tokens, 10), "waldo.content_bytes": strconv.FormatInt(content, 10), "waldo.email_address_records": strconv.FormatInt(emailRecords, 10), "waldo.repetitive_content_records": strconv.FormatInt(repetitiveRecords, 10), "waldo.boilerplate_content_records": strconv.FormatInt(boilerplateRecords, 10), "waldo.licenses": `[` + quotedKeys(licenses) + `]`}
 		for key, value := range overrides {
 			values[key] = value
 		}
-		for _, key := range []string{"waldo.records", "waldo.tokens", "waldo.content_bytes", "waldo.email_address_records", "waldo.licenses"} {
+		for _, key := range []string{"waldo.records", "waldo.tokens", "waldo.content_bytes", "waldo.email_address_records", "waldo.repetitive_content_records", "waldo.boilerplate_content_records", "waldo.licenses"} {
 			writer.SetKeyValueMetadata(key, values[key])
 		}
 	}

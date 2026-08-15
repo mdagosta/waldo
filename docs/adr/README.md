@@ -55,4 +55,4 @@ logs.
 - [0049: Configure and filter corpora at their compose selection](0049-configured-compose-corpora.md)
 - [0050: Name training profiles by behavior](0050-name-training-profiles-by-behavior.md)
 - [0051: Resolve direct compose model origins through the shared importer](0051-direct-compose-model-origins.md)
-- [0052: Detect email-shaped strings as immutable row facts](0052-row-level-email-assessment.md)
+- [0052: Preserve general content assessments as immutable row facts](0052-row-level-content-assessment.md)

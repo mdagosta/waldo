@@ -157,7 +157,7 @@ func validateRecordFilterYAML(node *yaml.Node) error {
 				return err
 			}
 		} else if key == "exclude" {
-			if err := knownYAMLFields(value, map[string]bool{"email_addresses": true, "licenses": true}); err != nil {
+			if err := knownYAMLFields(value, map[string]bool{"email_addresses": true, "repetitive_content": true, "boilerplate_content": true, "licenses": true}); err != nil {
 				return err
 			}
 		} else if err := knownYAMLFields(value, map[string]bool{"include": true, "exclude": true}); err != nil {

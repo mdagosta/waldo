@@ -139,6 +139,7 @@ func TestComposeAcceptsConfiguredCorporaWithoutBreakingScalarForm(t *testing.T) 
 func TestComposeAcceptsUnifiedExclusionFilterStrictly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "exclude.yaml")
 	document := strings.Replace(composeYAML(""), "    corpora:\n", "    filter:\n      exclude:\n        email_addresses: true\n        licenses: [CC-BY-NC-*, LicenseRef-Restricted-*]\n    corpora:\n", 1)
+	document = strings.Replace(document, "        email_addresses: true\n", "        email_addresses: true\n        repetitive_content: true\n        boilerplate_content: true\n", 1)
 	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +148,7 @@ func TestComposeAcceptsUnifiedExclusionFilterStrictly(t *testing.T) {
 		t.Fatal(err)
 	}
 	exclude := compose.Stages[0].Filter.Exclude
-	if exclude == nil || exclude.EmailAddresses == nil || !*exclude.EmailAddresses || len(exclude.Licenses) != 2 {
+	if exclude == nil || exclude.EmailAddresses == nil || !*exclude.EmailAddresses || exclude.RepetitiveContent == nil || !*exclude.RepetitiveContent || exclude.BoilerplateContent == nil || !*exclude.BoilerplateContent || len(exclude.Licenses) != 2 {
 		t.Fatalf("exclude filter = %+v", exclude)
 	}
 	unknown := strings.Replace(document, "email_addresses: true", "unknown: true", 1)

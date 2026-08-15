@@ -123,6 +123,8 @@ source evidence provides the logical attribution boundary.
 | `token_count` | signed 64-bit integer | no | count from the shard's explicitly named counting recipe |
 | `meta` | UTF-8 string containing canonical JSON | no | source-specific evidence not promoted to a core column |
 | `email_addresses` | boolean | yes in schema 2 | `true` when WALDO's pinned detector found an email-shaped string in `text`; the text is not changed |
+| `repetitive_content` | boolean | yes in schema 2 | `true` when WALDO's pinned token n-gram detector exceeds its within-document threshold; the text is not changed |
+| `boilerplate_content` | boolean | yes in schema 2 | `true` when WALDO's pinned duplicate-line or duplicate-paragraph detector exceeds its threshold; the text is not changed |
 
 For recipe-driven whole-file text and Markdown inputs, `meta.source_path`
 preserves the validated acquisition-relative path. This keeps file-level

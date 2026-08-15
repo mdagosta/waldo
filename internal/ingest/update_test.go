@@ -54,7 +54,7 @@ func TestAppendRequiresRebuildAcrossRecordSchemas(t *testing.T) {
 	}
 }
 
-func TestAppendRecomputesEmailAssessment(t *testing.T) {
+func TestAppendRecomputesContentAssessment(t *testing.T) {
 	firstInput := filepath.Join(t.TempDir(), "first.txt")
 	writeFixture(t, firstInput, "contact maintainer@example.org")
 	firstPlan := textFixturePlan(t, firstInput)
@@ -81,6 +81,9 @@ func TestAppendRecomputesEmailAssessment(t *testing.T) {
 	}
 	if len(updated.Shards) != 2 || updated.Assessment == nil || updated.Assessment.EmailAddresses == nil || updated.Assessment.EmailAddresses.Records != 1 {
 		t.Fatalf("updated assessment = %+v across %d shards", updated.Assessment, len(updated.Shards))
+	}
+	if updated.Assessment.RepetitiveContent == nil || updated.Assessment.RepetitiveContent.Records != 0 || updated.Assessment.BoilerplateContent == nil || updated.Assessment.BoilerplateContent.Records != 0 {
+		t.Fatalf("updated content assessment = %+v", updated.Assessment)
 	}
 }
 

@@ -43,7 +43,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default,
 		},
 	}
-	manifest.Assessment = &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{Detector: shard.EmailDetector}}
+	manifest.Assessment = newContentAssessment(0, 0, 0)
 	planSources := plan.Sources
 	if len(planSources) == 0 {
 		legacy := plan.Source
@@ -83,9 +83,11 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			URL: objectURL, SHA256: object.SHA256, Sources: object.Sources,
 			Docs: object.Docs, Tokens: object.Tokens, Bytes: object.Bytes,
 			LicenseUsage: object.LicenseUsage,
-			Assessment:   &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{Detector: shard.EmailDetector, Records: object.EmailAddressRecords}},
+			Assessment:   newContentAssessment(object.EmailAddressRecords, object.RepetitiveContentRecords, object.BoilerplateContentRecords),
 		})
 		manifest.Assessment.EmailAddresses.Records += object.EmailAddressRecords
+		manifest.Assessment.RepetitiveContent.Records += object.RepetitiveContentRecords
+		manifest.Assessment.BoilerplateContent.Records += object.BoilerplateContentRecords
 		if len(licenses) == 1 {
 			manifest.Shards[len(manifest.Shards)-1].License = licenses[0]
 		} else {
@@ -107,6 +109,14 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		return index.Manifest{}, err
 	}
 	return manifest, nil
+}
+
+func newContentAssessment(email, repetitive, boilerplate int64) *index.ContentAssessment {
+	return &index.ContentAssessment{
+		EmailAddresses:     &index.DetectionMeasure{Detector: shard.EmailDetector, Records: email},
+		RepetitiveContent:  &index.DetectionMeasure{Detector: shard.RepetitionDetector, Records: repetitive},
+		BoilerplateContent: &index.DetectionMeasure{Detector: shard.BoilerplateDetector, Records: boilerplate},
+	}
 }
 
 func compactCollector(recipe *index.IngestRecipeEvidence) string {
