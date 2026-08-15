@@ -125,6 +125,7 @@ source evidence provides the logical attribution boundary.
 | `email_addresses` | boolean | yes in schema 2 | `true` when WALDO's pinned detector found an email-shaped string in `text`; the text is not changed |
 | `repetitive_content` | boolean | yes in schema 2 | `true` when WALDO's pinned token n-gram detector exceeds its within-document threshold; the text is not changed |
 | `boilerplate_content` | boolean | yes in schema 2 | `true` when WALDO's pinned duplicate-line or duplicate-paragraph detector exceeds its threshold; the text is not changed |
+| `main_content` | boolean | yes in current schema 2 | Recipe-declared primary-content classification; defaults to `true` when no mapping exists, including older schemas |
 
 For recipe-driven whole-file text and Markdown inputs, `meta.source_path`
 preserves the validated acquisition-relative path. This keeps file-level

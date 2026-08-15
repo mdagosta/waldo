@@ -141,6 +141,7 @@ func streamJSONLInput(ctx context.Context, plan Plan, input PlanInput, maximum i
 			Source:        fmt.Sprintf("sha256:%s#line=%d", input.Artifact.SHA256, lineNumber),
 			SourceName:    &sourceName,
 			License:       license,
+			MainContent:   true,
 		}
 		if err := emit(row, int64(len(text))); err != nil {
 			_ = reader.Close()

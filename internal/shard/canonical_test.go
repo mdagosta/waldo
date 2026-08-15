@@ -102,8 +102,38 @@ func TestEstablishedSchemaOneRowsRemainReadableAndUnassessed(t *testing.T) {
 	if err := ReadRecordsAt(path, []int64{0}, func(_ int64, view RecordView) error { got = view; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if got.Text != text || got.EmailAddresses != nil {
+	if got.Text != text || got.EmailAddresses != nil || !got.MainContent {
 		t.Fatalf("schema-one view = %+v", got)
+	}
+}
+
+func TestInitialSchemaTwoRowsDefaultToMainContent(t *testing.T) {
+	text := "initial schema two"
+	tokens := tokenCount(t, text)
+	digest := sha256.Sum256([]byte(text))
+	path := filepath.Join(t.TempDir(), "schema-two-v7.parquet")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := parquet.NewGenericWriter[textRowV2](file, proposedTextWriterOptions()...)
+	writer.SetKeyValueMetadata("waldo.record_schema", strconv.Itoa(TextRecordSchema))
+	writer.SetKeyValueMetadata("waldo.recipe", FormerAssessmentRecipe)
+	if _, err := writer.Write([]textRowV2{{ContentSHA256: digest, Text: text, Source: "fixture", License: "CC0-1.0", TokenCount: &tokens}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var got RecordView
+	if err := ReadRecordsAt(path, []int64{0}, func(_ int64, view RecordView) error { got = view; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if !got.MainContent || got.EmailAddresses == nil {
+		t.Fatalf("initial schema-two view = %+v", got)
 	}
 }
 
@@ -330,7 +360,7 @@ func TestAuditReadsEstablishedSchemaOnePhysicalLayout(t *testing.T) {
 
 func validTextRow(text string, tokens int64) TextRow {
 	digest := sha256.Sum256([]byte(text))
-	return TextRow{ContentSHA256: digest, Text: text, Source: "fixture", License: "CC0-1.0", TokenCount: &tokens}
+	return TextRow{ContentSHA256: digest, Text: text, Source: "fixture", License: "CC0-1.0", TokenCount: &tokens, MainContent: true}
 }
 
 func tokenCount(t *testing.T, text string) int64 {

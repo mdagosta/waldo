@@ -158,6 +158,7 @@ func readProjectedText(ctx context.Context, input *os.File, planned PlanInput, p
 				Source:        fmt.Sprintf("sha256:%s#row=%d", planned.Artifact.SHA256, rowNumber),
 				SourceName:    &sourceName,
 				License:       license,
+				MainContent:   true,
 			}
 			if err := emit(canonical, int64(len(textBytes))); err != nil {
 				return err

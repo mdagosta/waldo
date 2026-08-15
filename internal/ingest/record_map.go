@@ -26,6 +26,7 @@ import (
 
 var errEmptyMappedRecord = errors.New("required mapped content is empty")
 var errLicensePolicy = errors.New("effective license is excluded by input policy")
+var errMainContentMapping = errors.New("main_content classification failed")
 
 type recordAccessor interface {
 	Values(string) ([]string, error)
@@ -133,6 +134,9 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 	}
 	row, err := mapJSONCanonicalRecord(object, plan, input, "sha256:"+input.Artifact.SHA256)
 	if err != nil {
+		if errors.Is(err, errMainContentMapping) {
+			return err
+		}
 		if errors.Is(err, errLicensePolicy) {
 			return rejectVerified(RejectionLicense)
 		}
@@ -202,6 +206,10 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 		}
 		row, err := mapJSONCanonicalRecord(object, plan, input, fmt.Sprintf("sha256:%s#line=%d", input.Artifact.SHA256, line))
 		if err != nil {
+			if errors.Is(err, errMainContentMapping) {
+				_ = reader.Close()
+				return fmt.Errorf("line %d: %w", line, err)
+			}
 			if errors.Is(err, errLicensePolicy) {
 				if err := reject(RejectionLicense); err != nil {
 					_ = reader.Close()
@@ -280,6 +288,9 @@ func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit f
 			position++
 			row, err := mapCanonicalRecord(compiled.accessor(buffer[0]), plan, input, fmt.Sprintf("sha256:%s#row=%d", input.Artifact.SHA256, position))
 			if err != nil {
+				if errors.Is(err, errMainContentMapping) {
+					return fmt.Errorf("row %d: %w", position, err)
+				}
 				if errors.Is(err, errLicensePolicy) {
 					if err := reject(RejectionLicense); err != nil {
 						return err
@@ -424,7 +435,11 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 	if int64(len(text)) > plan.Writer.RecordMaximumBytes || !utf8.ValidString(text) || strings.IndexByte(text, 0) >= 0 {
 		return shard.TextRow{}, fmt.Errorf("mapped text is not bounded NUL-free UTF-8")
 	}
-	source, err := optionalScalar(record, input.Profile.Fields.ID)
+	sourcePath := input.Profile.Fields.Source
+	if sourcePath == "" {
+		sourcePath = input.Profile.Fields.ID
+	}
+	source, err := optionalScalar(record, sourcePath)
 	if err != nil {
 		return shard.TextRow{}, err
 	}
@@ -453,12 +468,58 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 	if !input.Profile.LicensePolicy.Allows(effective) {
 		return shard.TextRow{}, fmt.Errorf("%w: %s", errLicensePolicy, effective)
 	}
+	mainContent, err := mappedMainContent(record, input.Profile.MainContent)
+	if err != nil {
+		return shard.TextRow{}, err
+	}
 	sourceName := projectSource.Name
 	hash := sha256.Sum256([]byte(text))
 	return shard.TextRow{
 		ContentSHA256: hash, Text: text, Source: source, SourceName: &sourceName,
-		License: effective, LicenseRaw: rawLicense, Language: stringPointer(language), Date: stringPointer(date), Meta: meta,
+		License: effective, LicenseRaw: rawLicense, Language: stringPointer(language), Date: stringPointer(date), Meta: meta, MainContent: mainContent,
 	}, nil
+}
+
+func mappedMainContent(record recordAccessor, condition map[string]any) (bool, error) {
+	if len(condition) == 0 {
+		return true, nil
+	}
+	for path, raw := range condition {
+		expected, _ := mainContentScalar(raw)
+		values, err := record.Values(path)
+		if err != nil {
+			return false, fmt.Errorf("%w: %v", errMainContentMapping, err)
+		}
+		if len(values) == 0 {
+			return false, fmt.Errorf("%w: field %q is absent", errMainContentMapping, path)
+		}
+		if len(values) != 1 {
+			return false, fmt.Errorf("%w: field %q must be scalar", errMainContentMapping, path)
+		}
+		return values[0] == expected, nil
+	}
+	return true, nil
+}
+
+func mainContentScalar(value any) (string, bool) {
+	switch value := value.(type) {
+	case string:
+		return value, true
+	case bool:
+		return strconv.FormatBool(value), true
+	case json.Number:
+		return value.String(), true
+	case int:
+		return strconv.Itoa(value), true
+	case int64:
+		return strconv.FormatInt(value, 10), true
+	case uint64:
+		return strconv.FormatUint(value, 10), true
+	case float64:
+		return strconv.FormatFloat(value, 'g', -1, 64), true
+	default:
+		return "", false
+	}
 }
 
 func optionalLicense(record recordAccessor, path string) (string, *string, error) {

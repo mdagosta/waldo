@@ -70,6 +70,7 @@ stages:
     type: pre-training
     objective: causal-language-modeling
     filter:
+      main_content: true
       exclude:
         email_addresses: true
         repetitive_content: true
@@ -286,6 +287,7 @@ form is a single deny list whose conditions are ORed:
 
 ```yaml
 filter:                         # stage-wide
+  main_content: true
   exclude:
     email_addresses: true
     repetitive_content: true
@@ -309,6 +311,7 @@ corpora:
 | `path` | yes in object form | Logical index path. |
 | `weight` | only for `causal-pretrain-weighted` | Positive integer relative token exposure. It replaces the legacy map entry for this corpus. |
 | `filter` | no | Record filter local to this corpus. |
+| `filter.main_content` | no | Requires the canonical main-content boolean to equal the declared value. Normally `true`; older schemas default to `true`. |
 | `filter.exclude.email_addresses` | no | Excludes rows whose schema-2 email-address flag equals the declared boolean. The normal policy is `true`. |
 | `filter.exclude.repetitive_content` | no | Excludes rows whose schema-2 repeated-token flag equals the declared boolean. The normal policy is `true`. |
 | `filter.exclude.boilerplate_content` | no | Excludes rows whose schema-2 duplicated-structure flag equals the declared boolean. The normal policy is `true`. |

@@ -53,6 +53,9 @@ func TestInputProfileValidation(t *testing.T) {
 		"bad empty policy":     {Type: ProfileRecordMap, OnEmpty: "discard", Fields: ProfileFields{Text: []string{"body"}}},
 		"bad NUL policy":       {Type: ProfileRecordMap, NUL: "drop", Fields: ProfileFields{Text: []string{"body"}}},
 		"NUL policy on file":   {Type: ProfileBoundedText, NUL: "space", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}},
+		"empty main content":   {Type: ProfileRecordMap, MainContent: map[string]any{}, Fields: ProfileFields{Text: []string{"body"}}},
+		"multiple main fields": {Type: ProfileRecordMap, MainContent: map[string]any{"namespace": 0, "type": "article"}, Fields: ProfileFields{Text: []string{"body"}}},
+		"bad main value":       {Type: ProfileRecordMap, MainContent: map[string]any{"namespace": []string{"0"}}, Fields: ProfileFields{Text: []string{"body"}}},
 		"bad malformed policy": {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"/doc/body"}}, XML: XMLMapping{OnMalformed: "discard"}},
 		"XML policy on text":   {Type: ProfileBoundedText, Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}, XML: XMLMapping{OnMalformed: "skip"}},
 	} {

@@ -62,6 +62,20 @@ Profiles change only how physical records become canonical text:
 - `bounded-text`: UTF-8 text files.
 - `xml-record`: XML files.
 
+Structured record profiles may classify primary material with one exact scalar
+condition:
+
+```yaml
+input:
+  main_content:
+    metadata.namespace: 0
+```
+
+Matching rows receive `main_content: true`; other values receive `false`, and
+a missing declared field rejects ingestion as source-schema drift. When the
+mapping is omitted, every retained row is main content. Older canonical schemas
+also read as `main_content: true`.
+
 ## Recipe application
 
 Schema 1 has one source directory. All steps share its `WALDO_FETCH_DIR`, and

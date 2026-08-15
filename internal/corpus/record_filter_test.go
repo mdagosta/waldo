@@ -111,3 +111,14 @@ func TestUnifiedEmailExclusionCombinesWithLegacyLicenseFilter(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMainContentFilterIsDirectAndDefaultsOlderRowsToMain(t *testing.T) {
+	want := true
+	filter := RecordFilter{MainContent: &want}
+	if err := filter.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !filter.Allows(shard.RecordView{MainContent: true}) || filter.Allows(shard.RecordView{MainContent: false}) {
+		t.Fatal("main-content filter did not require the declared boolean")
+	}
+}

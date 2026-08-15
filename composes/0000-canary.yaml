@@ -19,6 +19,8 @@ stages:
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
+    filter:
+      main_content: true
     corpora:
       - core/common-pile/public-domain-review
       - core/common-pile/python-enhancement-proposals/peps

@@ -475,7 +475,7 @@ func verifyAssembledObject(object ObjectResult) (int, error) {
 	if parquetFile.NumRows() != object.Docs {
 		return 0, fmt.Errorf("assembled object has %d rows, want %d", parquetFile.NumRows(), object.Docs)
 	}
-	wantColumns := []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content"}
+	wantColumns := []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content", "main_content"}
 	columns := parquetFile.Schema().Columns()
 	gotColumns := make([]string, len(columns))
 	for index, column := range columns {

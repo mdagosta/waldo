@@ -20,6 +20,8 @@ stages:
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
+    filter:
+      main_content: true
     corpora:
       - path: core/books/gutenberg
         weight: 3

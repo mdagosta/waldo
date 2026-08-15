@@ -32,11 +32,12 @@ type RecordFilterPolicy struct {
 }
 
 type RecordFilter struct {
-	Exclude   *ExclusionFilter `json:"exclude,omitempty" yaml:"exclude,omitempty"`
-	Licenses  *ValueFilter     `json:"licenses,omitempty" yaml:"licenses,omitempty"`
-	Languages *ValueFilter     `json:"languages,omitempty" yaml:"languages,omitempty"`
-	Sources   *ValueFilter     `json:"sources,omitempty" yaml:"sources,omitempty"`
-	Date      *DateFilter      `json:"date,omitempty" yaml:"date,omitempty"`
+	MainContent *bool            `json:"main_content,omitempty" yaml:"main_content,omitempty"`
+	Exclude     *ExclusionFilter `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+	Licenses    *ValueFilter     `json:"licenses,omitempty" yaml:"licenses,omitempty"`
+	Languages   *ValueFilter     `json:"languages,omitempty" yaml:"languages,omitempty"`
+	Sources     *ValueFilter     `json:"sources,omitempty" yaml:"sources,omitempty"`
+	Date        *DateFilter      `json:"date,omitempty" yaml:"date,omitempty"`
 }
 
 // ExclusionFilter is the canonical deny-list form. A record is excluded when
@@ -116,7 +117,7 @@ func (filter RecordFilter) Validate() error {
 }
 
 func (filter RecordFilter) empty() bool {
-	return filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && filter.Date == nil
+	return filter.MainContent == nil && filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && filter.Date == nil
 }
 
 func (filter ExclusionFilter) Validate() error {
@@ -184,6 +185,9 @@ func (policy RecordFilterPolicy) Allows(corpusPath string, record shard.RecordVi
 }
 
 func (filter RecordFilter) Allows(record shard.RecordView) bool {
+	if filter.MainContent != nil && record.MainContent != *filter.MainContent {
+		return false
+	}
 	if filter.Exclude != nil && filter.Exclude.Matches(record) {
 		return false
 	}

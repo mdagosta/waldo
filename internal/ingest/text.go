@@ -236,7 +236,7 @@ func streamLargeTextInput(ctx context.Context, plan Plan, input PlanInput, chunk
 		sourceName := source.Name
 		if err := consume(TextBatch{Rows: []shard.TextRow{{
 			ContentSHA256: contentHash, Text: text, Source: "sha256:" + input.Artifact.SHA256,
-			SourceName: &sourceName, License: license, Meta: &metadataText,
+			SourceName: &sourceName, License: license, Meta: &metadataText, MainContent: true,
 		}}, LogicalBytes: int64(len(data))}); err != nil {
 			return err
 		}
@@ -311,6 +311,7 @@ func readTextRow(ctx context.Context, plan Plan, input PlanInput, maximum int64)
 		SourceName:    &sourceName,
 		License:       license,
 		Meta:          metadata,
+		MainContent:   true,
 	}, written, nil
 }
 

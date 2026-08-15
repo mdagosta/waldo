@@ -148,6 +148,45 @@ func TestDeclarativeProfileIsPartOfConversionAndSourceIdentity(t *testing.T) {
 	}
 }
 
+func TestMainContentClassificationChangesPlanAndSourceIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "input.json")
+	writeFixture(t, path, `{"metadata":{"namespace":0},"text":"main"}`)
+	probe, err := ProbePaths(context.Background(), []string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := NewPlan(probe, PlanRequest{
+		Destination: "core/main-content", Title: "Main content", License: "CC0-1.0",
+		Source:  PlanSource{Name: "fixture", URL: "https://example.test/data", Category: "public-dataset"},
+		Profile: InputProfile{Type: ProfileRecordMap, MainContent: map[string]any{"metadata.namespace": 0}, Fields: ProfileFields{Text: []string{"text"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := base
+	changed.Inputs = append([]PlanInput(nil), base.Inputs...)
+	changed.Inputs[0].Profile.MainContent = map[string]any{"metadata.namespace": 1}
+	basePlan, err := base.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedPlan, err := changed.Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseSource, err := sourceAcquisitionIdentity(base, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedSource, err := sourceAcquisitionIdentity(changed, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if basePlan == changedPlan || baseSource == changedSource {
+		t.Fatal("main-content classification did not change plan and source identities")
+	}
+}
+
 func TestSourceEvidenceChangesPlanAndAcquisitionIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "input.txt")
 	writeFixture(t, path, "source evidence identity")

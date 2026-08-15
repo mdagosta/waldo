@@ -71,7 +71,7 @@ func TestRecordMapPreservesSelectedProvenanceMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{
-		Text: []string{"text"}, ID: "metadata.url",
+		Text: []string{"text"}, Source: "metadata.url",
 		Meta: map[string]string{"dataset_id": "metadata.dataset_id", "record_id": "id", "tags": "metadata.tags[]"},
 	}}
 	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
@@ -127,6 +127,40 @@ func TestRecordMapUsesExistingCompressedJSONLReader(t *testing.T) {
 	rows := collectMappedRows(t, plan)
 	if len(rows) != 2 || rows[0].Text != "first" || rows[1].Text != "second" {
 		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestRecordMapClassifiesMainContentFromOneScalarField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wikimedia.jsonl")
+	contents := "{\"text\":\"Article\",\"metadata\":{\"namespace\":0}}\n" +
+		"{\"text\":\"Discussion\",\"metadata\":{\"namespace\":1}}\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type: ProfileRecordMap, MainContent: map[string]any{"metadata.namespace": 0},
+		Fields: ProfileFields{Text: []string{"text"}},
+	}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	if len(rows) != 2 || !rows[0].MainContent || rows[1].MainContent {
+		t.Fatalf("main-content rows = %+v", rows)
+	}
+}
+
+func TestRecordMapMainContentDefaultsTrueAndMissingDeclaredFieldFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.jsonl")
+	if err := os.WriteFile(path, []byte("{\"text\":\"Article\"}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plain := InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"text"}}}
+	if rows := collectMappedRows(t, mappedFixturePlan(t, path, plain)); len(rows) != 1 || !rows[0].MainContent {
+		t.Fatalf("default main-content rows = %+v", rows)
+	}
+	declared := plain
+	declared.MainContent = map[string]any{"metadata.namespace": 0}
+	err := StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, declared), func(TextBatch) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), `main_content classification failed: field "metadata.namespace" is absent`) {
+		t.Fatalf("missing main-content field error = %v", err)
 	}
 }
 

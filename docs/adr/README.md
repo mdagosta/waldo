@@ -56,3 +56,4 @@ logs.
 - [0050: Name training profiles by behavior](0050-name-training-profiles-by-behavior.md)
 - [0051: Resolve direct compose model origins through the shared importer](0051-direct-compose-model-origins.md)
 - [0052: Preserve general content assessments as immutable row facts](0052-row-level-content-assessment.md)
+- [0053: Classify main content with a default-true row fact](0053-main-content-classification.md)

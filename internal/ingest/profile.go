@@ -34,6 +34,7 @@ type InputProfile struct {
 	Type          string               `json:"type" yaml:"type"`
 	OnEmpty       string               `json:"on_empty,omitempty" yaml:"on_empty,omitempty"`
 	NUL           string               `json:"nul,omitempty" yaml:"nul,omitempty"`
+	MainContent   map[string]any       `json:"main_content,omitempty" yaml:"main_content,omitempty"`
 	Fields        ProfileFields        `json:"fields,omitempty" yaml:"fields,omitempty"`
 	Tree          ConversationTree     `json:"tree,omitempty" yaml:"tree,omitempty"`
 	Bounds        TextBounds           `json:"bounds,omitempty" yaml:"bounds,omitempty"`
@@ -131,9 +132,25 @@ func (profile InputProfile) Validate() error {
 	if profile.NUL != "" && !profile.recordProfile() {
 		return fmt.Errorf("nul is supported only for record profiles")
 	}
+	if profile.MainContent != nil {
+		if !profile.recordProfile() {
+			return fmt.Errorf("main_content is supported only for record profiles")
+		}
+		if len(profile.MainContent) != 1 {
+			return fmt.Errorf("main_content requires exactly one field and value")
+		}
+		for path, value := range profile.MainContent {
+			if err := validateFieldPath(path); err != nil {
+				return fmt.Errorf("main_content: %w", err)
+			}
+			if _, ok := mainContentScalar(value); !ok {
+				return fmt.Errorf("main_content value must be a string, number, or boolean")
+			}
+		}
+	}
 	switch profile.Type {
 	case "":
-		if profile.OnEmpty != "" || profile.NUL != "" || !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() || len(profile.LicensePolicy.Include) > 0 || len(profile.LicensePolicy.Exclude) > 0 {
+		if profile.OnEmpty != "" || profile.NUL != "" || profile.MainContent != nil || !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() || len(profile.LicensePolicy.Include) > 0 || len(profile.LicensePolicy.Exclude) > 0 {
 			return fmt.Errorf("input profile fields require a type")
 		}
 		return nil
@@ -141,8 +158,8 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) == 0 {
 			return fmt.Errorf("record-map requires fields.text")
 		}
-		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
-			return fmt.Errorf("record-map accepts text, id, date, language, license, and meta fields only")
+		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+			return fmt.Errorf("record-map accepts text, id, date, language, license, source, and meta fields only")
 		}
 		for name, path := range profile.Fields.Meta {
 			if strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {
@@ -224,6 +241,9 @@ func (profile InputProfile) paths() []string {
 		profile.Tree.Root, profile.Tree.Replies, profile.Tree.Text, profile.Tree.Rank,
 		profile.Tree.Role)
 	for _, path := range profile.Fields.Meta {
+		paths = append(paths, path)
+	}
+	for path := range profile.MainContent {
 		paths = append(paths, path)
 	}
 	return paths

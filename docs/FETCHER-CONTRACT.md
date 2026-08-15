@@ -221,6 +221,11 @@ canonical row after acquisition, writes the schema-2 `email_addresses`,
 `repetitive_content`, and `boilerplate_content` booleans without changing the
 text, and records aggregate detector evidence in the generated manifest.
 
+For structured sources that mix primary and auxiliary records, the recipe may
+derive the general canonical `main_content` boolean from one exact scalar field
+match. Fetchers still emit the unmodified source field. Omitting the declaration
+marks every retained row as main content.
+
 ```yaml
 input:
   type: record-map

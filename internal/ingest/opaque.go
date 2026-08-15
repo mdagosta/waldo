@@ -97,7 +97,7 @@ func streamOpaqueInput(ctx context.Context, plan Plan, input PlanInput, batchMax
 		sourceName := source.Name
 		row := shard.TextRow{
 			ContentSHA256: contentHash, Text: text, Source: "sha256:" + input.Artifact.SHA256,
-			SourceName: &sourceName, License: license, Meta: &metadataText,
+			SourceName: &sourceName, License: license, Meta: &metadataText, MainContent: true,
 		}
 		if len(batch.Rows) > 0 && batch.LogicalBytes+int64(len(text)) > batchMaximum {
 			if err := flush(); err != nil {

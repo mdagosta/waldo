@@ -79,7 +79,7 @@ func (bom BOM) Validate() error {
 	if !validDigest(bom.PlanSHA256) {
 		return fmt.Errorf("shard BOM plan_sha256 must be 64 lowercase hexadecimal characters")
 	}
-	supported := bom.RecordSchema == TextRecordSchema && bom.WriterRecipe == TextWriterRecipe || bom.RecordSchema == FormerTextRecordSchema && bom.WriterRecipe == FormerTextBOMRecipe
+	supported := bom.RecordSchema == TextRecordSchema && (bom.WriterRecipe == TextWriterRecipe || bom.WriterRecipe == FormerAssessmentRecipe) || bom.RecordSchema == FormerTextRecordSchema && bom.WriterRecipe == FormerTextBOMRecipe
 	if !supported || bom.Tokenizer == "" {
 		return fmt.Errorf("shard BOM has unsupported record, writer, or tokenizer identity")
 	}
@@ -146,7 +146,7 @@ func InspectAttestation(path string) (Attestation, error) {
 	defer file.Close()
 	recipe, _ := parquetFile.Lookup("waldo.recipe")
 	switch recipe {
-	case TextWriterRecipe, FormerTextBOMRecipe:
+	case TextWriterRecipe, FormerAssessmentRecipe, FormerTextBOMRecipe:
 		if _, err := verifyAttestedOne(path); err != nil {
 			return Attestation{}, err
 		}

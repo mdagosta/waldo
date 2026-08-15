@@ -17,7 +17,8 @@ import (
 const (
 	TextRecordSchema       = 2
 	FormerTextRecordSchema = 1
-	TextWriterRecipe       = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v7-content-assessment"
+	TextWriterRecipe       = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v8-main-content"
+	FormerAssessmentRecipe = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v7-content-assessment"
 	FormerTextBOMRecipe    = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v5-bom"
 	FormerTextRecipe       = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v4"
 	EmailDetector          = "waldo/email-address-v1"
@@ -31,6 +32,26 @@ const (
 // 2. Pointer fields are true Parquet nulls; empty strings and zero values are
 // not overloaded to mean absence.
 type TextRow struct {
+	ContentSHA256      [32]byte `parquet:"content_sha256"`
+	Text               string   `parquet:"text"`
+	Source             string   `parquet:"source"`
+	SourceName         *string  `parquet:"source_name,dict"`
+	License            string   `parquet:"license,dict"`
+	LicenseRaw         *string  `parquet:"license_raw,dict"`
+	Language           *string  `parquet:"language,dict"`
+	LanguageScore      *int32   `parquet:"language_score"`
+	Date               *string  `parquet:"date,dict"`
+	TokenCount         *int64   `parquet:"token_count"`
+	Meta               *string  `parquet:"meta"`
+	EmailAddresses     bool     `parquet:"email_addresses"`
+	RepetitiveContent  bool     `parquet:"repetitive_content"`
+	BoilerplateContent bool     `parquet:"boilerplate_content"`
+	MainContent        bool     `parquet:"main_content"`
+}
+
+// textRowV2 preserves the initial schema-2 physical contract. Before
+// main_content existed, every retained row was implicitly main content.
+type textRowV2 struct {
 	ContentSHA256      [32]byte `parquet:"content_sha256"`
 	Text               string   `parquet:"text"`
 	Source             string   `parquet:"source"`

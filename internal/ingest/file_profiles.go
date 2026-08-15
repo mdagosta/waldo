@@ -376,6 +376,6 @@ func profiledFileRow(plan Plan, input PlanInput, text, source, date, language, r
 	digest := sha256.Sum256([]byte(text))
 	return shard.TextRow{
 		ContentSHA256: digest, Text: text, Source: source, SourceName: &sourceName,
-		License: license, LicenseRaw: licenseRaw, Language: stringPointer(language), Date: stringPointer(date), Meta: meta,
+		License: license, LicenseRaw: licenseRaw, Language: stringPointer(language), Date: stringPointer(date), Meta: meta, MainContent: true,
 	}, nil
 }
