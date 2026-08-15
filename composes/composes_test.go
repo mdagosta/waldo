@@ -77,8 +77,18 @@ func TestEveryReferenceComposeSettingResolvesIntoTrainingContract(t *testing.T) 
 					t.Fatalf("stage %s shuffle_buffer_records = %d, want %d", stage.Name, resolved.Data.ShuffleBufferRecords, *raw.ShuffleBufferRecords)
 				}
 				assertOptionalInt64(t, stage.Name+" shuffle_buffer_bytes", raw.ShuffleBufferBytes, resolved.Data.ShuffleBufferBytes)
-				if !reflect.DeepEqual(resolved.Data.CorpusWeights, raw.CorpusWeights) {
-					t.Fatalf("stage %s corpus_weights = %v, want %v", stage.Name, resolved.Data.CorpusWeights, raw.CorpusWeights)
+				expectedWeights := raw.CorpusWeights
+				for _, selection := range stage.Corpora {
+					if selection.Weight == nil {
+						continue
+					}
+					if expectedWeights == nil {
+						expectedWeights = map[string]uint64{}
+					}
+					expectedWeights[selection.Path] = *selection.Weight
+				}
+				if !reflect.DeepEqual(resolved.Data.CorpusWeights, expectedWeights) {
+					t.Fatalf("stage %s corpus weights = %v, want %v", stage.Name, resolved.Data.CorpusWeights, expectedWeights)
 				}
 				if resolved.Evaluation == nil {
 					t.Fatalf("stage %s has no resolved evaluation policy", stage.Name)
@@ -152,7 +162,7 @@ func TestBasicHasTenHourScalingBudget(t *testing.T) {
 	if forecast.ApproximateParameters != 114115584 || forecast.PlannedTokens != 3932160000 {
 		t.Fatalf("basic forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
-	if compose.Architecture.Dropout != 0.1 || compose.Stages[0].Parameters.Profile != "causal-pretrain-v3" || len(compose.Stages[0].Parameters.CorpusWeights) != 3 {
+	if compose.Architecture.Dropout != 0.1 || compose.Stages[0].Parameters.Profile != "causal-pretrain-v3" || inlineWeightCount(compose.Stages[0]) != 3 || len(compose.Stages[0].Parameters.CorpusWeights) != 0 {
 		t.Fatalf("basic tuning controls are not pinned: architecture=%+v parameters=%+v", compose.Architecture, compose.Stages[0].Parameters)
 	}
 }
@@ -176,6 +186,16 @@ func TestIntermediateHasTwoDayScalingBudget(t *testing.T) {
 	if parameters.BatchSize != 16 || parameters.Steps != 366210 || parameters.SequenceLength != 2048 {
 		t.Fatalf("intermediate memory-safe training shape = %+v", parameters)
 	}
+}
+
+func inlineWeightCount(stage model.Stage) int {
+	count := 0
+	for _, selection := range stage.Corpora {
+		if selection.Weight != nil {
+			count++
+		}
+	}
+	return count
 }
 
 func TestValidatedBabbleHasMeasuredScalingBudget(t *testing.T) {
