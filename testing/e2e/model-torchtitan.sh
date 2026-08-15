@@ -26,6 +26,8 @@ fi
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
+revision=$(sed -n 's/.*TorchTitanRevision = "\(.*\)".*/\1/p' "$repo_root/internal/training/torchtitan.go")
+[ -n "$revision" ] || { echo "could not read TorchTitanRevision from internal/training/torchtitan.go" >&2; exit 1; }
 temporary_base=${TMPDIR:-/tmp}
 work=$(mktemp -d "$temporary_base/waldo-torchtitan-e2e.XXXXXX")
 
@@ -113,7 +115,7 @@ EOF
 
 output=$("$binary" model train torchtitan-smoke "$compose")
 printf '%s\n' "$output"
-printf '%s\n' "$output" | grep -q 'backend       torchtitan@builtin-torchtitan-worker-schema-1-r2'
+printf '%s\n' "$output" | grep -q 'backend       torchtitan@'"$revision"''
 summary=$("$binary" --json model summary torchtitan-smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"torchtitan"'

@@ -26,6 +26,8 @@ fi
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
+revision=$(sed -n 's/.*MLXRevision = "\(.*\)".*/\1/p' "$repo_root/internal/training/mlx.go")
+[ -n "$revision" ] || { echo "could not read MLXRevision from internal/training/mlx.go" >&2; exit 1; }
 temporary_base=${TMPDIR:-/tmp}
 work=$(mktemp -d "$temporary_base/waldo-mlx-e2e.XXXXXX")
 
@@ -130,7 +132,7 @@ EOF
 
 output=$("$binary" model train mlx-smoke "$compose")
 printf '%s\n' "$output"
-printf '%s\n' "$output" | grep -q 'backend       mlx@builtin-mlx-worker-schema-1-r2'
+printf '%s\n' "$output" | grep -q 'backend       mlx@'"$revision"''
 summary=$("$binary" --json model summary mlx-smoke)
 printf '%s\n' "$summary" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*false'
 printf '%s\n' "$summary" | grep -Eq '"name"[[:space:]]*:[[:space:]]*"mlx"'
@@ -142,7 +144,7 @@ find "$models/mlx-smoke/runs" -type d -name 'step-*' -exec test -f '{}/model.saf
 
 train_output=$("$binary" model train mlx-smoke core/e2e/mlx --epochs 2)
 printf '%s\n' "$train_output"
-printf '%s\n' "$train_output" | grep -q 'backend       mlx@builtin-mlx-worker-schema-1-r2'
+printf '%s\n' "$train_output" | grep -q 'backend       mlx@'"$revision"''
 summary=$("$binary" --json model summary mlx-smoke)
 printf '%s\n' "$summary" | grep -Eq '"runs"[[:space:]]*:[[:space:]]*\['
 printf '%s\n' "$summary" | grep -Eq '"initialization"[[:space:]]*:'

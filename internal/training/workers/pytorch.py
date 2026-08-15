@@ -720,7 +720,11 @@ class Trainer:
             if missing or unexpected:
                 raise ValueError(f"saved artifact weights do not match architecture: missing={missing}, unexpected={unexpected}")
             artifact_model.to(device=self.device, dtype=torch.float32)
-            artifact_loss = self.evaluate_model(artifact_model, mixed_precision=False)
+            # Evaluate the artifact exactly as the live model was evaluated. Under
+            # a different compute precision this comparison measures autocast
+            # rounding rather than the reload, and that error grows with depth
+            # until it exceeds the tolerance for every sufficiently large model.
+            artifact_loss = self.evaluate_model(artifact_model, mixed_precision=True)
             del artifact_model
             live_loss = self.evaluations[-1]["metrics"]["heldout_loss"]
             tolerance = max(0.02, abs(live_loss) * 0.01)
