@@ -45,14 +45,22 @@ func runModelForecast(context Context, args []string, stdout, stderr io.Writer) 
 			return err
 		}
 		if isCompose {
-			return runModelComposeForecast(context, args[0], stdout)
+			return runModelComposeForecast(context, args[0], stdout, stderr)
 		}
 	}
 	return runModelIndexForecast(context, args, stdout, stderr)
 }
 
-func runModelComposeForecast(context Context, path string, stdout io.Writer) error {
+func runModelComposeForecast(context Context, path string, stdout, progress io.Writer) error {
 	compose, composePath, err := model.LoadCompose(path)
+	if err != nil {
+		return err
+	}
+	builder, err := configuredModelBuilder(context, progress)
+	if err != nil {
+		return err
+	}
+	compose, err = builder.ResolveCompose(context.Execution, compose, false)
 	if err != nil {
 		return err
 	}
@@ -795,6 +803,10 @@ func runModelComposeTraining(context Context, name, path string, cluster trainin
 	if err != nil {
 		return err
 	}
+	compose, err = builder.ResolveCompose(context.Execution, compose, true)
+	if err != nil {
+		return err
+	}
 	if err := builder.CheckComposeTarget(name, compose); err != nil {
 		return err
 	}
@@ -1261,6 +1273,9 @@ func configuredModelBuilderForCluster(commandContext Context, progress io.Writer
 		if commandContext.Progress != nil {
 			commandContext.Progress(event)
 		}
+	}}
+	builder.OriginPuller = &model.Puller{Client: &http.Client{}, Progress: func(event model.PullProgress) {
+		fmt.Fprintln(progress, event.Message)
 	}}
 	backend := config.EffectiveModelBackend(configuration)
 	resolver := training.NewEnvironmentResolverForCluster(backend, cluster)

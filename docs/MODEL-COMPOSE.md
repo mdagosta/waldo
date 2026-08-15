@@ -39,10 +39,12 @@ weights.
 kind: waldo-model-compose
 schema: 1
 
-# Optional: initialize from a locally managed pulled model.
+# Optional: initialize from either a managed pulled model or a pinned source.
 # base:
 #   model: llama-base
 #   origin_sha256: <expected-origin-bom-sha256> # optional assertion
+# base:
+#   source: huggingface://organization/model@<commit>
 
 architecture:
   family: decoder-transformer
@@ -110,19 +112,21 @@ field names and structure.
 | `kind` | yes | `waldo-model-compose` | Identifies the document as a model compose. |
 | `schema` | yes | `1` | Selects the compose schema. |
 | `base` | no | object | Optionally initializes a new model from pulled origin weights. |
-| `architecture` | yes | object | Defines immutable model structure and tokenizer identity. |
+| `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
 | `stages` | yes | non-empty list | Ordered training stages. Stage names must be unique. |
 
 ### Base fields
 
 | Field | Required | Value | Meaning |
 | --- | --- | --- | --- |
-| `base.model` | yes when `base` is present | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model whose current weights are still its pulled origin. |
+| `base.model` | exactly one of `model` or `source` | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model whose current weights are still its pulled origin. |
+| `base.source` | exactly one of `model` or `source` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
 | `base.origin_sha256` | no | SHA-256 | Asserts the expected origin BOM. WALDO always resolves and pins the actual value. |
 
-The complete compose architecture must exactly equal the base model
-architecture. A base initializes a new model; training never mutates the named
-base model.
+With `base.model`, the complete compose architecture must exactly equal the
+managed base architecture. With `base.source`, architecture may be omitted and
+is inherited from the verified source; when supplied, it is an exact assertion.
+A base initializes a new model and is never mutated by training.
 
 ## Architecture fields
 
@@ -357,6 +361,21 @@ base:
 Add this block to a complete compose whose architecture exactly matches
 `llama-base`. The base must have pulled origin weights as its current weights.
 
+To acquire the origin directly from a supported external source, pin its
+immutable commit and omit `architecture` to inherit the verified definition:
+
+```yaml
+base:
+  source: huggingface://organization/model@0123456789abcdef0123456789abcdef01234567
+```
+
+This uses the same importer and compatibility checks as `waldo model pull`.
+WALDO caches the verified origin beneath the managed model root, initializes
+the new model using hard links when possible, and records the resolved origin
+BOM in the compose, plan, and model BOM. Branches and tags are rejected because
+they can move. Schema 1 currently supports the Hugging Face model subset
+documented in the model lifecycle guide.
+
 ### Multiple ordered stages
 
 ```yaml
@@ -402,7 +421,7 @@ WALDO fails before training when a compose has:
 - invalid parameter ranges or an overflowing planned token capacity;
 - corpus weights outside `causal-pretrain-weighted`, missing weighted-profile
   weights, or weights for unselected corpora;
-- a base whose origin, architecture, or current weights do not match; or
+- a base whose source is mutable or whose origin, architecture, or current weights do not match; or
 - an existing destination model with a different immutable architecture.
 
 During training, WALDO fails rather than accepting incomplete steps,

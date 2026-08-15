@@ -63,6 +63,29 @@ func TestLoadComposeIsStrictAndKeepsIndexPathsLogical(t *testing.T) {
 	}
 }
 
+func TestLoadComposeAcceptsPinnedSourceWithInheritedArchitecture(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.yaml")
+	revision := strings.Repeat("a", 40)
+	document := "kind: waldo-model-compose\nschema: 1\nbase:\n  source: huggingface://org/model@" + revision + "\n" +
+		"stages:\n  - name: pretrain\n    type: pre-training\n    objective: causal-language-modeling\n    corpora: [core/books]\n    parameters:\n      steps: 2\n      batch_size: 1\n      sequence_length: 64\n      learning_rate: 0.001\n      seed: 7\n"
+	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compose, _, err := LoadCompose(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compose.Base == nil || compose.Base.Source == "" || compose.Architecture != (Architecture{}) {
+		t.Fatalf("compose = %+v", compose)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(document, "  source:", "  unknown: true\n  source:", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompose(path); err == nil || !strings.Contains(err.Error(), "field unknown not found") {
+		t.Fatalf("base unknown-field error = %v", err)
+	}
+}
+
 func TestComposeAcceptsConfiguredCorporaWithoutBreakingScalarForm(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "configured.yaml")
 	configured := strings.Replace(composeYAML(""), "      - core/books\n      - science/papers", `      - path: core/books

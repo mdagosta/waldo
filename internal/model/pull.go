@@ -55,16 +55,54 @@ var huggingFaceRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Z
 var huggingFaceCommit = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 var huggingFaceShard = regexp.MustCompile(`^model-[0-9]{5}-of-[0-9]{5}\.safetensors$`)
 
+// Probe resolves only the portable architecture and tokenizer contract. It is
+// used for forecasting an inherited compose without downloading model weights.
+func (puller Puller) Probe(ctx context.Context, source string) (Architecture, error) {
+	metadata, repository, requested, endpoint, token, client, err := puller.resolveHub(ctx, source)
+	if err != nil {
+		return Architecture{}, err
+	}
+	names, err := selectModelFiles(metadata)
+	if err != nil {
+		return Architecture{}, err
+	}
+	if err := os.MkdirAll(puller.Root, 0o755); err != nil {
+		return Architecture{}, err
+	}
+	directory, err := os.MkdirTemp(puller.Root, ".waldo-probe-*")
+	if err != nil {
+		return Architecture{}, err
+	}
+	defer os.RemoveAll(directory)
+	sizes := map[string]int64{}
+	for _, sibling := range metadata.Siblings {
+		sizes[sibling.Name] = sibling.Size
+	}
+	for _, filename := range []string{"config.json", "tokenizer_config.json"} {
+		if !slicesContains(names, filename) {
+			return Architecture{}, fmt.Errorf("Hugging Face model must contain %s", filename)
+		}
+		fileURL := endpoint + "/" + repository + "/resolve/" + metadata.SHA + "/" + escapePath(filename)
+		if _, _, err := downloadFile(ctx, client, fileURL, token, filepath.Join(directory, filename), sizes[filename]); err != nil {
+			return Architecture{}, fmt.Errorf("probe %s@%s %s: %w", repository, requested, filename, err)
+		}
+	}
+	architecture, err := loadHuggingFaceArchitecture(filepath.Join(directory, "config.json"))
+	if err != nil {
+		return Architecture{}, err
+	}
+	if err := validateDownloadedTokenizer(directory, architecture); err != nil {
+		return Architecture{}, err
+	}
+	return architecture, nil
+}
+
 func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection, error) {
 	if err := ValidateName(name); err != nil {
 		return Inspection{}, err
 	}
 	if puller.Root == "" {
 		return Inspection{}, fmt.Errorf("model root is required")
-	}
-	repository, requested, err := parseHuggingFaceSource(source)
-	if err != nil {
-		return Inspection{}, err
 	}
 	destination := filepath.Join(puller.Root, name)
 	if _, err := os.Stat(destination); err == nil {
@@ -85,29 +123,9 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 			_ = os.RemoveAll(temporary)
 		}
 	}()
-	client := puller.Client
-	if client == nil {
-		client = &http.Client{}
-	}
-	endpoint := strings.TrimRight(puller.Endpoint, "/")
-	if endpoint == "" {
-		endpoint = strings.TrimRight(os.Getenv("HF_ENDPOINT"), "/")
-		if endpoint == "" {
-			endpoint = "https://huggingface.co"
-		}
-	}
-	token := puller.Token
-	if token == "" {
-		token = huggingFaceToken()
-	}
-	puller.report(PullProgress{Phase: "resolve", Message: fmt.Sprintf("resolving %s@%s", repository, requested)})
-	metadataURL := endpoint + "/api/models/" + repository + "/revision/" + url.PathEscape(requested)
-	var metadata hubModel
-	if err := getJSON(ctx, client, metadataURL, token, &metadata); err != nil {
-		return Inspection{}, fmt.Errorf("resolve Hugging Face model %s@%s: %w", repository, requested, err)
-	}
-	if metadata.ID == "" || !huggingFaceCommit.MatchString(metadata.SHA) {
-		return Inspection{}, fmt.Errorf("Hugging Face returned incomplete model identity for %s@%s", repository, requested)
+	metadata, repository, requested, endpoint, token, client, err := puller.resolveHub(ctx, source)
+	if err != nil {
+		return Inspection{}, err
 	}
 	names, err := selectModelFiles(metadata)
 	if err != nil {
@@ -234,6 +252,47 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	committed = true
 	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s at %s", metadata.ID, metadata.SHA)})
 	return Inspect(puller.Root, name)
+}
+
+func (puller Puller) resolveHub(ctx context.Context, source string) (hubModel, string, string, string, string, *http.Client, error) {
+	repository, requested, err := parseHuggingFaceSource(source)
+	if err != nil {
+		return hubModel{}, "", "", "", "", nil, err
+	}
+	client := puller.Client
+	if client == nil {
+		client = &http.Client{}
+	}
+	endpoint := strings.TrimRight(puller.Endpoint, "/")
+	if endpoint == "" {
+		endpoint = strings.TrimRight(os.Getenv("HF_ENDPOINT"), "/")
+		if endpoint == "" {
+			endpoint = "https://huggingface.co"
+		}
+	}
+	token := puller.Token
+	if token == "" {
+		token = huggingFaceToken()
+	}
+	puller.report(PullProgress{Phase: "resolve", Message: fmt.Sprintf("resolving %s@%s", repository, requested)})
+	metadataURL := endpoint + "/api/models/" + repository + "/revision/" + url.PathEscape(requested)
+	var metadata hubModel
+	if err := getJSON(ctx, client, metadataURL, token, &metadata); err != nil {
+		return hubModel{}, "", "", "", "", nil, fmt.Errorf("resolve Hugging Face model %s@%s: %w", repository, requested, err)
+	}
+	if metadata.ID == "" || !huggingFaceCommit.MatchString(metadata.SHA) {
+		return hubModel{}, "", "", "", "", nil, fmt.Errorf("Hugging Face returned incomplete model identity for %s@%s", repository, requested)
+	}
+	return metadata, repository, requested, endpoint, token, client, nil
+}
+
+func slicesContains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func parseHuggingFaceSource(source string) (string, string, error) {

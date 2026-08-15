@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +84,52 @@ func TestDownloadRejectsUnsupportedTokenizerWithoutPublishing(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "bad")); !os.IsNotExist(statErr) {
 		t.Fatalf("model was published: %v", statErr)
+	}
+}
+
+func TestComposeAcquiresPinnedHuggingFaceBaseWithoutVisibleModel(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
+	files := huggingFaceFixture(t, architecture, "OpenWALDOByteTokenizer")
+	revision := strings.Repeat("c", 40)
+	client := &http.Client{Transport: huggingFaceTransport(t, files, revision)}
+	root := t.TempDir()
+	builder := Builder{Root: root, OriginPuller: &Puller{Endpoint: "https://hub.test", Client: client, Token: "secret"}, NewID: func() (string, error) { return "source0001", nil }, Resolver: training.FakeResolver()}
+	stage := testStage("adapt")
+	stage.Parameters.SequenceLength = 32
+	compose := Compose{Kind: "waldo-model-compose", Schema: 1, Base: &ComposeBase{Source: "huggingface://org/tiny@" + revision}, Stages: []Stage{stage}}
+	probed, err := builder.ResolveCompose(t.Context(), compose, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(probed.Architecture, architecture) || probed.Base.OriginSHA256 != "" {
+		t.Fatalf("probed compose = %+v", probed)
+	}
+	prepared := preparedFixture(t, stage)
+	trained, err := builder.Compose(t.Context(), "adapted", compose, []PreparedStage{prepared})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if trained.Origin == nil || trained.Origin.Source.Repository != "org/tiny" || trained.Origin.Source.Revision != revision || trained.Model.Architecture != architecture {
+		t.Fatalf("trained origin = %+v, architecture = %+v", trained.Origin, trained.Model.Architecture)
+	}
+	listed, err := List(root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 || listed[0].Name != "adapted" {
+		t.Fatalf("visible models = %+v", listed)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".origins")); err != nil {
+		t.Fatalf("hidden origin cache: %v", err)
+	}
+}
+
+func TestComposeBaseSourceRequiresImmutableCommit(t *testing.T) {
+	compose := validCompose()
+	compose.Base = &ComposeBase{Source: "huggingface://org/model@main"}
+	if err := compose.Validate(); err == nil || !strings.Contains(err.Error(), "immutable Hugging Face commit") {
+		t.Fatalf("mutable base source error = %v", err)
 	}
 }
 
@@ -163,7 +210,7 @@ func huggingFaceTransport(t *testing.T, files map[string][]byte, revision string
 		if authorization := request.Header.Get("Authorization"); authorization != "" && authorization != "Bearer secret" {
 			t.Errorf("request carried an unexpected authorization header (%d bytes, redacted)", len(authorization))
 		}
-		if request.URL.Path == "/api/models/org/tiny/revision/main" || request.URL.Path == "/api/models/org/bad/revision/main" {
+		if strings.HasPrefix(request.URL.Path, "/api/models/org/tiny/revision/") || strings.HasPrefix(request.URL.Path, "/api/models/org/bad/revision/") {
 			siblings := make([]map[string]any, 0, len(files))
 			for name, data := range files {
 				siblings = append(siblings, map[string]any{"rfilename": name, "size": len(data)})

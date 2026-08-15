@@ -175,7 +175,7 @@ func newModelCommand(state *cobraState) *cobra.Command {
 	command.AddCommand(
 		leaf(state, "init <name>", "Initialize an untrained model", "Available presets: 10m, 35m, 90m, 300m, 1b, 3b, 7b, 13b, 34b, 70b.", cobra.ExactArgs(1), runModelInit,
 			requiredTextFlag("preset", "model architecture preset")),
-		leaf(state, "pull <name> <huggingface-source>", "Pull training-quality open weights", "Pulls and validates a Hugging Face Safetensors model into WALDO's managed model store.", cobra.ExactArgs(2), runModelPull),
+		leaf(state, "pull <name> <source>", "Import a supported external model", "Imports and verifies a supported external model into WALDO's managed model store. Schema 1 accepts pinned Hugging Face Safetensors sources.", cobra.ExactArgs(2), runModelPull),
 		leaf(state, "list [pattern...]", "List locally managed models", "Patterns use shell-style *, ?, and character classes.", cobra.ArbitraryArgs, runModelList),
 		leaf(state, "summary <name>", "Summarize architecture and training history", "", cobra.ExactArgs(1), runModelSummary),
 		leaf(state, "advisor <name>", "Chat with an AI model advisor", "Compatibility form of `waldo advisor <name>`.", cobra.ExactArgs(1), runModelAdvisor, advisorFlags()...),

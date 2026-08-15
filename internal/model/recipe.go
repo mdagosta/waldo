@@ -37,7 +37,8 @@ type Compose struct {
 }
 
 type ComposeBase struct {
-	Model        string `json:"model" yaml:"model"`
+	Model        string `json:"model,omitempty" yaml:"model,omitempty"`
+	Source       string `json:"source,omitempty" yaml:"source,omitempty"`
 	OriginSHA256 string `json:"origin_sha256,omitempty" yaml:"origin_sha256,omitempty"`
 }
 
@@ -322,11 +323,29 @@ func (compose Compose) Validate() error {
 	if compose.Kind != "waldo-model-compose" || compose.Schema != ComposeSchema {
 		return fmt.Errorf("unsupported model compose identity %q schema %d", compose.Kind, compose.Schema)
 	}
-	if err := compose.Architecture.Validate(); err != nil {
-		return err
+	inheritedArchitecture := compose.Base != nil && compose.Base.Source != "" && compose.Architecture == (Architecture{})
+	if !inheritedArchitecture {
+		if err := compose.Architecture.Validate(); err != nil {
+			return err
+		}
 	}
-	if compose.Base != nil && !validName.MatchString(compose.Base.Model) {
-		return fmt.Errorf("base.model must name a locally managed model")
+	if compose.Base != nil {
+		hasModel, hasSource := compose.Base.Model != "", compose.Base.Source != ""
+		if hasModel == hasSource {
+			return fmt.Errorf("base must declare exactly one of model or source")
+		}
+		if hasModel && !validName.MatchString(compose.Base.Model) {
+			return fmt.Errorf("base.model must name a locally managed model")
+		}
+		if hasSource {
+			_, revision, err := parseHuggingFaceSource(compose.Base.Source)
+			if err != nil {
+				return fmt.Errorf("base.source: %w", err)
+			}
+			if !huggingFaceCommit.MatchString(revision) {
+				return fmt.Errorf("base.source must pin an immutable Hugging Face commit")
+			}
+		}
 	}
 	if len(compose.Stages) == 0 {
 		return fmt.Errorf("at least one training stage is required")
@@ -383,7 +402,7 @@ func (compose Compose) Validate() error {
 				}
 			}
 		}
-		if uint64(stage.Parameters.SequenceLength) > compose.Architecture.ContextTokens {
+		if !inheritedArchitecture && uint64(stage.Parameters.SequenceLength) > compose.Architecture.ContextTokens {
 			return fmt.Errorf("stage %s sequence_length exceeds architecture context_tokens", stage.Name)
 		}
 	}

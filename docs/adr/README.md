@@ -54,3 +54,4 @@ logs.
 - [0048: Make corpus weights and dropout durable training facts](0048-weighted-corpus-and-dropout.md)
 - [0049: Configure and filter corpora at their compose selection](0049-configured-compose-corpora.md)
 - [0050: Name training profiles by behavior](0050-name-training-profiles-by-behavior.md)
+- [0051: Resolve direct compose model origins through the shared importer](0051-direct-compose-model-origins.md)
