@@ -77,7 +77,7 @@ func TestBalancedProfilePinsCorpusBalancedDataAndEvaluation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.ProfileSchema != 2 || resolved.Data.Order != "corpus-balanced-shuffle-v1" || resolved.Evaluation == nil || resolved.Evaluation.Selection != "stratified-lowest-sha256-v1" {
+	if resolved.ProfileSchema != 1 || resolved.Data.Order != "corpus-balanced-shuffle-v1" || resolved.Evaluation == nil || resolved.Evaluation.Selection != "stratified-lowest-sha256-v1" {
 		t.Fatalf("balanced profile = %+v", resolved)
 	}
 }
@@ -88,12 +88,37 @@ func TestWeightedProfilePinsDeclaredCorpusWeights(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolved.ProfileSchema != 3 || resolved.Data.Order != "corpus-weighted-shuffle-v1" || !reflect.DeepEqual(resolved.Data.CorpusWeights, parameters.CorpusWeights) {
+	if resolved.ProfileSchema != 1 || resolved.Data.Order != "corpus-weighted-shuffle-v1" || !reflect.DeepEqual(resolved.Data.CorpusWeights, parameters.CorpusWeights) {
 		t.Fatalf("weighted profile = %+v", resolved)
 	}
 	parameters.Profile = BalancedProfile
 	if _, err := ResolveParameters(parameters); err == nil {
 		t.Fatal("balanced profile accepted corpus_weights")
+	}
+}
+
+func TestNumberedProfileAliasesResolveToCanonicalNames(t *testing.T) {
+	for legacy, canonical := range map[string]string{
+		"causal-pretrain-v1": ShuffledProfile,
+		"causal-pretrain-v2": BalancedProfile,
+		"causal-pretrain-v3": WeightedProfile,
+	} {
+		parameters := Parameters{Profile: legacy, Steps: 10, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 42}
+		if canonical == WeightedProfile {
+			parameters.CorpusWeights = map[string]uint64{"corpus": 1}
+		}
+		resolved, err := ResolveParameters(parameters)
+		if err != nil {
+			t.Fatalf("alias %s: %v", legacy, err)
+		}
+		if resolved.Profile != canonical || resolved.ProfileSchema != ProfileSchema {
+			t.Fatalf("alias %s resolved as %s schema %d", legacy, resolved.Profile, resolved.ProfileSchema)
+		}
+	}
+	legacy := ResolvedParameters{Profile: "causal-pretrain-v3", ProfileSchema: 3}
+	canonical := NormalizeResolvedParameters(legacy)
+	if canonical.Profile != WeightedProfile || canonical.ProfileSchema != ProfileSchema {
+		t.Fatalf("persisted profile normalization = %+v", canonical)
 	}
 }
 

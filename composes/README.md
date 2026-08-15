@@ -49,11 +49,11 @@ materializing the FP32 loss input. The corrected batch of 16 doubles optimizer
 steps to preserve the exact token budget, lowers peak memory substantially, and
 uses a correspondingly gentler learning rate.
 
-The babble compose uses equal-exposure `causal-pretrain-v2`. Later composes use
-`causal-pretrain-v3`, which applies declared integer corpus weights while
-retaining deterministic shuffling, stratified evaluation, and exact consumed
-token accounting. This prevents a finite run from silently stopping before it
-reaches a declared source.
+The babble compose uses equal-exposure `causal-pretrain-balanced`. Later
+composes use `causal-pretrain-weighted`, which applies declared integer corpus
+weights while retaining deterministic shuffling, stratified evaluation, and
+exact consumed token accounting. This prevents a finite run from silently
+stopping before it reaches a declared source.
 
 Hardware remains a deployment decision. Use `waldo model forecast` to compare
 the compose against the accelerator catalog and locally observed calibration.

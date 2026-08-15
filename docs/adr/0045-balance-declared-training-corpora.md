@@ -11,8 +11,8 @@ available inputs, but its observation did not prove what training consumed.
 
 ## Decision
 
-`causal-pretrain-v1` remains unchanged for reproducibility.
-`causal-pretrain-v2` adds two general contracts:
+`causal-pretrain-shuffled` retains the original behavior.
+`causal-pretrain-balanced` adds two general contracts:
 
 - records are selected from the logical corpus path with the fewest emitted
   tokenizer targets, with bounded deterministic shuffle inside each path;
@@ -20,15 +20,16 @@ available inputs, but its observation did not prove what training consumed.
 
 Every materialized input carries its selected logical corpus identity into the
 trainer. After sequence packing, the trainer attributes each consumed next-token
-target to that identity. A successful v2 observation must account for every
-declared corpus and exactly equal the run's total consumed token targets.
+target to that identity. A successful balanced-profile observation must account
+for every declared corpus and exactly equal the run's total consumed token
+targets.
 
 ## Consequences
 
-- A finite v2 run cannot silently omit a declared corpus.
+- A finite balanced-profile run cannot silently omit a declared corpus.
 - Run observations provide auditable per-corpus consumption rather than inferring
   use from selected shard sizes.
-- Equal tokenizer-target exposure is the v2 policy while every selected corpus
-  still has records; explicit weighting is a future, separately versioned
-  profile concern.
-- Existing v1 runs and resumes keep their original data order.
+- Equal tokenizer-target exposure is the balanced policy while every selected
+  corpus still has records; explicit weighting belongs to the separate weighted
+  profile.
+- Existing shuffled runs and resumes keep their original data order.

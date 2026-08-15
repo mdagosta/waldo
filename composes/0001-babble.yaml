@@ -23,7 +23,7 @@ stages:
       - core/books/gutenberg
       - science/plos
     parameters:
-      profile: causal-pretrain-v2
+      profile: causal-pretrain-balanced
       steps: 32000
       batch_size: 64
       sequence_length: 512

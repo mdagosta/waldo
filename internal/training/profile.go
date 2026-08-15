@@ -11,11 +11,18 @@ import (
 )
 
 const (
-	DefaultProfile            = "causal-pretrain-v1"
-	BalancedProfile           = "causal-pretrain-v2"
-	WeightedProfile           = "causal-pretrain-v3"
+	ShuffledProfile           = "causal-pretrain-shuffled"
+	BalancedProfile           = "causal-pretrain-balanced"
+	WeightedProfile           = "causal-pretrain-weighted"
+	DefaultProfile            = ShuffledProfile
 	ProfileSchema             = 1
 	defaultShuffleBufferBytes = int64(64 * 1024 * 1024)
+)
+
+const (
+	legacyShuffledProfile = "causal-pretrain-v1"
+	legacyBalancedProfile = "causal-pretrain-v2"
+	legacyWeightedProfile = "causal-pretrain-v3"
 )
 
 func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
@@ -23,6 +30,7 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if profile == "" {
 		profile = DefaultProfile
 	}
+	profile = CanonicalProfile(profile)
 	if profile != DefaultProfile && profile != BalancedProfile && profile != WeightedProfile {
 		return ResolvedParameters{}, fmt.Errorf("unsupported training profile %q", profile)
 	}
@@ -115,7 +123,6 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if profile == BalancedProfile {
 		order = "corpus-balanced-shuffle-v1"
 		selection = "stratified-lowest-sha256-v1"
-		profileSchema = 2
 	}
 	var weights map[string]uint64
 	if len(parameters.CorpusWeights) != 0 {
@@ -133,7 +140,6 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 		}
 		order = "corpus-weighted-shuffle-v1"
 		selection = "stratified-lowest-sha256-v1"
-		profileSchema = 3
 	} else if len(weights) != 0 {
 		return ResolvedParameters{}, fmt.Errorf("corpus_weights require training profile %q", WeightedProfile)
 	}
@@ -148,6 +154,35 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 		Evaluation:      &EvaluationPolicy{Selection: selection, Fraction: evaluationFraction, MaxRecords: evaluationMaxRecords, MaxBytes: evaluationMaxBytes},
 		CheckpointEvery: checkpointEvery, EvaluateEvery: evaluateEvery,
 	}, nil
+}
+
+// CanonicalProfile maps deprecated numbered profile names to their
+// behavior-named identities. Unknown names are returned unchanged so callers
+// can still report the original invalid value.
+func CanonicalProfile(profile string) string {
+	switch profile {
+	case legacyShuffledProfile:
+		return ShuffledProfile
+	case legacyBalancedProfile:
+		return BalancedProfile
+	case legacyWeightedProfile:
+		return WeightedProfile
+	default:
+		return profile
+	}
+}
+
+// NormalizeResolvedParameters makes persisted numbered profiles comparable
+// with their behavior-named replacements during checkpoint resume.
+func NormalizeResolvedParameters(parameters ResolvedParameters) ResolvedParameters {
+	original := parameters.Profile
+	parameters.Profile = CanonicalProfile(original)
+	if (original == legacyShuffledProfile && parameters.ProfileSchema == 1) ||
+		(original == legacyBalancedProfile && parameters.ProfileSchema == 2) ||
+		(original == legacyWeightedProfile && parameters.ProfileSchema == 3) {
+		parameters.ProfileSchema = ProfileSchema
+	}
+	return parameters
 }
 
 func multiplyInt64(values ...int64) (int64, bool) {

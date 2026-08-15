@@ -82,7 +82,7 @@ stages:
           sources:
             exclude: [deprecated-*]
     parameters:
-      profile: causal-pretrain-v3
+      profile: causal-pretrain-weighted
       epochs: 1
       steps: 60000
       batch_size: 32
@@ -215,7 +215,7 @@ corpora:
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `path` | yes in object form | Logical index path. |
-| `weight` | only for `causal-pretrain-v3` | Positive integer relative token exposure. It replaces the legacy map entry for this corpus. |
+| `weight` | only for `causal-pretrain-weighted` | Positive integer relative token exposure. It replaces the legacy map entry for this corpus. |
 | `filter` | no | Record filter local to this corpus. |
 | `licenses` | no | Matches the canonical row's normalized license. |
 | `languages` | no | Matches the canonical row's language. |
@@ -238,7 +238,7 @@ silently train on a different subset. The BOM's manifest totals remain the
 indexed reference totals; run and evaluation evidence describe actual training
 consumption.
 
-For `causal-pretrain-v3`, prefer inline `weight` fields. Existing
+For `causal-pretrain-weighted`, prefer inline `weight` fields. Existing
 `parameters.corpus_weights` maps remain valid for compatibility, but a stage
 must use one representation or the other, never both.
 
@@ -246,7 +246,7 @@ must use one representation or the other, never both.
 
 | Field | Required | Default or range | Meaning |
 | --- | --- | --- | --- |
-| `profile` | no | `causal-pretrain-v1` | Selects versioned record ordering, corpus exposure, and held-out selection. |
+| `profile` | no | `causal-pretrain-shuffled` | Selects versioned record ordering, corpus exposure, and held-out selection. |
 | `epochs` | no | default `1`; `1..1000000` | Maximum deterministic passes over the selected canonical records. |
 | `steps` | yes | positive integer | Required optimizer steps and learning-rate schedule length. |
 | `batch_size` | yes | positive integer | Number of packed sequences in each optimizer step. |
@@ -259,7 +259,7 @@ must use one representation or the other, never both.
 | `evaluate_every` | no | `min(500, steps)`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation. |
 | `shuffle_buffer_records` | no | default `1024`; `1..1000000` | Maximum records retained by deterministic bounded shuffle. |
 | `shuffle_buffer_bytes` | no | default 64 MiB; `1 B..16 GiB` | Maximum record text retained by deterministic bounded shuffle. |
-| `corpus_weights` | only for v3; legacy form | each weight `1..1000000` | Integer relative token exposure keyed by every selected corpus path. Configured corpus `weight` fields are preferred. |
+| `corpus_weights` | only for `causal-pretrain-weighted`; legacy form | each weight `1..1000000` | Integer relative token exposure keyed by every selected corpus path. Configured corpus `weight` fields are preferred. |
 | `evaluation_fraction` | no | default `0.01`; `0 <= value < 1` | Candidate fraction for deterministic held-out selection. |
 | `evaluation_max_records` | no | default `256`; `0..1000000` | Held-out record cap. |
 | `evaluation_max_bytes` | no | default 1 MiB; `0 B..16 GiB` | Held-out text-byte cap. |
@@ -294,15 +294,22 @@ than an ignored compose field.
 
 | Profile | Training record order | Held-out selection | Corpus weights |
 | --- | --- | --- | --- |
-| `causal-pretrain-v1` | One bounded deterministic shuffle across the selection. | Deterministic lowest SHA-256 candidates across the selection. | Not accepted. |
-| `causal-pretrain-v2` | Balances emitted tokenizer targets equally across logical corpus paths, with bounded shuffle within each. | Deterministically stratified across corpus paths. | Not accepted. |
-| `causal-pretrain-v3` | Selects the corpus with the lowest emitted-target-to-declared-weight ratio, with bounded shuffle within each. | Deterministically stratified across corpus paths. | Required for every selected corpus. |
+| `causal-pretrain-shuffled` | One bounded deterministic shuffle across the selection. | Deterministic lowest SHA-256 candidates across the selection. | Not accepted. |
+| `causal-pretrain-balanced` | Balances emitted tokenizer targets equally across logical corpus paths, with bounded shuffle within each. | Deterministically stratified across corpus paths. | Not accepted. |
+| `causal-pretrain-weighted` | Selects the corpus with the lowest emitted-target-to-declared-weight ratio, with bounded shuffle within each. | Deterministically stratified across corpus paths. | Required for every selected corpus. |
 
-Use v2 when every selected corpus should receive equal token exposure. Use v3
-when the intended mixture is unequal. Weights are relative—for example, `2`
-and `1` target approximately twice as many emitted training tokens from the
-first corpus while it remains available. They do not duplicate canonical
-records or alter corpus provenance.
+Each named profile currently has `profile_schema: 1` in the resolved run BOM.
+That field versions the behavior contract independently; it is not a model
+architecture version. The former `causal-pretrain-v1`, `-v2`, and `-v3` names
+remain accepted as deprecated input aliases and resolve respectively to
+`shuffled`, `balanced`, and `weighted`. New resolved run BOMs use the
+behavior-named identities.
+
+Use `causal-pretrain-balanced` when every selected corpus should receive equal
+token exposure. Use `causal-pretrain-weighted` when the intended mixture is
+unequal. Weights are relative—for example, `2` and `1` target approximately
+twice as many emitted training tokens from the first corpus while it remains
+available. They do not duplicate canonical records or alter corpus provenance.
 
 ## Common compose patterns
 
@@ -331,7 +338,7 @@ stages:
     objective: causal-language-modeling
     corpora: [core/books/gutenberg, science/plos]
     parameters:
-      profile: causal-pretrain-v2
+      profile: causal-pretrain-balanced
       steps: 32000
       batch_size: 64
       sequence_length: 512
@@ -359,7 +366,7 @@ stages:
     objective: causal-language-modeling
     corpora: [core/books/gutenberg, science/plos]
     parameters:
-      profile: causal-pretrain-v2
+      profile: causal-pretrain-balanced
       steps: 32000
       batch_size: 64
       sequence_length: 512
@@ -371,7 +378,7 @@ stages:
     objective: causal-language-modeling
     corpora: [core/common-pile/python-enhancement-proposals/peps]
     parameters:
-      profile: causal-pretrain-v1
+      profile: causal-pretrain-shuffled
       steps: 1000
       batch_size: 32
       sequence_length: 512
@@ -393,8 +400,8 @@ WALDO fails before training when a compose has:
 - dropout outside `0..<1` or a sequence longer than the architecture context;
 - no stages, duplicate stage names, no corpus selection, or duplicate corpora;
 - invalid parameter ranges or an overflowing planned token capacity;
-- corpus weights outside v3, missing v3 weights, or weights for unselected
-  corpora;
+- corpus weights outside `causal-pretrain-weighted`, missing weighted-profile
+  weights, or weights for unselected corpora;
 - a base whose origin, architecture, or current weights do not match; or
 - an existing destination model with a different immutable architecture.
 

@@ -563,7 +563,7 @@ func advisorComposeReference(corpora []waldoindex.CorpusInfo) map[string]any {
 			"name": "pretrain", "type": "pre-training", "objective": "causal-language-modeling",
 			"corpora": []string{corpus},
 			"parameters": map[string]any{
-				"profile": "causal-pretrain-v1", "steps": 1000, "batch_size": 64,
+				"profile": "causal-pretrain-shuffled", "steps": 1000, "batch_size": 64,
 				"sequence_length": 512, "learning_rate": 0.0003, "seed": 42,
 				"warmup_steps": 10, "checkpoint_every": 100, "evaluate_every": 100,
 			},

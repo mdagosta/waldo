@@ -28,7 +28,7 @@ stages:
       - path: science/plos
         weight: 2
     parameters:
-      profile: causal-pretrain-v3
+      profile: causal-pretrain-weighted
       steps: 60000
       batch_size: 64
       sequence_length: 1024

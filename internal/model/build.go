@@ -264,7 +264,7 @@ func resumableRun(inspection Inspection, stage Stage, parameters training.Resolv
 	index := len(inspection.Runs) - 1
 	run := inspection.Runs[index]
 	bom := inspection.RunBOMs[index]
-	if !resumableRunState(run, parameters) || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !reflect.DeepEqual(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
+	if !resumableRunState(run, parameters) || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !equivalentTrainingParameters(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
 		return 0, false
 	}
 	return index, true
@@ -1174,10 +1174,14 @@ func validateStagedComposeRun(inspection Inspection, index int, prepared Prepare
 			return err
 		}
 	}
-	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !reflect.DeepEqual(bom.Parameters, parameters) {
+	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !equivalentTrainingParameters(bom.Parameters, parameters) {
 		return fmt.Errorf("run %d immutable facts do not match stage %s", index+1, prepared.Stage.Name)
 	}
 	return nil
+}
+
+func equivalentTrainingParameters(left, right training.ResolvedParameters) bool {
+	return reflect.DeepEqual(training.NormalizeResolvedParameters(left), training.NormalizeResolvedParameters(right))
 }
 
 func (builder Builder) initializeFromOrigin(name string, compose Compose, base Inspection) (Inspection, error) {

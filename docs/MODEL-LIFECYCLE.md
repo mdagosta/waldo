@@ -249,7 +249,7 @@ stages:
       - core/books
       - core/common-pile/foodista
     parameters:
-      profile: causal-pretrain-v1
+      profile: causal-pretrain-shuffled
       steps: 10000
       batch_size: 2
       sequence_length: 1024
@@ -269,7 +269,7 @@ stages:
 ```
 
 Use `architecture.dropout` for recorded residual dropout. Multi-corpus runs
-that need unequal exposure use `profile: causal-pretrain-v3` and declare an
+that need unequal exposure use `profile: causal-pretrain-weighted` and declare an
 integer weight for every resolved corpus path:
 
 ```yaml
@@ -283,7 +283,7 @@ stages:
       - path: core/common-pile/wikimedia
         weight: 2
     parameters:
-      profile: causal-pretrain-v3
+      profile: causal-pretrain-weighted
 ```
 
 Weights define relative tokenizer-target exposure, not sampling probabilities

@@ -143,7 +143,7 @@ printf '%s\n' "$inspect_output" | grep -q 'simulated'
 json_inspection=$("$binary" --json model summary smoke)
 printf '%s\n' "$json_inspection" | grep -Eq '"state"[[:space:]]*:[[:space:]]*"complete"'
 printf '%s\n' "$json_inspection" | grep -Eq '"simulated"[[:space:]]*:[[:space:]]*true'
-printf '%s\n' "$json_inspection" | grep -Eq '"profile"[[:space:]]*:[[:space:]]*"causal-pretrain-v1"'
+printf '%s\n' "$json_inspection" | grep -Eq '"profile"[[:space:]]*:[[:space:]]*"causal-pretrain-shuffled"'
 printf '%s\n' "$json_inspection" | grep -Eq '"packing"[[:space:]]*:[[:space:]]*"continuous-eos-v1"'
 printf '%s\n' "$json_inspection" | grep -Eq '"checkpoints"[[:space:]]*:'
 

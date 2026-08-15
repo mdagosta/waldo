@@ -162,7 +162,7 @@ func TestBasicHasTenHourScalingBudget(t *testing.T) {
 	if forecast.ApproximateParameters != 114115584 || forecast.PlannedTokens != 3932160000 {
 		t.Fatalf("basic forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
-	if compose.Architecture.Dropout != 0.1 || compose.Stages[0].Parameters.Profile != "causal-pretrain-v3" || inlineWeightCount(compose.Stages[0]) != 3 || len(compose.Stages[0].Parameters.CorpusWeights) != 0 {
+	if compose.Architecture.Dropout != 0.1 || compose.Stages[0].Parameters.Profile != "causal-pretrain-weighted" || inlineWeightCount(compose.Stages[0]) != 3 || len(compose.Stages[0].Parameters.CorpusWeights) != 0 {
 		t.Fatalf("basic tuning controls are not pinned: architecture=%+v parameters=%+v", compose.Architecture, compose.Stages[0].Parameters)
 	}
 }

@@ -13,7 +13,7 @@ gaining their own Parquet readers and subtly different data semantics.
 
 ## Decision
 
-Portable stage parameters select `causal-pretrain-v1` by default. Before a run
+Portable stage parameters select `causal-pretrain-shuffled` by default. Before a run
 BOM is written, WALDO resolves every omitted value and persists the complete
 schema-1 profile: AdamW constants, cosine schedule and warmup, global batch and
 sequence length, planned token capacity, deterministic bounded shuffle,

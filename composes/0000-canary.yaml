@@ -25,7 +25,7 @@ stages:
       - post-train/sft/dolly
       - post-train/sft/oasst1
     parameters:
-      profile: causal-pretrain-v2
+      profile: causal-pretrain-balanced
       steps: 250
       batch_size: 32
       sequence_length: 512

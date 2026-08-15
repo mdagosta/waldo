@@ -73,7 +73,7 @@ func TestComposeAcceptsConfiguredCorporaWithoutBreakingScalarForm(t *testing.T) 
       - path: science/papers
         weight: 1`, 1)
 	configured = strings.Replace(configured, "    corpora:\n", "    filter:\n      languages:\n        include: [en]\n    corpora:\n", 1)
-	configured = strings.Replace(configured, "    parameters:\n", "    parameters:\n      profile: causal-pretrain-v3\n", 1)
+	configured = strings.Replace(configured, "    parameters:\n", "    parameters:\n      profile: causal-pretrain-weighted\n", 1)
 	if err := os.WriteFile(path, []byte(configured), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -322,6 +322,19 @@ func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
 	run.Error = "trainer exited"
 	if resumableRunState(run, parameters) {
 		t.Fatal("ordinary failed run became resumable")
+	}
+}
+
+func TestNumberedProfileRemainsResumeCompatible(t *testing.T) {
+	current, err := training.ResolveParameters(training.Parameters{Profile: training.WeightedProfile, Steps: 10, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, CorpusWeights: map[string]uint64{"example": 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := current
+	legacy.Profile = "causal-pretrain-v3"
+	legacy.ProfileSchema = 3
+	if !equivalentTrainingParameters(legacy, current) {
+		t.Fatalf("legacy parameters are not resume-compatible: %+v / %+v", legacy, current)
 	}
 }
 
