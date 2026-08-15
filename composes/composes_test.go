@@ -122,8 +122,8 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 4 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic.yaml" || files[3] != "0003-intermediate.yaml" {
-		t.Fatalf("reference composes = %v, want canary, babble, basic, and intermediate", files)
+	if len(files) != 5 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic.yaml" || files[3] != "0003-intermediate.yaml" || files[4] != "0004-conversation.yaml" {
+		t.Fatalf("reference composes = %v, want canary through conversation", files)
 	}
 	compose, _, err := model.LoadCompose("0000-canary.yaml")
 	if err != nil {
@@ -141,6 +141,29 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	}
 	if forecast.ApproximateParameters != 13620736 || forecast.PlannedTokens != 4096000 {
 		t.Fatalf("canary forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	}
+}
+
+func TestConversationHasOrderedPretrainingAndInstructionTuning(t *testing.T) {
+	compose, _, err := model.LoadCompose("0004-conversation.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compose.Stages) != 2 || compose.Stages[0].Type != "pre-training" || compose.Stages[1].Type != "fine-tuning" {
+		t.Fatalf("conversation stages = %+v", compose.Stages)
+	}
+	if compose.Stages[0].Filter == nil || compose.Stages[0].Filter.MainContent == nil || !*compose.Stages[0].Filter.MainContent {
+		t.Fatalf("conversation pretraining does not require main content: %+v", compose.Stages[0].Filter)
+	}
+	forecast, err := model.ForecastCompose(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forecast.ApproximateParameters != 139287552 || forecast.PlannedTokens != 6039961600 {
+		t.Fatalf("conversation forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	}
+	if compose.Stages[1].Parameters.LearningRate >= compose.Stages[0].Parameters.LearningRate || compose.Stages[1].Parameters.Epochs != 5 {
+		t.Fatalf("conversation tuning controls = %+v", compose.Stages[1].Parameters)
 	}
 }
 
