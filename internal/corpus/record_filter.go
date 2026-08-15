@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"path"
 	"regexp"
+	"slices"
 	"time"
 
 	"github.com/openwaldo/waldo/internal/shard"
@@ -221,20 +222,38 @@ func (filter ExclusionFilter) Matches(record shard.RecordView) bool {
 	return false
 }
 
-func (filter RecordFilter) RequiresContentAssessment() bool {
-	return filter.Exclude != nil && (filter.Exclude.EmailAddresses != nil || filter.Exclude.RepetitiveContent != nil || filter.Exclude.BoilerplateContent != nil)
+// ContentAssessmentExclusions returns the assessment fields whose true or
+// false value can exclude a record from the selected logical corpus. An empty
+// result means the policy can be applied completely to an unassessed row.
+func (policy RecordFilterPolicy) ContentAssessmentExclusions(corpusPath string) []string {
+	fields := map[string]bool{}
+	if policy.Global != nil {
+		policy.Global.addContentAssessmentExclusions(fields)
+	}
+	if filter, exists := policy.Corpora[corpusPath]; exists {
+		filter.addContentAssessmentExclusions(fields)
+	}
+	result := make([]string, 0, len(fields))
+	for field := range fields {
+		result = append(result, field)
+	}
+	slices.Sort(result)
+	return result
 }
 
-func (policy RecordFilterPolicy) RequiresContentAssessment() bool {
-	if policy.Global != nil && policy.Global.RequiresContentAssessment() {
-		return true
+func (filter RecordFilter) addContentAssessmentExclusions(fields map[string]bool) {
+	if filter.Exclude == nil {
+		return
 	}
-	for _, filter := range policy.Corpora {
-		if filter.RequiresContentAssessment() {
-			return true
-		}
+	if filter.Exclude.EmailAddresses != nil {
+		fields["email_addresses"] = true
 	}
-	return false
+	if filter.Exclude.RepetitiveContent != nil {
+		fields["repetitive_content"] = true
+	}
+	if filter.Exclude.BoilerplateContent != nil {
+		fields["boilerplate_content"] = true
+	}
 }
 
 func (filter ValueFilter) Allows(value string) bool {

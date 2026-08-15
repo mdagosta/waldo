@@ -122,3 +122,19 @@ func TestMainContentFilterIsDirectAndDefaultsOlderRowsToMain(t *testing.T) {
 		t.Fatal("main-content filter did not require the declared boolean")
 	}
 }
+
+func TestContentAssessmentExclusionsCombineGlobalAndCorpusPolicy(t *testing.T) {
+	present := true
+	policy := RecordFilterPolicy{
+		Global: &RecordFilter{Exclude: &ExclusionFilter{BoilerplateContent: &present}},
+		Corpora: map[string]RecordFilter{
+			"books": {Exclude: &ExclusionFilter{EmailAddresses: &present, RepetitiveContent: &present}},
+		},
+	}
+	if got := policy.ContentAssessmentExclusions("books"); !reflect.DeepEqual(got, []string{"boilerplate_content", "email_addresses", "repetitive_content"}) {
+		t.Fatalf("books assessment exclusions = %v", got)
+	}
+	if got := policy.ContentAssessmentExclusions("science"); !reflect.DeepEqual(got, []string{"boilerplate_content"}) {
+		t.Fatalf("science assessment exclusions = %v", got)
+	}
+}

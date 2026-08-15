@@ -1405,7 +1405,43 @@ func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cach
 	if err := bom.Validate(); err != nil {
 		return model.PreparedStage{}, fmt.Errorf("stage %s filtered corpus BOM: %w", stage.Name, err)
 	}
+	emitUnassessedFilterWarning(progress, stage.Name, bom)
 	return materializeModelStage(context, stage, bom, cache, progress, audit)
+}
+
+func emitUnassessedFilterWarning(output io.Writer, stageName string, bom corpus.BOM) {
+	if bom.RecordFilter == nil {
+		return
+	}
+	fields := map[string]bool{}
+	affected := 0
+	for _, selected := range bom.Shards {
+		if selected.RecordSchema >= shard.TextRecordSchema {
+			continue
+		}
+		corpusPath := selectedCorpusGroup(selected.Manifest, bom.Paths)
+		shardFields := bom.RecordFilter.ContentAssessmentExclusions(corpusPath)
+		if len(shardFields) == 0 {
+			continue
+		}
+		affected++
+		for _, field := range shardFields {
+			fields[field] = true
+		}
+	}
+	if affected == 0 {
+		return
+	}
+	names := make([]string, 0, len(fields))
+	for field := range fields {
+		names = append(names, field)
+	}
+	slices.Sort(names)
+	shardLabel, reference := "shards", "those shards"
+	if affected == 1 {
+		shardLabel, reference = "shard", "that shard"
+	}
+	fmt.Fprintf(output, "warning: stage %s: %s schema-1 %s have no content assessments; %s filters will be ignored for records from %s\n", stageName, humanInteger(int64(affected)), shardLabel, strings.Join(names, ", "), reference)
 }
 
 func materializeModelStage(context Context, stage model.Stage, bom corpus.BOM, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {

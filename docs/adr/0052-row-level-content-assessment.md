@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Accepted; schema-1 filtering behavior amended by [ADR 0054](0054-unassessed-filter-compatibility.md).
 
 ## Decision
 
@@ -45,7 +45,6 @@ but cannot be mixed with the unified license exclusion in one filter.
 This expands the unreleased schema-2 contract in place rather than introducing
 schema 3. No production schema-2 objects existed when the decision was made.
 Existing schema-1 shards remain valid, readable, and unmodified. New ingestion
-emits the expanded schema 2. Any content-assessment filter fails closed when
-its selection contains schema-1 shards because absence means unassessed, not
-false. Only affected corpora need an explicit rebuild; an index may contain
-both schema versions.
+emits the expanded schema 2. Absence continues to mean unassessed, not false.
+The mixed-version filtering behavior is defined by ADR 0054; an index may
+contain both schema versions.

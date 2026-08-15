@@ -156,8 +156,8 @@ func TestConversationHasOrderedPretrainingAndInstructionTuning(t *testing.T) {
 		t.Fatalf("conversation pretraining does not require main content: %+v", compose.Stages[0].Filter)
 	}
 	for _, stage := range compose.Stages {
-		if stage.Filter == nil || stage.Filter.Exclude != nil {
-			t.Fatalf("conversation stage %s requires unavailable content assessments: %+v", stage.Name, stage.Filter)
+		if stage.Filter == nil || stage.Filter.Exclude == nil || stage.Filter.Exclude.RepetitiveContent == nil || stage.Filter.Exclude.BoilerplateContent == nil {
+			t.Fatalf("conversation stage %s does not declare content-quality exclusions: %+v", stage.Name, stage.Filter)
 		}
 	}
 	forecast, err := model.ForecastCompose(compose)

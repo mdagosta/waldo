@@ -335,10 +335,12 @@ condition.
 
 The older `filter.licenses.include`/`exclude` representation remains accepted.
 It cannot be combined with `filter.exclude.licenses` in the same filter.
-Content-assessment filtering requires record schema 2; selecting an unassessed
-schema-1 shard fails before held-out selection or training and directs the user
-to rebuild the affected corpus. Assessment filters exclude complete rows; they
-never redact or rewrite their text.
+Content-assessment filtering is applied wherever record schema 2 supplies the
+declared facts. Schema-1 rows are unassessed rather than clean: WALDO retains
+them, ignores only the unavailable assessment conditions, and emits a warning
+that names the affected stage, shard count, and fields. Other conditions in the
+same filter still apply. Assessment filters exclude complete rows; they never
+redact or rewrite their text.
 
 Filtering happens while WALDO streams canonical rows, before deterministic
 held-out selection and training shuffle. The versioned effective policy is

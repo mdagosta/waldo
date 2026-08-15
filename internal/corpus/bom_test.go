@@ -65,7 +65,7 @@ func TestBuildBOMResolvesAndPinsSelection(t *testing.T) {
 	}
 }
 
-func TestContentAssessmentExclusionsRejectUnassessedSchemaOneSelection(t *testing.T) {
+func TestContentAssessmentExclusionsAllowUnassessedSchemaOneSelection(t *testing.T) {
 	root := bomFixture(t)
 	target, err := index.Resolve(root, "books")
 	if err != nil {
@@ -84,8 +84,8 @@ func TestContentAssessmentExclusionsRejectUnassessedSchemaOneSelection(t *testin
 	} {
 		t.Run(name, func(t *testing.T) {
 			bom.RecordFilter = &RecordFilterPolicy{Schema: RecordFilterSchema, Global: &RecordFilter{Exclude: &exclusion}}
-			if err := bom.Validate(); err == nil || !strings.Contains(err.Error(), "unassessed record schema") {
-				t.Fatalf("schema-one filter error = %v", err)
+			if err := bom.Validate(); err != nil {
+				t.Fatalf("schema-one filtered BOM was rejected: %v", err)
 			}
 		})
 	}

@@ -159,9 +159,10 @@ detector recognizes common Internet email-shaped strings. It does not determine
 whether an address identifies a natural person or establish a legal conclusion.
 
 Because canonical objects are immutable, adding this column does not migrate
-existing shards. A corpus is upgraded only by an explicit rebuild. A compose
-that requests email-address exclusion fails closed if any selected shard uses
-schema 1, identifying the unassessed shard and required schema.
+existing shards. A corpus is upgraded only by an explicit rebuild. If a
+compose requests an assessment exclusion across schema-1 shards, WALDO warns,
+retains those unassessed rows, and applies the exclusion normally to schema-2
+rows. All non-assessment filter conditions continue to apply.
 
 ### Other logical record kinds
 

@@ -41,13 +41,6 @@ func (bom BOM) Validate() error {
 		if err := bom.RecordFilter.Validate(bom.Paths); err != nil {
 			return err
 		}
-		if bom.RecordFilter.RequiresContentAssessment() {
-			for _, shard := range bom.Shards {
-				if shard.RecordSchema < waldoshard.TextRecordSchema {
-					return fmt.Errorf("record filter excludes assessed content, but shard %s uses unassessed record schema %d; reingest its corpus with record schema %d", shard.SHA256, shard.RecordSchema, waldoshard.TextRecordSchema)
-				}
-			}
-		}
 	}
 
 	manifests := make(map[string]ManifestPin, len(bom.Manifests))
