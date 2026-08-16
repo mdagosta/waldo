@@ -54,11 +54,10 @@ uses a correspondingly gentler learning rate.
 
 `0004-conversation.yaml` is an unvalidated two-stage candidate. Its 6.0B-token
 pretraining stage establishes a compact language base without Wikimedia talk
-pages; its 40.0M-token fine-tuning stage then combines the small reviewable
-OpenWALDO interaction contract with Dolly and two human-written OpenAssistant
-conversation corpora under a lower learning rate. The interaction corpus is
-consumed once per declared epoch rather than duplicated to match the larger
-sources. It excludes assessed repetitive and boilerplate rows. Those exclusions
+pages; its 40.0M-token fine-tuning stage then combines 45,000 training examples
+from the reviewable OpenWALDO interaction contract with Dolly and two
+human-written OpenAssistant conversation corpora under a lower learning rate.
+It excludes assessed repetitive and boilerplate rows. Those exclusions
 are applied to schema-2 shards; WALDO warns and retains unassessed schema-1 rows
 while older corpora are rebuilt. WALDO currently applies causal loss to the
 complete formatted dialogue rather than masking user tokens. The compose
