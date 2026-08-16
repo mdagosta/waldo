@@ -87,12 +87,13 @@ waldo index summary
 waldo index verify --offline
 waldo index verify core/example
 waldo index verify core/example --objects
-waldo index audit core/example
+waldo index audit core/example --workers 8
 ```
 
 Default verification checks metadata and canonical object availability without
 downloading object bodies. `--objects` downloads and hashes every selected
-object. `audit` additionally validates canonical shard contents.
+object. `audit` additionally validates canonical shard contents. Its worker
+count controls concurrent fetch-and-audit operations.
 
 Local Parquet files can be inspected without an index:
 

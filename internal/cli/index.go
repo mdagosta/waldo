@@ -13,8 +13,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"text/tabwriter"
 
 	"github.com/openwaldo/waldo/internal/config"
@@ -228,7 +230,7 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 			err = corpus.AttachShardAttestations(&bom, materialized.Objects)
 		}
 	} else {
-		audited, err = verifyAuditStream(context.Execution, &bom, cache, progress)
+		audited, err = verifyAuditStream(context.Execution, &bom, cache, auditOptions, progress)
 	}
 	if err != nil {
 		return err
@@ -259,9 +261,9 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 // verifyAuditStream bounds disk use to the retained cache policy by verifying
 // each content-addressed object immediately after Fetch. Unlike a deep audit,
 // the attestation path never requires the entire corpus to coexist locally.
-func verifyAuditStream(ctx context.Context, bom *corpus.BOM, cache *lookaside.Cache, progress io.Writer) (shard.Summary, error) {
+func verifyAuditStream(ctx context.Context, bom *corpus.BOM, cache *lookaside.Cache, options shard.AuditOptions, progress io.Writer) (shard.Summary, error) {
 	seen := make(map[string]int64)
-	totalUnique := 0
+	unique := make([]corpus.ShardPin, 0, len(bom.Shards))
 	for _, pin := range bom.Shards {
 		if size, ok := seen[pin.SHA256]; ok {
 			if size != pin.Bytes {
@@ -270,46 +272,88 @@ func verifyAuditStream(ctx context.Context, bom *corpus.BOM, cache *lookaside.Ca
 			continue
 		}
 		seen[pin.SHA256] = pin.Bytes
-		totalUnique++
+		unique = append(unique, pin)
 	}
-	clear(seen)
+	workers := options.Workers
+	if workers <= 0 {
+		workers = min(runtime.GOMAXPROCS(0), 4)
+	}
+	workers = min(workers, len(unique))
+	if workers == 0 {
+		return shard.Summary{}, nil
+	}
+	type auditOutcome struct {
+		pin     corpus.ShardPin
+		path    string
+		summary shard.Summary
+		err     error
+	}
+	auditContext, cancel := context.WithCancel(ctx)
+	defer cancel()
+	jobs := make(chan corpus.ShardPin)
+	outcomes := make(chan auditOutcome, workers)
+	var group sync.WaitGroup
+	for range workers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			for pin := range jobs {
+				path, err := cache.Fetch(auditContext, pin.URL, pin.SHA256, pin.Bytes)
+				var one shard.Summary
+				if err == nil {
+					one, err = shard.VerifyWithOptions(auditContext, []string{path}, shard.AuditOptions{Workers: 1})
+				}
+				outcomes <- auditOutcome{pin: pin, path: path, summary: one, err: err}
+				if err != nil {
+					cancel()
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(jobs)
+		for _, pin := range unique {
+			select {
+			case jobs <- pin:
+			case <-auditContext.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		group.Wait()
+		close(outcomes)
+	}()
 	licenses, recipes := map[string]bool{}, map[string]bool{}
 	var total shard.Summary
 	current := 0
-	for _, pin := range bom.Shards {
-		if _, ok := seen[pin.SHA256]; ok {
+	var auditErr error
+	for outcome := range outcomes {
+		if outcome.err != nil {
+			if auditErr == nil || errors.Is(auditErr, context.Canceled) {
+				auditErr = fmt.Errorf("%s shard %s: %w", outcome.pin.Manifest, outcome.pin.SHA256[:12], outcome.err)
+			}
 			continue
 		}
-		seen[pin.SHA256] = pin.Bytes
-		path, err := cache.Fetch(ctx, pin.URL, pin.SHA256, pin.Bytes)
-		if err != nil {
-			return shard.Summary{}, fmt.Errorf("%s shard %s: %w", pin.Manifest, pin.SHA256[:12], err)
+		if err := corpus.AttachShardAttestation(bom, corpus.MaterializedObject{Shard: outcome.pin, Path: outcome.path}); err != nil {
+			cancel()
+			if auditErr == nil {
+				auditErr = err
+			}
+			continue
 		}
-		one, err := shard.VerifyWithOptions(ctx, []string{path}, shard.AuditOptions{Workers: 1})
-		if err != nil {
-			return shard.Summary{}, fmt.Errorf("%s shard %s: %w", pin.Manifest, pin.SHA256[:12], err)
-		}
-		if err := corpus.AttachShardAttestation(bom, corpus.MaterializedObject{Shard: pin, Path: path}); err != nil {
-			return shard.Summary{}, err
-		}
-		total.Shards += one.Shards
-		total.Attested += one.Attested
-		total.DeepScanned += one.DeepScanned
-		total.Records += one.Records
-		total.Tokens += one.Tokens
-		total.ContentBytes += one.ContentBytes
-		total.EncodedBytes += one.EncodedBytes
-		total.RowGroups += one.RowGroups
-		for _, value := range one.Licenses {
-			licenses[value] = true
-		}
-		for _, value := range one.Recipes {
-			recipes[value] = true
-		}
+		addAuditSummary(&total, outcome.summary, licenses, recipes)
 		current++
-		if current == 1 || current == totalUnique || current%25 == 0 {
-			fmt.Fprintf(progress, "  verified %s/%s  %s\n", humanInteger(int64(current)), humanInteger(int64(totalUnique)), pin.SHA256[:12])
+		if current == 1 || current == len(unique) || current%25 == 0 {
+			fmt.Fprintf(progress, "  verified %s/%s  %s\n", humanInteger(int64(current)), humanInteger(int64(len(unique))), outcome.pin.SHA256[:12])
 		}
+	}
+	if auditErr != nil {
+		return shard.Summary{}, auditErr
+	}
+	if err := ctx.Err(); err != nil {
+		return shard.Summary{}, err
 	}
 	for value := range licenses {
 		total.Licenses = append(total.Licenses, value)
@@ -323,6 +367,35 @@ func verifyAuditStream(ctx context.Context, bom *corpus.BOM, cache *lookaside.Ca
 		return shard.Summary{}, err
 	}
 	return total, nil
+}
+
+func addAuditSummary(total *shard.Summary, one shard.Summary, licenses, recipes map[string]bool) {
+	total.Shards += one.Shards
+	total.Attested += one.Attested
+	total.DeepScanned += one.DeepScanned
+	total.Records += one.Records
+	total.Tokens += one.Tokens
+	total.ContentBytes += one.ContentBytes
+	total.EncodedBytes += one.EncodedBytes
+	total.RowGroups += one.RowGroups
+	total.EmailAddressRecords += one.EmailAddressRecords
+	total.RepetitiveContentRecords += one.RepetitiveContentRecords
+	total.BoilerplateContentRecords += one.BoilerplateContentRecords
+	total.Redaction.EmailAddresses += one.Redaction.EmailAddresses
+	total.Redaction.IPAddresses += one.Redaction.IPAddresses
+	total.Redaction.PhoneNumbers += one.Redaction.PhoneNumbers
+	total.Redaction.MailRoutingHeaders += one.Redaction.MailRoutingHeaders
+	total.Redaction.Credentials += one.Redaction.Credentials
+	if one.Redaction.Policy != "" {
+		total.Redaction.Policy = one.Redaction.Policy
+		total.Redaction.NamesRetained = one.Redaction.NamesRetained
+	}
+	for _, value := range one.Licenses {
+		licenses[value] = true
+	}
+	for _, value := range one.Recipes {
+		recipes[value] = true
+	}
 }
 
 func printShardBOMEvidence(output io.Writer, bom corpus.BOM, details bool) {

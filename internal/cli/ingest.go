@@ -411,6 +411,10 @@ func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSi
 			fmt.Fprintf(output, "convert  %s using %s\n", event.Input, event.Adapter)
 		case event.Phase == "convert" && event.Status == "completed":
 			fmt.Fprintf(output, "converted %s (%s)\n", event.Input, humanBytes(event.Bytes))
+		case event.Phase == "audit" && event.Status == "started":
+			fmt.Fprintf(output, "audit %d  %s started on worker %d\n", event.Sequence, short, event.Worker)
+		case event.Phase == "audit" && event.Status == "completed":
+			fmt.Fprintf(output, "audit %d  %s completed\n", event.Sequence, short)
 		case event.Phase == "shard" && event.Status == "ready":
 			fmt.Fprintf(output, "shard %d  %s ready (%s)\n", event.Sequence, short, humanBytes(event.Bytes))
 		case event.Phase == "upload" && event.Status == "started":

@@ -70,7 +70,7 @@ func TestIndexAuditComparesStreamedShardTotalsWithManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := Run([]string{"index", "audit", root}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "VERIFIED") || !strings.Contains(stdout.String(), "ATTESTED:       1") {
+	if code := Run([]string{"index", "audit", root, "--workers", "2"}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "VERIFIED") || !strings.Contains(stdout.String(), "ATTESTED:       1") {
 		t.Fatalf("valid audit code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
 	writeAuditManifest(t, root, objectPath, objectDigest, int64(encoded.Len()), tokens+1)

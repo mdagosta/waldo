@@ -29,7 +29,8 @@ hash inside the shard would be circular.
 Ingestion validates canonical fields, content hashes, token counts, and exact
 per-license deduplication before rows are admitted. It then checks the completed object's
 SHA-256, physical schema, row count, footer aggregates, and embedded BOM before
-publication.
+publication. Completed shards pass through a bounded automatic-audit pipeline;
+the ingestion worker count controls concurrent audits and uploads.
 
 `waldo index audit` uses scalable attestation verification by default:
 

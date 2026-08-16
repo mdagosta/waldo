@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -206,6 +207,84 @@ func TestExecutePublicationRecoversAfterPartialFailure(t *testing.T) {
 	}
 	if len(publication.Objects) != len(assembly.Objects) {
 		t.Fatalf("recovered publication = %+v", publication)
+	}
+}
+
+func TestObjectVerificationPipelineUsesWorkersAndPreservesOrder(t *testing.T) {
+	directory := t.TempDir()
+	started := make(chan int, 2)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	active, maximum := 0, 0
+	verify := func(_ string, object ObjectResult) (ObjectResult, error) {
+		mu.Lock()
+		active++
+		if active > maximum {
+			maximum = active
+		}
+		mu.Unlock()
+		started <- int(object.Docs)
+		<-release
+		mu.Lock()
+		active--
+		mu.Unlock()
+		return object, nil
+	}
+	var delivered []int64
+	pipeline := newObjectVerificationPipeline(context.Background(), directory, 2, func(object ObjectResult) error {
+		delivered = append(delivered, object.Docs)
+		return nil
+	}, verify)
+	for sequence := 1; sequence <= 2; sequence++ {
+		object := ObjectResult{Path: filepath.Join(directory, fmt.Sprintf("input-%d", sequence)), SHA256: fmt.Sprintf("%064d", sequence), Docs: int64(sequence)}
+		if err := pipeline.enqueue(object); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, second := <-started, <-started
+	if first == second {
+		t.Fatalf("workers started duplicate jobs %d and %d", first, second)
+	}
+	mu.Lock()
+	gotMaximum := maximum
+	mu.Unlock()
+	if gotMaximum != 2 {
+		t.Fatalf("maximum concurrent audits = %d, want 2", gotMaximum)
+	}
+	close(release)
+	objects, err := pipeline.closeAndWait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 2 || len(delivered) != 2 || delivered[0] != 1 || delivered[1] != 2 {
+		t.Fatalf("ordered audit results = %+v, delivered = %v", objects, delivered)
+	}
+}
+
+func TestObjectVerificationPipelineRefusesFailedShard(t *testing.T) {
+	directory := t.TempDir()
+	var delivered []int64
+	pipeline := newObjectVerificationPipeline(context.Background(), directory, 2, func(object ObjectResult) error {
+		delivered = append(delivered, object.Docs)
+		return nil
+	}, func(_ string, object ObjectResult) (ObjectResult, error) {
+		if object.Docs == 2 {
+			return ObjectResult{}, fmt.Errorf("injected audit failure")
+		}
+		return object, nil
+	})
+	for sequence := 1; sequence <= 2; sequence++ {
+		object := ObjectResult{Path: filepath.Join(directory, fmt.Sprintf("input-%d", sequence)), SHA256: fmt.Sprintf("%064d", sequence), Docs: int64(sequence)}
+		if err := pipeline.enqueue(object); err != nil {
+			t.Fatal(err)
+		}
+	}
+	objects, err := pipeline.closeAndWait()
+	if err == nil || !strings.Contains(err.Error(), "injected audit failure") {
+		t.Fatalf("audit failure = %v", err)
+	}
+	if len(objects) != 1 || len(delivered) != 1 || delivered[0] != 1 {
+		t.Fatalf("failed audit published results = %+v, delivered = %v", objects, delivered)
 	}
 }
 

@@ -109,8 +109,9 @@ func assembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 	if workers <= 0 {
 		workers = min(runtime.GOMAXPROCS(0), 32)
 	}
-	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory, sink: sink, workers: workers}
-	err = StreamCanonicalTextBatches(ctx, plan, func(batch TextBatch) error {
+	verification := newObjectVerificationPipeline(ctx, objectDirectory, workers, sink, verifyAndStageObject)
+	assembler := objectAssembler{ctx: verification.ctx, plan: plan, directory: objectDirectory, sink: verification.enqueue, workers: workers}
+	err = StreamCanonicalTextBatches(verification.ctx, plan, func(batch TextBatch) error {
 		redacted, redactErr := redactCanonicalBatch(batch)
 		if redactErr != nil {
 			return redactErr
@@ -126,17 +127,24 @@ func assembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 		err = assembler.finishAll()
 	}
 	if err != nil {
+		verification.cancel()
 		assembler.discardActive()
+	}
+	objects, verificationErr := verification.closeAndWait()
+	if verificationErr != nil {
+		return AssemblyResult{}, verificationErr
+	}
+	if err != nil {
 		return AssemblyResult{}, err
 	}
-	if len(assembler.results) == 0 {
+	if len(objects) == 0 {
 		if seed != nil && dedup.input > 0 {
 			return AssemblyResult{InputDocs: dedup.input + dedup.rejected, DuplicateDocs: dedup.input, RejectedDocs: dedup.rejected, Rejections: dedup.reasons}, nil
 		}
 		return AssemblyResult{}, fmt.Errorf("ingestion produced no canonical records")
 	}
 	return AssemblyResult{
-		Objects: assembler.results, InputDocs: dedup.input + dedup.rejected, RetainedDocs: dedup.kept,
+		Objects: objects, InputDocs: dedup.input + dedup.rejected, RetainedDocs: dedup.kept,
 		DuplicateDocs: dedup.input - dedup.kept, RejectedDocs: dedup.rejected, Rejections: dedup.reasons,
 	}, nil
 }
@@ -147,7 +155,6 @@ type objectAssembler struct {
 	directory string
 	active    map[string]*activeObject
 	clock     int64
-	results   []ObjectResult
 	sink      func(ObjectResult) error
 	workers   int
 	counters  []tokenizer.Counter
@@ -382,44 +389,152 @@ func (assembler *objectAssembler) finishActive(active *activeObject) error {
 		_ = os.Remove(active.path)
 		return fmt.Errorf("encoded shard %s is %d bytes; maximum is %d bytes", digest, result.Bytes, assembler.plan.Writer.CompressedMaximum)
 	}
-	rowGroups, err := verifyAssembledObject(result)
-	if err != nil {
-		_ = os.Remove(active.path)
-		return err
-	}
-	result.RowGroups = rowGroups
-	destination := filepath.Join(assembler.directory, digest)
-	if _, err := os.Stat(destination); err == nil {
-		existing := result
-		existing.Path = destination
-		if _, err := verifyAssembledObject(existing); err != nil {
-			_ = os.Remove(active.path)
-			return fmt.Errorf("existing staged object %s is invalid: %w", digest, err)
-		}
-		if err := os.Remove(active.path); err != nil {
-			return err
-		}
-		result.Path = destination
-	} else if !os.IsNotExist(err) {
-		_ = os.Remove(active.path)
-		return err
-	} else if err := os.Rename(active.path, destination); err != nil {
-		_ = os.Remove(active.path)
-		return err
-	} else {
-		result.Path = destination
-	}
-	if err := syncDirectory(assembler.directory); err != nil {
-		return err
-	}
-	assembler.results = append(assembler.results, result)
-	emitProgress(assembler.ctx, ProgressEvent{Phase: "shard", Status: "ready", Shard: result.SHA256, Sequence: len(assembler.results), Bytes: result.Bytes})
 	if assembler.sink != nil {
 		if err := assembler.sink(result); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+type objectVerificationJob struct {
+	sequence int
+	object   ObjectResult
+}
+
+type objectVerificationOutcome struct {
+	job    objectVerificationJob
+	object ObjectResult
+	err    error
+}
+
+type objectVerificationCompletion struct {
+	objects []ObjectResult
+	err     error
+}
+
+type objectVerificationPipeline struct {
+	ctx       context.Context
+	cancel    context.CancelFunc
+	jobs      chan objectVerificationJob
+	outcomes  chan objectVerificationOutcome
+	done      chan objectVerificationCompletion
+	workers   sync.WaitGroup
+	sequence  int
+	directory string
+}
+
+func newObjectVerificationPipeline(parent context.Context, directory string, workers int, sink func(ObjectResult) error, verify func(string, ObjectResult) (ObjectResult, error)) *objectVerificationPipeline {
+	ctx, cancel := context.WithCancel(parent)
+	pipeline := &objectVerificationPipeline{
+		ctx: ctx, cancel: cancel, directory: directory,
+		jobs: make(chan objectVerificationJob, workers), outcomes: make(chan objectVerificationOutcome, workers), done: make(chan objectVerificationCompletion, 1),
+	}
+	for worker := 1; worker <= workers; worker++ {
+		pipeline.workers.Add(1)
+		go func(worker int) {
+			defer pipeline.workers.Done()
+			for job := range pipeline.jobs {
+				emitProgress(parent, ProgressEvent{Phase: "audit", Status: "started", Shard: job.object.SHA256, Sequence: job.sequence, Worker: worker, TotalBytes: job.object.Bytes})
+				object, err := verify(directory, job.object)
+				if err != nil {
+					_ = os.Remove(job.object.Path)
+					pipeline.cancel()
+				}
+				pipeline.outcomes <- objectVerificationOutcome{job: job, object: object, err: err}
+			}
+		}(worker)
+	}
+	go pipeline.collect(parent, sink)
+	return pipeline
+}
+
+func (pipeline *objectVerificationPipeline) enqueue(object ObjectResult) error {
+	pipeline.sequence++
+	job := objectVerificationJob{sequence: pipeline.sequence, object: object}
+	emitProgress(pipeline.ctx, ProgressEvent{Phase: "audit", Status: "queued", Shard: object.SHA256, Sequence: job.sequence, TotalBytes: object.Bytes})
+	select {
+	case pipeline.jobs <- job:
+		return nil
+	case <-pipeline.ctx.Done():
+		_ = os.Remove(object.Path)
+		return pipeline.ctx.Err()
+	}
+}
+
+func (pipeline *objectVerificationPipeline) collect(progressContext context.Context, sink func(ObjectResult) error) {
+	pending := map[int]objectVerificationOutcome{}
+	objects := make([]ObjectResult, 0)
+	next := 1
+	var firstErr error
+	for outcome := range pipeline.outcomes {
+		pending[outcome.job.sequence] = outcome
+		for {
+			current, ok := pending[next]
+			if !ok {
+				break
+			}
+			delete(pending, next)
+			if current.err != nil {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("audit assembled shard %s: %w", current.job.object.SHA256[:12], current.err)
+				}
+			} else if firstErr == nil {
+				emitProgress(progressContext, ProgressEvent{Phase: "audit", Status: "completed", Shard: current.object.SHA256, Sequence: next, Bytes: current.object.Bytes, TotalBytes: current.object.Bytes})
+				emitProgress(progressContext, ProgressEvent{Phase: "shard", Status: "ready", Shard: current.object.SHA256, Sequence: next, Bytes: current.object.Bytes})
+				if sink != nil {
+					if err := sink(current.object); err != nil {
+						firstErr = err
+						pipeline.cancel()
+					}
+				}
+				if firstErr == nil {
+					objects = append(objects, current.object)
+				}
+			}
+			next++
+		}
+	}
+	pipeline.done <- objectVerificationCompletion{objects: objects, err: firstErr}
+}
+
+func (pipeline *objectVerificationPipeline) closeAndWait() ([]ObjectResult, error) {
+	close(pipeline.jobs)
+	pipeline.workers.Wait()
+	close(pipeline.outcomes)
+	completion := <-pipeline.done
+	pipeline.cancel()
+	return completion.objects, completion.err
+}
+
+func verifyAndStageObject(directory string, result ObjectResult) (ObjectResult, error) {
+	rowGroups, err := verifyAssembledObject(result)
+	if err != nil {
+		return ObjectResult{}, err
+	}
+	result.RowGroups = rowGroups
+	destination := filepath.Join(directory, result.SHA256)
+	if _, err := os.Stat(destination); err == nil {
+		existing := result
+		existing.Path = destination
+		if _, err := verifyAssembledObject(existing); err != nil {
+			return ObjectResult{}, fmt.Errorf("existing staged object %s is invalid: %w", result.SHA256, err)
+		}
+		if err := os.Remove(result.Path); err != nil {
+			return ObjectResult{}, err
+		}
+		result.Path = destination
+	} else if !os.IsNotExist(err) {
+		return ObjectResult{}, err
+	} else if err := os.Rename(result.Path, destination); err != nil {
+		return ObjectResult{}, err
+	} else {
+		result.Path = destination
+	}
+	if err := syncDirectory(directory); err != nil {
+		return ObjectResult{}, err
+	}
+	return result, nil
 }
 
 func (assembler *objectAssembler) finishAll() error {
