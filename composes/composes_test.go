@@ -122,8 +122,8 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 5 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic.yaml" || files[3] != "0003-intermediate.yaml" || files[4] != "0004-conversation.yaml" {
-		t.Fatalf("reference composes = %v, want canary through conversation", files)
+	if len(files) != 6 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic.yaml" || files[3] != "0003-intermediate.yaml" || files[4] != "0004-conversation.yaml" || files[5] != "0005-assistant.yaml" {
+		t.Fatalf("reference composes = %v, want canary through assistant", files)
 	}
 	compose, _, err := model.LoadCompose("0000-canary.yaml")
 	if err != nil {
@@ -141,6 +141,37 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	}
 	if forecast.ApproximateParameters != 13620736 || forecast.PlannedTokens != 4096000 {
 		t.Fatalf("canary forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	}
+}
+
+func TestAssistantHasExplicitPreMidAndPostTraining(t *testing.T) {
+	compose, _, err := model.LoadCompose("0005-assistant.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compose.Stages) != 3 || compose.Stages[0].Name != "pretrain" || compose.Stages[1].Name != "conversational-midtrain" || compose.Stages[2].Name != "post-train" {
+		t.Fatalf("assistant stages = %+v", compose.Stages)
+	}
+	for _, stage := range compose.Stages {
+		if stage.Filter == nil || stage.Filter.MainContent == nil || !*stage.Filter.MainContent || stage.Filter.Exclude == nil || stage.Filter.Exclude.RepetitiveContent == nil || stage.Filter.Exclude.BoilerplateContent == nil {
+			t.Fatalf("assistant stage %s quality filter = %+v", stage.Name, stage.Filter)
+		}
+	}
+	if compose.Stages[1].Corpora[0].Path != "post-train/sft/oasst1" || compose.Stages[1].Corpora[1].Path != "post-train/sft/oasst2" {
+		t.Fatalf("assistant conversational corpora = %+v", compose.Stages[1].Corpora)
+	}
+	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
+		t.Fatalf("assistant post-training corpora = %+v", compose.Stages[2].Corpora)
+	}
+	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {
+		t.Fatalf("assistant learning rates do not decay by phase: %+v", compose.Stages)
+	}
+	forecast, err := model.ForecastCompose(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 12149981184 {
+		t.Fatalf("assistant forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 

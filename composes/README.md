@@ -18,6 +18,8 @@ waldo model forecast composes/0003-intermediate.yaml
 waldo model train intermediate-test composes/0003-intermediate.yaml
 waldo model forecast composes/0004-conversation.yaml
 waldo model train conversation-test composes/0004-conversation.yaml
+waldo model forecast composes/0005-assistant.yaml
+waldo model train assistant-test composes/0005-assistant.yaml
 ```
 
 | Compose | Architecture | Planned tokens | Corpus selection | Purpose |
@@ -27,6 +29,7 @@ waldo model train conversation-test composes/0004-conversation.yaml
 | `0002-basic.yaml` | 114.1M parameters | 3.93B | Gutenberg, Wikimedia, and PLOS, balanced by token exposure | Basic cross-domain language-model capability over a longer context |
 | `0003-intermediate.yaml` | 336.6M parameters | 12.0B | Books, encyclopedic, civic, and scientific text with declared weights | Broader intermediate base-model capability over a 2,048-token context |
 | `0004-conversation.yaml` | 139.3M parameters | 6.04B | Clean books, scientific and civic text, followed by the OpenWALDO interaction contract, Dolly, and OpenAssistant dialogue | First candidate for basic user/assistant interaction |
+| `0005-assistant.yaml` | 336.6M parameters | 12.15B | Broad pretraining, OASST/Aya/Dolly conversational mid-training, then the interaction contract and quality-gated HelpSteer2 | Three-phase assistant candidate with explicit post-training policy |
 
 `0000-canary.yaml` has been validated end to end on a single H200. The first
 babble experiment used `cl100k_base`, which spent 80% of its 47.9M parameters
@@ -65,9 +68,14 @@ declares the versioned
 `user-assistant-v1` interaction contract, so `waldo model chat` formats turns,
 preserves conversation history, and stops before a generated next-user turn.
 
-HelpSteer2 is intentionally not flattened into this stage. Its human response
-scores should enter a later scored-response or preference objective that
-preserves helpfulness, correctness, coherence, complexity, and verbosity.
+`0005-assistant.yaml` is an unvalidated three-stage candidate. It reuses the
+12.0B-token intermediate base budget, devotes about 100M tokens to broad
+conversational adaptation with OASST1/2, Aya, and Dolly, then devotes about 50M
+tokens to the OpenWALDO interaction contract and HelpSteer2 responses rated 4
+for helpfulness, correctness, and coherence. All five HelpSteer2 ratings remain
+in canonical metadata. Complexity and verbosity are not quality gates. WALDO
+still uses causal dialogue tuning rather than a preference objective, so this
+stage must not be described as DPO, RLHF, or reward-model training.
 
 The babble compose uses equal-exposure `causal-pretrain-balanced`. Later
 composes use `causal-pretrain-weighted`, which applies declared integer corpus
