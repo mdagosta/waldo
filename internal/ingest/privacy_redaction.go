@@ -18,10 +18,11 @@ import (
 )
 
 const (
-	emailPlaceholder      = "<EMAIL_ADDRESS>"
-	ipPlaceholder         = "<IP_ADDRESS>"
-	phonePlaceholder      = "<PHONE_NUMBER>"
-	credentialPlaceholder = "<CREDENTIAL>"
+	emailPlaceholder          = "<EMAIL_ADDRESS>"
+	ipPlaceholder             = "<IP_ADDRESS>"
+	phonePlaceholder          = "<PHONE_NUMBER>"
+	credentialPlaceholder     = "<CREDENTIAL>"
+	privacyRedactionPassLimit = 8
 )
 
 type privacyRedaction struct {
@@ -30,6 +31,14 @@ type privacyRedaction struct {
 	PhoneNumbers       int64
 	MailRoutingHeaders int64
 	Credentials        int64
+}
+
+func (value privacyRedaction) empty() bool {
+	return value.EmailAddresses == 0 && value.IPAddresses == 0 && value.PhoneNumbers == 0 && value.MailRoutingHeaders == 0 && value.Credentials == 0
+}
+
+func (value privacyRedaction) counts() string {
+	return fmt.Sprintf("email=%d, ip=%d, phone=%d, routing=%d, credential=%d", value.EmailAddresses, value.IPAddresses, value.PhoneNumbers, value.MailRoutingHeaders, value.Credentials)
 }
 
 var (
@@ -47,16 +56,24 @@ var mailRoutingHeaders = map[string]bool{
 	"message-id": true,
 }
 
+var privacyPlaceholderInvariant = validatePrivacyPlaceholders()
+
 // redactCanonicalBatch applies the mandatory schema-2 privacy policy before
 // content identity, deduplication, token measurement, or Parquet encoding.
 func redactCanonicalBatch(batch TextBatch) (TextBatch, error) {
 	batch.LogicalBytes = 0
 	for position := range batch.Rows {
 		row := &batch.Rows[position]
-		row.Text, row.RedactedEmailAddresses, row.RedactedIPAddresses,
-			row.RedactedPhoneNumbers, row.RemovedMailRoutingHeaders,
-			row.RedactedCredentials = redactPrivacy(row.Text)
-		redactedSource, redaction := redactString(row.Source)
+		redactedText, redaction, err := redactPrivacy(row.Text)
+		if err != nil {
+			return TextBatch{}, fmt.Errorf("redact canonical text: %w", err)
+		}
+		row.Text = redactedText
+		addRowRedaction(row, redaction)
+		redactedSource, redaction, err := redactString(row.Source)
+		if err != nil {
+			return TextBatch{}, fmt.Errorf("redact canonical source: %w", err)
+		}
 		row.Source = redactedSource
 		addRowRedaction(row, redaction)
 		if row.Meta != nil {
@@ -74,9 +91,8 @@ func redactCanonicalBatch(batch TextBatch) (TextBatch, error) {
 	return batch, nil
 }
 
-func redactString(text string) (string, privacyRedaction) {
-	text, email, ip, phone, routing, credentials := redactPrivacy(text)
-	return text, privacyRedaction{EmailAddresses: email, IPAddresses: ip, PhoneNumbers: phone, MailRoutingHeaders: routing, Credentials: credentials}
+func redactString(text string) (string, privacyRedaction, error) {
+	return redactPrivacy(text)
 }
 
 func addRowRedaction(row *shard.TextRow, value privacyRedaction) {
@@ -95,27 +111,37 @@ func redactJSONStrings(encoded string) (string, privacyRedaction, error) {
 		return "", privacyRedaction{}, err
 	}
 	var total privacyRedaction
-	redactJSONValue(&value, &total)
+	if err := redactJSONValue(&value, &total); err != nil {
+		return "", privacyRedaction{}, err
+	}
 	data, err := json.Marshal(value)
 	return string(data), total, err
 }
 
-func redactJSONValue(value *any, total *privacyRedaction) {
+func redactJSONValue(value *any, total *privacyRedaction) error {
 	switch typed := (*value).(type) {
 	case string:
-		redacted, one := redactString(typed)
+		redacted, one, err := redactString(typed)
+		if err != nil {
+			return err
+		}
 		*value = redacted
 		addPrivacyRedaction(total, one)
 	case []any:
 		for position := range typed {
-			redactJSONValue(&typed[position], total)
+			if err := redactJSONValue(&typed[position], total); err != nil {
+				return err
+			}
 		}
 	case map[string]any:
 		for key, child := range typed {
-			redactJSONValue(&child, total)
+			if err := redactJSONValue(&child, total); err != nil {
+				return err
+			}
 			typed[key] = child
 		}
 	}
+	return nil
 }
 
 func addPrivacyRedaction(total *privacyRedaction, value privacyRedaction) {
@@ -126,7 +152,31 @@ func addPrivacyRedaction(total *privacyRedaction, value privacyRedaction) {
 	total.Credentials += value.Credentials
 }
 
-func redactPrivacy(text string) (string, int64, int64, int64, int64, int64) {
+func redactPrivacy(text string) (string, privacyRedaction, error) {
+	if privacyPlaceholderInvariant != nil {
+		return "", privacyRedaction{}, privacyPlaceholderInvariant
+	}
+	return convergePrivacyRedaction(text, redactPrivacyPass)
+}
+
+func convergePrivacyRedaction(text string, pass func(string) (string, privacyRedaction)) (string, privacyRedaction, error) {
+	var total privacyRedaction
+	for passNumber := 1; passNumber <= privacyRedactionPassLimit; passNumber++ {
+		redacted, current := pass(text)
+		if current.empty() {
+			return redacted, total, nil
+		}
+		addPrivacyRedaction(&total, current)
+		text = redacted
+	}
+	_, remaining := pass(text)
+	if !remaining.empty() {
+		return text, total, fmt.Errorf("privacy redaction did not converge after %d passes; remaining detector counts: %s", privacyRedactionPassLimit, remaining.counts())
+	}
+	return text, total, nil
+}
+
+func redactPrivacyPass(text string) (string, privacyRedaction) {
 	text, routing := removeMailRoutingHeaders(text)
 	text, credentials := replaceMatches(text, privateKeyPattern, credentialPlaceholder)
 	text, credentialValues := replaceMatches(text, credentialPattern, credentialPlaceholder)
@@ -137,7 +187,17 @@ func redactPrivacy(text string) (string, int64, int64, int64, int64, int64) {
 		return strings.ContainsAny(value, ".:") && net.ParseIP(value) != nil
 	})
 	text, phones := replaceValidated(text, phoneCandidatePattern, phonePlaceholder, likelyPhoneNumber)
-	return text, emails, ips, phones, routing, credentials
+	return text, privacyRedaction{EmailAddresses: emails, IPAddresses: ips, PhoneNumbers: phones, MailRoutingHeaders: routing, Credentials: credentials}
+}
+
+func validatePrivacyPlaceholders() error {
+	for _, placeholder := range []string{emailPlaceholder, ipPlaceholder, phonePlaceholder, credentialPlaceholder} {
+		redacted, matches := redactPrivacyPass(placeholder)
+		if redacted != placeholder || !matches.empty() {
+			return fmt.Errorf("privacy placeholder matches a detector (%s)", matches.counts())
+		}
+	}
+	return nil
 }
 
 func replaceMatches(text string, pattern *regexp.Regexp, replacement string) (string, int64) {

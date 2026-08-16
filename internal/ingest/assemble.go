@@ -215,8 +215,12 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 		count := counts[position]
 		row.TokenCount = &count
 		assessment := assessContent(row.Text)
-		if _, emails, ips, phones, routing, credentials := redactPrivacy(row.Text); emails+ips+phones+routing+credentials != 0 {
-			return fmt.Errorf("canonical privacy redaction left %d sensitive value(s) in a record", emails+ips+phones+routing+credentials)
+		_, remaining, err := redactPrivacy(row.Text)
+		if err != nil {
+			return fmt.Errorf("verify canonical privacy redaction: %w", err)
+		}
+		if !remaining.empty() {
+			return fmt.Errorf("canonical privacy redaction invariant failed (%s)", remaining.counts())
 		}
 		row.EmailAddresses = assessment.EmailAddresses
 		row.RepetitiveContent = assessment.RepetitiveContent
