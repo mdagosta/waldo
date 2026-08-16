@@ -2,14 +2,15 @@
 
 ## Status
 
-Accepted; schema-1 filtering behavior amended by [ADR 0054](0054-unassessed-filter-compatibility.md).
+Accepted; email handling superseded by [ADR 0055](0055-automatic-privacy-redaction.md), and schema-1 filtering behavior amended by [ADR 0054](0054-unassessed-filter-compatibility.md).
 
 ## Decision
 
-Canonical Parquet record schema 2 adds the required booleans
+The v7 physical form of canonical Parquet record schema 2 added the required booleans
 `email_addresses`, `repetitive_content`, and `boilerplate_content`. During every
 ingestion WALDO evaluates the final retained text with three pinned detectors
-and writes the results without redacting or otherwise changing the text.
+and wrote the results without redacting or otherwise changing the text. Current
+ingestion follows ADR 0055 and redacts before assessment.
 
 `waldo/email-address-v1` identifies common email-shaped strings.
 `waldo/gopher-ngram-repetition-v1` applies pinned repeated-token n-gram
@@ -31,7 +32,6 @@ Model composes may exclude any matching row with:
 ```yaml
 filter:
   exclude:
-    email_addresses: true
     repetitive_content: true
     boilerplate_content: true
     licenses: [CC-BY-NC-*]

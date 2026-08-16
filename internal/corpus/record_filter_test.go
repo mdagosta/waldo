@@ -67,17 +67,16 @@ func TestRecordFilterValidationAndBOMRoundTrip(t *testing.T) {
 	}
 }
 
-func TestUnifiedExclusionFilterMatchesEmailFlagsOrLicenses(t *testing.T) {
+func TestUnifiedExclusionFilterMatchesContentFlagsOrLicenses(t *testing.T) {
 	present, absent := true, false
 	filter := RecordFilter{Exclude: &ExclusionFilter{
-		EmailAddresses: &present, RepetitiveContent: &present, BoilerplateContent: &present,
+		RepetitiveContent: &present, BoilerplateContent: &present,
 		Licenses: []string{"CC-BY-NC-*", "LicenseRef-Restricted-*"},
 	}}
 	if err := filter.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	for name, record := range map[string]shard.RecordView{
-		"email":       {License: "CC0-1.0", EmailAddresses: &present, RepetitiveContent: &absent, BoilerplateContent: &absent},
 		"repetitive":  {License: "CC0-1.0", EmailAddresses: &absent, RepetitiveContent: &present, BoilerplateContent: &absent},
 		"boilerplate": {License: "CC0-1.0", EmailAddresses: &absent, RepetitiveContent: &absent, BoilerplateContent: &present},
 		"license":     {License: "CC-BY-NC-4.0", EmailAddresses: &absent, RepetitiveContent: &absent, BoilerplateContent: &absent},
@@ -101,17 +100,6 @@ func TestUnifiedExclusionFilterMatchesEmailFlagsOrLicenses(t *testing.T) {
 	}
 }
 
-func TestUnifiedEmailExclusionCombinesWithLegacyLicenseFilter(t *testing.T) {
-	present := true
-	filter := RecordFilter{
-		Exclude:  &ExclusionFilter{EmailAddresses: &present},
-		Licenses: &ValueFilter{Include: []string{"CC-*"}},
-	}
-	if err := filter.Validate(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestMainContentFilterIsDirectAndDefaultsOlderRowsToMain(t *testing.T) {
 	want := true
 	filter := RecordFilter{MainContent: &want}
@@ -128,10 +116,10 @@ func TestContentAssessmentExclusionsCombineGlobalAndCorpusPolicy(t *testing.T) {
 	policy := RecordFilterPolicy{
 		Global: &RecordFilter{Exclude: &ExclusionFilter{BoilerplateContent: &present}},
 		Corpora: map[string]RecordFilter{
-			"books": {Exclude: &ExclusionFilter{EmailAddresses: &present, RepetitiveContent: &present}},
+			"books": {Exclude: &ExclusionFilter{RepetitiveContent: &present}},
 		},
 	}
-	if got := policy.ContentAssessmentExclusions("books"); !reflect.DeepEqual(got, []string{"boilerplate_content", "email_addresses", "repetitive_content"}) {
+	if got := policy.ContentAssessmentExclusions("books"); !reflect.DeepEqual(got, []string{"boilerplate_content", "repetitive_content"}) {
 		t.Fatalf("books assessment exclusions = %v", got)
 	}
 	if got := policy.ContentAssessmentExclusions("science"); !reflect.DeepEqual(got, []string{"boilerplate_content"}) {

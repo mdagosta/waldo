@@ -34,6 +34,7 @@ func TestTextRowPhysicalSchemaAndMetadata(t *testing.T) {
 	wantColumns := []string{
 		"content_sha256", "text", "source", "source_name", "license", "license_raw",
 		"language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content", "main_content",
+		"redacted_email_addresses", "redacted_ip_addresses", "redacted_phone_numbers", "removed_mail_routing_headers", "redacted_credentials",
 	}
 	columns := file.Schema().Columns()
 	if len(columns) != len(wantColumns) {

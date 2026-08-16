@@ -44,7 +44,6 @@ type RecordFilter struct {
 // ExclusionFilter is the canonical deny-list form. A record is excluded when
 // any declared condition matches.
 type ExclusionFilter struct {
-	EmailAddresses     *bool    `json:"email_addresses,omitempty" yaml:"email_addresses,omitempty"`
 	RepetitiveContent  *bool    `json:"repetitive_content,omitempty" yaml:"repetitive_content,omitempty"`
 	BoilerplateContent *bool    `json:"boilerplate_content,omitempty" yaml:"boilerplate_content,omitempty"`
 	Licenses           []string `json:"licenses,omitempty" yaml:"licenses,omitempty"`
@@ -122,7 +121,7 @@ func (filter RecordFilter) empty() bool {
 }
 
 func (filter ExclusionFilter) Validate() error {
-	if filter.EmailAddresses == nil && filter.RepetitiveContent == nil && filter.BoilerplateContent == nil && len(filter.Licenses) == 0 {
+	if filter.RepetitiveContent == nil && filter.BoilerplateContent == nil && len(filter.Licenses) == 0 {
 		return fmt.Errorf("at least one exclusion is required")
 	}
 	return validatePatterns(filter.Licenses)
@@ -205,9 +204,6 @@ func (filter RecordFilter) Allows(record shard.RecordView) bool {
 }
 
 func (filter ExclusionFilter) Matches(record shard.RecordView) bool {
-	if filter.EmailAddresses != nil && record.EmailAddresses != nil && *filter.EmailAddresses == *record.EmailAddresses {
-		return true
-	}
 	if filter.RepetitiveContent != nil && record.RepetitiveContent != nil && *filter.RepetitiveContent == *record.RepetitiveContent {
 		return true
 	}
@@ -244,9 +240,6 @@ func (policy RecordFilterPolicy) ContentAssessmentExclusions(corpusPath string) 
 func (filter RecordFilter) addContentAssessmentExclusions(fields map[string]bool) {
 	if filter.Exclude == nil {
 		return
-	}
-	if filter.Exclude.EmailAddresses != nil {
-		fields["email_addresses"] = true
 	}
 	if filter.Exclude.RepetitiveContent != nil {
 		fields["repetitive_content"] = true

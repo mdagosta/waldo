@@ -58,3 +58,4 @@ logs.
 - [0052: Preserve general content assessments as immutable row facts](0052-row-level-content-assessment.md)
 - [0053: Classify main content with a default-true row fact](0053-main-content-classification.md)
 - [0054: Retain unassessed rows when applying assessment filters](0054-unassessed-filter-compatibility.md)
+- [0055: Apply automatic privacy redaction before canonical identity](0055-automatic-privacy-redaction.md)

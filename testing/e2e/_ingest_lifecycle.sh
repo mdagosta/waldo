@@ -239,8 +239,16 @@ grep -q 'detector: waldo/email-address-v1' "$manifest_path" || {
   echo "manifest does not pin the email-address detector" >&2
   exit 1
 }
-grep -A2 'email_addresses:' "$manifest_path" | grep -q 'records: 1' || {
-  echo "manifest does not report the one retained email-address row" >&2
+grep -A2 'email_addresses:' "$manifest_path" | grep -q 'records: 0' || {
+  echo "manifest assessment reports an email after redaction" >&2
+  exit 1
+}
+grep -q 'policy: waldo/privacy-redaction-v1' "$manifest_path" || {
+  echo "manifest does not pin the privacy-redaction policy" >&2
+  exit 1
+}
+grep -A3 '^redaction:' "$manifest_path" | grep -q 'email_addresses: 1' || {
+  echo "manifest does not report the email-address replacement" >&2
   exit 1
 }
 grep -q 'detector: waldo/gopher-ngram-repetition-v1' "$manifest_path" || {
@@ -303,7 +311,8 @@ if [ "$transport" = "local" ]; then
   }
   first_id=$(sed -n '1s/.*"sha256":"\([0-9a-f]*\)".*/\1/p' "$jsonl")
   "$binary" shard export-record "$published_object" "$first_id" > "$work/exported-record.txt"
-  cmp "$work/exported-record.txt" "$fixture/01-plain.txt"
+  sed 's/maintainer@example.org/<EMAIL_ADDRESS>/g' "$fixture/01-plain.txt" > "$work/expected-redacted-record.txt"
+  cmp "$work/exported-record.txt" "$work/expected-redacted-record.txt"
 fi
 
 if find "$staging" -path '*/objects/*' -type f -print | grep . >/dev/null 2>&1; then

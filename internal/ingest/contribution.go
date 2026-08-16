@@ -44,6 +44,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		},
 	}
 	manifest.Assessment = newContentAssessment(0, 0, 0)
+	manifest.Redaction = newContentRedaction()
 	planSources := plan.Sources
 	if len(planSources) == 0 {
 		legacy := plan.Source
@@ -84,10 +85,12 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			Docs: object.Docs, Tokens: object.Tokens, Bytes: object.Bytes,
 			LicenseUsage: object.LicenseUsage,
 			Assessment:   newContentAssessment(object.EmailAddressRecords, object.RepetitiveContentRecords, object.BoilerplateContentRecords),
+			Redaction:    cloneContentRedaction(object.Redaction),
 		})
 		manifest.Assessment.EmailAddresses.Records += object.EmailAddressRecords
 		manifest.Assessment.RepetitiveContent.Records += object.RepetitiveContentRecords
 		manifest.Assessment.BoilerplateContent.Records += object.BoilerplateContentRecords
+		addContentRedaction(manifest.Redaction, object.Redaction)
 		if len(licenses) == 1 {
 			manifest.Shards[len(manifest.Shards)-1].License = licenses[0]
 		} else {
@@ -109,6 +112,23 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		return index.Manifest{}, err
 	}
 	return manifest, nil
+}
+
+func newContentRedaction() *index.ContentRedaction {
+	return &index.ContentRedaction{Policy: shard.PrivacyRedactionPolicy, NamesRetained: true}
+}
+
+func cloneContentRedaction(value index.ContentRedaction) *index.ContentRedaction {
+	copy := value
+	return &copy
+}
+
+func addContentRedaction(total *index.ContentRedaction, value index.ContentRedaction) {
+	total.EmailAddresses += value.EmailAddresses
+	total.IPAddresses += value.IPAddresses
+	total.PhoneNumbers += value.PhoneNumbers
+	total.MailRoutingHeaders += value.MailRoutingHeaders
+	total.Credentials += value.Credentials
 }
 
 func newContentAssessment(email, repetitive, boilerplate int64) *index.ContentAssessment {

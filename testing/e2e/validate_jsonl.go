@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	waldoindex "github.com/openwaldo/waldo/internal/index"
 )
@@ -48,9 +49,11 @@ func main() {
 		if err := decoder.Decode(&actual); err != nil {
 			fatalf("decode exported record %d: %v", position+1, err)
 		}
+		rawDigest := sha256.Sum256(expected)
+		expected = []byte(strings.ReplaceAll(string(expected), "maintainer@example.org", "<EMAIL_ADDRESS>"))
 		digest := sha256.Sum256(expected)
 		wantHash := hex.EncodeToString(digest[:])
-		wantSource := "sha256:" + wantHash
+		wantSource := "sha256:" + hex.EncodeToString(rawDigest[:])
 		if actual.Text != string(expected) {
 			fatalf("record %d text differs from %s", position+1, expectedPath)
 		}

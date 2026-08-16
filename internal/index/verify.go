@@ -172,6 +172,12 @@ func verifyManifest(path string, manifest Manifest) error {
 			return fmt.Errorf("%s: manifest assessment: %w", path, err)
 		}
 	}
+	privacyRedacted := manifest.ConvertedBy.Recipe == "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction"
+	if privacyRedacted {
+		if err := validateContentRedaction(manifest.Redaction); err != nil {
+			return fmt.Errorf("%s: manifest redaction: %w", path, err)
+		}
+	}
 
 	sources := map[string]bool{}
 	for i, source := range manifest.Sources {
@@ -202,6 +208,8 @@ func verifyManifest(path string, manifest Manifest) error {
 	var assessedEmailRecords int64
 	var assessedRepetitiveRecords int64
 	var assessedBoilerplateRecords int64
+	redaction := &ContentRedaction{Policy: "waldo/privacy-redaction-v1", NamesRetained: true}
+	anyPrivacyRedacted := privacyRedacted
 	for i, shard := range manifest.Shards {
 		if shard.URL == "" || !sha256Pattern.MatchString(shard.SHA256) {
 			return fmt.Errorf("%s: shard %d requires a URL and lowercase 64-character sha256", path, i+1)
@@ -255,9 +263,29 @@ func verifyManifest(path string, manifest Manifest) error {
 			assessedRepetitiveRecords += shard.Assessment.RepetitiveContent.Records
 			assessedBoilerplateRecords += shard.Assessment.BoilerplateContent.Records
 		}
+		shardPrivacyRedacted := privacyRedacted || shard.ConvertedBy != nil && shard.ConvertedBy.Recipe == "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction"
+		if shardPrivacyRedacted {
+			anyPrivacyRedacted = true
+			if err := validateContentRedaction(shard.Redaction); err != nil {
+				return fmt.Errorf("%s: shard %s redaction: %w", path, shard.SHA256[:12], err)
+			}
+			redaction.EmailAddresses += shard.Redaction.EmailAddresses
+			redaction.IPAddresses += shard.Redaction.IPAddresses
+			redaction.PhoneNumbers += shard.Redaction.PhoneNumbers
+			redaction.MailRoutingHeaders += shard.Redaction.MailRoutingHeaders
+			redaction.Credentials += shard.Redaction.Credentials
+		}
 	}
 	if manifest.RecordSchema >= 2 && manifest.Rollup == nil && (manifest.Assessment.EmailAddresses.Records != assessedEmailRecords || manifest.Assessment.RepetitiveContent.Records != assessedRepetitiveRecords || manifest.Assessment.BoilerplateContent.Records != assessedBoilerplateRecords) {
 		return fmt.Errorf("%s: manifest content assessment does not equal shard counts", path)
+	}
+	if anyPrivacyRedacted && manifest.Rollup == nil {
+		if err := validateContentRedaction(manifest.Redaction); err != nil {
+			return fmt.Errorf("%s: manifest redaction: %w", path, err)
+		}
+		if *manifest.Redaction != *redaction {
+			return fmt.Errorf("%s: manifest redaction does not equal shard counts", path)
+		}
 	}
 	if manifest.Rollup != nil {
 		if manifest.Rollup.URL == "" || !sha256Pattern.MatchString(manifest.Rollup.SHA256) {
@@ -269,6 +297,16 @@ func verifyManifest(path string, manifest Manifest) error {
 	}
 	if err := validateManifestProvenance(manifest); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
+	}
+	return nil
+}
+
+func validateContentRedaction(redaction *ContentRedaction) error {
+	if redaction == nil || redaction.Policy != "waldo/privacy-redaction-v1" || !redaction.NamesRetained {
+		return fmt.Errorf("privacy policy and names_retained are required")
+	}
+	if redaction.EmailAddresses < 0 || redaction.IPAddresses < 0 || redaction.PhoneNumbers < 0 || redaction.MailRoutingHeaders < 0 || redaction.Credentials < 0 {
+		return fmt.Errorf("redaction counts must be non-negative")
 	}
 	return nil
 }

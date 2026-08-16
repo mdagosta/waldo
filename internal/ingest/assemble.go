@@ -44,6 +44,7 @@ type ObjectResult struct {
 	EmailAddressRecords       int64                     `json:"email_address_records"`
 	RepetitiveContentRecords  int64                     `json:"repetitive_content_records"`
 	BoilerplateContentRecords int64                     `json:"boilerplate_content_records"`
+	Redaction                 index.ContentRedaction    `json:"redaction"`
 }
 
 type AssemblyResult struct {
@@ -110,6 +111,11 @@ func assembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 	}
 	assembler := objectAssembler{ctx: ctx, plan: plan, directory: objectDirectory, sink: sink, workers: workers}
 	err = StreamCanonicalTextBatches(ctx, plan, func(batch TextBatch) error {
+		redacted, redactErr := redactCanonicalBatch(batch)
+		if redactErr != nil {
+			return redactErr
+		}
+		batch = redacted
 		unique, err := dedup.filter(batch)
 		if err != nil || len(unique.Rows) == 0 {
 			return err
@@ -162,6 +168,7 @@ type activeObject struct {
 	emailAddressRecords       int64
 	repetitiveContentRecords  int64
 	boilerplateContentRecords int64
+	redaction                 index.ContentRedaction
 	lastUsed                  int64
 }
 
@@ -187,6 +194,7 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 			return err
 		}
 		row := batch.Rows[position]
+		redaction := privacyRedactionForRow(row)
 		if row.License == "" {
 			return fmt.Errorf("canonical row has no effective license")
 		}
@@ -207,6 +215,9 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 		count := counts[position]
 		row.TokenCount = &count
 		assessment := assessContent(row.Text)
+		if _, emails, ips, phones, routing, credentials := redactPrivacy(row.Text); emails+ips+phones+routing+credentials != 0 {
+			return fmt.Errorf("canonical privacy redaction left %d sensitive value(s) in a record", emails+ips+phones+routing+credentials)
+		}
 		row.EmailAddresses = assessment.EmailAddresses
 		row.RepetitiveContent = assessment.RepetitiveContent
 		row.BoilerplateContent = assessment.BoilerplateContent
@@ -219,6 +230,11 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 		if row.BoilerplateContent {
 			active.boilerplateContentRecords++
 		}
+		active.redaction.EmailAddresses += redaction.EmailAddresses
+		active.redaction.IPAddresses += redaction.IPAddresses
+		active.redaction.PhoneNumbers += redaction.PhoneNumbers
+		active.redaction.MailRoutingHeaders += redaction.MailRoutingHeaders
+		active.redaction.Credentials += redaction.Credentials
 		active.licenses[row.License] = true
 		usage := active.licenseUsage[row.License]
 		usage.Docs++
@@ -351,7 +367,10 @@ func (assembler *objectAssembler) finishActive(active *activeObject) error {
 		EmailAddressRecords:       active.emailAddressRecords,
 		RepetitiveContentRecords:  active.repetitiveContentRecords,
 		BoilerplateContentRecords: active.boilerplateContentRecords,
+		Redaction:                 active.redaction,
 	}
+	result.Redaction.Policy = shard.PrivacyRedactionPolicy
+	result.Redaction.NamesRetained = true
 	if len(licenses) == 1 {
 		result.License = licenses[0]
 	}
@@ -414,12 +433,20 @@ func (assembler *objectAssembler) finishAll() error {
 }
 
 func setAggregateMetadata(active *activeObject, plan Plan) error {
+	active.redaction.Policy = shard.PrivacyRedactionPolicy
+	active.redaction.NamesRetained = true
 	active.writer.SetKeyValueMetadata("waldo.records", fmt.Sprint(active.docs))
 	active.writer.SetKeyValueMetadata("waldo.tokens", fmt.Sprint(active.tokens))
 	active.writer.SetKeyValueMetadata("waldo.content_bytes", fmt.Sprint(active.logicalBytes))
 	active.writer.SetKeyValueMetadata("waldo.email_address_records", fmt.Sprint(active.emailAddressRecords))
 	active.writer.SetKeyValueMetadata("waldo.repetitive_content_records", fmt.Sprint(active.repetitiveContentRecords))
 	active.writer.SetKeyValueMetadata("waldo.boilerplate_content_records", fmt.Sprint(active.boilerplateContentRecords))
+	active.writer.SetKeyValueMetadata("waldo.privacy_redaction_policy", shard.PrivacyRedactionPolicy)
+	active.writer.SetKeyValueMetadata("waldo.redacted_email_addresses", fmt.Sprint(active.redaction.EmailAddresses))
+	active.writer.SetKeyValueMetadata("waldo.redacted_ip_addresses", fmt.Sprint(active.redaction.IPAddresses))
+	active.writer.SetKeyValueMetadata("waldo.redacted_phone_numbers", fmt.Sprint(active.redaction.PhoneNumbers))
+	active.writer.SetKeyValueMetadata("waldo.removed_mail_routing_headers", fmt.Sprint(active.redaction.MailRoutingHeaders))
+	active.writer.SetKeyValueMetadata("waldo.redacted_credentials", fmt.Sprint(active.redaction.Credentials))
 	licenses := sortedKeys(active.licenses)
 	encoded, _ := json.Marshal(licenses)
 	active.writer.SetKeyValueMetadata("waldo.licenses", string(encoded))
@@ -431,6 +458,7 @@ func setAggregateMetadata(active *activeObject, plan Plan) error {
 	shardBOM.EmailAddressRecords = active.emailAddressRecords
 	shardBOM.RepetitiveContentRecords = active.repetitiveContentRecords
 	shardBOM.BoilerplateContentRecords = active.boilerplateContentRecords
+	shardBOM.Redaction = active.redaction
 	bom, err := shard.EncodeBOM(shardBOM)
 	if err != nil {
 		return err
@@ -475,7 +503,7 @@ func verifyAssembledObject(object ObjectResult) (int, error) {
 	if parquetFile.NumRows() != object.Docs {
 		return 0, fmt.Errorf("assembled object has %d rows, want %d", parquetFile.NumRows(), object.Docs)
 	}
-	wantColumns := []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content", "main_content"}
+	wantColumns := []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content", "main_content", "redacted_email_addresses", "redacted_ip_addresses", "redacted_phone_numbers", "removed_mail_routing_headers", "redacted_credentials"}
 	columns := parquetFile.Schema().Columns()
 	gotColumns := make([]string, len(columns))
 	for index, column := range columns {
@@ -502,6 +530,9 @@ func verifyAssembledObject(object ObjectResult) (int, error) {
 	}
 	if audited.Records != object.Docs || audited.Tokens != object.Tokens || audited.ContentBytes != object.LogicalBytes || audited.EmailAddressRecords != object.EmailAddressRecords || audited.RepetitiveContentRecords != object.RepetitiveContentRecords || audited.BoilerplateContentRecords != object.BoilerplateContentRecords {
 		return 0, fmt.Errorf("assembled object audit totals do not match assembly totals")
+	}
+	if audited.Redaction != object.Redaction {
+		return 0, fmt.Errorf("assembled object redaction totals do not match assembly totals")
 	}
 	expectedLicenses := object.Licenses
 	if len(expectedLicenses) == 0 && object.License != "" {

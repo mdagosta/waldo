@@ -21,13 +21,15 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/parquet-go/parquet-go"
 	"go.etcd.io/bbolt"
 )
 
-var canonicalColumns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content", "main_content"}
+var canonicalColumns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content", "main_content", "redacted_email_addresses", "redacted_ip_addresses", "redacted_phone_numbers", "removed_mail_routing_headers", "redacted_credentials"}
+var canonicalV3Columns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content", "main_content"}
 var canonicalV2Columns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta", "email_addresses", "repetitive_content", "boilerplate_content"}
 var canonicalV1Columns = []string{"content_sha256", "text", "source", "source_name", "license", "license_raw", "language", "language_score", "date", "token_count", "meta"}
 var legacyColumns = []string{"sha256", "kind", "text", "source", "source_name", "license", "license_raw", "lang", "lang_score", "date", "tokens", "meta"}
@@ -50,19 +52,20 @@ type RecordView struct {
 }
 
 type Summary struct {
-	Shards                    int64    `json:"shards"`
-	Attested                  int64    `json:"attested_shards,omitempty"`
-	DeepScanned               int64    `json:"deep_scanned_shards,omitempty"`
-	Records                   int64    `json:"records"`
-	Tokens                    int64    `json:"tokens"`
-	ContentBytes              int64    `json:"content_bytes"`
-	EncodedBytes              int64    `json:"encoded_bytes"`
-	RowGroups                 int64    `json:"row_groups"`
-	Licenses                  []string `json:"licenses"`
-	Recipes                   []string `json:"writer_recipes"`
-	EmailAddressRecords       int64    `json:"email_address_records,omitempty"`
-	RepetitiveContentRecords  int64    `json:"repetitive_content_records,omitempty"`
-	BoilerplateContentRecords int64    `json:"boilerplate_content_records,omitempty"`
+	Shards                    int64                  `json:"shards"`
+	Attested                  int64                  `json:"attested_shards,omitempty"`
+	DeepScanned               int64                  `json:"deep_scanned_shards,omitempty"`
+	Records                   int64                  `json:"records"`
+	Tokens                    int64                  `json:"tokens"`
+	ContentBytes              int64                  `json:"content_bytes"`
+	EncodedBytes              int64                  `json:"encoded_bytes"`
+	RowGroups                 int64                  `json:"row_groups"`
+	Licenses                  []string               `json:"licenses"`
+	Recipes                   []string               `json:"writer_recipes"`
+	EmailAddressRecords       int64                  `json:"email_address_records,omitempty"`
+	RepetitiveContentRecords  int64                  `json:"repetitive_content_records,omitempty"`
+	BoilerplateContentRecords int64                  `json:"boilerplate_content_records,omitempty"`
+	Redaction                 index.ContentRedaction `json:"redaction,omitempty"`
 }
 
 type AuditOptions struct {
@@ -283,7 +286,7 @@ func verifyAttestedOne(path string) (Summary, error) {
 	}
 	recipe, _ := parquetFile.Lookup("waldo.recipe")
 	switch recipe {
-	case TextWriterRecipe, FormerAssessmentRecipe, FormerTextBOMRecipe:
+	case TextWriterRecipe, FormerMainContentRecipe, FormerAssessmentRecipe, FormerTextBOMRecipe:
 		if _, ok := parquetFile.Lookup(BOMMetadataKey); !ok {
 			return Summary{}, errDeepScanRequired
 		}
@@ -291,7 +294,7 @@ func verifyAttestedOne(path string) (Summary, error) {
 		if err != nil {
 			return Summary{}, err
 		}
-		if bom.Records != one.Records || bom.Tokens != one.Tokens || bom.ContentBytes != one.ContentBytes || bom.EmailAddressRecords != one.EmailAddressRecords || bom.RepetitiveContentRecords != one.RepetitiveContentRecords || bom.BoilerplateContentRecords != one.BoilerplateContentRecords || !slices.Equal(bom.Licenses, one.Licenses) {
+		if bom.Records != one.Records || bom.Tokens != one.Tokens || bom.ContentBytes != one.ContentBytes || bom.EmailAddressRecords != one.EmailAddressRecords || bom.RepetitiveContentRecords != one.RepetitiveContentRecords || bom.BoilerplateContentRecords != one.BoilerplateContentRecords || bom.Redaction != one.Redaction || !slices.Equal(bom.Licenses, one.Licenses) {
 			return Summary{}, fmt.Errorf("embedded shard BOM differs from Parquet footer aggregates")
 		}
 	case FormerTextRecipe:
@@ -317,6 +320,15 @@ func addSummary(total *Summary, one Summary, licenses, recipes map[string]bool) 
 	total.EmailAddressRecords += one.EmailAddressRecords
 	total.RepetitiveContentRecords += one.RepetitiveContentRecords
 	total.BoilerplateContentRecords += one.BoilerplateContentRecords
+	total.Redaction.EmailAddresses += one.Redaction.EmailAddresses
+	total.Redaction.IPAddresses += one.Redaction.IPAddresses
+	total.Redaction.PhoneNumbers += one.Redaction.PhoneNumbers
+	total.Redaction.MailRoutingHeaders += one.Redaction.MailRoutingHeaders
+	total.Redaction.Credentials += one.Redaction.Credentials
+	if one.Redaction.Policy != "" {
+		total.Redaction.Policy = one.Redaction.Policy
+		total.Redaction.NamesRetained = one.Redaction.NamesRetained
+	}
 	for _, value := range one.Licenses {
 		licenses[value] = true
 	}
@@ -495,9 +507,9 @@ func auditOne(ctx context.Context, path string, counter tokenizer.Counter, addID
 	if err == nil {
 		footer, complete := footerSummary(parquetFile, size)
 		recipe, _ := parquetFile.Lookup("waldo.recipe")
-		if (recipe == TextWriterRecipe || recipe == FormerAssessmentRecipe || recipe == FormerTextBOMRecipe) && !complete {
+		if (recipe == TextWriterRecipe || recipe == FormerMainContentRecipe || recipe == FormerAssessmentRecipe || recipe == FormerTextBOMRecipe) && !complete {
 			err = fmt.Errorf("current writer recipe is missing valid aggregate footer metadata")
-		} else if complete && (footer.Records != one.Records || footer.Tokens != one.Tokens || footer.ContentBytes != one.ContentBytes || footer.EmailAddressRecords != one.EmailAddressRecords || footer.RepetitiveContentRecords != one.RepetitiveContentRecords || footer.BoilerplateContentRecords != one.BoilerplateContentRecords || !slices.Equal(footer.Licenses, one.Licenses)) {
+		} else if complete && (footer.Records != one.Records || footer.Tokens != one.Tokens || footer.ContentBytes != one.ContentBytes || footer.EmailAddressRecords != one.EmailAddressRecords || footer.RepetitiveContentRecords != one.RepetitiveContentRecords || footer.BoilerplateContentRecords != one.BoilerplateContentRecords || footer.Redaction != one.Redaction || !slices.Equal(footer.Licenses, one.Licenses)) {
 			err = fmt.Errorf("footer aggregates do not match streamed records")
 		}
 	}
@@ -658,6 +670,30 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 		}
 		return nil
 	}
+	if slices.Equal(columnNames(parquetFile), canonicalV3Columns) {
+		reader := parquet.NewGenericReader[textRowV3](parquetFile)
+		defer reader.Close()
+		rows := make([]textRowV3, 1)
+		for _, position := range positions {
+			if err := reader.SeekToRow(position); err != nil {
+				return fmt.Errorf("seek to record %d: %w", position, err)
+			}
+			count, readErr := reader.Read(rows)
+			if count != 1 {
+				if readErr == nil {
+					readErr = io.ErrUnexpectedEOF
+				}
+				return fmt.Errorf("read record %d: %w", position, readErr)
+			}
+			row := rows[0]
+			email, repetitive, boilerplate := row.EmailAddresses, row.RepetitiveContent, row.BoilerplateContent
+			view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &email, RepetitiveContent: &repetitive, BoilerplateContent: &boilerplate, MainContent: row.MainContent}
+			if err := callback(position, view); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	reader := parquet.NewGenericReader[TextRow](parquetFile)
 	defer reader.Close()
 	rows := make([]TextRow, 1)
@@ -745,15 +781,16 @@ func openShard(path string) (*os.File, *parquet.File, int64, error) {
 		got[i] = column[0]
 	}
 	canonical := slices.Equal(got, canonicalColumns)
+	canonicalV3 := slices.Equal(got, canonicalV3Columns)
 	canonicalV2 := slices.Equal(got, canonicalV2Columns)
 	canonicalV1 := slices.Equal(got, canonicalV1Columns)
 	legacy := slices.Equal(got, legacyColumns)
-	if !canonical && !canonicalV2 && !canonicalV1 && !legacy {
+	if !canonical && !canonicalV3 && !canonicalV2 && !canonicalV1 && !legacy {
 		file.Close()
 		return nil, nil, 0, fmt.Errorf("columns are %v, want schema-2 %v or established schema-1 %v", got, canonicalColumns, canonicalV1Columns)
 	}
 	value, ok := pf.Lookup("waldo.record_schema")
-	if (canonical || canonicalV2) && (!ok || value != strconv.Itoa(TextRecordSchema)) || canonicalV1 && (!ok || value != strconv.Itoa(FormerTextRecordSchema)) || legacy && ok && value != strconv.Itoa(FormerTextRecordSchema) {
+	if (canonical || canonicalV3 || canonicalV2) && (!ok || value != strconv.Itoa(TextRecordSchema)) || canonicalV1 && (!ok || value != strconv.Itoa(FormerTextRecordSchema)) || legacy && ok && value != strconv.Itoa(FormerTextRecordSchema) {
 		file.Close()
 		return nil, nil, 0, fmt.Errorf("unsupported or missing waldo.record_schema")
 	}
@@ -785,7 +822,32 @@ func footerSummary(file *parquet.File, size int64) (Summary, bool) {
 	if schema, _ := file.Lookup("waldo.record_schema"); schema == strconv.Itoa(TextRecordSchema) && (!emailOK || !repetitiveOK || !boilerplateOK) {
 		return Summary{}, false
 	}
-	return Summary{Records: values["waldo.records"], Tokens: values["waldo.tokens"], ContentBytes: values["waldo.content_bytes"], EncodedBytes: size, RowGroups: int64(len(file.RowGroups())), Licenses: licenses, Recipes: []string{recipe}, EmailAddressRecords: emailAddressRecords, RepetitiveContentRecords: repetitiveContentRecords, BoilerplateContentRecords: boilerplateContentRecords}, true
+	redaction := index.ContentRedaction{}
+	if recipe == TextWriterRecipe {
+		policy, ok := file.Lookup("waldo.privacy_redaction_policy")
+		if !ok || policy != PrivacyRedactionPolicy {
+			return Summary{}, false
+		}
+		redaction.Policy, redaction.NamesRetained = policy, true
+		for key, target := range map[string]*int64{
+			"waldo.redacted_email_addresses":     &redaction.EmailAddresses,
+			"waldo.redacted_ip_addresses":        &redaction.IPAddresses,
+			"waldo.redacted_phone_numbers":       &redaction.PhoneNumbers,
+			"waldo.removed_mail_routing_headers": &redaction.MailRoutingHeaders,
+			"waldo.redacted_credentials":         &redaction.Credentials,
+		} {
+			raw, ok := file.Lookup(key)
+			if !ok {
+				return Summary{}, false
+			}
+			parsed, err := strconv.ParseInt(raw, 10, 64)
+			if err != nil || parsed < 0 {
+				return Summary{}, false
+			}
+			*target = parsed
+		}
+	}
+	return Summary{Records: values["waldo.records"], Tokens: values["waldo.tokens"], ContentBytes: values["waldo.content_bytes"], EncodedBytes: size, RowGroups: int64(len(file.RowGroups())), Licenses: licenses, Recipes: []string{recipe}, EmailAddressRecords: emailAddressRecords, RepetitiveContentRecords: repetitiveContentRecords, BoilerplateContentRecords: boilerplateContentRecords, Redaction: redaction}, true
 }
 
 func footerAssessment(file *parquet.File, name string, records int64) (int64, bool) {
@@ -805,6 +867,9 @@ func scan(file *parquet.File, validate bool, callback func(int64, RecordView, re
 	if slices.Equal(columns, canonicalColumns) {
 		return scanCanonical(file, validate, callback)
 	}
+	if slices.Equal(columns, canonicalV3Columns) {
+		return scanCanonicalV3(file, validate, callback)
+	}
 	if slices.Equal(columns, canonicalV2Columns) {
 		return scanCanonicalV2(file, validate, callback)
 	}
@@ -812,6 +877,31 @@ func scan(file *parquet.File, validate bool, callback func(int64, RecordView, re
 		return scanCanonicalV1(file, validate, callback)
 	}
 	return Summary{}, fmt.Errorf("unsupported canonical physical columns %v", columns)
+}
+
+func scanCanonicalV3(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
+	reader := parquet.NewGenericReader[textRowV3](file)
+	defer reader.Close()
+	rows := make([]textRowV3, 512)
+	consumer := newRowConsumer(file, validate, callback)
+	for {
+		count, readErr := reader.Read(rows)
+		for i := 0; i < count; i++ {
+			row := rows[i]
+			canonical := record.Record{SHA256: hex.EncodeToString(row.ContentSHA256[:]), Kind: record.KindPretrain, Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, LicenseRaw: stringValue(row.LicenseRaw), Lang: stringValue(row.Language), LangScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount)}
+			email, repetitive, boilerplate := row.EmailAddresses, row.RepetitiveContent, row.BoilerplateContent
+			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil, &email, &repetitive, &boilerplate, row.MainContent); err != nil {
+				return consumer.finish(), err
+			}
+		}
+		if errors.Is(readErr, io.EOF) || (readErr == nil && count == 0) {
+			break
+		}
+		if readErr != nil {
+			return consumer.finish(), readErr
+		}
+	}
+	return consumer.finish(), nil
 }
 
 func scanCanonical(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
@@ -830,6 +920,13 @@ func scanCanonical(file *parquet.File, validate bool, callback func(int64, Recor
 			if err := consumer.add(canonical, stringValue(row.Meta), row.TokenCount != nil, &emailAddresses, &repetitiveContent, &boilerplateContent, row.MainContent); err != nil {
 				return consumer.finish(), err
 			}
+			consumer.result.Redaction.Policy = PrivacyRedactionPolicy
+			consumer.result.Redaction.NamesRetained = true
+			consumer.result.Redaction.EmailAddresses += row.RedactedEmailAddresses
+			consumer.result.Redaction.IPAddresses += row.RedactedIPAddresses
+			consumer.result.Redaction.PhoneNumbers += row.RedactedPhoneNumbers
+			consumer.result.Redaction.MailRoutingHeaders += row.RemovedMailRoutingHeaders
+			consumer.result.Redaction.Credentials += row.RedactedCredentials
 		}
 		if errors.Is(readErr, io.EOF) || (readErr == nil && count == 0) {
 			break
@@ -906,6 +1003,9 @@ func ValidateTextRow(row TextRow) error {
 	meta := stringValue(row.Meta)
 	if meta != "" && (!json.Valid([]byte(meta)) || meta[0] != '{') {
 		return fmt.Errorf("record meta is not a JSON object")
+	}
+	if row.RedactedEmailAddresses < 0 || row.RedactedIPAddresses < 0 || row.RedactedPhoneNumbers < 0 || row.RemovedMailRoutingHeaders < 0 || row.RedactedCredentials < 0 {
+		return fmt.Errorf("record redaction counts must be non-negative")
 	}
 	return nil
 }

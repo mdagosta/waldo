@@ -136,6 +136,17 @@ func BuildUpdatedManifest(plan Plan, existing index.Manifest, assembly AssemblyR
 		}
 		updated.Assessment = assessment
 	}
+	var redaction *index.ContentRedaction
+	for _, shard := range updated.Shards {
+		if shard.Redaction == nil {
+			continue
+		}
+		if redaction == nil {
+			redaction = newContentRedaction()
+		}
+		addContentRedaction(redaction, *shard.Redaction)
+	}
+	updated.Redaction = redaction
 	updated.Schema = index.ManifestSchema
 	if err := index.ValidateManifest(manifestPath, updated); err != nil {
 		return index.Manifest{}, err

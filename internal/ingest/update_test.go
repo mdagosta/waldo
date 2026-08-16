@@ -79,8 +79,11 @@ func TestAppendRecomputesContentAssessment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(updated.Shards) != 2 || updated.Assessment == nil || updated.Assessment.EmailAddresses == nil || updated.Assessment.EmailAddresses.Records != 1 {
+	if len(updated.Shards) != 2 || updated.Assessment == nil || updated.Assessment.EmailAddresses == nil || updated.Assessment.EmailAddresses.Records != 0 {
 		t.Fatalf("updated assessment = %+v across %d shards", updated.Assessment, len(updated.Shards))
+	}
+	if updated.Redaction == nil || updated.Redaction.EmailAddresses != 1 {
+		t.Fatalf("updated redaction = %+v", updated.Redaction)
 	}
 	if updated.Assessment.RepetitiveContent == nil || updated.Assessment.RepetitiveContent.Records != 0 || updated.Assessment.BoilerplateContent == nil || updated.Assessment.BoilerplateContent.Records != 0 {
 		t.Fatalf("updated content assessment = %+v", updated.Assessment)

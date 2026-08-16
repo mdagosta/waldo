@@ -78,7 +78,6 @@ func TestContentAssessmentExclusionsAllowUnassessedSchemaOneSelection(t *testing
 	}
 	present := true
 	for name, exclusion := range map[string]ExclusionFilter{
-		"email":       {EmailAddresses: &present},
 		"repetitive":  {RepetitiveContent: &present},
 		"boilerplate": {BoilerplateContent: &present},
 	} {

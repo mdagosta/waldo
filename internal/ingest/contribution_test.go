@@ -67,6 +67,9 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	if len(roundTrip.Shards) != 1 || roundTrip.Shards[0].SHA256 != manifest.Shards[0].SHA256 {
 		t.Fatalf("round-trip manifest = %+v", roundTrip)
 	}
+	if roundTrip.Redaction == nil || roundTrip.Shards[0].Redaction == nil || *roundTrip.Redaction != *manifest.Redaction {
+		t.Fatalf("round-trip redaction = %+v / %+v", roundTrip.Redaction, roundTrip.Shards[0].Redaction)
+	}
 }
 
 func TestIngestionFlagsContentAssessmentsAndSummarizesManifest(t *testing.T) {
@@ -94,8 +97,11 @@ func TestIngestionFlagsContentAssessmentsAndSummarizesManifest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.Assessment == nil || manifest.Assessment.EmailAddresses == nil || manifest.Assessment.EmailAddresses.Detector != shard.EmailDetector || manifest.Assessment.EmailAddresses.Records != 1 {
+	if manifest.Assessment == nil || manifest.Assessment.EmailAddresses == nil || manifest.Assessment.EmailAddresses.Detector != shard.EmailDetector || manifest.Assessment.EmailAddresses.Records != 0 {
 		t.Fatalf("manifest assessment = %+v", manifest.Assessment)
+	}
+	if manifest.Redaction == nil || manifest.Redaction.Policy != shard.PrivacyRedactionPolicy || !manifest.Redaction.NamesRetained || manifest.Redaction.EmailAddresses != 1 {
+		t.Fatalf("manifest redaction = %+v", manifest.Redaction)
 	}
 	if manifest.Assessment.RepetitiveContent == nil || manifest.Assessment.RepetitiveContent.Detector != shard.RepetitionDetector || manifest.Assessment.RepetitiveContent.Records != 1 {
 		t.Fatalf("repetitive assessment = %+v", manifest.Assessment)
@@ -112,6 +118,9 @@ func TestIngestionFlagsContentAssessmentsAndSummarizesManifest(t *testing.T) {
 		if *view.EmailAddresses {
 			emailFlagged++
 		}
+		if strings.Contains(view.Text, "maintainer@example.org") {
+			t.Fatal("canonical shard retained an email address")
+		}
 		if *view.RepetitiveContent {
 			repetitiveFlagged++
 		}
@@ -122,7 +131,7 @@ func TestIngestionFlagsContentAssessmentsAndSummarizesManifest(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if assessed != 4 || emailFlagged != 1 || repetitiveFlagged != 1 || boilerplateFlagged != 1 {
+	if assessed != 4 || emailFlagged != 0 || repetitiveFlagged != 1 || boilerplateFlagged != 1 {
 		t.Fatalf("assessed/email/repetitive/boilerplate rows = %d/%d/%d/%d", assessed, emailFlagged, repetitiveFlagged, boilerplateFlagged)
 	}
 }
@@ -252,7 +261,7 @@ func TestBuildManifestSizeDoesNotScaleWithInputArtifactCount(t *testing.T) {
 		plan.Inputs[position] = input
 	}
 	assembly := AssemblyResult{
-		Objects:   []ObjectResult{{SHA256: fmt.Sprintf("%064x", 1), Bytes: 1024, Docs: 25_000, Tokens: 50_000, LogicalBytes: 500_000, License: plan.License}},
+		Objects:   []ObjectResult{{SHA256: fmt.Sprintf("%064x", 1), Bytes: 1024, Docs: 25_000, Tokens: 50_000, LogicalBytes: 500_000, License: plan.License, Redaction: index.ContentRedaction{Policy: shard.PrivacyRedactionPolicy, NamesRetained: true}}},
 		InputDocs: 25_000, RetainedDocs: 25_000,
 	}
 	manifest, err := BuildManifest(plan, assembly, "s3://openwaldo/lookaside/v1")

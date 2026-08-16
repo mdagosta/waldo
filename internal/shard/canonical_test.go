@@ -137,6 +137,36 @@ func TestInitialSchemaTwoRowsDefaultToMainContent(t *testing.T) {
 	}
 }
 
+func TestSchemaTwoMainContentRowsRemainReadableWithoutRedactionEvidence(t *testing.T) {
+	text := "schema two v8"
+	tokens := tokenCount(t, text)
+	digest := sha256.Sum256([]byte(text))
+	path := filepath.Join(t.TempDir(), "schema-two-v8.parquet")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := parquet.NewGenericWriter[textRowV3](file, proposedTextWriterOptions()...)
+	writer.SetKeyValueMetadata("waldo.record_schema", strconv.Itoa(TextRecordSchema))
+	writer.SetKeyValueMetadata("waldo.recipe", FormerMainContentRecipe)
+	if _, err := writer.Write([]textRowV3{{ContentSHA256: digest, Text: text, Source: "fixture", License: "CC0-1.0", TokenCount: &tokens, MainContent: false}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var got RecordView
+	if err := ReadRecordsAt(path, []int64{0}, func(_ int64, view RecordView) error { got = view; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if got.MainContent || got.Text != text {
+		t.Fatalf("v8 record = %+v", got)
+	}
+}
+
 func TestInspectEmbeddedShardBOM(t *testing.T) {
 	text := "embedded BOM fixture"
 	tokens := tokenCount(t, text)
@@ -155,6 +185,7 @@ func TestInspectEmbeddedShardBOM(t *testing.T) {
 	writer.SetKeyValueMetadata("waldo.email_address_records", "0")
 	writer.SetKeyValueMetadata("waldo.repetitive_content_records", "0")
 	writer.SetKeyValueMetadata("waldo.boilerplate_content_records", "0")
+	setPrivacyFooter(writer)
 	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
 	bom := NewBOM(strings.Repeat("a", 64), tokenizer.Default, 1, tokens, int64(len(text)), []string{"CC0-1.0"})
 	encoded, err := EncodeBOM(bom)
@@ -399,11 +430,11 @@ func writeCanonicalFixture(t *testing.T, path string, rows []TextRow, footer boo
 				boilerplateRecords++
 			}
 		}
-		values := map[string]string{"waldo.records": strconv.Itoa(len(rows)), "waldo.tokens": strconv.FormatInt(tokens, 10), "waldo.content_bytes": strconv.FormatInt(content, 10), "waldo.email_address_records": strconv.FormatInt(emailRecords, 10), "waldo.repetitive_content_records": strconv.FormatInt(repetitiveRecords, 10), "waldo.boilerplate_content_records": strconv.FormatInt(boilerplateRecords, 10), "waldo.licenses": `[` + quotedKeys(licenses) + `]`}
+		values := map[string]string{"waldo.records": strconv.Itoa(len(rows)), "waldo.tokens": strconv.FormatInt(tokens, 10), "waldo.content_bytes": strconv.FormatInt(content, 10), "waldo.email_address_records": strconv.FormatInt(emailRecords, 10), "waldo.repetitive_content_records": strconv.FormatInt(repetitiveRecords, 10), "waldo.boilerplate_content_records": strconv.FormatInt(boilerplateRecords, 10), "waldo.licenses": `[` + quotedKeys(licenses) + `]`, "waldo.privacy_redaction_policy": PrivacyRedactionPolicy, "waldo.redacted_email_addresses": "0", "waldo.redacted_ip_addresses": "0", "waldo.redacted_phone_numbers": "0", "waldo.removed_mail_routing_headers": "0", "waldo.redacted_credentials": "0"}
 		for key, value := range overrides {
 			values[key] = value
 		}
-		for _, key := range []string{"waldo.records", "waldo.tokens", "waldo.content_bytes", "waldo.email_address_records", "waldo.repetitive_content_records", "waldo.boilerplate_content_records", "waldo.licenses"} {
+		for _, key := range []string{"waldo.records", "waldo.tokens", "waldo.content_bytes", "waldo.email_address_records", "waldo.repetitive_content_records", "waldo.boilerplate_content_records", "waldo.licenses", "waldo.privacy_redaction_policy", "waldo.redacted_email_addresses", "waldo.redacted_ip_addresses", "waldo.redacted_phone_numbers", "waldo.removed_mail_routing_headers", "waldo.redacted_credentials"} {
 			writer.SetKeyValueMetadata(key, values[key])
 		}
 	}
@@ -413,6 +444,15 @@ func writeCanonicalFixture(t *testing.T, path string, rows []TextRow, footer boo
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func setPrivacyFooter(writer *parquet.GenericWriter[TextRow]) {
+	writer.SetKeyValueMetadata("waldo.privacy_redaction_policy", PrivacyRedactionPolicy)
+	writer.SetKeyValueMetadata("waldo.redacted_email_addresses", "0")
+	writer.SetKeyValueMetadata("waldo.redacted_ip_addresses", "0")
+	writer.SetKeyValueMetadata("waldo.redacted_phone_numbers", "0")
+	writer.SetKeyValueMetadata("waldo.removed_mail_routing_headers", "0")
+	writer.SetKeyValueMetadata("waldo.redacted_credentials", "0")
 }
 
 func quotedKeys(values map[string]bool) string {

@@ -15,23 +15,50 @@ import (
 )
 
 const (
-	TextRecordSchema       = 2
-	FormerTextRecordSchema = 1
-	TextWriterRecipe       = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v8-main-content"
-	FormerAssessmentRecipe = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v7-content-assessment"
-	FormerTextBOMRecipe    = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v5-bom"
-	FormerTextRecipe       = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v4"
-	EmailDetector          = "waldo/email-address-v1"
-	RepetitionDetector     = "waldo/gopher-ngram-repetition-v1"
-	BoilerplateDetector    = "waldo/gopher-structural-duplication-v1"
-	TextRowGroupBytes      = 64 << 20
-	TextPageBytes          = 1 << 20
+	TextRecordSchema        = 2
+	FormerTextRecordSchema  = 1
+	TextWriterRecipe        = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction"
+	FormerMainContentRecipe = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v8-main-content"
+	FormerAssessmentRecipe  = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v7-content-assessment"
+	FormerTextBOMRecipe     = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v5-bom"
+	FormerTextRecipe        = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v4"
+	EmailDetector           = "waldo/email-address-v1"
+	RepetitionDetector      = "waldo/gopher-ngram-repetition-v1"
+	BoilerplateDetector     = "waldo/gopher-structural-duplication-v1"
+	PrivacyRedactionPolicy  = "waldo/privacy-redaction-v1"
+	TextRowGroupBytes       = 64 << 20
+	TextPageBytes           = 1 << 20
 )
 
 // TextRow is the canonical tokenizer-neutral pretraining row for record schema
 // 2. Pointer fields are true Parquet nulls; empty strings and zero values are
 // not overloaded to mean absence.
 type TextRow struct {
+	ContentSHA256             [32]byte `parquet:"content_sha256"`
+	Text                      string   `parquet:"text"`
+	Source                    string   `parquet:"source"`
+	SourceName                *string  `parquet:"source_name,dict"`
+	License                   string   `parquet:"license,dict"`
+	LicenseRaw                *string  `parquet:"license_raw,dict"`
+	Language                  *string  `parquet:"language,dict"`
+	LanguageScore             *int32   `parquet:"language_score"`
+	Date                      *string  `parquet:"date,dict"`
+	TokenCount                *int64   `parquet:"token_count"`
+	Meta                      *string  `parquet:"meta"`
+	EmailAddresses            bool     `parquet:"email_addresses"`
+	RepetitiveContent         bool     `parquet:"repetitive_content"`
+	BoilerplateContent        bool     `parquet:"boilerplate_content"`
+	MainContent               bool     `parquet:"main_content"`
+	RedactedEmailAddresses    int64    `parquet:"redacted_email_addresses"`
+	RedactedIPAddresses       int64    `parquet:"redacted_ip_addresses"`
+	RedactedPhoneNumbers      int64    `parquet:"redacted_phone_numbers"`
+	RemovedMailRoutingHeaders int64    `parquet:"removed_mail_routing_headers"`
+	RedactedCredentials       int64    `parquet:"redacted_credentials"`
+}
+
+// textRowV3 preserves the schema-2 physical contract before automatic
+// privacy redaction evidence was added.
+type textRowV3 struct {
 	ContentSHA256      [32]byte `parquet:"content_sha256"`
 	Text               string   `parquet:"text"`
 	Source             string   `parquet:"source"`

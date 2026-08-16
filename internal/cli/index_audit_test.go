@@ -41,6 +41,12 @@ func TestIndexAuditComparesStreamedShardTotalsWithManifest(t *testing.T) {
 	writer.SetKeyValueMetadata("waldo.email_address_records", "0")
 	writer.SetKeyValueMetadata("waldo.repetitive_content_records", "0")
 	writer.SetKeyValueMetadata("waldo.boilerplate_content_records", "0")
+	writer.SetKeyValueMetadata("waldo.privacy_redaction_policy", shard.PrivacyRedactionPolicy)
+	writer.SetKeyValueMetadata("waldo.redacted_email_addresses", "0")
+	writer.SetKeyValueMetadata("waldo.redacted_ip_addresses", "0")
+	writer.SetKeyValueMetadata("waldo.redacted_phone_numbers", "0")
+	writer.SetKeyValueMetadata("waldo.removed_mail_routing_headers", "0")
+	writer.SetKeyValueMetadata("waldo.redacted_credentials", "0")
 	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
 	bom, err := shard.EncodeBOM(shard.NewBOM(strings.Repeat("b", 64), tokenizer.Default, 1, tokens, int64(len(text)), []string{"CC0-1.0"}))
 	if err != nil {
@@ -100,9 +106,10 @@ func writeAuditManifest(t *testing.T, root, objectPath, digest string, bytes, to
 	manifest := fmt.Sprintf(`{
   "kind":"manifest", "schema":1, "name":"tiny", "title":"Tiny", "description":"Audit fixture.", "license":"CC0-1.0", "record_schema":2,
   "assessment":{"email_addresses":{"detector":"%s","records":0},"repetitive_content":{"detector":"%s","records":0},"boilerplate_content":{"detector":"%s","records":0}},
+  "redaction":{"policy":"waldo/privacy-redaction-v1","names_retained":true,"email_addresses":0,"ip_addresses":0,"phone_numbers":0,"mail_routing_headers":0,"credentials":0},
   "sources":[{"name":"fixture","source":"Fixture","url":"https://example.invalid/audit","sha256":"%s"}],
   "converted_by":{"tool":"waldo","version":"test","profile":"text","recipe":"%s","tokenizer":"%s"},
-  "shards":[{"url":%q,"sha256":%q,"sources":["fixture"],"docs":1,"tokens":%d,"bytes":%d,"assessment":{"email_addresses":{"detector":"%s","records":0},"repetitive_content":{"detector":"%s","records":0},"boilerplate_content":{"detector":"%s","records":0}}}]
+  "shards":[{"url":%q,"sha256":%q,"sources":["fixture"],"docs":1,"tokens":%d,"bytes":%d,"assessment":{"email_addresses":{"detector":"%s","records":0},"repetitive_content":{"detector":"%s","records":0},"boilerplate_content":{"detector":"%s","records":0}},"redaction":{"policy":"waldo/privacy-redaction-v1","names_retained":true,"email_addresses":0,"ip_addresses":0,"phone_numbers":0,"mail_routing_headers":0,"credentials":0}}]
 }`, shard.EmailDetector, shard.RepetitionDetector, shard.BoilerplateDetector, strings.Repeat("a", 64), shard.TextWriterRecipe, tokenizer.Default, objectPath, digest, tokens, bytes, shard.EmailDetector, shard.RepetitionDetector, shard.BoilerplateDetector)
 	writeCLIFile(t, filepath.Join(root, "tiny", "tiny.json"), manifest)
 }

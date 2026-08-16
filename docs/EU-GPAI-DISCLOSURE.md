@@ -319,7 +319,11 @@ Old manifests remain readable and produce the same existing totals. New writers
 declare `format: "parquet"`, the versioned record schema, the exact writer recipe, and the additive provenance
 facts. Unknown additive fields continue to be accepted by older readers.
 New canonical Parquet records use record schema 2 while schema-1 shards remain
-readable and unassessed. Schema 2 records carry versioned, immutable row facts
+readable and unassessed. Current schema-2 ingestion applies the mandatory
+`waldo/privacy-redaction-v1` policy before canonical identity, retains names,
+and records replacement/removal counts in rows, manifests, and BOMs. This is
+risk-reduction evidence rather than a claim of anonymity or GDPR compliance.
+Schema 2 records also carry versioned, immutable row facts
 for detected email-shaped strings, token repetition, and structural boilerplate;
 the flags do not themselves establish a legal basis, personal-data status, or
 overall content quality. Detector identities and aggregate counts survive in

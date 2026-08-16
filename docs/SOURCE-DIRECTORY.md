@@ -87,13 +87,28 @@ profile apply only to records beneath that directory. WALDO may pack records
 from several source directories into the same size-bounded Parquet shard while
 preserving source path, source identity, and license on every row.
 
-## Automatic row assessment
+## Automatic privacy redaction and row assessment
+
+Before canonical identity is calculated, WALDO applies
+`waldo/privacy-redaction-v1` to every record from every source. It retains names
+and public attribution, replaces email addresses, IP addresses, phone numbers,
+and high-confidence credentials with typed placeholders, and removes routing
+headers from recognized RFC 822 message blocks. The redacted text is then
+hashed, deduplicated, measured, assessed, and packed. Raw values never enter a
+canonical shard.
+
+Schema-2 rows carry replacement/removal counts in
+`redacted_email_addresses`, `redacted_ip_addresses`,
+`redacted_phone_numbers`, `removed_mail_routing_headers`, and
+`redacted_credentials`. Footer, shard BOM, manifest, and OpenWALDO BOM evidence
+pins the policy and aggregates those counts. Existing v8/v7 schema-2 and
+schema-1 shards remain readable but have no redaction guarantee.
 
 Every newly ingested row receives three required booleans:
 
 | Column | Detector | Meaning |
 | --- | --- | --- |
-| `email_addresses` | `waldo/email-address-v1` | A common Internet email-shaped string was found. |
+| `email_addresses` | `waldo/email-address-v1` | A common Internet email-shaped string remains after redaction; current ingestion rejects this condition. |
 | `repetitive_content` | `waldo/gopher-ngram-repetition-v1` | Repeated token n-grams exceeded a pinned within-document threshold. |
 | `boilerplate_content` | `waldo/gopher-structural-duplication-v1` | Duplicate lines or paragraphs exceeded a pinned within-document threshold. |
 
@@ -107,7 +122,7 @@ exceed 30% of those elements or 20% of the source bytes. Whitespace is
 normalized for structural comparison and tokens are Unicode letters/numbers
 lowercased for n-gram comparison.
 
-Assessment never redacts text or makes a legal, safety, or overall-quality
-determination. Manifests preserve detector identities and aggregate flagged-row
+Assessment does not make a legal, safety, or overall-quality determination.
+Manifests preserve detector identities and aggregate flagged-row
 counts. Existing schema-1 shards remain readable but unassessed and are upgraded
 only through an explicit corpus rebuild.

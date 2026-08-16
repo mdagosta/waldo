@@ -124,7 +124,6 @@ stages:
     filter:
       main_content: true
       exclude:
-        email_addresses: true
         repetitive_content: true
         boilerplate_content: true
     corpora:
@@ -176,14 +175,13 @@ run_bom=$(find "$models/smoke/runs" -type f -name RUN-BOM.json -print -quit)
 [ -n "$run_bom" ] || { echo "missing training run BOM" >&2; exit 1; }
 grep -Eq '"attestation"[[:space:]]*:' "$run_bom" || { echo "run BOM omitted shard attestation evidence" >&2; exit 1; }
 grep -Eq '"status"[[:space:]]*:[[:space:]]*"embedded"' "$run_bom" || { echo "run BOM omitted embedded shard BOM status" >&2; exit 1; }
-grep -Eq '"email_addresses"[[:space:]]*:[[:space:]]*true' "$run_bom" || { echo "run BOM omitted the applied email-address exclusion" >&2; exit 1; }
 grep -Eq '"main_content"[[:space:]]*:[[:space:]]*true' "$run_bom" || { echo "run BOM omitted the applied main-content requirement" >&2; exit 1; }
 grep -Eq '"repetitive_content"[[:space:]]*:[[:space:]]*true' "$run_bom" || { echo "run BOM omitted the applied repetitive-content exclusion" >&2; exit 1; }
 grep -Eq '"boilerplate_content"[[:space:]]*:[[:space:]]*true' "$run_bom" || { echo "run BOM omitted the applied boilerplate-content exclusion" >&2; exit 1; }
 artifact_count=$(find "$models/smoke/runs" -type f -name fake-model.json -print | wc -l | tr -d ' ')
 [ "$artifact_count" -eq 1 ] || { echo "found $artifact_count fake artifacts, want 1" >&2; exit 1; }
 fake_artifact=$(find "$models/smoke/runs" -type f -name fake-model.json -print -quit)
-grep -Eq '"training_records"[[:space:]]*:[[:space:]]*1' "$fake_artifact" || { echo "content exclusions did not leave exactly one training record" >&2; exit 1; }
+grep -Eq '"training_records"[[:space:]]*:[[:space:]]*2' "$fake_artifact" || { echo "content exclusions did not leave exactly two training records" >&2; exit 1; }
 checkpoint_count=$(find "$models/smoke/runs" -type f -name 'step-*.json' -print | wc -l | tr -d ' ')
 [ "$checkpoint_count" -eq 1 ] || { echo "found $checkpoint_count fake checkpoints, want 1" >&2; exit 1; }
 

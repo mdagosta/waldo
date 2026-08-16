@@ -72,7 +72,6 @@ stages:
     filter:
       main_content: true
       exclude:
-        email_addresses: true
         repetitive_content: true
         boilerplate_content: true
         licenses: [CC-BY-NC-*]
@@ -289,7 +288,6 @@ form is a single deny list whose conditions are ORed:
 filter:                         # stage-wide
   main_content: true
   exclude:
-    email_addresses: true
     repetitive_content: true
     boilerplate_content: true
     licenses: [CC-BY-NC-*, LicenseRef-Restricted-*]
@@ -312,7 +310,6 @@ corpora:
 | `weight` | only for `causal-pretrain-weighted` | Positive integer relative token exposure. It replaces the legacy map entry for this corpus. |
 | `filter` | no | Record filter local to this corpus. |
 | `filter.main_content` | no | Requires the canonical main-content boolean to equal the declared value. Normally `true`; older schemas default to `true`. |
-| `filter.exclude.email_addresses` | no | Excludes rows whose schema-2 email-address flag equals the declared boolean. The normal policy is `true`. |
 | `filter.exclude.repetitive_content` | no | Excludes rows whose schema-2 repeated-token flag equals the declared boolean. The normal policy is `true`. |
 | `filter.exclude.boilerplate_content` | no | Excludes rows whose schema-2 duplicated-structure flag equals the declared boolean. The normal policy is `true`. |
 | `filter.exclude.licenses` | no | Excludes rows whose normalized license matches any listed shell-style pattern. |

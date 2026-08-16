@@ -106,6 +106,12 @@ func calibrationShard(t *testing.T, texts []string) (string, string, int64, int6
 	writer.SetKeyValueMetadata("waldo.email_address_records", "0")
 	writer.SetKeyValueMetadata("waldo.repetitive_content_records", "0")
 	writer.SetKeyValueMetadata("waldo.boilerplate_content_records", "0")
+	writer.SetKeyValueMetadata("waldo.privacy_redaction_policy", shard.PrivacyRedactionPolicy)
+	writer.SetKeyValueMetadata("waldo.redacted_email_addresses", "0")
+	writer.SetKeyValueMetadata("waldo.redacted_ip_addresses", "0")
+	writer.SetKeyValueMetadata("waldo.redacted_phone_numbers", "0")
+	writer.SetKeyValueMetadata("waldo.removed_mail_routing_headers", "0")
+	writer.SetKeyValueMetadata("waldo.redacted_credentials", "0")
 	writer.SetKeyValueMetadata("waldo.licenses", `["CC0-1.0"]`)
 	if err := writer.Close(); err != nil {
 		t.Fatal(err)
@@ -130,12 +136,13 @@ func calibrationCorpus(object, objectSHA string, objectBytes, tokens, records in
 		RepetitiveContent:  &index.DetectionMeasure{Detector: shard.RepetitionDetector},
 		BoilerplateContent: &index.DetectionMeasure{Detector: shard.BoilerplateDetector},
 	}
+	redaction := &index.ContentRedaction{Policy: shard.PrivacyRedactionPolicy, NamesRetained: true}
 	manifest := corpus.ManifestPin{
 		Path: "core/test.json", SHA256: fmt.Sprintf("%064x", 1), Name: "test", Title: "Test", Description: "Calibration fixture.",
-		License: "CC0-1.0", Format: "parquet", RecordSchema: shard.TextRecordSchema, ConvertedBy: conversion, Assessment: assessment,
+		License: "CC0-1.0", Format: "parquet", RecordSchema: shard.TextRecordSchema, ConvertedBy: conversion, Assessment: assessment, Redaction: redaction,
 		Sources: []index.Source{{Name: "fixture", Source: "Fixture", URL: "https://example.invalid/source", SHA256: fmt.Sprintf("%064x", 2)}},
 		Totals:  measure, Licenses: licenses,
 	}
-	pin := corpus.ShardPin{Manifest: manifest.Path, URL: object, SHA256: objectSHA, Format: "parquet", RecordSchema: shard.TextRecordSchema, License: "CC0-1.0", ConvertedBy: conversion, Docs: records, Tokens: tokens, Bytes: objectBytes, Assessment: assessment}
+	pin := corpus.ShardPin{Manifest: manifest.Path, URL: object, SHA256: objectSHA, Format: "parquet", RecordSchema: shard.TextRecordSchema, License: "CC0-1.0", ConvertedBy: conversion, Docs: records, Tokens: tokens, Bytes: objectBytes, Assessment: assessment, Redaction: redaction}
 	return corpus.BOM{Kind: "openwaldo-bom", Schema: 1, Subject: "corpus", Paths: []string{"core/test"}, Manifests: []corpus.ManifestPin{manifest}, Shards: []corpus.ShardPin{pin}, Totals: measure, Licenses: licenses}
 }

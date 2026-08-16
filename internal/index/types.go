@@ -55,6 +55,7 @@ type Manifest struct {
 	ConvertedBy  Conversion            `json:"converted_by"`
 	RecordSchema int                   `json:"record_schema,omitempty"`
 	Assessment   *ContentAssessment    `json:"assessment,omitempty"`
+	Redaction    *ContentRedaction     `json:"redaction,omitempty"`
 	Processing   *Processing           `json:"processing,omitempty"`
 	ComposedBy   *IngestRecipeEvidence `json:"composed_by,omitempty"`
 	Shards       []Shard               `json:"-"`
@@ -72,6 +73,18 @@ type ContentAssessment struct {
 type DetectionMeasure struct {
 	Detector string `json:"detector" yaml:"detector"`
 	Records  int64  `json:"records" yaml:"records"`
+}
+
+// ContentRedaction records irreversible, deterministic transformations made
+// before canonical identity and packing. Names are deliberately retained.
+type ContentRedaction struct {
+	Policy             string `json:"policy" yaml:"policy"`
+	NamesRetained      bool   `json:"names_retained" yaml:"names_retained"`
+	EmailAddresses     int64  `json:"email_addresses" yaml:"email_addresses"`
+	IPAddresses        int64  `json:"ip_addresses" yaml:"ip_addresses"`
+	PhoneNumbers       int64  `json:"phone_numbers" yaml:"phone_numbers"`
+	MailRoutingHeaders int64  `json:"mail_routing_headers" yaml:"mail_routing_headers"`
+	Credentials        int64  `json:"credentials" yaml:"credentials"`
 }
 
 // UnmarshalJSON accepts the schema-1 polymorphic shards field: an inline
@@ -272,6 +285,7 @@ type Shard struct {
 	RecordsRoot  string              `json:"records_root,omitempty"`
 	Modalities   Modalities          `json:"modalities,omitempty"`
 	Assessment   *ContentAssessment  `json:"assessment,omitempty"`
+	Redaction    *ContentRedaction   `json:"redaction,omitempty"`
 }
 
 // Rollup describes an external submanifest tree. Its aggregate counts are
