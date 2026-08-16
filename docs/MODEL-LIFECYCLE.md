@@ -338,8 +338,11 @@ compose never mutates a named base model.
 WALDO resolves and hash-verifies every stage and creates the active model at
 `<model.root>/<name>` when absent. When the name already exists, its normalized
 architecture and tokenizer hash must exactly match the compose; a mismatch is
-refused with guidance to use a new model name. Matching composes append their
-stages without replacing the model. Durable transaction metadata beneath
+refused with guidance to use a new model name. WALDO removes corpus paths
+already present in that model's completed run BOMs, then appends stages for
+the remaining paths without replacing the model. If no paths remain, the
+model is unchanged. This is path-level reuse, not record- or shard-level delta
+detection. Durable transaction metadata beneath
 `<model.root>/.waldo-compose` pins the compose, every corpus BOM, the model ID,
 and the starting run ordinal.
 Passing `--audit` audits every materialized stage before the transaction starts.
@@ -353,8 +356,9 @@ the standard model path.
 After Ctrl-C or process loss, repeating the exact command discovers the active
 model, marks an abandoned running attempt interrupted, and resumes the same
 stage and run from its newest verified checkpoint. Different inputs are refused
-while that transaction is unfinished. A failed stage is cleared; interrupted
-work is retained.
+while that transaction is unfinished. Completed-path skipping is disabled for
+an unfinished transaction so its checkpoint selection remains exact. A failed
+stage is cleared; interrupted work is retained.
 
 ## Durable layout
 

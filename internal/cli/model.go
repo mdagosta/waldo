@@ -814,6 +814,34 @@ func runModelComposeTraining(context Context, name, path string, cluster trainin
 	if err := builder.CheckComposeTarget(name, compose); err != nil {
 		return err
 	}
+	pending, err := model.HasPendingCompose(builder.Root, name)
+	if err != nil {
+		return err
+	}
+	var skipped []model.SkippedCorpus
+	if exists, err := model.Exists(builder.Root, name); err != nil {
+		return err
+	} else if exists && !pending {
+		inspection, err := model.Inspect(builder.Root, name)
+		if err != nil {
+			return err
+		}
+		compose, skipped = model.SkipCompletedCorpora(compose, inspection)
+		for _, corpus := range skipped {
+			fmt.Fprintf(stderr, "preflight/%s          skipped %s (already completed by this model)\n", corpus.Stage, corpus.Path)
+		}
+		if len(compose.Stages) == 0 {
+			if context.JSON {
+				return writeJSON(stdout, struct {
+					Compose string                `json:"compose"`
+					Result  model.Inspection      `json:"result"`
+					Skipped []model.SkippedCorpus `json:"skipped"`
+				}{Compose: composePath, Result: inspection, Skipped: skipped})
+			}
+			fmt.Fprintf(stdout, "model %s unchanged; all selected corpora were already completed\n", name)
+			return nil
+		}
+	}
 	builder.ComposeName = filepath.Base(composePath)
 	objectives := make([]string, 0, len(compose.Stages))
 	for _, stage := range compose.Stages {

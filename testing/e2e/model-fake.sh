@@ -185,9 +185,10 @@ grep -Eq '"training_records"[[:space:]]*:[[:space:]]*2' "$fake_artifact" || { ec
 checkpoint_count=$(find "$models/smoke/runs" -type f -name 'step-*.json' -print | wc -l | tr -d ' ')
 [ "$checkpoint_count" -eq 1 ] || { echo "found $checkpoint_count fake checkpoints, want 1" >&2; exit 1; }
 
-"$binary" model train smoke "$compose" --audit >/dev/null
+repeat_output=$("$binary" model train smoke "$compose" --audit)
+printf '%s\n' "$repeat_output" | grep -q 'unchanged; all selected corpora were already completed'
 run_count=$(find "$models/smoke/runs" -type f -name RUN.json -print | wc -l | tr -d ' ')
-[ "$run_count" -eq 2 ] || { echo "compatible compose did not append a run" >&2; exit 1; }
+[ "$run_count" -eq 1 ] || { echo "completed corpus was trained again" >&2; exit 1; }
 
 "$binary" model init manual --preset 10m >/dev/null
 "$binary" model train manual core/e2e/model-corpus >/dev/null
