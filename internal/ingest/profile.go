@@ -136,8 +136,8 @@ func (profile InputProfile) Validate() error {
 		if !profile.recordProfile() {
 			return fmt.Errorf("main_content is supported only for record profiles")
 		}
-		if len(profile.MainContent) != 1 {
-			return fmt.Errorf("main_content requires exactly one field and value")
+		if len(profile.MainContent) == 0 {
+			return fmt.Errorf("main_content requires at least one field and value")
 		}
 		for path, value := range profile.MainContent {
 			if err := validateFieldPath(path); err != nil {
@@ -170,8 +170,13 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) == 0 || profile.Fields.Response == "" {
 			return fmt.Errorf("dialogue-pair requires fields.text and fields.response")
 		}
-		if len(profile.Fields.TextFallback) > 0 || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if len(profile.Fields.TextFallback) > 0 || profile.Fields.Source != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("dialogue-pair does not accept tree fields")
+		}
+		for name, path := range profile.Fields.Meta {
+			if strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {
+				return fmt.Errorf("dialogue-pair meta names and paths must be non-empty")
+			}
 		}
 	case ProfileRankedConversationTree:
 		if profile.Tree.Replies == "" || profile.Tree.Text == "" || profile.Tree.Rank == "" {

@@ -223,9 +223,10 @@ headers, and high-confidence credentials are removed or replaced. Schema-2
 rows and generated provenance preserve the policy and redaction counts.
 
 For structured sources that mix primary and auxiliary records, the recipe may
-derive the general canonical `main_content` boolean from one exact scalar field
-match. Fetchers still emit the unmodified source field. Omitting the declaration
-marks every retained row as main content.
+derive the general canonical `main_content` boolean from one or more exact
+scalar field matches. Every declared field must match. Fetchers still emit the
+unmodified source fields. Omitting the declaration marks every retained row as
+main content.
 
 ```yaml
 input:

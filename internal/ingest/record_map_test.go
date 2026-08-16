@@ -147,6 +147,24 @@ func TestRecordMapClassifiesMainContentFromOneScalarField(t *testing.T) {
 	}
 }
 
+func TestRecordMapClassifiesMainContentFromConjoinedScalarFields(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "quality.jsonl")
+	contents := "{\"text\":\"keep\",\"helpfulness\":4,\"correctness\":4,\"coherence\":4}\n" +
+		"{\"text\":\"omit\",\"helpfulness\":4,\"correctness\":3,\"coherence\":4}\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type:        ProfileRecordMap,
+		MainContent: map[string]any{"helpfulness": 4, "correctness": 4, "coherence": 4},
+		Fields:      ProfileFields{Text: []string{"text"}},
+	}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	if len(rows) != 2 || !rows[0].MainContent || rows[1].MainContent {
+		t.Fatalf("main-content rows = %+v", rows)
+	}
+}
+
 func TestRecordMapMainContentDefaultsTrueAndMissingDeclaredFieldFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.jsonl")
 	if err := os.WriteFile(path, []byte("{\"text\":\"Article\"}\n"), 0o644); err != nil {
@@ -161,6 +179,21 @@ func TestRecordMapMainContentDefaultsTrueAndMissingDeclaredFieldFails(t *testing
 	err := StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, declared), func(TextBatch) error { return nil })
 	if err == nil || !strings.Contains(err.Error(), `main_content classification failed: field "metadata.namespace" is absent`) {
 		t.Fatalf("missing main-content field error = %v", err)
+	}
+}
+
+func TestRecordMapMainContentChecksEveryDeclaredFieldForSchemaDrift(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.jsonl")
+	if err := os.WriteFile(path, []byte("{\"text\":\"Auxiliary\",\"a\":0}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type: ProfileRecordMap, MainContent: map[string]any{"a": 1, "z": 1},
+		Fields: ProfileFields{Text: []string{"text"}},
+	}
+	err := StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, profile), func(TextBatch) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), `main_content classification failed: field "z" is absent`) {
+		t.Fatalf("missing later main-content field error = %v", err)
 	}
 }
 
@@ -259,6 +292,25 @@ func TestDialoguePairRendersPromptContextAndResponse(t *testing.T) {
 	rows := collectMappedRows(t, plan)
 	want := "User: Summarize\n\nA long passage\n\nAssistant: Short summary\n"
 	if len(rows) != 1 || rows[0].Text != want || rows[0].Meta == nil || !strings.Contains(*rows[0].Meta, `"turns":2`) {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestDialoguePairPreservesMappedMetadata(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dialogue.jsonl")
+	contents := "{\"prompt\":\"Question\",\"response\":\"Answer\",\"helpfulness\":4,\"correctness\":3}\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type: ProfileDialoguePair,
+		Fields: ProfileFields{
+			Text: []string{"prompt"}, Response: "response",
+			Meta: map[string]string{"helpfulness": "helpfulness", "correctness": "correctness"},
+		},
+	}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	if len(rows) != 1 || rows[0].Meta == nil || !strings.Contains(*rows[0].Meta, `"helpfulness":"4"`) || !strings.Contains(*rows[0].Meta, `"correctness":"3"`) || !strings.Contains(*rows[0].Meta, `"format":"dialogue-flattened"`) {
 		t.Fatalf("rows = %+v", rows)
 	}
 }

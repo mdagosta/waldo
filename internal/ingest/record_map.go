@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -374,7 +375,10 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 			return shard.TextRow{}, fmt.Errorf("%w: mapped response field is empty or absent", errEmptyMappedRecord)
 		}
 		text = renderDialogue(text, response)
-		meta = dialogueMeta(2)
+		meta, err = dialogueMappedMeta(record, input.Profile.Fields.Meta, 2)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
 	} else if input.Profile.Type == ProfileRecordMap {
 		mapped, err := mappedRecordMeta(record, input.Profile.Fields.Meta)
 		if err != nil {
@@ -408,6 +412,30 @@ func mappedRecordMeta(record recordAccessor, fields map[string]string) (*string,
 	}
 	if len(metadata) == 0 {
 		return nil, nil
+	}
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+	value := string(encoded)
+	return &value, nil
+}
+
+func dialogueMappedMeta(record recordAccessor, fields map[string]string, turns int) (*string, error) {
+	metadata := map[string]any{"format": "dialogue-flattened", "turns": turns}
+	for name, path := range fields {
+		values, err := record.Values(path)
+		if err != nil {
+			return nil, err
+		}
+		switch len(values) {
+		case 0:
+			continue
+		case 1:
+			metadata[name] = values[0]
+		default:
+			metadata[name] = values
+		}
 	}
 	encoded, err := json.Marshal(metadata)
 	if err != nil {
@@ -484,7 +512,14 @@ func mappedMainContent(record recordAccessor, condition map[string]any) (bool, e
 	if len(condition) == 0 {
 		return true, nil
 	}
-	for path, raw := range condition {
+	paths := make([]string, 0, len(condition))
+	for path := range condition {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	matches := true
+	for _, path := range paths {
+		raw := condition[path]
 		expected, _ := mainContentScalar(raw)
 		values, err := record.Values(path)
 		if err != nil {
@@ -496,9 +531,11 @@ func mappedMainContent(record recordAccessor, condition map[string]any) (bool, e
 		if len(values) != 1 {
 			return false, fmt.Errorf("%w: field %q must be scalar", errMainContentMapping, path)
 		}
-		return values[0] == expected, nil
+		if values[0] != expected {
+			matches = false
+		}
 	}
-	return true, nil
+	return matches, nil
 }
 
 func mainContentScalar(value any) (string, bool) {

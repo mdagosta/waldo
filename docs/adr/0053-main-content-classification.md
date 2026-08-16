@@ -8,7 +8,7 @@ Accepted.
 
 The current canonical record schema 2 adds the required `main_content` boolean.
 All retained rows default to `true`. A structured input profile may instead
-declare one exact scalar condition:
+declare one or more exact scalar conditions:
 
 ```yaml
 input:
@@ -16,10 +16,11 @@ input:
     metadata.namespace: 0
 ```
 
-The matching value produces `true`; any other value produces `false`. A missing
-declared field fails ingestion so upstream schema drift cannot silently change
-classification. The recipe mapping is general and participates in plan and
-acquisition identity; WALDO contains no Wikimedia- or corpus-specific logic.
+Every declared value must match to produce `true`; any other value produces
+`false`. A missing declared field fails ingestion so upstream schema drift
+cannot silently change classification. The recipe mapping is general and
+participates in plan and acquisition identity; WALDO contains no Wikimedia- or
+corpus-specific logic. The conjunction extension is recorded in ADR 0057.
 
 Composes select primary rows directly:
 

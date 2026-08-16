@@ -60,3 +60,4 @@ logs.
 - [0054: Retain unassessed rows when applying assessment filters](0054-unassessed-filter-compatibility.md)
 - [0055: Apply automatic privacy redaction before canonical identity](0055-automatic-privacy-redaction.md)
 - [0056: Persist a versioned model interaction contract](0056-versioned-model-interaction-contract.md)
+- [0057: Preserve scored dialogue metadata and explicit quality gates](0057-preserve-scored-dialogue-metadata.md)
