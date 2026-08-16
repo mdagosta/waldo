@@ -59,6 +59,8 @@ stages:
         repetitive_content: true
         boilerplate_content: true
     corpora:
+      - path: post-train/sft/interaction-contract
+        weight: 5
       - path: post-train/sft/dolly
         weight: 2
       - path: post-train/sft/oasst1

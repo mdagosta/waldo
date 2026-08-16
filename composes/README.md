@@ -26,7 +26,7 @@ waldo model train conversation-test composes/0004-conversation.yaml
 | `0001-babble.yaml` | 49.9M parameters | 1.05B | Gutenberg and PLOS, balanced by token exposure | Coherent local continuations from a compact base model |
 | `0002-basic.yaml` | 114.1M parameters | 3.93B | Gutenberg, Wikimedia, and PLOS, balanced by token exposure | Basic cross-domain language-model capability over a longer context |
 | `0003-intermediate.yaml` | 336.6M parameters | 12.0B | Books, encyclopedic, civic, and scientific text with declared weights | Broader intermediate base-model capability over a 2,048-token context |
-| `0004-conversation.yaml` | 139.3M parameters | 6.04B | Clean books, scientific and civic text, followed by Dolly and OpenAssistant dialogue | First candidate for basic user/assistant interaction |
+| `0004-conversation.yaml` | 139.3M parameters | 6.04B | Clean books, scientific and civic text, followed by the OpenWALDO interaction contract, Dolly, and OpenAssistant dialogue | First candidate for basic user/assistant interaction |
 
 `0000-canary.yaml` has been validated end to end on a single H200. The first
 babble experiment used `cl100k_base`, which spent 80% of its 47.9M parameters
@@ -54,14 +54,21 @@ uses a correspondingly gentler learning rate.
 
 `0004-conversation.yaml` is an unvalidated two-stage candidate. Its 6.0B-token
 pretraining stage establishes a compact language base without Wikimedia talk
-pages; its 40.0M-token fine-tuning stage then repeats three human-written
-dialogue corpora under a lower learning rate. It excludes assessed repetitive
-and boilerplate rows. Those exclusions are applied to schema-2 shards; WALDO
-warns and retains unassessed schema-1 rows while older corpora are rebuilt.
-WALDO currently applies causal loss to the complete formatted dialogue rather
-than masking user tokens. The compose declares the versioned
+pages; its 40.0M-token fine-tuning stage then combines the small reviewed
+OpenWALDO interaction contract with Dolly and two human-written OpenAssistant
+conversation corpora under a lower learning rate. The interaction corpus is
+consumed once per declared epoch rather than duplicated to match the larger
+sources. It excludes assessed repetitive and boilerplate rows. Those exclusions
+are applied to schema-2 shards; WALDO warns and retains unassessed schema-1 rows
+while older corpora are rebuilt. WALDO currently applies causal loss to the
+complete formatted dialogue rather than masking user tokens. The compose
+declares the versioned
 `user-assistant-v1` interaction contract, so `waldo model chat` formats turns,
 preserves conversation history, and stops before a generated next-user turn.
+
+HelpSteer2 is intentionally not flattened into this stage. Its human response
+scores should enter a later scored-response or preference objective that
+preserves helpfulness, correctness, coherence, complexity, and verbosity.
 
 The babble compose uses equal-exposure `causal-pretrain-balanced`. Later
 composes use `causal-pretrain-weighted`, which applies declared integer corpus

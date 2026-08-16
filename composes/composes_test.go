@@ -170,6 +170,20 @@ func TestConversationHasOrderedPretrainingAndInstructionTuning(t *testing.T) {
 	if compose.Stages[1].Parameters.LearningRate >= compose.Stages[0].Parameters.LearningRate || compose.Stages[1].Parameters.Epochs != 5 {
 		t.Fatalf("conversation tuning controls = %+v", compose.Stages[1].Parameters)
 	}
+	wantCorpora := map[string]uint64{
+		"post-train/sft/interaction-contract": 5,
+		"post-train/sft/dolly":                2,
+		"post-train/sft/oasst1":               3,
+		"post-train/sft/oasst2":               4,
+	}
+	if len(compose.Stages[1].Corpora) != len(wantCorpora) {
+		t.Fatalf("conversation tuning corpora = %+v", compose.Stages[1].Corpora)
+	}
+	for _, corpus := range compose.Stages[1].Corpora {
+		if corpus.Weight == nil || wantCorpora[corpus.Path] != *corpus.Weight {
+			t.Fatalf("conversation tuning corpus = %+v", corpus)
+		}
+	}
 }
 
 func TestBasicHasTenHourScalingBudget(t *testing.T) {
