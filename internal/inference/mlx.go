@@ -41,14 +41,15 @@ type workerFrame struct {
 }
 
 type workerRequest struct {
-	Kind        string  `json:"kind"`
-	Schema      int     `json:"schema"`
-	Prompt      string  `json:"prompt"`
-	TokenIDs    []int   `json:"token_ids,omitempty"`
-	MaxTokens   int     `json:"max_tokens"`
-	Temperature float64 `json:"temperature"`
-	TopP        float64 `json:"top_p"`
-	Seed        *uint64 `json:"seed,omitempty"`
+	Kind         string  `json:"kind"`
+	Schema       int     `json:"schema"`
+	Prompt       string  `json:"prompt"`
+	TokenIDs     []int   `json:"token_ids,omitempty"`
+	MaxTokens    int     `json:"max_tokens"`
+	Temperature  float64 `json:"temperature"`
+	TopP         float64 `json:"top_p"`
+	Seed         *uint64 `json:"seed,omitempty"`
+	StopTokenIDs [][]int `json:"stop_token_ids,omitempty"`
 }
 
 type MLXSession struct {
@@ -153,6 +154,9 @@ func (session *MLXSession) Generate(ctx context.Context, prompt string, options 
 		return Result{}, fmt.Errorf("MLX chat session is closed")
 	}
 	request := workerRequest{Kind: "generate", Schema: 1, Prompt: prompt, MaxTokens: options.MaxTokens, Temperature: options.Temperature, TopP: options.TopP, Seed: options.Seed}
+	for _, stop := range options.Stop {
+		request.StopTokenIDs = append(request.StopTokenIDs, session.codec.Encode(stop))
+	}
 	if session.spec.Name != "byte" {
 		request.TokenIDs = session.codec.Encode(prompt)
 		request.Prompt = ""

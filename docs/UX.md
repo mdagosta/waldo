@@ -174,6 +174,9 @@ waldo model export --help
 
 Run `forecast` before allocating substantial compute. Training and generation
 fail when the selected host lacks a compatible runtime or artifacts.
+Models with a declared `interaction.template` automatically receive the
+matching prompt format and multi-turn history in `model chat`; models without
+one remain raw causal-continuation models.
 
 Reference composes under `composes/` are test and experiment inputs, not model
 quality guarantees. See the [model compose guide](MODEL-COMPOSE.md) for the

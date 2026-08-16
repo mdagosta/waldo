@@ -192,6 +192,7 @@ class Generator:
         temperature = float(request["temperature"])
         top_p = float(request["top_p"])
         seed = request.get("seed")
+        stop_sequences = [[int(token) for token in sequence] for sequence in request.get("stop_token_ids", []) if sequence]
         generator = random.Random(seed if seed is not None else int.from_bytes(os.urandom(16), "big"))
         tokens = [int(token) for token in request.get("token_ids", [])]
         if not tokens and self.byte_tokenizer:
@@ -220,6 +221,9 @@ class Generator:
                     emit("token", data=base64.b64encode(data).decode("ascii"))
             else:
                 emit("token", token_id=token)
+            if any(len(tokens) >= len(sequence) and tokens[-len(sequence):] == sequence for sequence in stop_sequences):
+                reason = "stop"
+                break
             if len(tokens) >= self.context_tokens:
                 tokens = tokens[-self.context_tokens:]
                 inputs = mx.array([tokens], dtype=mx.int32)

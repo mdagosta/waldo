@@ -83,6 +83,10 @@ func ValidateName(name string) error {
 
 // Initialize creates an untrained model with an immutable architecture.
 func (builder Builder) Initialize(name string, architecture Architecture) (Inspection, error) {
+	return builder.initialize(name, architecture, Interaction{})
+}
+
+func (builder Builder) initialize(name string, architecture Architecture, interaction Interaction) (Inspection, error) {
 	if builder.Root == "" {
 		return Inspection{}, fmt.Errorf("model root is required")
 	}
@@ -92,13 +96,16 @@ func (builder Builder) Initialize(name string, architecture Architecture) (Inspe
 	if err := architecture.Validate(); err != nil {
 		return Inspection{}, err
 	}
+	if err := interaction.Validate(); err != nil {
+		return Inspection{}, err
+	}
 	modelPath := filepath.Join(builder.Root, name)
 	if _, err := os.Stat(modelPath); err == nil {
 		return Inspection{}, fmt.Errorf("model %q already exists", name)
 	} else if !os.IsNotExist(err) {
 		return Inspection{}, err
 	}
-	plan, err := composePlan(name, Compose{Architecture: architecture})
+	plan, err := composePlan(name, Compose{Architecture: architecture, Interaction: interaction})
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -111,7 +118,7 @@ func (builder Builder) Initialize(name string, architecture Architecture) (Inspe
 	record := ModelRecord{
 		Kind: "waldo-model", Schema: ModelSchema, ID: planHash, Name: name,
 		PlanSHA256: planHash, ArchitectureSHA256: plan.ArchitectureSHA256,
-		Architecture: plan.Architecture, Forecast: plan.Forecast,
+		Architecture: plan.Architecture, Interaction: plan.Interaction, Forecast: plan.Forecast,
 		Created: formatTime(created), Updated: formatTime(created),
 	}
 	if err := initializeModel(builder.Root, modelPath, plan, record); err != nil {
@@ -777,6 +784,9 @@ func validateComposeTarget(target Inspection, compose Compose) error {
 	if target.Model.ArchitectureSHA256 != architectureHash {
 		return fmt.Errorf("compose architecture does not match existing model %q; use a new model name", target.Model.Name)
 	}
+	if !reflect.DeepEqual(target.Model.Interaction, compose.Interaction) {
+		return fmt.Errorf("compose interaction template does not match existing model %q; use a new model name", target.Model.Name)
+	}
 	if compose.Base != nil && compose.Base.OriginSHA256 != "" && target.Model.OriginBOMSHA256 != compose.Base.OriginSHA256 {
 		return fmt.Errorf("compose base does not match existing model %q; use a new model name", target.Model.Name)
 	}
@@ -980,7 +990,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	}
 	if _, err := os.Stat(destination); os.IsNotExist(err) {
 		if compose.Base == nil {
-			if _, err := builder.Initialize(name, compose.Architecture); err != nil {
+			if _, err := builder.initialize(name, compose.Architecture, compose.Interaction); err != nil {
 				finishFailedCompose(workspace)
 				return Inspection{}, err
 			}
@@ -1267,7 +1277,7 @@ func (builder Builder) initializeFromOrigin(name string, compose Compose, base I
 	record := ModelRecord{
 		Kind: "waldo-model", Schema: ModelSchema, ID: planHash, Name: name,
 		PlanSHA256: planHash, ArchitectureSHA256: plan.ArchitectureSHA256,
-		Architecture: plan.Architecture, Forecast: plan.Forecast,
+		Architecture: plan.Architecture, Interaction: plan.Interaction, Forecast: plan.Forecast,
 		Created: formatTime(now), Updated: formatTime(now),
 		OriginBOMSHA256: base.Model.OriginBOMSHA256,
 		OriginArtifacts: append([]OriginArtifact(nil), base.Model.OriginArtifacts...),

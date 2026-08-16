@@ -15,10 +15,11 @@ import (
 )
 
 type Options struct {
-	MaxTokens   int     `json:"max_tokens"`
-	Temperature float64 `json:"temperature"`
-	TopP        float64 `json:"top_p"`
-	Seed        *uint64 `json:"seed,omitempty"`
+	MaxTokens   int      `json:"max_tokens"`
+	Temperature float64  `json:"temperature"`
+	TopP        float64  `json:"top_p"`
+	Seed        *uint64  `json:"seed,omitempty"`
+	Stop        []string `json:"stop,omitempty"`
 }
 
 func (options Options) Validate() error {
@@ -30,6 +31,14 @@ func (options Options) Validate() error {
 	}
 	if math.IsNaN(options.TopP) || math.IsInf(options.TopP, 0) || options.TopP <= 0 || options.TopP > 1 {
 		return fmt.Errorf("top-p %v must be greater than 0 and at most 1", options.TopP)
+	}
+	if len(options.Stop) > 8 {
+		return fmt.Errorf("at most 8 stop strings are supported")
+	}
+	for _, stop := range options.Stop {
+		if stop == "" {
+			return fmt.Errorf("stop strings must not be empty")
+		}
 	}
 	return nil
 }

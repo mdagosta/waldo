@@ -49,6 +49,11 @@ schema: 1
 # base:
 #   source: huggingface://organization/model@<commit>
 
+# Optional: declare the exact inference-time dialogue format learned by the
+# model. Omit this block for raw causal continuation.
+interaction:
+  template: user-assistant-v1
+
 architecture:
   family: decoder-transformer
   context_tokens: 2048
@@ -118,7 +123,25 @@ field names and structure.
 | `schema` | yes | `1` | Selects the compose schema. |
 | `base` | no | object | Optionally initializes a new model from pulled origin weights. |
 | `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
+| `interaction` | no | object | Declares a versioned inference-time prompt contract. Omit it for raw causal continuation. |
 | `stages` | yes | non-empty list | Ordered training stages. Stage names must be unique. |
+
+### Interaction fields
+
+Schema 1 supports `interaction.template: user-assistant-v1`. It renders each
+turn in the same general format produced by WALDO dialogue ingestion:
+
+```text
+User: <message>
+
+Assistant: <response>
+```
+
+`waldo model chat` maintains that transcript across interactive turns and
+stops generation before the model begins a new `User:` turn. The interaction
+contract is stored in the immutable model plan, model record, and model BOM.
+It changes model identity but not parameter count. Models without an
+interaction block retain raw causal-continuation behavior.
 
 ### Base fields
 
@@ -393,12 +416,13 @@ All profiles resolve to AdamW with betas `0.9` and `0.95`, epsilon `1e-8`, and
 a cosine schedule ending at 10% of the peak learning rate. Those values and
 continuous EOS packing are versioned profile facts, not compose fields.
 
-A schema-1 compose also has no fields for a chat template, optimizer choice,
-gradient accumulation, activation checkpointing, mixture-of-experts routing,
-or distributed topology. The current objective produces a raw causal base
-model. Hardware and backend topology remain machine-local policy; other
-training behaviors require a separately versioned portable contract rather
-than an ignored compose field.
+A schema-1 compose has no fields for arbitrary chat-template expressions,
+optimizer choice, gradient accumulation, activation checkpointing,
+mixture-of-experts routing, or distributed topology. The optional built-in
+interaction contract controls inference formatting; it does not change the
+causal training objective. Hardware and backend topology remain machine-local
+policy; other training behaviors require a separately versioned portable
+contract rather than an ignored compose field.
 
 | Profile | Training record order | Held-out selection | Corpus weights |
 | --- | --- | --- | --- |

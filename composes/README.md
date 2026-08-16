@@ -59,9 +59,9 @@ dialogue corpora under a lower learning rate. It excludes assessed repetitive
 and boilerplate rows. Those exclusions are applied to schema-2 shards; WALDO
 warns and retains unassessed schema-1 rows while older corpora are rebuilt.
 WALDO currently applies causal loss to the complete formatted dialogue rather
-than masking user tokens, and does not yet persist a chat prompt template. Test
-the learned training format explicitly with a prompt such as
-`User: Hello\n\nAssistant:`.
+than masking user tokens. The compose declares the versioned
+`user-assistant-v1` interaction contract, so `waldo model chat` formats turns,
+preserves conversation history, and stops before a generated next-user turn.
 
 The babble compose uses equal-exposure `causal-pretrain-balanced`. Later
 composes use `causal-pretrain-weighted`, which applies declared integer corpus

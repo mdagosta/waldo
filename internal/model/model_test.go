@@ -63,6 +63,59 @@ func TestLoadComposeIsStrictAndKeepsIndexPathsLogical(t *testing.T) {
 	}
 }
 
+func TestComposeConversationInteractionIsStrictAndChangesPlanIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "conversation.yaml")
+	document := strings.Replace(composeYAML(""), "architecture:\n", "interaction:\n  template: user-assistant-v1\narchitecture:\n", 1)
+	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compose, _, err := LoadCompose(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compose.Interaction.Conversational() || compose.Interaction.Prompt("", "Hello") != "User: Hello\n\nAssistant:" {
+		t.Fatalf("interaction = %+v", compose.Interaction)
+	}
+	raw := compose
+	raw.Interaction = Interaction{}
+	conversationPlan, err := composePlan("example", compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawPlan, err := composePlan("example", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conversationHash, _ := hashJSON(conversationPlan)
+	rawHash, _ := hashJSON(rawPlan)
+	if conversationHash == rawHash {
+		t.Fatal("interaction did not change immutable plan identity")
+	}
+	encodedRaw, err := json.Marshal(rawPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(encodedRaw, []byte(`"interaction"`)) {
+		t.Fatalf("raw plan changed its legacy JSON identity: %s", encodedRaw)
+	}
+
+	unknown := strings.Replace(document, "template: user-assistant-v1", "unknown: true", 1)
+	if err := os.WriteFile(path, []byte(unknown), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompose(path); err == nil || !strings.Contains(err.Error(), "field unknown not found") {
+		t.Fatalf("interaction unknown-field error = %v", err)
+	}
+}
+
+func TestInteractionTrimsGeneratedNextTurn(t *testing.T) {
+	interaction := Interaction{Template: InteractionUserAssistantV1}
+	value := " I can help.\n\nUser: ignored\n\nAssistant: ignored"
+	if got := interaction.TrimResponse(value); got != " I can help." {
+		t.Fatalf("trimmed response = %q", got)
+	}
+}
+
 func TestLoadComposeAcceptsPinnedSourceWithInheritedArchitecture(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "source.yaml")
 	revision := strings.Repeat("a", 40)
@@ -620,6 +673,7 @@ func TestTrainResumesInterruptedRunFromVerifiedCheckpoint(t *testing.T) {
 func TestComposeAppendsToCompatibleModelAndRejectsDifferentArchitecture(t *testing.T) {
 	root := t.TempDir()
 	compose := validCompose()
+	compose.Interaction = Interaction{Template: InteractionUserAssistantV1}
 	stage := preparedFixture(t, compose.Stages[0])
 	nextID := 0
 	builder := Builder{Root: root, NewID: func() (string, error) {
@@ -634,8 +688,13 @@ func TestComposeAppendsToCompatibleModelAndRejectsDifferentArchitecture(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.Model.ID != first.Model.ID || len(second.Runs) != 2 || second.Runs[1].State != RunComplete {
+	if second.Model.ID != first.Model.ID || len(second.Runs) != 2 || second.Runs[1].State != RunComplete || second.Plan.Interaction != compose.Interaction || second.Model.Interaction != compose.Interaction || second.BOM.Interaction != compose.Interaction {
 		t.Fatalf("compatible compose did not append: first = %+v, second = %+v", first.Model, second.Model)
+	}
+	differentInteraction := compose
+	differentInteraction.Interaction = Interaction{}
+	if _, err := builder.Compose(context.Background(), "smoke", differentInteraction, []PreparedStage{stage}); err == nil || !strings.Contains(err.Error(), "interaction template") {
+		t.Fatalf("different interaction error = %v", err)
 	}
 	different := compose
 	different.Architecture.Layers++

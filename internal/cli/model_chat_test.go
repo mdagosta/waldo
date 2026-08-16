@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/inference"
+	"github.com/openwaldo/waldo/internal/model"
 )
 
 func TestParseModelChatSupportsOneShotGenerationOptions(t *testing.T) {
@@ -40,14 +41,14 @@ func TestOneShotChatStreamsSafeTerminalOutputAndReturnsJSON(t *testing.T) {
 	opened := inference.Opened{Description: inference.Description{Model: "foo", RunID: "run"}, Session: &chatSession{data: []byte{'A', 0x1b, 0xff}}}
 	options := inference.Options{MaxTokens: 3, Temperature: 0, TopP: 1}
 	var output bytes.Buffer
-	if err := runOneShotChat(Context{Execution: context.Background()}, opened, "hello", options, &output); err != nil {
+	if err := runOneShotChat(Context{Execution: context.Background()}, opened, model.Interaction{}, "hello", options, &output); err != nil {
 		t.Fatal(err)
 	}
 	if output.String() != "A\\x1b\\xff\n" {
 		t.Fatalf("safe output = %q", output.String())
 	}
 	output.Reset()
-	if err := runOneShotChat(Context{Execution: context.Background(), JSON: true}, opened, "hello", options, &output); err != nil {
+	if err := runOneShotChat(Context{Execution: context.Background(), JSON: true}, opened, model.Interaction{}, "hello", options, &output); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`"model": "foo"`, `"prompt": "hello"`, `"finish_reason": "max_tokens"`} {
@@ -80,11 +81,34 @@ func TestInteractiveChatMaintainsAndClearsContext(t *testing.T) {
 	modelChatInput = strings.NewReader("first\n/clear\nsecond\n/exit\n")
 	defer func() { modelChatInput = previous }()
 	var output bytes.Buffer
-	if err := runInteractiveChat(context.Background(), opened, inference.Options{MaxTokens: 2, Temperature: 0, TopP: 1}, &output); err != nil {
+	if err := runInteractiveChat(context.Background(), opened, model.Interaction{}, inference.Options{MaxTokens: 2, Temperature: 0, TopP: 1}, &output); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(output.String(), "raw causal continuation") || len(session.prompts) != 2 || session.prompts[0] != "first" || session.prompts[1] != "second" {
 		t.Fatalf("output = %q, prompts = %#v", output.String(), session.prompts)
+	}
+}
+
+func TestInteractiveConversationFormatsTurnsAndStopsAtNextUser(t *testing.T) {
+	session := &chatSession{data: []byte(" First answer\n\nUser: invented turn")}
+	opened := inference.Opened{Description: inference.Description{Model: "foo", Backend: "pytorch", ContextTokens: 2048}, Session: session}
+	previous := modelChatInput
+	modelChatInput = strings.NewReader("first\nsecond\n/exit\n")
+	defer func() { modelChatInput = previous }()
+	var output bytes.Buffer
+	interaction := model.Interaction{Template: model.InteractionUserAssistantV1}
+	if err := runInteractiveChat(context.Background(), opened, interaction, inference.Options{MaxTokens: 64, Temperature: 0, TopP: 1}, &output); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "invented turn") || !strings.Contains(output.String(), "user/assistant conversation") {
+		t.Fatalf("output = %q", output.String())
+	}
+	if len(session.prompts) != 2 || session.prompts[0] != "User: first\n\nAssistant:" {
+		t.Fatalf("prompts = %#v", session.prompts)
+	}
+	wantSecond := "User: first\n\nAssistant: First answer\n\nUser: second\n\nAssistant:"
+	if session.prompts[1] != wantSecond {
+		t.Fatalf("second prompt = %q, want %q", session.prompts[1], wantSecond)
 	}
 }
 

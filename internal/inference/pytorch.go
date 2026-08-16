@@ -114,6 +114,9 @@ func (session *PyTorchSession) Generate(ctx context.Context, prompt string, opti
 		return Result{}, fmt.Errorf("PyTorch chat session is closed")
 	}
 	request := workerRequest{Kind: "generate", Schema: 1, Prompt: prompt, MaxTokens: options.MaxTokens, Temperature: options.Temperature, TopP: options.TopP, Seed: options.Seed}
+	for _, stop := range options.Stop {
+		request.StopTokenIDs = append(request.StopTokenIDs, session.codec.Encode(stop))
+	}
 	if session.spec.Name != "byte" {
 		request.TokenIDs = session.codec.Encode(prompt)
 		request.Prompt = ""

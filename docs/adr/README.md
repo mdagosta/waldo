@@ -59,3 +59,4 @@ logs.
 - [0053: Classify main content with a default-true row fact](0053-main-content-classification.md)
 - [0054: Retain unassessed rows when applying assessment filters](0054-unassessed-filter-compatibility.md)
 - [0055: Apply automatic privacy redaction before canonical identity](0055-automatic-privacy-redaction.md)
+- [0056: Persist a versioned model interaction contract](0056-versioned-model-interaction-contract.md)

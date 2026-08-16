@@ -7,6 +7,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -340,6 +341,9 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error 
 		humanIntegerUint(inspection.Model.Architecture.Layers), humanIntegerUint(inspection.Model.Architecture.HiddenSize),
 		humanIntegerUint(inspection.Model.Architecture.AttentionHeads), humanIntegerUint(inspection.Model.Architecture.KeyValueHeads))
 	fmt.Fprintf(stdout, "TOKENIZER:     %s@%s\n", inspection.Model.Architecture.Tokenizer.Name, inspection.Model.Architecture.Tokenizer.Revision)
+	if inspection.Model.Interaction.Template != "" {
+		fmt.Fprintf(stdout, "INTERACTION:   %s\n", inspection.Model.Interaction.Template)
+	}
 	if inspection.Origin != nil {
 		fmt.Fprintf(stdout, "ORIGIN:        %s@%s (%s)\n", inspection.Origin.Source.Repository, shortModelHash(inspection.Origin.Source.Revision), inspection.Origin.Source.Provider)
 	}
@@ -1121,9 +1125,9 @@ func runModelChat(context Context, args []string, stdout, stderr io.Writer) erro
 	}
 	var chatErr error
 	if interactive {
-		chatErr = runInteractiveChat(context.Execution, opened, options, stdout)
+		chatErr = runInteractiveChat(context.Execution, opened, inspection.Model.Interaction, options, stdout)
 	} else {
-		chatErr = runOneShotChat(context, opened, *prompt, options, stdout)
+		chatErr = runOneShotChat(context, opened, inspection.Model.Interaction, *prompt, options, stdout)
 	}
 	return errors.Join(chatErr, opened.Session.Close())
 }
@@ -1143,29 +1147,41 @@ func cobraModelChatOptions(context Context, args []string) (string, *string, inf
 	return args[0], nil, options, nil
 }
 
-func runOneShotChat(context Context, opened inference.Opened, prompt string, options inference.Options, stdout io.Writer) error {
+func runOneShotChat(context Context, opened inference.Opened, interaction model.Interaction, prompt string, options inference.Options, stdout io.Writer) error {
+	renderedPrompt := interaction.Prompt("", prompt)
+	options.Stop = interaction.Stops()
 	var renderer safeTokenWriter
+	stopper := stoppingTokenWriter{stops: options.Stop, write: renderer.Write}
 	if !context.JSON {
 		renderer.writer = stdout
 	}
-	result, err := opened.Session.Generate(context.Execution, prompt, options, func(token inference.Token) error {
+	result, err := opened.Session.Generate(context.Execution, renderedPrompt, options, func(token inference.Token) error {
 		if context.JSON {
 			return nil
 		}
-		return renderer.Write(token.Bytes)
+		return stopper.Write(token.Bytes)
 	})
 	if err != nil {
 		return err
 	}
 	if context.JSON {
+		result.Text = interaction.TrimResponse(result.Text)
+		rendered := ""
+		if interaction.Conversational() {
+			rendered = renderedPrompt
+		}
 		return writeJSON(stdout, struct {
-			Model      string           `json:"model"`
-			SourceType string           `json:"source_type"`
-			SourceID   string           `json:"source_id"`
-			RunID      string           `json:"run_id,omitempty"`
-			Prompt     string           `json:"prompt"`
-			Result     inference.Result `json:"result"`
-		}{opened.Description.Model, opened.Description.SourceType, opened.Description.SourceID, opened.Description.RunID, prompt, result})
+			Model          string           `json:"model"`
+			SourceType     string           `json:"source_type"`
+			SourceID       string           `json:"source_id"`
+			RunID          string           `json:"run_id,omitempty"`
+			Prompt         string           `json:"prompt"`
+			RenderedPrompt string           `json:"rendered_prompt,omitempty"`
+			Result         inference.Result `json:"result"`
+		}{opened.Description.Model, opened.Description.SourceType, opened.Description.SourceID, opened.Description.RunID, prompt, rendered, result})
+	}
+	if err := stopper.Flush(); err != nil {
+		return err
 	}
 	if err := renderer.Flush(); err != nil {
 		return err
@@ -1176,11 +1192,16 @@ func runOneShotChat(context Context, opened inference.Opened, prompt string, opt
 	return err
 }
 
-func runInteractiveChat(ctx context.Context, opened inference.Opened, options inference.Options, stdout io.Writer) error {
+func runInteractiveChat(ctx context.Context, opened inference.Opened, interaction model.Interaction, options inference.Options, stdout io.Writer) error {
 	fmt.Fprintf(stdout, "OpenWALDO model %s\n", opened.Description.Model)
 	fmt.Fprintf(stdout, "Backend: %s\n", strings.ToUpper(opened.Description.Backend))
 	fmt.Fprintf(stdout, "Context: %d tokens\n", opened.Description.ContextTokens)
-	fmt.Fprintln(stdout, "Mode: raw causal continuation (this model has no chat template)")
+	if interaction.Conversational() {
+		fmt.Fprintf(stdout, "Mode: user/assistant conversation (%s)\n", interaction.Template)
+		options.Stop = interaction.Stops()
+	} else {
+		fmt.Fprintln(stdout, "Mode: raw causal continuation (this model has no chat template)")
+	}
 	fmt.Fprintln(stdout, "Commands: /clear, /help, /exit")
 	reader := bufio.NewReader(modelChatInput)
 	history := ""
@@ -1206,29 +1227,86 @@ func runInteractiveChat(ctx context.Context, opened inference.Opened, options in
 			fmt.Fprintln(stdout, "/clear resets context; /exit or Ctrl-D closes the session")
 			continue
 		}
-		prompt := line
-		if history != "" {
-			prompt = history + "\n" + line
-		}
+		prompt := interaction.Prompt(history, line)
 		fmt.Fprintf(stdout, "%s> ", opened.Description.Model)
 		renderer := safeTokenWriter{writer: stdout}
+		stopper := stoppingTokenWriter{stops: options.Stop, write: renderer.Write}
 		result, generateErr := opened.Session.Generate(ctx, prompt, options, func(token inference.Token) error {
-			return renderer.Write(token.Bytes)
+			return stopper.Write(token.Bytes)
 		})
 		if generateErr != nil {
 			return generateErr
 		}
+		if err := stopper.Flush(); err != nil {
+			return err
+		}
 		if err := renderer.Flush(); err != nil {
 			return err
 		}
-		if !strings.HasSuffix(result.Text, "\n") {
+		response := interaction.TrimResponse(result.Text)
+		if !strings.HasSuffix(response, "\n") {
 			fmt.Fprintln(stdout)
 		}
-		history = boundChatHistory(prompt+result.Text, opened.Description.ContextTokens)
+		history = boundChatHistory(prompt+response, opened.Description.ContextTokens)
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 	}
+}
+
+type stoppingTokenWriter struct {
+	stops   []string
+	pending []byte
+	write   func([]byte) error
+	stopped bool
+}
+
+func (writer *stoppingTokenWriter) Write(value []byte) error {
+	if writer.stopped || len(value) == 0 {
+		return nil
+	}
+	writer.pending = append(writer.pending, value...)
+	stopAt := -1
+	maxStop := 0
+	for _, stop := range writer.stops {
+		maxStop = max(maxStop, len(stop))
+		if index := bytes.Index(writer.pending, []byte(stop)); index >= 0 && (stopAt < 0 || index < stopAt) {
+			stopAt = index
+		}
+	}
+	if stopAt >= 0 {
+		if stopAt > 0 && writer.write != nil {
+			if err := writer.write(writer.pending[:stopAt]); err != nil {
+				return err
+			}
+		}
+		writer.pending = nil
+		writer.stopped = true
+		return nil
+	}
+	keep := maxStop - 1
+	if keep < 0 {
+		keep = 0
+	}
+	if emit := len(writer.pending) - keep; emit > 0 {
+		if writer.write != nil {
+			if err := writer.write(writer.pending[:emit]); err != nil {
+				return err
+			}
+		}
+		writer.pending = append(writer.pending[:0], writer.pending[emit:]...)
+	}
+	return nil
+}
+
+func (writer *stoppingTokenWriter) Flush() error {
+	if !writer.stopped && len(writer.pending) > 0 && writer.write != nil {
+		if err := writer.write(writer.pending); err != nil {
+			return err
+		}
+	}
+	writer.pending = nil
+	return nil
 }
 
 func boundChatHistory(history string, contextTokens int) string {

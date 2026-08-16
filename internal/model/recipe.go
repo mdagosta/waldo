@@ -33,7 +33,59 @@ type Compose struct {
 	Schema       int          `json:"schema" yaml:"schema"`
 	Base         *ComposeBase `json:"base,omitempty" yaml:"base,omitempty"`
 	Architecture Architecture `json:"architecture" yaml:"architecture"`
+	Interaction  Interaction  `json:"interaction,omitzero" yaml:"interaction,omitempty"`
 	Stages       []Stage      `json:"stages" yaml:"stages"`
+}
+
+const InteractionUserAssistantV1 = "user-assistant-v1"
+
+// Interaction is the portable inference-time prompt contract learned by a
+// model. The zero value deliberately means raw causal continuation.
+type Interaction struct {
+	Template string `json:"template,omitempty" yaml:"template,omitempty"`
+}
+
+func (interaction Interaction) IsZero() bool { return interaction.Template == "" }
+
+func (interaction Interaction) Validate() error {
+	if interaction.Template == "" || interaction.Template == InteractionUserAssistantV1 {
+		return nil
+	}
+	return fmt.Errorf("unsupported interaction template %q", interaction.Template)
+}
+
+func (interaction Interaction) Conversational() bool {
+	return interaction.Template == InteractionUserAssistantV1
+}
+
+func (interaction Interaction) Prompt(history, user string) string {
+	if !interaction.Conversational() {
+		if history == "" {
+			return user
+		}
+		return history + "\n" + user
+	}
+	prefix := ""
+	if history != "" {
+		prefix = strings.TrimRight(history, "\n") + "\n\n"
+	}
+	return prefix + "User: " + user + "\n\nAssistant:"
+}
+
+func (interaction Interaction) Stops() []string {
+	if interaction.Conversational() {
+		return []string{"\n\nUser:"}
+	}
+	return nil
+}
+
+func (interaction Interaction) TrimResponse(value string) string {
+	for _, stop := range interaction.Stops() {
+		if index := strings.Index(value, stop); index >= 0 {
+			value = value[:index]
+		}
+	}
+	return strings.TrimRight(value, "\r\n")
 }
 
 type ComposeBase struct {
@@ -328,6 +380,9 @@ func IsComposeFile(path string) (bool, error) {
 func (compose Compose) Validate() error {
 	if compose.Kind != "waldo-model-compose" || compose.Schema != ComposeSchema {
 		return fmt.Errorf("unsupported model compose identity %q schema %d", compose.Kind, compose.Schema)
+	}
+	if err := compose.Interaction.Validate(); err != nil {
+		return err
 	}
 	inheritedArchitecture := compose.Base != nil && compose.Base.Source != "" && compose.Architecture == (Architecture{})
 	if !inheritedArchitecture {

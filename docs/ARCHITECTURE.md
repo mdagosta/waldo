@@ -60,15 +60,17 @@ trees, choose mirrors, or normalize corpus licenses.
 
 ### Model, training, and inference
 
-`internal/model` owns model identity, architecture, compose transactions,
-run history, origin pulls, forecasting inputs, and lifecycle state.
+`internal/model` owns model identity, architecture, versioned interaction
+contracts, compose transactions, run history, origin pulls, forecasting
+inputs, and lifecycle state.
 
 `internal/training` owns portable backend requests and MLX, PyTorch, and
 TorchTitan adapters. A backend receives an explicit request and returns
 observations; it does not own model persistence or corpus selection.
 
 `internal/inference` loads verified model artifacts for supported local
-runtimes. Export conversion is split across `internal/modelexport`,
+runtimes and enforces generation stop sequences supplied by the interaction
+contract. Export conversion is split across `internal/modelexport`,
 `internal/modelweights`, and `internal/modelquant`.
 
 ### Cross-cutting packages

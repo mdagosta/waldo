@@ -1,6 +1,8 @@
 # Fifth rung: learn basic user/assistant interaction after a clean language base.
 kind: waldo-model-compose
 schema: 1
+interaction:
+  template: user-assistant-v1
 architecture:
   family: decoder-transformer
   context_tokens: 2048

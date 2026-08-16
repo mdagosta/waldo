@@ -138,7 +138,7 @@ func composePlan(name string, compose Compose) (Plan, error) {
 	plan := Plan{
 		Kind: "waldo-model-plan", Schema: PlanSchema, Name: name,
 		ArchitectureSHA256: architectureHash, Architecture: compose.Architecture,
-		Forecast: forecast,
+		Interaction: compose.Interaction, Forecast: forecast,
 	}
 	if compose.Base != nil {
 		plan.OriginBOMSHA256 = compose.Base.OriginSHA256
