@@ -160,7 +160,7 @@ func TestAssistantHasExplicitPreMidAndPostTraining(t *testing.T) {
 	if compose.Stages[1].Corpora[0].Path != "post-train/sft/oasst1" || compose.Stages[1].Corpora[1].Path != "post-train/sft/oasst2" {
 		t.Fatalf("assistant conversational corpora = %+v", compose.Stages[1].Corpora)
 	}
-	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
+	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
 		t.Fatalf("assistant post-training corpora = %+v", compose.Stages[2].Corpora)
 	}
 	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {
