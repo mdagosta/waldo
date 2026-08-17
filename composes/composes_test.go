@@ -122,8 +122,8 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 6 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic.yaml" || files[3] != "0003-intermediate.yaml" || files[4] != "0004-conversation.yaml" || files[5] != "0005-assistant.yaml" {
-		t.Fatalf("reference composes = %v, want canary through assistant", files)
+	if len(files) != 7 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic.yaml" || files[3] != "0003-intermediate.yaml" || files[4] != "0004-conversation.yaml" || files[5] != "0005-assistant.yaml" || files[6] != "0006-tool-assistant.yaml" {
+		t.Fatalf("reference composes = %v, want canary through tool assistant", files)
 	}
 	compose, _, err := model.LoadCompose("0000-canary.yaml")
 	if err != nil {
@@ -141,6 +141,26 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	}
 	if forecast.ApproximateParameters != 13620736 || forecast.PlannedTokens != 4096000 {
 		t.Fatalf("canary forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	}
+}
+
+func TestToolAssistantAddsMaskedConversationAndToolStages(t *testing.T) {
+	compose, _, err := model.LoadCompose("0006-tool-assistant.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(compose.Stages) != 5 || compose.Stages[3].Objective != "assistant-response-modeling" || compose.Stages[4].Objective != "assistant-response-modeling" {
+		t.Fatalf("tool assistant stages = %+v", compose.Stages)
+	}
+	if compose.Stages[3].Corpora[0].Path != "post-train/sft/ultrachat-200k" || compose.Stages[3].Corpora[1].Path != "post-train/sft/tulu3" || compose.Stages[4].Corpora[0].Path != "post-train/sft/hermes-function-calling" {
+		t.Fatalf("tool assistant corpora = %+v / %+v", compose.Stages[3].Corpora, compose.Stages[4].Corpora)
+	}
+	forecast, err := model.ForecastCompose(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 12569985024 {
+		t.Fatalf("tool assistant forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 

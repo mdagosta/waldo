@@ -20,6 +20,8 @@ waldo model forecast composes/0004-conversation.yaml
 waldo model train conversation-test composes/0004-conversation.yaml
 waldo model forecast composes/0005-assistant.yaml
 waldo model train assistant-test composes/0005-assistant.yaml
+waldo model forecast composes/0006-tool-assistant.yaml
+waldo model train assistant-test composes/0006-tool-assistant.yaml
 ```
 
 | Compose | Architecture | Planned tokens | Corpus selection | Purpose |
@@ -30,6 +32,7 @@ waldo model train assistant-test composes/0005-assistant.yaml
 | `0003-intermediate.yaml` | 336.6M parameters | 12.0B | Books, encyclopedic, civic, and scientific text with declared weights | Broader intermediate base-model capability over a 2,048-token context |
 | `0004-conversation.yaml` | 139.3M parameters | 6.04B | Clean books, scientific and civic text, followed by the OpenWALDO interaction contract, Dolly, and OpenAssistant dialogue | First candidate for basic user/assistant interaction |
 | `0005-assistant.yaml` | 336.6M parameters | 12.15B | Broad pretraining, OASST/Aya/Dolly conversational mid-training, then the interaction contract and quality-gated HelpSteer2 | Three-phase assistant candidate with explicit post-training policy |
+| `0006-tool-assistant.yaml` | 336.6M parameters | 12.57B | The complete 0005 selection plus UltraChat 200k, curated Tulu 3, and Hermes function calling | Assistant-only response tuning followed by tool-call/tool-result behavior |
 
 `0000-canary.yaml` has been validated end to end on a single H200. The first
 babble experiment used `cl100k_base`, which spent 80% of its 47.9M parameters
@@ -76,6 +79,14 @@ for helpfulness, correctness, and coherence. All five HelpSteer2 ratings remain
 in canonical metadata. Complexity and verbosity are not quality gates. WALDO
 still uses causal dialogue tuning rather than a preference objective, so this
 stage must not be described as DPO, RLHF, or reward-model training.
+
+`0006-tool-assistant.yaml` is a standalone superset of 0005. Running it against
+the same managed model after 0005 completes skips corpus paths already recorded
+as trained and proceeds to the new assistant and tool stages; a new model runs
+all five stages. The last two stages apply loss only to assistant content. Tulu
+rows from the noncommercial no-robots subset and duplicate OASST1/Aya subsets
+are excluded by source label. Hermes teaches the textual call/result/final-answer
+pattern; WALDO's runtime remains responsible for actually executing tools.
 
 The babble compose uses equal-exposure `causal-pretrain-balanced`. Later
 composes use `causal-pretrain-weighted`, which applies declared integer corpus

@@ -1,0 +1,181 @@
+# Seventh rung: retain the 0005 language base, then add broad assistant-response and tool-use SFT.
+kind: waldo-model-compose
+schema: 1
+interaction:
+  template: user-assistant-v1
+architecture:
+  family: decoder-transformer
+  context_tokens: 2048
+  vocabulary_size: 50259
+  hidden_size: 1152
+  intermediate_size: 3072
+  layers: 20
+  attention_heads: 16
+  key_value_heads: 4
+  dropout: 0.1
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: tiktoken/r50k_base
+    revision: tiktoken-r50k-base
+stages:
+  - name: pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: core/books/gutenberg
+        weight: 3
+      - path: core/common-pile/wikimedia
+        weight: 4
+      - path: government/regulations
+        weight: 1
+      - path: science/plos
+        weight: 2
+    parameters:
+      profile: causal-pretrain-weighted
+      steps: 366210
+      batch_size: 16
+      sequence_length: 2048
+      learning_rate: 0.00013
+      seed: 42
+      weight_decay: 0.15
+      warmup_steps: 3662
+      shuffle_buffer_records: 65536
+      shuffle_buffer_bytes: 2147483648
+      checkpoint_every: 18310
+      evaluate_every: 18310
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
+  - name: conversational-midtrain
+    type: fine-tuning
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/oasst1
+        weight: 3
+      - path: post-train/sft/oasst2
+        weight: 5
+      - path: post-train/sft/aya
+        weight: 3
+      - path: post-train/sft/dolly
+        weight: 2
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 3
+      steps: 6104
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.00004
+      seed: 43
+      weight_decay: 0.08
+      warmup_steps: 305
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 536870912
+      checkpoint_every: 1017
+      evaluate_every: 1017
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
+  - name: post-train
+    type: fine-tuning
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/interaction-contract-v1
+        weight: 8
+      - path: post-train/sft/helpsteer2
+        weight: 3
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 3
+      steps: 3052
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.000015
+      seed: 44
+      weight_decay: 0.05
+      warmup_steps: 153
+      shuffle_buffer_records: 16384
+      shuffle_buffer_bytes: 268435456
+      checkpoint_every: 508
+      evaluate_every: 508
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
+  - name: assistant-sft-v2
+    type: fine-tuning
+    objective: assistant-response-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/ultrachat-200k
+        weight: 5
+      - path: post-train/sft/tulu3
+        weight: 3
+        filter:
+          sources:
+            exclude:
+              - ai2-adapt-dev/no_robots_converted
+              - ai2-adapt-dev/oasst1_converted
+              - ai2-adapt-dev/tulu_v3.9_aya_100k
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 2
+      steps: 24414
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.00001
+      seed: 45
+      weight_decay: 0.04
+      warmup_steps: 610
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 1073741824
+      checkpoint_every: 3051
+      evaluate_every: 3051
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
+  - name: tool-sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/hermes-function-calling
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 4
+      steps: 1221
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.000008
+      seed: 46
+      weight_decay: 0.03
+      warmup_steps: 61
+      shuffle_buffer_records: 8192
+      shuffle_buffer_bytes: 268435456
+      checkpoint_every: 305
+      evaluate_every: 305
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216
