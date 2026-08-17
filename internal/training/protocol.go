@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
+	"strings"
 )
 
 const WorkerProtocolSchema = 1
@@ -32,16 +34,76 @@ type WorkerBegin struct {
 }
 
 type tokenizedRecordSource struct {
-	source RecordSource
-	codec  TokenCodec
+	source    RecordSource
+	codec     TokenCodec
+	objective string
 }
 
 func (source tokenizedRecordSource) Stream(ctx context.Context, consume func(Record) error) error {
 	return source.source.Stream(ctx, func(record Record) error {
-		record.Tokens = source.codec.Encode(record.Text)
+		if source.objective == "assistant-response-modeling" {
+			var err error
+			record.Tokens, record.LossMask, err = tokenizeAssistantResponses(record.Text, source.codec)
+			if err != nil {
+				return fmt.Errorf("tokenize assistant response record %s: %w", record.ID, err)
+			}
+		} else {
+			record.Tokens = source.codec.Encode(record.Text)
+		}
 		record.Text = ""
 		return consume(record)
 	})
+}
+
+func tokenizeAssistantResponses(value string, codec TokenCodec) ([]int, []bool, error) {
+	roles := []string{"System", "User", "Assistant", "Tool"}
+	findRole := func(offset int, first bool) (int, string, int) {
+		best, role, prefix := -1, "", 0
+		for _, candidate := range roles {
+			marker := candidate + ": "
+			if !first {
+				marker = "\n\n" + marker
+			}
+			if position := strings.Index(value[offset:], marker); position >= 0 && (best < 0 || position < best) {
+				best, role, prefix = position, candidate, len(marker)
+			}
+		}
+		return best, role, prefix
+	}
+	position, role, prefix := findRole(0, true)
+	if position != 0 {
+		return nil, nil, fmt.Errorf("record does not begin with a supported chat role")
+	}
+	var tokens []int
+	var mask []bool
+	for {
+		markerTokens := codec.Encode(value[position : position+prefix])
+		tokens = append(tokens, markerTokens...)
+		mask = append(mask, make([]bool, len(markerTokens))...)
+		contentStart := position + prefix
+		next, nextRole, nextPrefix := findRole(contentStart, false)
+		contentEnd := len(value)
+		if next >= 0 {
+			contentEnd = contentStart + next
+		}
+		contentTokens := codec.Encode(value[contentStart:contentEnd])
+		tokens = append(tokens, contentTokens...)
+		mask = append(mask, make([]bool, len(contentTokens))...)
+		if role == "Assistant" {
+			for index := len(mask) - len(contentTokens); index < len(mask); index++ {
+				mask[index] = true
+			}
+		}
+		if next < 0 {
+			mask = append(mask, role == "Assistant") // EOS target.
+			break
+		}
+		position, role, prefix = contentEnd, nextRole, nextPrefix
+	}
+	if !slices.Contains(mask, true) {
+		return nil, nil, fmt.Errorf("record contains no assistant response targets")
+	}
+	return tokens, mask, nil
 }
 
 type WorkerInitialization struct {

@@ -46,6 +46,8 @@ func TestInputProfileValidation(t *testing.T) {
 		"missing text":         {Type: ProfileRecordMap},
 		"bad path":             {Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"body[0]"}}},
 		"missing reply":        {Type: ProfileDialoguePair, Fields: ProfileFields{Text: []string{"prompt"}}},
+		"missing chat content": {Type: ProfileChatMessages, Messages: ChatMessagesMapping{Role: "messages[].role"}},
+		"bad chat alias":       {Type: ProfileChatMessages, Messages: ChatMessagesMapping{Role: "messages[].role", Content: "messages[].content", RoleAliases: map[string]string{"model": "bot"}}},
 		"incomplete tree":      {Type: ProfileRankedConversationTree, Tree: ConversationTree{Text: "text"}},
 		"bad rank fallback":    {Type: ProfileRankedConversationTree, Tree: ConversationTree{Replies: "replies", Text: "text", Rank: "rank", MissingRank: "random"}},
 		"bad boundary":         {Type: ProfileBoundedText, Bounds: TextBounds{StartPattern: "[", EndPattern: "end"}},

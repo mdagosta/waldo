@@ -168,7 +168,7 @@ func validateStage(stage Stage, architecture Architecture) error {
 	if stage.Type != "pre-training" && stage.Type != "fine-tuning" && stage.Type != "alignment" && stage.Type != "other" {
 		return fmt.Errorf("stage %s has unsupported type %q", stage.Name, stage.Type)
 	}
-	if stage.Objective != "causal-language-modeling" {
+	if stage.Objective != "causal-language-modeling" && stage.Objective != "assistant-response-modeling" {
 		return fmt.Errorf("stage %s has unsupported objective %q", stage.Name, stage.Objective)
 	}
 	parameters := stage.Parameters

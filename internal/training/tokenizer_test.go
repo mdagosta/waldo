@@ -7,6 +7,7 @@ package training
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -63,6 +64,23 @@ func TestTokenizedRecordSourceRemovesRawText(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAssistantResponseModelingMasksNonAssistantTurns(t *testing.T) {
+	text := "System: Be concise.\n\nUser: Hello\n\nAssistant: Hi\n\nTool: ignored\n\nAssistant: Done"
+	tokens, mask, err := tokenizeAssistantResponses(text, byteCodec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mask) != len(tokens)+1 || !mask[len(mask)-1] {
+		t.Fatalf("mask framing = %d tokens, %d mask values, eos=%v", len(tokens), len(mask), mask[len(mask)-1])
+	}
+	for index, token := range tokens {
+		character := byte(token - 3)
+		if mask[index] && !strings.Contains("HiDone", string(character)) {
+			t.Fatalf("supervised non-assistant byte %q at %d", character, index)
+		}
 	}
 }
 

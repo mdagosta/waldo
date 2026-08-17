@@ -29,7 +29,7 @@ func (Fake) Descriptor() Descriptor {
 		Identity:  Identity{Name: "fake", Revision: FakeRevision},
 		Framework: "fake",
 		Capabilities: Capabilities{
-			Objectives: []string{"causal-language-modeling"}, CheckpointResume: true,
+			Objectives: []string{"causal-language-modeling", "assistant-response-modeling"}, CheckpointResume: true,
 		},
 	}
 }

@@ -22,6 +22,7 @@ const inputProfileMaximum = 1 << 20
 const (
 	ProfileRecordMap              = "record-map"
 	ProfileDialoguePair           = "dialogue-pair"
+	ProfileChatMessages           = "chat-messages"
 	ProfileRankedConversationTree = "ranked-conversation-tree"
 	ProfileBoundedText            = "bounded-text"
 	ProfileXMLRecord              = "xml-record"
@@ -37,9 +38,16 @@ type InputProfile struct {
 	MainContent   map[string]any       `json:"main_content,omitempty" yaml:"main_content,omitempty"`
 	Fields        ProfileFields        `json:"fields,omitempty" yaml:"fields,omitempty"`
 	Tree          ConversationTree     `json:"tree,omitempty" yaml:"tree,omitempty"`
+	Messages      ChatMessagesMapping  `json:"messages,omitempty" yaml:"messages,omitempty"`
 	Bounds        TextBounds           `json:"bounds,omitempty" yaml:"bounds,omitempty"`
 	XML           XMLMapping           `json:"xml,omitempty" yaml:"xml,omitempty"`
 	LicensePolicy corpus.LicensePolicy `json:"license_policy,omitempty" yaml:"license_policy,omitempty"`
+}
+
+type ChatMessagesMapping struct {
+	Role        string            `json:"role,omitempty" yaml:"role,omitempty"`
+	Content     string            `json:"content,omitempty" yaml:"content,omitempty"`
+	RoleAliases map[string]string `json:"role_aliases,omitempty" yaml:"role_aliases,omitempty"`
 }
 
 type ProfileFields struct {
@@ -123,8 +131,8 @@ func (profile InputProfile) Validate() error {
 	if profile.OnEmpty != "" && profile.OnEmpty != "error" && profile.OnEmpty != "skip" {
 		return fmt.Errorf("on_empty must be error or skip")
 	}
-	if profile.OnEmpty != "" && profile.Type != ProfileRecordMap && profile.Type != ProfileDialoguePair && profile.Type != ProfileBoundedText {
-		return fmt.Errorf("on_empty is supported only for record-map, dialogue-pair, and bounded-text")
+	if profile.OnEmpty != "" && profile.Type != ProfileRecordMap && profile.Type != ProfileDialoguePair && profile.Type != ProfileChatMessages && profile.Type != ProfileBoundedText {
+		return fmt.Errorf("on_empty is supported only for record-map, dialogue-pair, chat-messages, and bounded-text")
 	}
 	if profile.NUL != "" && profile.NUL != "error" && profile.NUL != "space" {
 		return fmt.Errorf("nul must be error or space")
@@ -150,7 +158,7 @@ func (profile InputProfile) Validate() error {
 	}
 	switch profile.Type {
 	case "":
-		if profile.OnEmpty != "" || profile.NUL != "" || profile.MainContent != nil || !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() || len(profile.LicensePolicy.Include) > 0 || len(profile.LicensePolicy.Exclude) > 0 {
+		if profile.OnEmpty != "" || profile.NUL != "" || profile.MainContent != nil || !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || !profile.Messages.empty() || profile.Bounds != (TextBounds{}) || !profile.XML.empty() || len(profile.LicensePolicy.Include) > 0 || len(profile.LicensePolicy.Exclude) > 0 {
 			return fmt.Errorf("input profile fields require a type")
 		}
 		return nil
@@ -158,7 +166,7 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) == 0 {
 			return fmt.Errorf("record-map requires fields.text")
 		}
-		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || !profile.Messages.empty() || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("record-map accepts text, id, date, language, license, source, and meta fields only")
 		}
 		for name, path := range profile.Fields.Meta {
@@ -170,7 +178,7 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) == 0 || profile.Fields.Response == "" {
 			return fmt.Errorf("dialogue-pair requires fields.text and fields.response")
 		}
-		if len(profile.Fields.TextFallback) > 0 || profile.Fields.Source != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if len(profile.Fields.TextFallback) > 0 || profile.Fields.Source != "" || profile.Tree != (ConversationTree{}) || !profile.Messages.empty() || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("dialogue-pair does not accept tree fields")
 		}
 		for name, path := range profile.Fields.Meta {
@@ -178,11 +186,28 @@ func (profile InputProfile) Validate() error {
 				return fmt.Errorf("dialogue-pair meta names and paths must be non-empty")
 			}
 		}
+	case ProfileChatMessages:
+		if profile.Messages.Role == "" || profile.Messages.Content == "" {
+			return fmt.Errorf("chat-messages requires messages.role and messages.content")
+		}
+		if len(profile.Fields.Text) > 0 || len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+			return fmt.Errorf("chat-messages accepts identity, source, and meta fields plus messages only")
+		}
+		for source, target := range profile.Messages.RoleAliases {
+			if strings.TrimSpace(source) == "" || !validChatRole(target) {
+				return fmt.Errorf("chat-messages role_aliases must map non-empty names to system, user, assistant, or tool")
+			}
+		}
+		for name, path := range profile.Fields.Meta {
+			if strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {
+				return fmt.Errorf("chat-messages meta names and paths must be non-empty")
+			}
+		}
 	case ProfileRankedConversationTree:
 		if profile.Tree.Replies == "" || profile.Tree.Text == "" || profile.Tree.Rank == "" {
 			return fmt.Errorf("ranked-conversation-tree requires tree.replies, tree.text, and tree.rank")
 		}
-		if len(profile.Fields.Text) > 0 || len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if len(profile.Fields.Text) > 0 || len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Source != "" || len(profile.Fields.Meta) > 0 || !profile.Messages.empty() || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("ranked-conversation-tree text comes from the tree mapping")
 		}
 		if profile.Tree.MissingRank != "" && profile.Tree.MissingRank != "source-order" {
@@ -198,14 +223,14 @@ func (profile InputProfile) Validate() error {
 		if _, err := regexp.Compile(profile.Bounds.EndPattern); err != nil {
 			return fmt.Errorf("invalid bounds.end_pattern: %w", err)
 		}
-		if !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || !profile.XML.empty() {
+		if !profile.Fields.empty() || profile.Tree != (ConversationTree{}) || !profile.Messages.empty() || !profile.XML.empty() {
 			return fmt.Errorf("bounded-text accepts bounds and on_empty only")
 		}
 	case ProfileXMLRecord:
 		if len(profile.Fields.Text) == 0 {
 			return fmt.Errorf("xml-record requires fields.text")
 		}
-		if len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) {
+		if len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || !profile.Messages.empty() || profile.Bounds != (TextBounds{}) {
 			return fmt.Errorf("xml-record accepts text, id, date, language, license, source, and meta fields only")
 		}
 		if profile.XML.OnMalformed != "" && profile.XML.OnMalformed != "error" && profile.XML.OnMalformed != "skip" {
@@ -238,13 +263,17 @@ func (mapping XMLMapping) empty() bool {
 	return len(mapping.Exclude) == 0 && mapping.SourcePrefix == "" && mapping.OnMalformed == ""
 }
 
+func (mapping ChatMessagesMapping) empty() bool {
+	return mapping.Role == "" && mapping.Content == "" && len(mapping.RoleAliases) == 0
+}
+
 func (profile InputProfile) paths() []string {
 	paths := append([]string(nil), profile.Fields.Text...)
 	paths = append(paths, profile.Fields.TextFallback...)
 	paths = append(paths, profile.Fields.ID, profile.Fields.Date, profile.Fields.Language,
-		profile.Fields.License, profile.Fields.Context, profile.Fields.Response,
+		profile.Fields.License, profile.Fields.Source, profile.Fields.Context, profile.Fields.Response,
 		profile.Tree.Root, profile.Tree.Replies, profile.Tree.Text, profile.Tree.Rank,
-		profile.Tree.Role)
+		profile.Tree.Role, profile.Messages.Role, profile.Messages.Content)
 	for _, path := range profile.Fields.Meta {
 		paths = append(paths, path)
 	}
@@ -349,5 +378,14 @@ func validateFieldPath(path string) error {
 }
 
 func (profile InputProfile) recordProfile() bool {
-	return profile.Type == ProfileRecordMap || profile.Type == ProfileDialoguePair || profile.Type == ProfileRankedConversationTree
+	return profile.Type == ProfileRecordMap || profile.Type == ProfileDialoguePair || profile.Type == ProfileChatMessages || profile.Type == ProfileRankedConversationTree
+}
+
+func validChatRole(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "system", "user", "assistant", "tool":
+		return true
+	default:
+		return false
+	}
 }

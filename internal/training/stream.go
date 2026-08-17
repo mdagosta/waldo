@@ -29,6 +29,7 @@ type Record struct {
 	Language    string `json:"language,omitempty"`
 	Corpus      string `json:"corpus,omitempty"`
 	Tokens      []int  `json:"tokens,omitempty"`
+	LossMask    []bool `json:"loss_mask,omitempty"`
 }
 
 type RecordPartition struct {
@@ -38,6 +39,7 @@ type RecordPartition struct {
 	inputs            []Input
 	parameters        ResolvedParameters
 	codec             TokenCodec
+	objective         string
 }
 
 type PartitionProgress struct {
@@ -88,6 +90,10 @@ func NewRecordPartitionContext(ctx context.Context, inputs []Input, parameters R
 }
 
 func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input, parameters ResolvedParameters, codec TokenCodec, progress func(PartitionProgress)) (RecordPartition, error) {
+	return NewRecordPartitionContextWithTokenizerAndObjective(ctx, inputs, parameters, codec, "causal-language-modeling", progress)
+}
+
+func NewRecordPartitionContextWithTokenizerAndObjective(ctx context.Context, inputs []Input, parameters ResolvedParameters, codec TokenCodec, objective string, progress func(PartitionProgress)) (RecordPartition, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -95,7 +101,7 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 		return RecordPartition{}, fmt.Errorf("record partition requires a tokenizer")
 	}
 	ordered := orderedInputs(inputs)
-	partition := RecordPartition{selected: make(map[string]bool), inputs: ordered, parameters: parameters, codec: codec}
+	partition := RecordPartition{selected: make(map[string]bool), inputs: ordered, parameters: parameters, codec: codec, objective: objective}
 	policy := parameters.Evaluation
 	if policy == nil {
 		policy = &EvaluationPolicy{Selection: "none-v1"}
@@ -248,7 +254,7 @@ func NewRecordPartitionContextWithTokenizer(ctx context.Context, inputs []Input,
 	if desired > 0 && len(selected) == 0 {
 		return RecordPartition{}, fmt.Errorf("no held-out record fits evaluation_max_bytes=%d; increase the limit or explicitly disable evaluation", policy.MaxBytes)
 	}
-	evaluationRecords, tokenTargets, err := readEvaluationRecords(ctx, ordered, selected, codec)
+	evaluationRecords, tokenTargets, err := readEvaluationRecords(ctx, ordered, selected, codec, objective)
 	if err != nil {
 		return RecordPartition{}, err
 	}
@@ -304,7 +310,7 @@ func evaluationCandidateSizes(ctx context.Context, inputs []Input, candidates []
 	return sizes, nil
 }
 
-func readEvaluationRecords(ctx context.Context, inputs []Input, selected []evaluationCandidate, codec TokenCodec) ([]Record, int64, error) {
+func readEvaluationRecords(ctx context.Context, inputs []Input, selected []evaluationCandidate, codec TokenCodec, objective string) ([]Record, int64, error) {
 	grouped := make(map[int][]evaluationCandidate)
 	for _, candidate := range selected {
 		grouped[candidate.input] = append(grouped[candidate.input], candidate)
@@ -328,8 +334,21 @@ func readEvaluationRecords(ctx context.Context, inputs []Input, selected []evalu
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			records = append(records, recordFromView(input, row, view))
-			tokenTargets += int64(codec.Count(view.Text))
+			record := recordFromView(input, row, view)
+			if objective == "assistant-response-modeling" {
+				_, mask, err := tokenizeAssistantResponses(record.Text, codec)
+				if err != nil {
+					return err
+				}
+				for _, supervised := range mask[1:] {
+					if supervised {
+						tokenTargets++
+					}
+				}
+			} else {
+				tokenTargets += int64(codec.Count(view.Text))
+			}
+			records = append(records, record)
 			return nil
 		})
 		if err != nil {
@@ -355,6 +374,18 @@ func (partition RecordPartition) TrainingByteTargets(ctx context.Context) (int64
 	var perEpoch int64
 	err := rawRecordSource{inputs: partition.inputs, include: func(record Record) bool { return !partition.selected[record.SelectionID] }}.Stream(ctx, func(record Record) error {
 		value := int64(partition.codec.Count(record.Text)) + 1
+		if partition.objective == "assistant-response-modeling" {
+			_, mask, err := tokenizeAssistantResponses(record.Text, partition.codec)
+			if err != nil {
+				return err
+			}
+			value = 0
+			for _, supervised := range mask[1:] {
+				if supervised {
+					value++
+				}
+			}
+		}
 		if perEpoch > math.MaxInt64-value {
 			return fmt.Errorf("training byte-token target count overflows int64")
 		}
@@ -367,7 +398,11 @@ func (partition RecordPartition) TrainingByteTargets(ctx context.Context) (int64
 	if perEpoch < 2 || perEpoch > math.MaxInt64/partition.parameters.Epochs {
 		return 0, fmt.Errorf("held-out partition leaves no usable training targets")
 	}
-	return perEpoch*partition.parameters.Epochs - 1, nil
+	total := perEpoch * partition.parameters.Epochs
+	if partition.objective != "assistant-response-modeling" {
+		total--
+	}
+	return total, nil
 }
 
 type filteredRecordSource struct {

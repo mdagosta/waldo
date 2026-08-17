@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r6"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r7"
 
 
 def emit(kind, **payload):
@@ -195,6 +195,7 @@ class Trainer:
         self.replay_steps = 0
         self.consumed_tokens = 0
         self.token_buffer = []
+        self.loss_buffer = []
         self.corpus_buffer = []
         self.batch = []
         self.consumed_by_corpus = {}
@@ -259,36 +260,46 @@ class Trainer:
         if self.step_number >= self.target_steps:
             return
         encoded = self.tokenizer.encode_record(record)
+        loss_mask = record.get("loss_mask", [True] * len(encoded))
+        if len(loss_mask) != len(encoded):
+            raise ValueError("record loss_mask does not match framed token count")
         self.token_buffer.extend(encoded)
+        self.loss_buffer.extend(loss_mask)
         self.corpus_buffer.extend([record.get("corpus", "")] * len(encoded))
         window = self.sequence_length + 1
         while len(self.token_buffer) >= window and self.step_number < self.target_steps:
-            self.add_sequence(self.token_buffer[:window], self.sequence_length, self.corpus_buffer[1:window])
+            self.add_sequence(self.token_buffer[:window], self.loss_buffer[1:window], self.corpus_buffer[1:window])
             del self.token_buffer[: self.sequence_length]
+            del self.loss_buffer[: self.sequence_length]
             del self.corpus_buffer[: self.sequence_length]
 
     def add_evaluation_record(self, record):
         self.evaluation_record_count += 1
         tokens = self.tokenizer.encode_record(record)
+        loss_mask = record.get("loss_mask", [True] * len(tokens))
+        if len(loss_mask) != len(tokens):
+            raise ValueError("evaluation record loss_mask does not match framed token count")
         window = self.sequence_length + 1
         while len(tokens) > 1:
             piece = tokens[:window]
-            valid_targets = len(piece) - 1
+            target_mask = loss_mask[1:len(piece)]
             padded = piece + [self.tokenizer.pad_id] * (window - len(piece))
-            mask = [1.0] * valid_targets + [0.0] * (self.sequence_length - valid_targets)
+            mask = [float(value) for value in target_mask] + [0.0] * (self.sequence_length - len(target_mask))
             self.evaluation_sequences.append((padded, mask))
-            self.evaluation_token_targets += valid_targets
+            self.evaluation_token_targets += sum(target_mask)
             del tokens[: self.sequence_length]
+            del loss_mask[: self.sequence_length]
 
-    def add_sequence(self, tokens, valid_targets, target_corpora=None):
-        if valid_targets <= 0 or self.step_number >= self.target_steps:
+    def add_sequence(self, tokens, target_mask, target_corpora=None):
+        if not any(target_mask) or self.step_number >= self.target_steps:
             return
         window = self.sequence_length + 1
         padded = tokens + [self.tokenizer.pad_id] * (window - len(tokens))
-        mask = [1.0] * valid_targets + [0.0] * (self.sequence_length - valid_targets)
+        mask = [float(value) for value in target_mask] + [0.0] * (self.sequence_length - len(target_mask))
         corpus_counts = {}
-        for corpus in (target_corpora or [])[:valid_targets]:
-            corpus_counts[corpus] = corpus_counts.get(corpus, 0) + 1
+        for corpus, supervised in zip(target_corpora or [], target_mask):
+            if supervised:
+                corpus_counts[corpus] = corpus_counts.get(corpus, 0) + 1
         self.batch.append((padded, mask, corpus_counts))
         if len(self.batch) >= self.batch_size:
             self.train_batch()
@@ -498,8 +509,8 @@ class Trainer:
                 f"run BOM pins {evaluation_set['records']} records and {evaluation_set['token_targets']} targets"
             )
         if self.step_number < self.target_steps and len(self.token_buffer) > 1:
-            valid_targets = min(self.sequence_length, len(self.token_buffer) - 1)
-            self.add_sequence(self.token_buffer[: self.sequence_length + 1], valid_targets, self.corpus_buffer[1 : valid_targets + 1])
+            target_mask = self.loss_buffer[1 : self.sequence_length + 1]
+            self.add_sequence(self.token_buffer[: self.sequence_length + 1], target_mask, self.corpus_buffer[1 : self.sequence_length + 1])
         if self.step_number < self.target_steps and self.batch:
             self.train_batch()
         if self.step_number != self.target_steps:

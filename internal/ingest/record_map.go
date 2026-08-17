@@ -330,6 +330,45 @@ func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit f
 }
 
 func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallbackSource string) (shard.TextRow, error) {
+	if input.Profile.Type == ProfileChatMessages {
+		roles, err := record.Values(input.Profile.Messages.Role)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		contents, err := record.Values(input.Profile.Messages.Content)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		if len(roles) == 0 || len(roles) != len(contents) {
+			return shard.TextRow{}, fmt.Errorf("%w: chat roles and contents must be non-empty aligned arrays", errEmptyMappedRecord)
+		}
+		var rendered strings.Builder
+		hasUser, hasAssistant := false, false
+		for index, role := range roles {
+			role = strings.ToLower(strings.TrimSpace(role))
+			if alias, ok := input.Profile.Messages.RoleAliases[role]; ok {
+				role = strings.ToLower(strings.TrimSpace(alias))
+			}
+			if !validChatRole(role) || strings.TrimSpace(contents[index]) == "" {
+				return shard.TextRow{}, fmt.Errorf("%w: chat message %d has an unsupported role or empty content", errEmptyMappedRecord, index+1)
+			}
+			hasUser = hasUser || role == "user"
+			hasAssistant = hasAssistant || role == "assistant"
+			if rendered.Len() > 0 {
+				rendered.WriteString("\n\n")
+			}
+			rendered.WriteString(strings.ToUpper(role[:1]) + role[1:] + ": ")
+			rendered.WriteString(contents[index])
+		}
+		if !hasUser || !hasAssistant {
+			return shard.TextRow{}, fmt.Errorf("%w: chat requires at least one user and assistant message", errEmptyMappedRecord)
+		}
+		meta, err := dialogueMappedMeta(record, input.Profile.Fields.Meta, len(roles))
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		return canonicalMappedRow(record, plan, input, fallbackSource, rendered.String(), meta)
+	}
 	mapText := func(paths []string) (string, error) {
 		parts := make([]string, 0, len(paths))
 		for _, path := range paths {

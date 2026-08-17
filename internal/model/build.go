@@ -164,7 +164,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
 	}
 	builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))})
-	partition, err := training.NewRecordPartitionContextWithTokenizer(ctx, prepared.Inputs, resolvedParameters, codec, func(event training.PartitionProgress) {
+	partition, err := training.NewRecordPartitionContextWithTokenizerAndObjective(ctx, prepared.Inputs, resolvedParameters, codec, stage.Objective, func(event training.PartitionProgress) {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("evaluation selection %d/%d shards, %d records indexed", event.CurrentShard, event.TotalShards, event.Records)})
 	})
 	if err != nil {

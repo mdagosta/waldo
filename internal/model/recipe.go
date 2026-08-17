@@ -420,7 +420,7 @@ func (compose Compose) Validate() error {
 		if stage.Type != "pre-training" && stage.Type != "fine-tuning" && stage.Type != "alignment" && stage.Type != "other" {
 			return fmt.Errorf("stage %s has unsupported type %q; use pre-training, fine-tuning, alignment, or other", stage.Name, stage.Type)
 		}
-		if stage.Objective != "causal-language-modeling" {
+		if stage.Objective != "causal-language-modeling" && stage.Objective != "assistant-response-modeling" {
 			return fmt.Errorf("stage %s has unsupported objective %q", stage.Name, stage.Objective)
 		}
 		if len(stage.Corpora) == 0 {

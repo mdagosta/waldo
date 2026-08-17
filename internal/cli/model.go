@@ -743,7 +743,7 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 	if err != nil {
 		return training.Request{}, fmt.Errorf("resolve primary plan tokenizer: %w", err)
 	}
-	partition, err := training.NewRecordPartitionContextWithTokenizer(commandContext.Execution, inputs, plan.Parameters, codec, nil)
+	partition, err := training.NewRecordPartitionContextWithTokenizerAndObjective(commandContext.Execution, inputs, plan.Parameters, codec, plan.Objective, nil)
 	if err != nil {
 		return training.Request{}, fmt.Errorf("reselect held-out evaluation split: %w", err)
 	}

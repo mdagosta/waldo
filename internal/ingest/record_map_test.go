@@ -315,6 +315,27 @@ func TestDialoguePairPreservesMappedMetadata(t *testing.T) {
 	}
 }
 
+func TestChatMessagesPreservesRolesAndToolResults(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat.jsonl")
+	contents := `{"id":"tool-1","messages":[{"role":"human","content":"Weather?"},{"role":"model","content":"<tool_call>weather</tool_call>"},{"role":"tool","content":"Sunny"},{"role":"model","content":"It is sunny."}]}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type:   ProfileChatMessages,
+		Fields: ProfileFields{ID: "id"},
+		Messages: ChatMessagesMapping{
+			Role: "messages[].role", Content: "messages[].content",
+			RoleAliases: map[string]string{"human": "user", "model": "assistant"},
+		},
+	}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	want := "User: Weather?\n\nAssistant: <tool_call>weather</tool_call>\n\nTool: Sunny\n\nAssistant: It is sunny."
+	if len(rows) != 1 || rows[0].Text != want || rows[0].Meta == nil || !strings.Contains(*rows[0].Meta, `"turns":4`) {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
 func TestDialoguePairExplicitlySkipsAndCountsEmptyRequiredFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dialogue.jsonl")
 	contents := "{\"prompt\":\"Question\",\"reply\":\"Answer\"}\n" +
