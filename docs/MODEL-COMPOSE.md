@@ -405,6 +405,10 @@ The canonical stream must contain enough packed targets across the declared
 epochs to reach every requested step. A run fails rather than silently
 shortening its budget. Records are continuously packed with an EOS token
 between records; document boundaries do not force padding to a new sequence.
+When `epochs` is explicitly set, WALDO verifies this exact capacity after
+filtering and held-out selection, before creating a run or starting a backend.
+Step-limited large pretraining stages that omit `epochs` retain the default
+single pass without an additional full-stream preflight scan.
 
 Setting any one of `evaluation_fraction`, `evaluation_max_records`, or
 `evaluation_max_bytes` to zero disables the held-out set and resolves all

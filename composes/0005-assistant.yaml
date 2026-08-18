@@ -102,16 +102,16 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       epochs: 3
-      steps: 3052
+      steps: 962
       batch_size: 8
       sequence_length: 2048
       learning_rate: 0.000015
       seed: 44
       weight_decay: 0.05
-      warmup_steps: 153
+      warmup_steps: 96
       shuffle_buffer_records: 16384
       shuffle_buffer_bytes: 268435456
-      checkpoint_every: 508
-      evaluate_every: 508
+      checkpoint_every: 160
+      evaluate_every: 160
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432

@@ -479,6 +479,80 @@ func TestByteTargetsAndRecordSourceRepeatExactEpochs(t *testing.T) {
 	}
 }
 
+func TestTrainingStepCapacityAccountsForHeldOutRecords(t *testing.T) {
+	inputs := []Input{writeTrainingShard(t, []string{strings.Repeat("a", 20), strings.Repeat("b", 20)})}
+	parameters, err := ResolveParameters(Parameters{Steps: 3, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartition(inputs, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, sufficient, err := partition.TrainingStepCapacity(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sufficient || steps != 2 {
+		t.Fatalf("capacity = %d, sufficient = %t; want 2, false", steps, sufficient)
+	}
+	if steps, sufficient, err = partition.TrainingStepCapacity(context.Background(), 2); err != nil || !sufficient || steps != 2 {
+		t.Fatalf("bounded capacity = %d, sufficient = %t, err = %v", steps, sufficient, err)
+	}
+}
+
+func TestTrainingStepCapacityAccountsForRecordFilters(t *testing.T) {
+	input := writeTrainingRows(t, []shard.Row{
+		{SHA256: record.TextHash(strings.Repeat("k", 20)), Kind: record.KindPretrain, Text: strings.Repeat("k", 20), Source: "fixture", License: "CC0-1.0", Lang: "en", Tokens: 1},
+		{SHA256: record.TextHash(strings.Repeat("x", 200)), Kind: record.KindPretrain, Text: strings.Repeat("x", 200), Source: "fixture", License: "CC0-1.0", Lang: "fr", Tokens: 1},
+	})
+	input.Corpus = "example"
+	input.RecordFilter = &corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema, Global: &corpus.RecordFilter{Languages: &corpus.ValueFilter{Include: []string{"en"}}}}
+	zeroFraction, zeroRecords, zeroBytes := 0.0, 0, int64(0)
+	parameters, err := ResolveParameters(Parameters{
+		Steps: 4, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 7,
+		EvaluationFraction: &zeroFraction, EvaluationMaxRecords: &zeroRecords, EvaluationMaxBytes: &zeroBytes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartition([]Input{input}, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, sufficient, err := partition.TrainingStepCapacity(context.Background(), 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sufficient || steps != 3 {
+		t.Fatalf("filtered capacity = %d, sufficient = %t; want 3, false", steps, sufficient)
+	}
+}
+
+func TestTrainingStepCapacityAccountsForAssistantLossMasks(t *testing.T) {
+	text := "User: " + strings.Repeat("u", 20) + "\n\nAssistant: " + strings.Repeat("a", 20)
+	input := writeTrainingShard(t, []string{text})
+	zeroFraction, zeroRecords, zeroBytes := 0.0, 0, int64(0)
+	parameters, err := ResolveParameters(Parameters{
+		Steps: 3, BatchSize: 1, SequenceLength: 16, LearningRate: 0.001, Seed: 7,
+		EvaluationFraction: &zeroFraction, EvaluationMaxRecords: &zeroRecords, EvaluationMaxBytes: &zeroBytes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartitionContextWithTokenizerAndObjective(context.Background(), []Input{input}, parameters, byteCodec{}, "assistant-response-modeling", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, sufficient, err := partition.TrainingStepCapacity(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sufficient || steps != 2 {
+		t.Fatalf("assistant capacity = %d, sufficient = %t; want 2, false", steps, sufficient)
+	}
+}
+
 func TestWorkerProtocolStreamsBeginRecordsEndAndValidatesOutput(t *testing.T) {
 	inputs := []Input{writeTrainingShard(t, []string{"one", "two"})}
 	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 7})

@@ -333,6 +333,39 @@ func TestInitializeAndTrainKeepStableModelIdentity(t *testing.T) {
 	}
 }
 
+func TestTrainRejectsExhaustedStreamBeforeBackend(t *testing.T) {
+	root := t.TempDir()
+	called := false
+	backend := backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+		called = true
+		return training.Observation{}, nil
+	})
+	builder := Builder{Root: root, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(backend), nil
+	})}
+	if _, err := builder.Initialize("smoke", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("post-train")
+	stage.Type = "fine-tuning"
+	stage.Parameters.Epochs = 1
+	stage.Parameters.Steps = 100
+	_, err := builder.Train(context.Background(), "smoke", preparedFixture(t, stage))
+	if err == nil || !strings.Contains(err.Error(), "requests 100 optimizer steps") || !strings.Contains(err.Error(), "provides only") {
+		t.Fatalf("capacity error = %v", err)
+	}
+	if called {
+		t.Fatal("training backend ran after capacity preflight failed")
+	}
+	inspection, err := Inspect(root, "smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inspection.Runs) != 0 {
+		t.Fatalf("capacity failure persisted %d runs", len(inspection.Runs))
+	}
+}
+
 func TestTrainingRunPinsConfiguredRecordFilter(t *testing.T) {
 	root := t.TempDir()
 	builder := Builder{Root: root, NewID: func() (string, error) { return "filtered1", nil }, Resolver: training.FakeResolver()}
@@ -955,7 +988,7 @@ func testStage(name string) Stage {
 
 func preparedFixture(t *testing.T, stage Stage) PreparedStage {
 	t.Helper()
-	text := "canonical parquet fixture"
+	text := strings.Repeat("canonical parquet fixture ", 8)
 	var encoded bytes.Buffer
 	writer := parquet.NewGenericWriter[shard.Row](&encoded)
 	secondText := text + " second"

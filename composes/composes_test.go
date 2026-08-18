@@ -190,7 +190,7 @@ func TestAssistantHasExplicitPreMidAndPostTraining(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 12149981184 {
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 12115738624 {
 		t.Fatalf("assistant forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }

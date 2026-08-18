@@ -22,6 +22,8 @@ portable overrides distinguish an omitted default from an explicit zero.
 Epoch count is also persisted and defaults to one. Direct training derives its
 step count from exact tokenizer targets across the requested epochs; it does
 not treat index reference-token estimates as an execution budget.
+Compose stages that explicitly set epochs verify their exact filtered,
+held-out-adjusted optimizer-step capacity before the run BOM is created.
 
 WALDO's training domain owns canonical Parquet decoding and produces records in
 a deterministic order. Shards are sorted and seeded, then records pass through

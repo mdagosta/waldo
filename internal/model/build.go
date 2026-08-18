@@ -171,6 +171,17 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, fmt.Errorf("stage %s held-out evaluation partition: %w", stage.Name, err)
 	}
 	builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selected %d held-out records (%s text)", partition.Evaluation.Records, byteCount(partition.Evaluation.TextBytes))})
+	if stage.Parameters.Epochs > 0 {
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("validating capacity for %d optimizer steps across %d explicit epochs", resolvedParameters.Steps, resolvedParameters.Epochs)})
+		availableSteps, sufficient, err := partition.TrainingStepCapacity(ctx, resolvedParameters.Steps)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s training capacity: %w", stage.Name, err)
+		}
+		if !sufficient {
+			return Inspection{}, fmt.Errorf("stage %s requests %d optimizer steps, but its filtered training stream provides only %d across %d epochs; reduce steps, increase epochs, or select more data", stage.Name, resolvedParameters.Steps, availableSteps, resolvedParameters.Epochs)
+		}
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("verified capacity for %d optimizer steps", resolvedParameters.Steps)})
+	}
 	records, err := partition.TrainingRecords()
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s training record stream: %w", stage.Name, err)

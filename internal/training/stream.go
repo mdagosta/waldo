@@ -12,9 +12,11 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 
 	"github.com/openwaldo/waldo/internal/shard"
@@ -403,6 +405,81 @@ func (partition RecordPartition) TrainingByteTargets(ctx context.Context) (int64
 		total--
 	}
 	return total, nil
+}
+
+// TrainingStepCapacity verifies that the finite epoch stream can supply the
+// requested optimizer steps. It stops as soon as the request is satisfiable;
+// an exhausted stream returns its exact smaller capacity.
+func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, requested int64) (int64, bool, error) {
+	if requested <= 0 || partition.parameters.BatchSize <= 0 || partition.parameters.SequenceLength <= 0 {
+		return 0, false, fmt.Errorf("requested steps, batch size, and sequence length must be positive")
+	}
+	requiredSequences, overflow := multiplyInt64(requested, partition.parameters.BatchSize)
+	if overflow {
+		return 0, false, fmt.Errorf("requested training sequence count overflows int64")
+	}
+	source, err := partition.TrainingRecords()
+	if err != nil {
+		return 0, false, err
+	}
+	var buffered int
+	var masks []bool
+	var sequences int64
+	reached := errors.New("requested training step capacity reached")
+	addSequence := func(targets []bool) error {
+		if slices.Contains(targets, true) {
+			sequences++
+			if sequences >= requiredSequences {
+				return reached
+			}
+		}
+		return nil
+	}
+	err = source.Stream(ctx, func(record Record) error {
+		var recordTokens int
+		var recordMask []bool
+		if partition.objective == "assistant-response-modeling" {
+			tokens, mask, err := tokenizeAssistantResponses(record.Text, partition.codec)
+			if err != nil {
+				return err
+			}
+			recordTokens = len(tokens) + 1 // Worker framing appends EOS.
+			recordMask = mask
+		} else {
+			recordTokens = partition.codec.Count(record.Text) + 1
+			recordMask = make([]bool, recordTokens)
+			for index := range recordMask {
+				recordMask[index] = true
+			}
+		}
+		buffered += recordTokens
+		masks = append(masks, recordMask...)
+		window := int(partition.parameters.SequenceLength) + 1
+		for buffered >= window {
+			if err := addSequence(masks[1:window]); err != nil {
+				return err
+			}
+			buffered -= int(partition.parameters.SequenceLength)
+			masks = masks[int(partition.parameters.SequenceLength):]
+		}
+		return nil
+	})
+	if errors.Is(err, reached) {
+		return requested, true, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if buffered > 1 {
+		if err := addSequence(masks[1:]); errors.Is(err, reached) {
+			return requested, true, nil
+		}
+	}
+	steps := sequences / partition.parameters.BatchSize
+	if sequences%partition.parameters.BatchSize != 0 {
+		steps++
+	}
+	return steps, steps >= requested, nil
 }
 
 type filteredRecordSource struct {
