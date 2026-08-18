@@ -8,6 +8,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"strings"
 	"testing"
 
@@ -76,6 +77,22 @@ func TestOneShotChatRendersMarkdownAtTerminalWidth(t *testing.T) {
 		if len([]rune(line)) > 60 {
 			t.Fatalf("rendered line exceeds width: %d: %q", len([]rune(line)), line)
 		}
+	}
+}
+
+func TestOneShotChatStreamsMarkdownOnTerminal(t *testing.T) {
+	previousLive := terminalMarkdownLive
+	terminalMarkdownLive = func(io.Writer) bool { return true }
+	t.Cleanup(func() { terminalMarkdownLive = previousLive })
+	markdown := "## Answer\n\n- first item\n- second item\n\n" + strings.Repeat("streamed words ", 12)
+	opened := inference.Opened{Description: inference.Description{Model: "foo"}, Session: &chatSession{data: []byte(markdown)}}
+	var output bytes.Buffer
+	if err := runOneShotChat(Context{Execution: context.Background()}, opened, model.Interaction{}, "hello", inference.Options{}, &output); err != nil {
+		t.Fatal(err)
+	}
+	rendered := output.String()
+	if !strings.Contains(rendered, "\x1b[") || !strings.Contains(rendered, "• first item") || !strings.Contains(rendered, "streamed words") {
+		t.Fatalf("live Markdown output = %q", rendered)
 	}
 }
 

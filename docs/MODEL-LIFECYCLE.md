@@ -208,10 +208,12 @@ waldo --json model chat small "Once" --max-tokens 64 --temperature 0 --seed 7
 No generation option is required. Defaults are 256 maximum tokens,
 temperature 0.8, and top-p 0.95. A zero temperature is deterministic; `seed`
 makes sampling reproducible. Interactive sessions support `/clear`, `/help`,
-and `/exit`. Generated terminal bytes stream incrementally, but control and
+and `/exit`. On a terminal, WALDO periodically re-renders the accumulated
+response so Markdown appears while generation is still running. Control and
 invalid UTF-8 bytes are escaped so model output cannot emit terminal control
-sequences. JSON is one-shot and includes model and run identity, prompt, text,
-token count, finish reason, and generation duration.
+sequences. Redirected output is rendered once without cursor controls. JSON is
+one-shot and includes model and run identity, prompt, text, token count, finish
+reason, and generation duration.
 
 The built-in byte-tokenizer models are causal pretraining models and carry no
 chat template. Interactive mode therefore performs raw continuation;
