@@ -1,4 +1,4 @@
-# First validated conversational model: broad language, dialogue adaptation, and reviewed interaction tuning.
+# Conversation model: broad language, dialogue adaptation, and reviewed interaction tuning.
 kind: waldo-model-compose
 schema: 1
 interaction:

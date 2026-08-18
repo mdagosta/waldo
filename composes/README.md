@@ -14,8 +14,8 @@ waldo model train canary composes/0000-canary.yaml
 waldo model forecast composes/0001-babble.yaml
 waldo model train babble composes/0001-babble.yaml
 
-waldo model forecast composes/0002-basic-conversation.yaml
-waldo model train basic-conversation composes/0002-basic-conversation.yaml
+waldo model forecast composes/0002-conversation.yaml
+waldo model train conversation composes/0002-conversation.yaml
 
 waldo model forecast composes/0003-tool-assistant.yaml
 waldo model train tool-assistant composes/0003-tool-assistant.yaml
@@ -25,7 +25,7 @@ waldo model train tool-assistant composes/0003-tool-assistant.yaml
 | --- | ---: | ---: | --- |
 | `0000-canary.yaml` | 13.6M parameters | 4.1M | Release-gate the training, artifact reload, accounting, and chat paths |
 | `0001-babble.yaml` | 76.4M parameters | 1.60B | Candidate compact model with coherent language and short basic interaction |
-| `0002-basic-conversation.yaml` | 336.6M parameters | 12.12B | First validated basic conversational model |
+| `0002-conversation.yaml` | 336.6M parameters | 12.12B | First validated conversational model |
 | `0003-tool-assistant.yaml` | 336.6M parameters | 12.57B | Extend basic conversation with assistant-only response and tool-use training |
 
 ## Canary
@@ -51,7 +51,7 @@ and retain turns consistently.
 
 ## Basic conversation
 
-`0002-basic-conversation.yaml` preserves the recipe that produced WALDO's
+`0002-conversation.yaml` preserves the recipe that produced WALDO's
 first useful conversational result. It builds a 336.6M-parameter language
 base, performs broad dialogue adaptation with OASST1/2, Aya, and Dolly, and
 then applies the interaction contract and quality-gated HelpSteer2 data. Its
@@ -65,9 +65,9 @@ without silently changing this reference.
 
 ## Tool assistant
 
-`0003-tool-assistant.yaml` is a standalone superset of basic conversation. A
+`0003-tool-assistant.yaml` is a standalone superset of conversation. A
 new model runs the complete sequence. Running it against a compatible model
-that already completed the basic-conversation corpora skips those recorded
+that already completed the conversation corpora skips those recorded
 corpus paths and proceeds to UltraChat, curated Tulu 3, and Hermes function
 calling. The final two stages apply loss only to assistant content. WALDO's
 runtime remains responsible for actually executing tools.

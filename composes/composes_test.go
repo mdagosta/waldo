@@ -122,7 +122,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 4 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic-conversation.yaml" || files[3] != "0003-tool-assistant.yaml" {
+	if len(files) != 4 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-conversation.yaml" || files[3] != "0003-tool-assistant.yaml" {
 		t.Fatalf("reference composes = %v, want canary, babble, basic conversation, and tool assistant", files)
 	}
 	compose, _, err := model.LoadCompose("0000-canary.yaml")
@@ -165,7 +165,7 @@ func TestToolAssistantAddsMaskedConversationAndToolStages(t *testing.T) {
 }
 
 func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
-	compose, _, err := model.LoadCompose("0002-basic-conversation.yaml")
+	compose, _, err := model.LoadCompose("0002-conversation.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
