@@ -1,106 +1,78 @@
 # Reference model composes
 
-This directory contains measured reference baselines and the next candidates in
-their capability progression. A candidate becomes a validated baseline only
-after a complete real training run. Names describe intended milestones rather
-than general capability or quality guarantees. See the
+This directory contains a small capability ladder. A compose is a candidate
+until a complete real training run validates its accounting, saved artifacts,
+evaluation, and generated behavior. Names describe observed or intended
+milestones rather than general intelligence claims. See the
 [model compose guide](../docs/MODEL-COMPOSE.md) for the complete schema and
 field reference.
 
 ```bash
 waldo model forecast composes/0000-canary.yaml
 waldo model train canary composes/0000-canary.yaml
+
 waldo model forecast composes/0001-babble.yaml
-waldo model train babble-test composes/0001-babble.yaml
-waldo model forecast composes/0002-basic.yaml
-waldo model train basic-test composes/0002-basic.yaml
-waldo model forecast composes/0003-intermediate.yaml
-waldo model train intermediate-test composes/0003-intermediate.yaml
-waldo model forecast composes/0004-conversation.yaml
-waldo model train conversation-test composes/0004-conversation.yaml
-waldo model forecast composes/0005-assistant.yaml
-waldo model train assistant-test composes/0005-assistant.yaml
-waldo model forecast composes/0006-tool-assistant.yaml
-waldo model train assistant-test composes/0006-tool-assistant.yaml
+waldo model train babble composes/0001-babble.yaml
+
+waldo model forecast composes/0002-basic-conversation.yaml
+waldo model train basic-conversation composes/0002-basic-conversation.yaml
+
+waldo model forecast composes/0003-tool-assistant.yaml
+waldo model train tool-assistant composes/0003-tool-assistant.yaml
 ```
 
-| Compose | Architecture | Planned tokens | Corpus selection | Purpose |
-| --- | ---: | ---: | --- | --- |
-| `0000-canary.yaml` | 13.6M parameters | 4.1M | Four small prose, technical, and dialogue selections | Release-gate CUDA/MLX, artifact reload, accounting, and chat |
-| `0001-babble.yaml` | 49.9M parameters | 1.05B | Gutenberg and PLOS, balanced by token exposure | Coherent local continuations from a compact base model |
-| `0002-basic.yaml` | 114.1M parameters | 3.93B | Gutenberg, Wikimedia, and PLOS, balanced by token exposure | Basic cross-domain language-model capability over a longer context |
-| `0003-intermediate.yaml` | 336.6M parameters | 12.0B | Books, encyclopedic, civic, and scientific text with declared weights | Broader intermediate base-model capability over a 2,048-token context |
-| `0004-conversation.yaml` | 139.3M parameters | 6.04B | Clean books, scientific and civic text, followed by the OpenWALDO interaction contract, Dolly, and OpenAssistant dialogue | First candidate for basic user/assistant interaction |
-| `0005-assistant.yaml` | 336.6M parameters | 12.12B | Broad pretraining, OASST/Aya/Dolly conversational mid-training, then the interaction contract and quality-gated HelpSteer2 | Three-phase assistant candidate with explicit post-training policy |
-| `0006-tool-assistant.yaml` | 336.6M parameters | 12.57B | The complete 0005 selection plus UltraChat 200k, curated Tulu 3, and Hermes function calling | Assistant-only response tuning followed by tool-call/tool-result behavior |
+| Compose | Architecture | Planned tokens | Purpose |
+| --- | ---: | ---: | --- |
+| `0000-canary.yaml` | 13.6M parameters | 4.1M | Release-gate the training, artifact reload, accounting, and chat paths |
+| `0001-babble.yaml` | 76.4M parameters | 1.60B | Candidate compact model with coherent language and short basic interaction |
+| `0002-basic-conversation.yaml` | 336.6M parameters | 12.12B | First validated basic conversational model |
+| `0003-tool-assistant.yaml` | 336.6M parameters | 12.57B | Extend basic conversation with assistant-only response and tool-use training |
 
-`0000-canary.yaml` has been validated end to end on a single H200. The first
-babble experiment used `cl100k_base`, which spent 80% of its 47.9M parameters
-on token embeddings and failed its generation acceptance test. The replacement
-uses the GPT-2 `r50k_base` vocabulary and assigns about half of its similar total
-size to the transformer backbone. Its single-H200 validation completed in 69m
-50s: held-out loss improved from 4.7500 to 3.6145, the reloaded artifact measured
-3.6109, corpus exposure remained balanced, and generated prose avoided the
-previous repetition collapse.
+## Canary
 
-The first `0002-basic.yaml` run completed in 6h 46m on one H200 and improved
-held-out loss from 3.8348 to 3.0598, but generation remained prone to repeated
-phrase loops. The revised candidate keeps its 114.1M-parameter and 3.93B-token
-budget while adding 10% residual dropout, gentler optimization, a larger
-shuffle window, and a 25/50/25 percent Gutenberg/Wikimedia/PLOS mixture.
+`0000-canary.yaml` is deliberately too small to assess language quality. It
+exists to catch backend, checkpoint, evaluation, accounting, and inference
+regressions cheaply.
 
-`0003-intermediate.yaml` is an unvalidated 336.6M-parameter, 12.0B-token
-candidate. Its estimate of approximately 48 hours on one H200 is scaled from
-the measured basic run with additional allowance for its larger softmax,
-longer context, dropout, checkpointing, and evaluation. Actual runtime remains
-authoritative. An initial physical batch of 32 exhausted a 141 GB H200 while
-materializing the FP32 loss input. The corrected batch of 16 doubles optimizer
-steps to preserve the exact token budget, lowers peak memory substantially, and
-uses a correspondingly gentler learning rate.
+## Babble
 
-`0004-conversation.yaml` is an unvalidated two-stage candidate. Its 6.0B-token
-pretraining stage establishes a compact language base without Wikimedia talk
-pages; its 40.0M-token fine-tuning stage then combines 45,000 training examples
-from the reviewable OpenWALDO interaction contract with Dolly and two
-human-written OpenAssistant conversation corpora under a lower learning rate.
-It excludes assessed repetitive and boilerplate rows. Those exclusions
-are applied to schema-2 shards; WALDO warns and retains unassessed schema-1 rows
-while older corpora are rebuilt. WALDO currently applies causal loss to the
-complete formatted dialogue rather than masking user tokens. The compose
-declares the versioned
-`user-assistant-v1` interaction contract, so `waldo model chat` formats turns,
-preserves conversation history, and stops before a generated next-user turn.
+The original 49.9M-parameter babble run proved that the compact `r50k_base`
+tokenizer and a roughly 1B-token budget could produce coherent prose. It did
+not learn conversational behavior. The replacement is a new candidate, not a
+claim that the earlier measurements still apply.
 
-`0005-assistant.yaml` is a three-stage candidate. It reuses the
-12.0B-token intermediate base budget, devotes about 100M tokens to broad
-conversational adaptation with OASST1/2, Aya, and Dolly, then devotes about 16M
-tokens to the OpenWALDO interaction contract and HelpSteer2 responses rated 4
-for helpfulness, correctness, and coherence. All five HelpSteer2 ratings remain
-in canonical metadata. Complexity and verbosity are not quality gates. WALDO
-still uses causal dialogue tuning rather than a preference objective, so this
-stage must not be described as DPO, RLHF, or reward-model training.
+The candidate assigns more capacity to its transformer, expands context to
+1,024 tokens, and pretrains on weighted clean books, Wikimedia main content,
+and scientific prose. Every stage excludes rows assessed as repetitive or
+boilerplate. Two inexpensive assistant-response stages then teach human
+dialogue followed by the reviewed interaction contract and high-quality
+responses. Its `user-assistant-v1` declaration makes `waldo model chat` format
+and retain turns consistently.
 
-`0006-tool-assistant.yaml` is a standalone superset of 0005. Running it against
-the same managed model after 0005 completes skips corpus paths already recorded
-as trained and proceeds to the new assistant and tool stages; a new model runs
-all five stages. The last two stages apply loss only to assistant content. Tulu
-rows from the noncommercial no-robots subset and duplicate OASST1/Aya subsets
-are excluded by source label. Hermes teaches the textual call/result/final-answer
-pattern; WALDO's runtime remains responsible for actually executing tools.
+## Basic conversation
 
-The babble compose uses equal-exposure `causal-pretrain-balanced`. Later
-composes use `causal-pretrain-weighted`, which applies declared integer corpus
-weights while retaining deterministic shuffling, stratified evaluation, and
-exact consumed token accounting. This prevents a finite run from silently
-stopping before it reaches a declared source.
+`0002-basic-conversation.yaml` preserves the recipe that produced WALDO's
+first useful conversational result. It builds a 336.6M-parameter language
+base, performs broad dialogue adaptation with OASST1/2, Aya, and Dolly, and
+then applies the interaction contract and quality-gated HelpSteer2 data. Its
+successful result is intentionally described as basic conversation: it can
+follow the interaction form but should not be represented as a knowledgeable,
+reliable general assistant.
 
-Hardware remains a deployment decision. Use `waldo model forecast` to compare
-the compose against the accelerator catalog and locally observed calibration.
-WALDO selects the training backend from machine-local configuration; compose
-identity does not change when hardware changes.
+The recipe uses causal dialogue tuning because that is the exact validated
+sequence. Future experiments can compare assistant-response-only tuning
+without silently changing this reference.
 
-The canary uses `tiktoken/cl100k_base`; the compact babble experiment uses
-`tiktoken/r50k_base`. Both are portable offline subword tokenizers and use the
-causal-language-modeling objective. Add or promote further composes only after
-their budgets, accounting, saved artifacts, and observed behavior have been
-measured on a real training run.
+## Tool assistant
+
+`0003-tool-assistant.yaml` is a standalone superset of basic conversation. A
+new model runs the complete sequence. Running it against a compatible model
+that already completed the basic-conversation corpora skips those recorded
+corpus paths and proceeds to UltraChat, curated Tulu 3, and Hermes function
+calling. The final two stages apply loss only to assistant content. WALDO's
+runtime remains responsible for actually executing tools.
+
+Hardware is a deployment decision. Use `waldo model forecast` to compare a
+compose against the accelerator catalog and locally observed calibration.
+WALDO selects the backend from machine-local configuration; compose identity
+does not change with hardware.

@@ -1,15 +1,18 @@
-# Validated first language-model rung: produce coherent local continuations.
+# Candidate first useful model: learn coherent language, then basic interaction.
 kind: waldo-model-compose
 schema: 1
+interaction:
+  template: user-assistant-v1
 architecture:
   family: decoder-transformer
-  context_tokens: 512
+  context_tokens: 1024
   vocabulary_size: 50259
-  hidden_size: 512
-  intermediate_size: 1536
-  layers: 8
-  attention_heads: 8
+  hidden_size: 640
+  intermediate_size: 1792
+  layers: 10
+  attention_heads: 10
   key_value_heads: 2
+  dropout: 0.1
   tie_embeddings: true
   parameter_dtype: bfloat16
   tokenizer:
@@ -21,18 +24,90 @@ stages:
     objective: causal-language-modeling
     filter:
       main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
     corpora:
-      - core/books/gutenberg
-      - science/plos
+      - path: core/books/gutenberg
+        weight: 3
+      - path: core/common-pile/wikimedia
+        weight: 4
+      - path: science/plos
+        weight: 2
     parameters:
-      profile: causal-pretrain-balanced
-      steps: 32000
-      batch_size: 64
-      sequence_length: 512
-      learning_rate: 0.0003
+      profile: causal-pretrain-weighted
+      steps: 48000
+      batch_size: 32
+      sequence_length: 1024
+      learning_rate: 0.00025
       seed: 42
-      warmup_steps: 320
-      checkpoint_every: 3200
-      evaluate_every: 3200
+      weight_decay: 0.12
+      warmup_steps: 480
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 1073741824
+      checkpoint_every: 4800
+      evaluate_every: 4800
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216
+
+  - name: conversational-midtrain
+    type: fine-tuning
+    objective: assistant-response-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/oasst1
+        weight: 3
+      - path: post-train/sft/oasst2
+        weight: 4
+      - path: post-train/sft/dolly
+        weight: 2
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 3
+      steps: 1024
+      batch_size: 16
+      sequence_length: 1024
+      learning_rate: 0.000035
+      seed: 43
+      weight_decay: 0.06
+      warmup_steps: 51
+      shuffle_buffer_records: 16384
+      shuffle_buffer_bytes: 268435456
+      checkpoint_every: 256
+      evaluate_every: 256
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216
+
+  - name: post-train
+    type: fine-tuning
+    objective: assistant-response-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/interaction-contract-v1
+        weight: 5
+      - path: post-train/sft/helpsteer2
+        weight: 2
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 3
+      steps: 384
+      batch_size: 16
+      sequence_length: 1024
+      learning_rate: 0.000012
+      seed: 44
+      weight_decay: 0.04
+      warmup_steps: 38
+      shuffle_buffer_records: 8192
+      shuffle_buffer_bytes: 134217728
+      checkpoint_every: 96
+      evaluate_every: 96
       evaluation_max_records: 512
       evaluation_max_bytes: 16777216

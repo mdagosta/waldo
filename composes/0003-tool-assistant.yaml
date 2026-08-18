@@ -1,4 +1,4 @@
-# Sixth rung: build a broad language base, adapt it to dialogue, then teach the reviewed interaction contract.
+# Extend the basic-conversation model with assistant-response and tool-use SFT.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -102,16 +102,80 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       epochs: 3
-      steps: 962
+      steps: 3052
       batch_size: 8
       sequence_length: 2048
       learning_rate: 0.000015
       seed: 44
       weight_decay: 0.05
-      warmup_steps: 96
+      warmup_steps: 153
       shuffle_buffer_records: 16384
       shuffle_buffer_bytes: 268435456
-      checkpoint_every: 160
-      evaluate_every: 160
+      checkpoint_every: 508
+      evaluate_every: 508
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
+
+  - name: assistant-sft-v2
+    type: fine-tuning
+    objective: assistant-response-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/ultrachat-200k
+        weight: 5
+      - path: post-train/sft/tulu3
+        weight: 3
+        filter:
+          sources:
+            exclude:
+              - ai2-adapt-dev/no_robots_converted
+              - ai2-adapt-dev/oasst1_converted
+              - ai2-adapt-dev/tulu_v3.9_aya_100k
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 2
+      steps: 24414
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.00001
+      seed: 45
+      weight_decay: 0.04
+      warmup_steps: 610
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 1073741824
+      checkpoint_every: 3051
+      evaluate_every: 3051
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
+  - name: tool-sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/hermes-function-calling
+        weight: 1
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 4
+      steps: 1221
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.000008
+      seed: 46
+      weight_decay: 0.03
+      warmup_steps: 61
+      shuffle_buffer_records: 8192
+      shuffle_buffer_bytes: 268435456
+      checkpoint_every: 305
+      evaluate_every: 305
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216

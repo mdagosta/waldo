@@ -122,8 +122,8 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 7 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic.yaml" || files[3] != "0003-intermediate.yaml" || files[4] != "0004-conversation.yaml" || files[5] != "0005-assistant.yaml" || files[6] != "0006-tool-assistant.yaml" {
-		t.Fatalf("reference composes = %v, want canary through tool assistant", files)
+	if len(files) != 4 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-basic-conversation.yaml" || files[3] != "0003-tool-assistant.yaml" {
+		t.Fatalf("reference composes = %v, want canary, babble, basic conversation, and tool assistant", files)
 	}
 	compose, _, err := model.LoadCompose("0000-canary.yaml")
 	if err != nil {
@@ -145,7 +145,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 }
 
 func TestToolAssistantAddsMaskedConversationAndToolStages(t *testing.T) {
-	compose, _, err := model.LoadCompose("0006-tool-assistant.yaml")
+	compose, _, err := model.LoadCompose("0003-tool-assistant.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,150 +164,68 @@ func TestToolAssistantAddsMaskedConversationAndToolStages(t *testing.T) {
 	}
 }
 
-func TestAssistantHasExplicitPreMidAndPostTraining(t *testing.T) {
-	compose, _, err := model.LoadCompose("0005-assistant.yaml")
+func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
+	compose, _, err := model.LoadCompose("0002-basic-conversation.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(compose.Stages) != 3 || compose.Stages[0].Name != "pretrain" || compose.Stages[1].Name != "conversational-midtrain" || compose.Stages[2].Name != "post-train" {
-		t.Fatalf("assistant stages = %+v", compose.Stages)
+		t.Fatalf("basic conversation stages = %+v", compose.Stages)
 	}
 	for _, stage := range compose.Stages {
 		if stage.Filter == nil || stage.Filter.MainContent == nil || !*stage.Filter.MainContent || stage.Filter.Exclude == nil || stage.Filter.Exclude.RepetitiveContent == nil || stage.Filter.Exclude.BoilerplateContent == nil {
-			t.Fatalf("assistant stage %s quality filter = %+v", stage.Name, stage.Filter)
+			t.Fatalf("basic conversation stage %s quality filter = %+v", stage.Name, stage.Filter)
 		}
 	}
 	if compose.Stages[1].Corpora[0].Path != "post-train/sft/oasst1" || compose.Stages[1].Corpora[1].Path != "post-train/sft/oasst2" {
-		t.Fatalf("assistant conversational corpora = %+v", compose.Stages[1].Corpora)
+		t.Fatalf("basic conversation conversational corpora = %+v", compose.Stages[1].Corpora)
 	}
 	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
-		t.Fatalf("assistant post-training corpora = %+v", compose.Stages[2].Corpora)
+		t.Fatalf("basic conversation post-training corpora = %+v", compose.Stages[2].Corpora)
 	}
 	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {
-		t.Fatalf("assistant learning rates do not decay by phase: %+v", compose.Stages)
+		t.Fatalf("basic conversation learning rates do not decay by phase: %+v", compose.Stages)
 	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 12115738624 {
-		t.Fatalf("assistant forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+		t.Fatalf("basic conversation forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 
-func TestConversationHasOrderedPretrainingAndInstructionTuning(t *testing.T) {
-	compose, _, err := model.LoadCompose("0004-conversation.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(compose.Stages) != 2 || compose.Stages[0].Type != "pre-training" || compose.Stages[1].Type != "fine-tuning" {
-		t.Fatalf("conversation stages = %+v", compose.Stages)
-	}
-	if compose.Stages[0].Filter == nil || compose.Stages[0].Filter.MainContent == nil || !*compose.Stages[0].Filter.MainContent {
-		t.Fatalf("conversation pretraining does not require main content: %+v", compose.Stages[0].Filter)
-	}
-	for _, stage := range compose.Stages {
-		if stage.Filter == nil || stage.Filter.Exclude == nil || stage.Filter.Exclude.RepetitiveContent == nil || stage.Filter.Exclude.BoilerplateContent == nil {
-			t.Fatalf("conversation stage %s does not declare content-quality exclusions: %+v", stage.Name, stage.Filter)
-		}
-	}
-	forecast, err := model.ForecastCompose(compose)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if forecast.ApproximateParameters != 139287552 || forecast.PlannedTokens != 6039961600 {
-		t.Fatalf("conversation forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
-	}
-	if compose.Stages[1].Parameters.LearningRate >= compose.Stages[0].Parameters.LearningRate || compose.Stages[1].Parameters.Epochs != 5 {
-		t.Fatalf("conversation tuning controls = %+v", compose.Stages[1].Parameters)
-	}
-	wantCorpora := map[string]uint64{
-		"post-train/sft/interaction-contract": 5,
-		"post-train/sft/dolly":                2,
-		"post-train/sft/oasst1":               3,
-		"post-train/sft/oasst2":               4,
-	}
-	if len(compose.Stages[1].Corpora) != len(wantCorpora) {
-		t.Fatalf("conversation tuning corpora = %+v", compose.Stages[1].Corpora)
-	}
-	for _, corpus := range compose.Stages[1].Corpora {
-		if corpus.Weight == nil || wantCorpora[corpus.Path] != *corpus.Weight {
-			t.Fatalf("conversation tuning corpus = %+v", corpus)
-		}
-	}
-}
-
-func TestBasicHasTenHourScalingBudget(t *testing.T) {
-	compose, _, err := model.LoadCompose("0002-basic.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 3 {
-		t.Fatalf("basic stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
-	}
-	if compose.Architecture.Tokenizer.Name != "tiktoken/r50k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-r50k-base" || compose.Architecture.VocabularySize != 50259 {
-		t.Fatalf("basic does not use the compact portable subword tokenizer: %+v", compose.Architecture.Tokenizer)
-	}
-	forecast, err := model.ForecastCompose(compose)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if forecast.ApproximateParameters != 114115584 || forecast.PlannedTokens != 3932160000 {
-		t.Fatalf("basic forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
-	}
-	if compose.Architecture.Dropout != 0.1 || compose.Stages[0].Parameters.Profile != "causal-pretrain-weighted" || inlineWeightCount(compose.Stages[0]) != 3 || len(compose.Stages[0].Parameters.CorpusWeights) != 0 {
-		t.Fatalf("basic tuning controls are not pinned: architecture=%+v parameters=%+v", compose.Architecture, compose.Stages[0].Parameters)
-	}
-}
-
-func TestIntermediateHasTwoDayScalingBudget(t *testing.T) {
-	compose, _, err := model.LoadCompose("0003-intermediate.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 4 || compose.Architecture.Dropout != 0.1 {
-		t.Fatalf("intermediate architecture/stage is incomplete: %+v", compose)
-	}
-	forecast, err := model.ForecastCompose(compose)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 {
-		t.Fatalf("intermediate forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
-	}
-	parameters := compose.Stages[0].Parameters
-	if parameters.BatchSize != 16 || parameters.Steps != 366210 || parameters.SequenceLength != 2048 {
-		t.Fatalf("intermediate memory-safe training shape = %+v", parameters)
-	}
-}
-
-func inlineWeightCount(stage model.Stage) int {
-	count := 0
-	for _, selection := range stage.Corpora {
-		if selection.Weight != nil {
-			count++
-		}
-	}
-	return count
-}
-
-func TestValidatedBabbleHasMeasuredScalingBudget(t *testing.T) {
+func TestBabbleUsesCleanPretrainingAndLightConversationTuning(t *testing.T) {
 	compose, _, err := model.LoadCompose("0001-babble.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(compose.Stages) != 1 || len(compose.Stages[0].Corpora) != 2 {
-		t.Fatalf("babble stages/corpora = %d/%d", len(compose.Stages), len(compose.Stages[0].Corpora))
+	if len(compose.Stages) != 3 || compose.Stages[0].Type != "pre-training" || compose.Stages[1].Objective != "assistant-response-modeling" || compose.Stages[2].Objective != "assistant-response-modeling" {
+		t.Fatalf("babble stages = %+v", compose.Stages)
 	}
-	if compose.Architecture.Tokenizer.Name != "tiktoken/r50k_base" || compose.Architecture.Tokenizer.Revision != "tiktoken-r50k-base" || compose.Architecture.VocabularySize != 50259 {
-		t.Fatalf("babble does not use the portable subword tokenizer: %+v", compose.Architecture.Tokenizer)
+	if compose.Interaction.Template != model.InteractionUserAssistantV1 {
+		t.Fatalf("babble interaction = %+v", compose.Interaction)
+	}
+	for _, stage := range compose.Stages {
+		if stage.Filter == nil || stage.Filter.MainContent == nil || !*stage.Filter.MainContent || stage.Filter.Exclude == nil || stage.Filter.Exclude.RepetitiveContent == nil || stage.Filter.Exclude.BoilerplateContent == nil {
+			t.Fatalf("babble stage %s quality filter = %+v", stage.Name, stage.Filter)
+		}
+	}
+	if compose.Architecture.ContextTokens != 1024 || compose.Architecture.Dropout != 0.1 || compose.Architecture.Tokenizer.Name != "tiktoken/r50k_base" || compose.Architecture.VocabularySize != 50259 {
+		t.Fatalf("babble architecture = %+v", compose.Architecture)
 	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 49858560 || forecast.PlannedTokens != 1048576000 {
+	if forecast.ApproximateParameters != 76416000 || forecast.PlannedTokens != 1595932672 {
 		t.Fatalf("babble forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	}
+	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {
+		t.Fatalf("babble learning rates do not decay by phase: %+v", compose.Stages)
+	}
+	if compose.Stages[2].Corpora[0].Path != "post-train/sft/interaction-contract-v1" || compose.Stages[2].Corpora[1].Path != "post-train/sft/helpsteer2" {
+		t.Fatalf("babble post-training corpora = %+v", compose.Stages[2].Corpora)
 	}
 }
 

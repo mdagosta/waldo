@@ -1,4 +1,4 @@
-# Fifth rung: learn basic user/assistant interaction after a clean language base.
+# First validated conversational model: broad language, dialogue adaptation, and reviewed interaction tuning.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -7,10 +7,10 @@ architecture:
   family: decoder-transformer
   context_tokens: 2048
   vocabulary_size: 50259
-  hidden_size: 768
-  intermediate_size: 2048
-  layers: 16
-  attention_heads: 12
+  hidden_size: 1152
+  intermediate_size: 3072
+  layers: 20
+  attention_heads: 16
   key_value_heads: 4
   dropout: 0.1
   tie_embeddings: true
@@ -30,19 +30,21 @@ stages:
     corpora:
       - path: core/books/gutenberg
         weight: 3
-      - path: science/plos
+      - path: core/common-pile/wikimedia
         weight: 4
       - path: government/regulations
         weight: 1
+      - path: science/plos
+        weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      steps: 183105
+      steps: 366210
       batch_size: 16
       sequence_length: 2048
-      learning_rate: 0.00018
+      learning_rate: 0.00013
       seed: 42
-      weight_decay: 0.12
-      warmup_steps: 1831
+      weight_decay: 0.15
+      warmup_steps: 3662
       shuffle_buffer_records: 65536
       shuffle_buffer_bytes: 2147483648
       checkpoint_every: 18310
@@ -50,7 +52,7 @@ stages:
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
 
-  - name: instruction-tune
+  - name: conversational-midtrain
     type: fine-tuning
     objective: causal-language-modeling
     filter:
@@ -59,27 +61,57 @@ stages:
         repetitive_content: true
         boilerplate_content: true
     corpora:
-      - path: post-train/sft/interaction-contract
-        weight: 5
-      - path: post-train/sft/dolly
-        weight: 2
       - path: post-train/sft/oasst1
         weight: 3
       - path: post-train/sft/oasst2
-        weight: 4
+        weight: 5
+      - path: post-train/sft/aya
+        weight: 3
+      - path: post-train/sft/dolly
+        weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      epochs: 5
-      steps: 1220
-      batch_size: 16
+      epochs: 3
+      steps: 6104
+      batch_size: 8
       sequence_length: 2048
-      learning_rate: 0.00003
+      learning_rate: 0.00004
       seed: 43
+      weight_decay: 0.08
+      warmup_steps: 305
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 536870912
+      checkpoint_every: 1017
+      evaluate_every: 1017
+      evaluation_max_records: 1024
+      evaluation_max_bytes: 33554432
+
+  - name: post-train
+    type: fine-tuning
+    objective: causal-language-modeling
+    filter:
+      main_content: true
+      exclude:
+        repetitive_content: true
+        boilerplate_content: true
+    corpora:
+      - path: post-train/sft/interaction-contract-v1
+        weight: 8
+      - path: post-train/sft/helpsteer2
+        weight: 3
+    parameters:
+      profile: causal-pretrain-weighted
+      epochs: 3
+      steps: 962
+      batch_size: 8
+      sequence_length: 2048
+      learning_rate: 0.000015
+      seed: 44
       weight_decay: 0.05
-      warmup_steps: 61
+      warmup_steps: 96
       shuffle_buffer_records: 16384
       shuffle_buffer_bytes: 268435456
-      checkpoint_every: 244
-      evaluate_every: 244
+      checkpoint_every: 160
+      evaluate_every: 160
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
