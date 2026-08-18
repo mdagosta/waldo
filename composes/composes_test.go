@@ -125,8 +125,8 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 4 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-conversation.yaml" || files[3] != "0003-tool-assistant.yaml" {
-		t.Fatalf("reference composes = %v, want canary, babble, basic conversation, and tool assistant", files)
+	if len(files) != 4 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-conversation.yaml" || files[3] != "0003-technology.yaml" {
+		t.Fatalf("reference composes = %v, want canary, babble, basic conversation, and technology", files)
 	}
 	compose, _, err := model.LoadCompose("0000-canary.yaml")
 	if err != nil {
@@ -147,32 +147,32 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	}
 }
 
-func TestToolAssistantAddsMaskedConversationAndToolStages(t *testing.T) {
-	compose, _, err := model.LoadCompose("0003-tool-assistant.yaml")
+func TestTechnologyComposeIncludesTechnicalSourcesAndAssistantTraining(t *testing.T) {
+	compose, _, err := model.LoadCompose("0003-technology.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(compose.Stages) != 5 || compose.Stages[3].Objective != "assistant-response-modeling" || compose.Stages[4].Objective != "assistant-response-modeling" {
-		t.Fatalf("tool assistant stages = %+v", compose.Stages)
+	if len(compose.Stages) != 4 || compose.Stages[3].Objective != "assistant-response-modeling" {
+		t.Fatalf("technology stages = %+v", compose.Stages)
 	}
-	if compose.Stages[3].Corpora[0].Path != "post-train/sft/ultrachat-200k" || compose.Stages[3].Corpora[1].Path != "post-train/sft/tulu3" || compose.Stages[4].Corpora[0].Path != "post-train/sft/hermes-function-calling" {
-		t.Fatalf("tool assistant corpora = %+v / %+v", compose.Stages[3].Corpora, compose.Stages[4].Corpora)
+	if compose.Stages[3].Corpora[0].Path != "post-train/sft/ultrachat-200k" || compose.Stages[3].Corpora[1].Path != "post-train/sft/tulu3" {
+		t.Fatalf("technology assistant corpora = %+v", compose.Stages[3].Corpora)
 	}
 	technologyCorpora := map[string]bool{}
 	for _, selection := range compose.Stages[0].Corpora {
 		technologyCorpora[selection.Path] = true
 	}
-	for _, path := range []string{"core/common-pile/stackexchange", "core/common-pile/python-enhancement-proposals/peps", "code/copyleft/linux-core", "code/permissive/linux-core", "code/cloud-native-core"} {
+	for _, path := range []string{"core/common-pile/stackexchange", "core/common-pile/python-enhancement-proposals/peps", "code/copyleft/linux-core", "code/permissive/linux-core", "code/cloud-native-core", "community/linux-kernel-mailing-list", "community/alpine-linux-mailing-list", "community/gcc-mailing-lists", "community/git-mailing-list", "community/glibc-mailing-lists", "community/qemu-devel-mailing-list"} {
 		if !technologyCorpora[path] {
-			t.Fatalf("tool assistant pretraining is missing %s", path)
+			t.Fatalf("technology pretraining is missing %s", path)
 		}
 	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 15999991808 || len(forecast.EpochDerivedStages) != 4 {
-		t.Fatalf("tool assistant forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 15999991808 || len(forecast.EpochDerivedStages) != 3 {
+		t.Fatalf("technology forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
 

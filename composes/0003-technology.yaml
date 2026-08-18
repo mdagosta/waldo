@@ -1,5 +1,5 @@
-# Build a technology-oriented assistant with broad technical pretraining,
-# assistant-response SFT, and tool-use SFT.
+# Build a conversational model grounded in technical prose, source code, and
+# public engineering discussions.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -42,6 +42,18 @@ stages:
       - path: code/permissive/linux-core
         weight: 1
       - path: code/cloud-native-core
+        weight: 1
+      - path: community/linux-kernel-mailing-list
+        weight: 1
+      - path: community/alpine-linux-mailing-list
+        weight: 1
+      - path: community/gcc-mailing-lists
+        weight: 1
+      - path: community/git-mailing-list
+        weight: 1
+      - path: community/glibc-mailing-lists
+        weight: 1
+      - path: community/qemu-devel-mailing-list
         weight: 1
       - path: science/plos
         weight: 1
@@ -157,30 +169,3 @@ stages:
       evaluate_every: 3051
       evaluation_max_records: 1024
       evaluation_max_bytes: 33554432
-
-  - name: tool-sft
-    type: fine-tuning
-    objective: assistant-response-modeling
-    filter:
-      main_content: true
-      exclude:
-        repetitive_content: true
-        boilerplate_content: true
-    corpora:
-      - path: post-train/sft/hermes-function-calling
-        weight: 1
-    parameters:
-      profile: causal-pretrain-weighted
-      epochs: 4
-      batch_size: 8
-      sequence_length: 2048
-      learning_rate: 0.000008
-      seed: 46
-      weight_decay: 0.03
-      warmup_steps: 61
-      shuffle_buffer_records: 8192
-      shuffle_buffer_bytes: 268435456
-      checkpoint_every: 305
-      evaluate_every: 305
-      evaluation_max_records: 512
-      evaluation_max_bytes: 16777216

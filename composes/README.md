@@ -17,8 +17,8 @@ waldo model train babble composes/0001-babble.yaml
 waldo model forecast composes/0002-conversation.yaml
 waldo model train conversation composes/0002-conversation.yaml
 
-waldo model forecast composes/0003-tool-assistant.yaml
-waldo model train tool-assistant composes/0003-tool-assistant.yaml
+waldo model forecast composes/0003-technology.yaml
+waldo model train technology composes/0003-technology.yaml
 ```
 
 | Compose | Architecture | Training budget | Purpose |
@@ -26,7 +26,7 @@ waldo model train tool-assistant composes/0003-tool-assistant.yaml
 | `0000-canary.yaml` | 13.6M parameters | 4.1M | Release-gate the training, artifact reload, accounting, and chat paths |
 | `0001-babble.yaml` | 76.4M parameters | 1.57B pretraining tokens + 2 epoch-driven stages | Candidate compact model with coherent language and short basic interaction |
 | `0002-conversation.yaml` | 336.6M parameters | 12.0B pretraining tokens + 2 epoch-driven stages | Candidate derived from the first successful conversational model |
-| `0003-tool-assistant.yaml` | 336.6M parameters | 16.0B pretraining tokens + 4 epoch-driven stages | Build a technology-oriented assistant with assistant-only response and tool-use training |
+| `0003-technology.yaml` | 336.6M parameters | 16.0B pretraining tokens + 3 epoch-driven stages | Build a conversational model grounded in technical prose, source, and engineering discussions |
 
 ## Canary
 
@@ -71,20 +71,22 @@ training budget. The recipe retains causal dialogue tuning so future
 assistant-response-only experiments do not silently change two variables at
 once.
 
-## Tool assistant
+## Technology
 
-`0003-tool-assistant.yaml` is a standalone technology-oriented assistant. Its
-16B-token base mixture emphasizes Stack Exchange questions and answers, Linux
-kernel and userland source, cloud-native infrastructure source, and Python
-technical specifications. Wikimedia, scientific prose, and books preserve
-explanatory breadth and general language quality. Noisy mailing-list and IRC
-archives are deliberately excluded from this reference mixture.
+`0003-technology.yaml` is a standalone technology-oriented conversational
+model. Its 16B-token base mixture emphasizes Stack Exchange questions and
+answers; Linux kernel, GNU/Linux, BSD, and cloud-native source; Python
+technical specifications; and public Linux, GCC, Git, glibc, and QEMU
+engineering mailing lists. Wikimedia, scientific prose, and books preserve
+explanatory breadth and general language quality. Mailing lists have lower
+weights than Stack Exchange because quoted replies and patch traffic are useful
+but noisier than curated question-and-answer material.
 
 A new model runs the complete sequence. Running it against a compatible model
 that already completed any selected corpora skips those recorded corpus paths.
-The later stages add broad conversation, UltraChat, curated Tulu 3, and Hermes
-function calling. The final two stages apply loss only to assistant content.
-WALDO's runtime remains responsible for actually executing tools.
+The later stages add broad conversation, UltraChat, and curated Tulu 3. The
+final stage applies loss only to assistant content. Tool-use training remains a
+future capability milestone rather than being implied by this compose's name.
 
 Hardware is a deployment decision. Use `waldo model forecast` to compare a
 compose against the accelerator catalog and locally observed calibration.
