@@ -87,9 +87,9 @@ func TestAdvisorDraftUpdatesAtomicallyAfterConfirmation(t *testing.T) {
 }
 
 func TestAdvisorReplyRendersMarkdown(t *testing.T) {
-	previousWidth := modelAdvisorWidth
-	modelAdvisorWidth = func() int { return 72 }
-	t.Cleanup(func() { modelAdvisorWidth = previousWidth })
+	previousWidth := terminalOutputWidth
+	terminalOutputWidth = func() int { return 72 }
+	t.Cleanup(func() { terminalOutputWidth = previousWidth })
 	var output bytes.Buffer
 	if err := renderAdvisorReply(&output, "### Architecture\n\n- 6 layers\n- 9.5M parameters"); err != nil {
 		t.Fatal(err)

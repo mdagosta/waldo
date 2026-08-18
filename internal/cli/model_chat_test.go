@@ -37,14 +37,14 @@ func TestParseModelChatSupportsOneShotGenerationOptions(t *testing.T) {
 	}
 }
 
-func TestOneShotChatStreamsSafeTerminalOutputAndReturnsJSON(t *testing.T) {
+func TestOneShotChatRendersSafeMarkdownAndReturnsJSON(t *testing.T) {
 	opened := inference.Opened{Description: inference.Description{Model: "foo", RunID: "run"}, Session: &chatSession{data: []byte{'A', 0x1b, 0xff}}}
 	options := inference.Options{MaxTokens: 3, Temperature: 0, TopP: 1}
 	var output bytes.Buffer
 	if err := runOneShotChat(Context{Execution: context.Background()}, opened, model.Interaction{}, "hello", options, &output); err != nil {
 		t.Fatal(err)
 	}
-	if output.String() != "A\\x1b\\xff\n" {
+	if !strings.Contains(output.String(), "A\\x1b\\xff") {
 		t.Fatalf("safe output = %q", output.String())
 	}
 	output.Reset()
@@ -54,6 +54,27 @@ func TestOneShotChatStreamsSafeTerminalOutputAndReturnsJSON(t *testing.T) {
 	for _, want := range []string{`"model": "foo"`, `"prompt": "hello"`, `"finish_reason": "max_tokens"`} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("JSON = %s", output.String())
+		}
+	}
+}
+
+func TestOneShotChatRendersMarkdownAtTerminalWidth(t *testing.T) {
+	previousWidth := terminalOutputWidth
+	terminalOutputWidth = func() int { return 60 }
+	t.Cleanup(func() { terminalOutputWidth = previousWidth })
+	markdown := "## Answer\n\n- first item\n- second item\n\n" + strings.Repeat("wrapped words ", 12)
+	opened := inference.Opened{Description: inference.Description{Model: "foo"}, Session: &chatSession{data: []byte(markdown)}}
+	var output bytes.Buffer
+	if err := runOneShotChat(Context{Execution: context.Background()}, opened, model.Interaction{}, "hello", inference.Options{}, &output); err != nil {
+		t.Fatal(err)
+	}
+	rendered := output.String()
+	if !strings.Contains(rendered, "## Answer") || !strings.Contains(rendered, "• first item") || !strings.Contains(rendered, "second item") {
+		t.Fatalf("Markdown was not rendered: %q", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if len([]rune(line)) > 60 {
+			t.Fatalf("rendered line exceeds width: %d: %q", len([]rune(line)), line)
 		}
 	}
 }

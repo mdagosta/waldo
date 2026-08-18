@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/glamour"
 	waldoai "github.com/openwaldo/waldo/internal/ai"
 	"github.com/openwaldo/waldo/internal/config"
 	waldoindex "github.com/openwaldo/waldo/internal/index"
@@ -34,16 +33,6 @@ import (
 
 var modelAdvisorInput io.Reader = os.Stdin
 var modelAdvisorTerminal = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
-var modelAdvisorWidth = func() int {
-	width, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || width < 60 {
-		return 88
-	}
-	if width > 120 {
-		return 120
-	}
-	return width
-}
 var modelAdvisorAsk = func(ctx context.Context, selection waldoai.Selection, prompt string) (string, error) {
 	return (waldoai.Client{}).Ask(ctx, selection, prompt)
 }
@@ -762,16 +751,7 @@ func renderAdvisorReply(output io.Writer, markdown string) error {
 }
 
 func renderAdvisorMarkdown(output io.Writer, title, markdown string) error {
-	renderer, err := glamour.NewTermRenderer(glamour.WithAutoStyle(), glamour.WithWordWrap(modelAdvisorWidth()))
-	if err != nil {
-		return fmt.Errorf("initialize advisor Markdown renderer: %w", err)
-	}
-	rendered, err := renderer.Render("## " + title + "\n\n" + strings.TrimSpace(markdown) + "\n")
-	if err != nil {
-		return fmt.Errorf("render advisor response: %w", err)
-	}
-	_, err = fmt.Fprint(output, rendered)
-	return err
+	return renderTerminalMarkdown(output, "## "+title+"\n\n"+strings.TrimSpace(markdown))
 }
 
 func advisorConfirmed(value string) bool {
