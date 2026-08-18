@@ -842,8 +842,7 @@ func compileParquetRecord(schema *parquet.Schema, profile InputProfile) (parquet
 		if path == "" {
 			continue
 		}
-		clean := strings.ReplaceAll(path, "[]", "")
-		leaf, ok := schema.Lookup(strings.Split(clean, ".")...)
+		leaf, ok := lookupParquetField(schema, path)
 		if !ok {
 			return parquetRecord{}, fmt.Errorf("mapped field %q is absent or non-scalar", path)
 		}
@@ -854,6 +853,54 @@ func compileParquetRecord(schema *parquet.Schema, profile InputProfile) (parquet
 		result.fields[path] = parquetField{path: path, column: leaf.ColumnIndex, repeated: repeated}
 	}
 	return result, nil
+}
+
+func lookupParquetField(schema *parquet.Schema, path string) (parquet.LeafColumn, bool) {
+	clean := strings.ReplaceAll(path, "[]", "")
+	if leaf, ok := schema.Lookup(strings.Split(clean, ".")...); ok {
+		return leaf, true
+	}
+	var match parquet.LeafColumn
+	found := false
+	for _, physical := range schema.Columns() {
+		if !parquetPathMatches(path, physical) {
+			continue
+		}
+		leaf, ok := schema.Lookup(physical...)
+		if !ok || found {
+			return parquet.LeafColumn{}, false
+		}
+		match, found = leaf, true
+	}
+	return match, found
+}
+
+func parquetPathMatches(logical string, physical []string) bool {
+	segments := strings.Split(logical, ".")
+	position := 0
+	for index, raw := range segments {
+		repeated := strings.HasSuffix(raw, "[]")
+		name := strings.TrimSuffix(raw, "[]")
+		if position >= len(physical) || physical[position] != name {
+			return false
+		}
+		position++
+		if repeated && index < len(segments)-1 {
+			for position < len(physical) && parquetListWrapper(physical[position]) {
+				position++
+			}
+		}
+	}
+	return position == len(physical)
+}
+
+func parquetListWrapper(name string) bool {
+	switch name {
+	case "list", "element", "item", "array", "array_element", "bag":
+		return true
+	default:
+		return false
+	}
 }
 
 func (record parquetRecord) accessor(row parquet.Row) recordAccessor {

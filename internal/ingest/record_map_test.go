@@ -336,6 +336,37 @@ func TestChatMessagesPreservesRolesAndToolResults(t *testing.T) {
 	}
 }
 
+type chatParquetMessage struct {
+	Role    string `parquet:"role"`
+	Content string `parquet:"content"`
+}
+
+type chatParquetRow struct {
+	ID       string               `parquet:"id"`
+	Messages []chatParquetMessage `parquet:"messages,list"`
+}
+
+func TestChatMessagesReadsNestedParquetLists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat.parquet")
+	if err := parquet.WriteFile(path, []chatParquetRow{{
+		ID: "chat-1",
+		Messages: []chatParquetMessage{
+			{Role: "user", Content: "Question"},
+			{Role: "assistant", Content: "Answer"},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type: ProfileChatMessages, Fields: ProfileFields{ID: "id"},
+		Messages: ChatMessagesMapping{Role: "messages[].role", Content: "messages[].content"},
+	}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	if len(rows) != 1 || rows[0].Text != "User: Question\n\nAssistant: Answer" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
 func TestDialoguePairExplicitlySkipsAndCountsEmptyRequiredFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dialogue.jsonl")
 	contents := "{\"prompt\":\"Question\",\"reply\":\"Answer\"}\n" +
