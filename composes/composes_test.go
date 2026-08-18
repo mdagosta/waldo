@@ -158,11 +158,20 @@ func TestToolAssistantAddsMaskedConversationAndToolStages(t *testing.T) {
 	if compose.Stages[3].Corpora[0].Path != "post-train/sft/ultrachat-200k" || compose.Stages[3].Corpora[1].Path != "post-train/sft/tulu3" || compose.Stages[4].Corpora[0].Path != "post-train/sft/hermes-function-calling" {
 		t.Fatalf("tool assistant corpora = %+v / %+v", compose.Stages[3].Corpora, compose.Stages[4].Corpora)
 	}
+	technologyCorpora := map[string]bool{}
+	for _, selection := range compose.Stages[0].Corpora {
+		technologyCorpora[selection.Path] = true
+	}
+	for _, path := range []string{"core/common-pile/stackexchange", "core/common-pile/python-enhancement-proposals/peps", "code/copyleft/linux-core", "code/permissive/linux-core", "code/cloud-native-core"} {
+		if !technologyCorpora[path] {
+			t.Fatalf("tool assistant pretraining is missing %s", path)
+		}
+	}
 	forecast, err := model.ForecastCompose(compose)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || len(forecast.EpochDerivedStages) != 4 {
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 15999991808 || len(forecast.EpochDerivedStages) != 4 {
 		t.Fatalf("tool assistant forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }

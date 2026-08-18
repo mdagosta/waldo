@@ -26,7 +26,7 @@ waldo model train tool-assistant composes/0003-tool-assistant.yaml
 | `0000-canary.yaml` | 13.6M parameters | 4.1M | Release-gate the training, artifact reload, accounting, and chat paths |
 | `0001-babble.yaml` | 76.4M parameters | 1.57B pretraining tokens + 2 epoch-driven stages | Candidate compact model with coherent language and short basic interaction |
 | `0002-conversation.yaml` | 336.6M parameters | 12.0B pretraining tokens + 2 epoch-driven stages | Candidate derived from the first successful conversational model |
-| `0003-tool-assistant.yaml` | 336.6M parameters | 12.0B pretraining tokens + 4 epoch-driven stages | Extend conversation with assistant-only response and tool-use training |
+| `0003-tool-assistant.yaml` | 336.6M parameters | 16.0B pretraining tokens + 4 epoch-driven stages | Build a technology-oriented assistant with assistant-only response and tool-use training |
 
 ## Canary
 
@@ -73,12 +73,18 @@ once.
 
 ## Tool assistant
 
-`0003-tool-assistant.yaml` is a standalone superset of conversation. A
-new model runs the complete sequence. Running it against a compatible model
-that already completed the conversation corpora skips those recorded
-corpus paths and proceeds to UltraChat, curated Tulu 3, and Hermes function
-calling. The final two stages apply loss only to assistant content. WALDO's
-runtime remains responsible for actually executing tools.
+`0003-tool-assistant.yaml` is a standalone technology-oriented assistant. Its
+16B-token base mixture emphasizes Stack Exchange questions and answers, Linux
+kernel and userland source, cloud-native infrastructure source, and Python
+technical specifications. Wikimedia, scientific prose, and books preserve
+explanatory breadth and general language quality. Noisy mailing-list and IRC
+archives are deliberately excluded from this reference mixture.
+
+A new model runs the complete sequence. Running it against a compatible model
+that already completed any selected corpora skips those recorded corpus paths.
+The later stages add broad conversation, UltraChat, curated Tulu 3, and Hermes
+function calling. The final two stages apply loss only to assistant content.
+WALDO's runtime remains responsible for actually executing tools.
 
 Hardware is a deployment decision. Use `waldo model forecast` to compare a
 compose against the accelerator catalog and locally observed calibration.
