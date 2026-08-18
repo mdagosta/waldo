@@ -289,6 +289,10 @@ Relative corpus values are logical paths beneath the selected WALDO index.
 Absolute paths may identify another index checkout. Values select indexed
 corpora, never raw source directories or exported corpus files.
 
+Before downloading any shard, `model train` refreshes the selected index and
+checks every corpus path in every stage. A failed sanity check reports all
+unavailable paths with their stage names and performs no shard materialization.
+
 Stages execute in listed order. Each completed stage produces the current
 weights used to initialize the next stage. If a stage fails, later stages do
 not run. Repeating the exact command after interruption resumes the durable

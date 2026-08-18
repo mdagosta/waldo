@@ -28,6 +28,7 @@ import (
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/disclosure"
+	waldoindex "github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/inference"
 	"github.com/openwaldo/waldo/internal/lookaside"
 	"github.com/openwaldo/waldo/internal/model"
@@ -855,6 +856,10 @@ func runModelComposeTraining(context Context, name, path string, cluster trainin
 		}
 	}
 	builder.ComposeName = filepath.Base(composePath)
+	corpusTargets, err := sanityCheckComposeCorpora(context.Execution, compose, stderr)
+	if err != nil {
+		return err
+	}
 	objectives := make([]string, 0, len(compose.Stages))
 	for _, stage := range compose.Stages {
 		if !slices.Contains(objectives, stage.Objective) {
@@ -870,7 +875,7 @@ func runModelComposeTraining(context Context, name, path string, cluster trainin
 	}
 	prepared := make([]model.PreparedStage, 0, len(compose.Stages))
 	for _, stage := range compose.Stages {
-		resolved, err := prepareModelStage(context, stage, cache, stderr, boolOption(context, "audit"))
+		resolved, err := prepareModelStage(context, stage, corpusTargets[stage.Name], cache, stderr, boolOption(context, "audit"))
 		if err != nil {
 			return err
 		}
@@ -890,6 +895,58 @@ func runModelComposeTraining(context Context, name, path string, cluster trainin
 		}{Compose: composePath, Result: result})
 	}
 	return writeModelMutationResult(context, stdout, result, "trained")
+}
+
+func sanityCheckComposeCorpora(execution context.Context, compose model.Compose, progress io.Writer) (map[string][]waldoindex.Target, error) {
+	rootTargets, err := resolveIndexArgumentsWithWarningPolicy(execution, []string{""}, progress, true)
+	if err != nil {
+		return nil, fmt.Errorf("compose corpus sanity check: resolve selected index: %w", err)
+	}
+	configuredRoot := rootTargets[0].Root
+	references := 0
+	for _, stage := range compose.Stages {
+		references += len(stage.Corpora)
+	}
+	fmt.Fprintf(progress, "preflight               checking %s corpus paths against index %s\n", humanInteger(int64(references)), configuredRoot)
+
+	resolved := make(map[string][]waldoindex.Target, len(compose.Stages))
+	refreshedRoots := map[string]bool{configuredRoot: true}
+	var unavailable []string
+	for _, stage := range compose.Stages {
+		stageRoot := configuredRoot
+		for index, selection := range stage.Corpora {
+			var target waldoindex.Target
+			if index == 0 {
+				target, err = waldoindex.ResolveConfigured(configuredRoot, selection.Path)
+			} else {
+				target, err = waldoindex.Resolve(stageRoot, selection.Path)
+			}
+			if err != nil {
+				unavailable = append(unavailable, fmt.Sprintf("  - stage %s: %s", stage.Name, selection.Path))
+				continue
+			}
+			if index == 0 {
+				if !refreshedRoots[target.Root] {
+					if err := refreshIndexCheckout(execution, target.Root, progress); err != nil {
+						return nil, fmt.Errorf("compose corpus sanity check: refresh index checkout %s: %w", target.Root, err)
+					}
+					refreshedRoots[target.Root] = true
+					target, err = waldoindex.ResolveConfigured(configuredRoot, selection.Path)
+					if err != nil {
+						unavailable = append(unavailable, fmt.Sprintf("  - stage %s: %s", stage.Name, selection.Path))
+						continue
+					}
+				}
+				stageRoot = target.Root
+			}
+			resolved[stage.Name] = append(resolved[stage.Name], target)
+		}
+	}
+	if len(unavailable) > 0 {
+		return nil, fmt.Errorf("compose corpus sanity check failed before shard download\nselected index: %s\nunavailable corpus paths:\n%s\nrun `waldo index pull`; if the paths remain unavailable, publish the required index entries or correct the compose", configuredRoot, strings.Join(unavailable, "\n"))
+	}
+	fmt.Fprintf(progress, "preflight               passed; all %s corpus paths are available\n", humanInteger(int64(references)))
+	return resolved, nil
 }
 
 func runModelContinue(context Context, args []string, stdout, stderr io.Writer) error {
@@ -1498,11 +1555,7 @@ func prepareDefaultTrainingStage(context Context, inspection model.Inspection, p
 	return model.PrepareStage(prepared.Stage, prepared.BOM, prepared.Inputs)
 }
 
-func prepareModelStage(context Context, stage model.Stage, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {
-	targets, err := resolveIndexArguments(context.Execution, model.CorpusPaths(stage.Corpora), progress)
-	if err != nil {
-		return model.PreparedStage{}, fmt.Errorf("stage %s: %w", stage.Name, err)
-	}
+func prepareModelStage(context Context, stage model.Stage, targets []waldoindex.Target, cache *lookaside.Cache, progress io.Writer, audit bool) (model.PreparedStage, error) {
 	policy, err := corpus.NewLicensePolicy(nil, nil)
 	if err != nil {
 		return model.PreparedStage{}, err

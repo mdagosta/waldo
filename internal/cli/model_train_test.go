@@ -7,11 +7,13 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
@@ -57,6 +59,37 @@ func TestTrainingComposeInputRequiresOneIdentifiedCompose(t *testing.T) {
 	}
 	if _, err := trainingComposeInput([]string{compose, "core/books"}); err == nil || !strings.Contains(err.Error(), "only training input") {
 		t.Fatalf("mixed compose inputs error = %v", err)
+	}
+}
+
+func TestComposeCorpusSanityCheckReportsAllMissingPathsBeforeMaterialization(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "index.yaml"), []byte("kind: index\nschema: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "present"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Index: root}); err != nil {
+		t.Fatal(err)
+	}
+	compose := model.Compose{Stages: []model.Stage{
+		{Name: "pretrain", Corpora: model.NewCorpusSelections([]string{"present", "missing/base"})},
+		{Name: "post-train", Corpora: model.NewCorpusSelections([]string{"missing/sft"})},
+	}}
+	var progress bytes.Buffer
+	_, err := sanityCheckComposeCorpora(context.Background(), compose, &progress)
+	if err == nil {
+		t.Fatal("missing compose corpora passed sanity check")
+	}
+	for _, want := range []string{"failed before shard download", "stage pretrain: missing/base", "stage post-train: missing/sft", "run `waldo index pull`"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("sanity error = %q, missing %q", err, want)
+		}
+	}
+	if !strings.Contains(progress.String(), "checking 3 corpus paths against index "+root) || strings.Contains(progress.String(), "materialize") {
+		t.Fatalf("sanity progress = %q", progress.String())
 	}
 }
 
