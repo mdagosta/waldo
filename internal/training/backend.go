@@ -79,7 +79,8 @@ func (function ResolverFunc) Resolve(ctx context.Context, request ResolveRequest
 type Parameters struct {
 	Profile              string            `json:"profile,omitempty" yaml:"profile,omitempty"`
 	Epochs               int64             `json:"epochs,omitempty" yaml:"epochs,omitempty"`
-	Steps                int64             `json:"steps" yaml:"steps"`
+	Tokens               int64             `json:"tokens,omitempty" yaml:"tokens,omitempty"`
+	Steps                int64             `json:"steps,omitempty" yaml:"steps,omitempty"`
 	BatchSize            int64             `json:"batch_size" yaml:"batch_size"`
 	SequenceLength       int64             `json:"sequence_length" yaml:"sequence_length"`
 	LearningRate         float64           `json:"learning_rate" yaml:"learning_rate"`
@@ -100,6 +101,7 @@ type ResolvedParameters struct {
 	Profile              string            `json:"profile"`
 	ProfileSchema        int               `json:"profile_schema"`
 	Epochs               int64             `json:"epochs,omitempty"`
+	RequestedTokens      int64             `json:"requested_tokens,omitempty"`
 	Steps                int64             `json:"steps"`
 	BatchSize            int64             `json:"batch_size"`
 	SequenceLength       int64             `json:"sequence_length"`

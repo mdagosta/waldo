@@ -269,7 +269,7 @@ stages:
       - core/common-pile/foodista
     parameters:
       profile: causal-pretrain-shuffled
-      steps: 10000
+      tokens: 20480000
       batch_size: 2
       sequence_length: 1024
       learning_rate: 0.0003

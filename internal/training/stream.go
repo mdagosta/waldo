@@ -418,6 +418,38 @@ func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, reque
 	if overflow {
 		return 0, false, fmt.Errorf("requested training sequence count overflows int64")
 	}
+	sequences, sufficient, err := partition.trainingSequenceCapacity(ctx, requiredSequences)
+	if err != nil {
+		return 0, false, err
+	}
+	if sufficient {
+		return requested, true, nil
+	}
+	steps := sequences / partition.parameters.BatchSize
+	if sequences%partition.parameters.BatchSize != 0 {
+		steps++
+	}
+	return steps, steps >= requested, nil
+}
+
+// TrainingSteps scans the finite epoch stream and returns its exact optimizer
+// step count after continuous packing and partial-batch flushing.
+func (partition RecordPartition) TrainingSteps(ctx context.Context) (int64, error) {
+	sequences, _, err := partition.trainingSequenceCapacity(ctx, 0)
+	if err != nil {
+		return 0, err
+	}
+	steps := sequences / partition.parameters.BatchSize
+	if sequences%partition.parameters.BatchSize != 0 {
+		steps++
+	}
+	if steps <= 0 {
+		return 0, fmt.Errorf("held-out partition leaves no usable training steps")
+	}
+	return steps, nil
+}
+
+func (partition RecordPartition) trainingSequenceCapacity(ctx context.Context, requiredSequences int64) (int64, bool, error) {
 	source, err := partition.TrainingRecords()
 	if err != nil {
 		return 0, false, err
@@ -429,7 +461,7 @@ func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, reque
 	addSequence := func(targets []bool) error {
 		if slices.Contains(targets, true) {
 			sequences++
-			if sequences >= requiredSequences {
+			if requiredSequences > 0 && sequences >= requiredSequences {
 				return reached
 			}
 		}
@@ -465,21 +497,17 @@ func (partition RecordPartition) TrainingStepCapacity(ctx context.Context, reque
 		return nil
 	})
 	if errors.Is(err, reached) {
-		return requested, true, nil
+		return sequences, true, nil
 	}
 	if err != nil {
 		return 0, false, err
 	}
 	if buffered > 1 {
 		if err := addSequence(masks[1:]); errors.Is(err, reached) {
-			return requested, true, nil
+			return sequences, true, nil
 		}
 	}
-	steps := sequences / partition.parameters.BatchSize
-	if sequences%partition.parameters.BatchSize != 0 {
-		steps++
-	}
-	return steps, steps >= requested, nil
+	return sequences, false, nil
 }
 
 type filteredRecordSource struct {

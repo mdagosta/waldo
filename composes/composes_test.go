@@ -51,7 +51,7 @@ func TestEveryReferenceComposeSettingResolvesIntoTrainingContract(t *testing.T) 
 			}
 			for _, stage := range compose.Stages {
 				raw := stage.Parameters
-				resolved, err := stage.ResolveParameters()
+				resolved, err := stage.ResolvePlanningParameters()
 				if err != nil {
 					t.Fatalf("stage %s: %v", stage.Name, err)
 				}
@@ -63,10 +63,13 @@ func TestEveryReferenceComposeSettingResolvesIntoTrainingContract(t *testing.T) 
 				if epochs == 0 {
 					epochs = 1
 				}
-				if resolved.Profile != profile || resolved.Epochs != epochs || resolved.Steps != raw.Steps || resolved.BatchSize != raw.BatchSize || resolved.SequenceLength != raw.SequenceLength || resolved.LearningRate != raw.LearningRate || resolved.Seed != raw.Seed {
+				if resolved.Profile != profile || resolved.Epochs != epochs || resolved.BatchSize != raw.BatchSize || resolved.SequenceLength != raw.SequenceLength || resolved.LearningRate != raw.LearningRate || resolved.Seed != raw.Seed {
 					t.Fatalf("stage %s direct settings were not preserved: raw=%+v resolved=%+v", stage.Name, raw, resolved)
 				}
-				if resolved.PlannedTokenCapacity != raw.Steps*raw.BatchSize*raw.SequenceLength {
+				if raw.Tokens > 0 && (resolved.RequestedTokens != raw.Tokens || resolved.PlannedTokenCapacity < raw.Tokens || resolved.PlannedTokenCapacity-raw.Tokens >= raw.BatchSize*raw.SequenceLength) {
+					t.Fatalf("stage %s token budget = %d requested/%d planned", stage.Name, resolved.RequestedTokens, resolved.PlannedTokenCapacity)
+				}
+				if raw.Steps > 0 && resolved.PlannedTokenCapacity != raw.Steps*raw.BatchSize*raw.SequenceLength {
 					t.Fatalf("stage %s planned capacity = %d", stage.Name, resolved.PlannedTokenCapacity)
 				}
 				assertOptionalFloat(t, stage.Name+" weight_decay", raw.WeightDecay, resolved.Optimizer.WeightDecay)
@@ -159,7 +162,7 @@ func TestToolAssistantAddsMaskedConversationAndToolStages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 12569985024 {
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || len(forecast.EpochDerivedStages) != 4 {
 		t.Fatalf("tool assistant forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
@@ -190,7 +193,7 @@ func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 12115738624 {
+	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 11999969280 || len(forecast.EpochDerivedStages) != 2 {
 		t.Fatalf("basic conversation forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
@@ -218,7 +221,7 @@ func TestBabbleUsesCleanPretrainingAndLightConversationTuning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 76416000 || forecast.PlannedTokens != 1595932672 {
+	if forecast.ApproximateParameters != 76416000 || forecast.PlannedTokens != 1572864000 || len(forecast.EpochDerivedStages) != 2 {
 		t.Fatalf("babble forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 	if compose.Stages[0].Parameters.LearningRate <= compose.Stages[1].Parameters.LearningRate || compose.Stages[1].Parameters.LearningRate <= compose.Stages[2].Parameters.LearningRate {

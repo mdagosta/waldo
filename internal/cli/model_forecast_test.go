@@ -118,3 +118,14 @@ func TestWriteModelForecastUsesApprovedCompactColumns(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteModelForecastIdentifiesEpochDerivedWork(t *testing.T) {
+	report := model.ResourceForecast{ApproximateParameters: 10, PlannedTokens: 1000, EpochDerivedStages: []string{"midtrain", "post-train"}}
+	var output bytes.Buffer
+	writeModelForecast(&output, report)
+	for _, want := range []string{"at least 1.0K plus 2 epoch-derived stage(s)", "midtrain, post-train resolve during training preflight"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("forecast output missing %q: %q", want, output.String())
+		}
+	}
+}

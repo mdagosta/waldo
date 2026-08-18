@@ -703,6 +703,24 @@ func TestTrainResumesInterruptedRunFromVerifiedCheckpoint(t *testing.T) {
 	}
 }
 
+func TestTrainDerivesAndPersistsEpochSteps(t *testing.T) {
+	root := t.TempDir()
+	builder := Builder{Root: root, Resolver: training.FakeResolver()}
+	if _, err := builder.Initialize("epoch-model", testArchitecture()); err != nil {
+		t.Fatal(err)
+	}
+	stage := testStage("epoch-train")
+	stage.Parameters.Steps = 0
+	stage.Parameters.Epochs = 2
+	result, err := builder.Train(context.Background(), "epoch-model", preparedFixture(t, stage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.RunBOMs) != 1 || result.RunBOMs[0].Parameters.Steps <= 0 || result.RunBOMs[0].Parameters.Epochs != 2 {
+		t.Fatalf("epoch-derived run BOM = %+v", result.RunBOMs)
+	}
+}
+
 func TestComposeAppendsToCompatibleModelAndRejectsDifferentArchitecture(t *testing.T) {
 	root := t.TempDir()
 	compose := validCompose()

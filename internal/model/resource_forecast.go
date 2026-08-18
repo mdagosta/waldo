@@ -22,6 +22,7 @@ type ResourceForecast struct {
 	Formula               string                  `json:"formula"`
 	ApproximateParameters uint64                  `json:"approximate_parameters"`
 	PlannedTokens         int64                   `json:"planned_tokens"`
+	EpochDerivedStages    []string                `json:"epoch_derived_stages,omitempty"`
 	TrainingFLOPs         float64                 `json:"training_flops"`
 	Calibrations          []ForecastCalibration   `json:"calibrations,omitempty"`
 	Configurations        []HardwareConfiguration `json:"configurations"`
@@ -103,15 +104,14 @@ func forecastPlan(plan Plan) (ResourceForecast, error) {
 func forecastPlanWithCalibration(plan Plan, calibrations []ForecastCalibration) (ResourceForecast, error) {
 	var plannedTokens int64
 	for _, stage := range plan.Stages {
-		if stage.PlannedTokens <= 0 || plannedTokens > math.MaxInt64-stage.PlannedTokens {
+		if stage.PlannedTokens == 0 {
+			continue
+		}
+		if stage.PlannedTokens < 0 || plannedTokens > math.MaxInt64-stage.PlannedTokens {
 			return ResourceForecast{}, fmt.Errorf("planned training tokens overflow int64")
 		}
 		plannedTokens += stage.PlannedTokens
 	}
-	if plannedTokens == 0 {
-		return ResourceForecast{}, fmt.Errorf("forecast requires at least one planned training token")
-	}
-
 	parameters := plan.Forecast.ApproximateParameters
 	trainingFLOPs := 6 * float64(parameters) * float64(plannedTokens)
 	if math.IsInf(trainingFLOPs, 0) || math.IsNaN(trainingFLOPs) {
@@ -121,6 +121,11 @@ func forecastPlanWithCalibration(plan Plan, calibrations []ForecastCalibration) 
 		Catalog: forecastCatalog, Formula: forecastFormula,
 		ApproximateParameters: parameters, PlannedTokens: plannedTokens,
 		TrainingFLOPs: trainingFLOPs,
+	}
+	for _, stage := range plan.Stages {
+		if stage.PlannedTokens == 0 {
+			report.EpochDerivedStages = append(report.EpochDerivedStages, stage.Name)
+		}
 	}
 	for _, profile := range acceleratorCatalog {
 		for _, count := range profile.counts {
@@ -146,12 +151,15 @@ func forecastPlanWithCalibration(plan Plan, calibrations []ForecastCalibration) 
 					report.Calibrations = append(report.Calibrations, calibration)
 				}
 			}
-			secondsFloat := math.Ceil(trainingFLOPs / (effective * 1e12) * overhead)
+			secondsFloat := float64(-1)
+			if plannedTokens > 0 {
+				secondsFloat = math.Ceil(trainingFLOPs / (effective * 1e12) * overhead)
+			}
 			if secondsFloat > math.MaxInt64 {
 				return ResourceForecast{}, fmt.Errorf("training duration exceeds the supported forecast range")
 			}
 			seconds := int64(secondsFloat)
-			if seconds < 1 {
+			if plannedTokens > 0 && seconds < 1 {
 				seconds = 1
 			}
 			report.Configurations = append(report.Configurations, HardwareConfiguration{

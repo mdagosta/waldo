@@ -28,7 +28,7 @@ stages:
       - post-train/sft/oasst1
     parameters:
       profile: causal-pretrain-balanced
-      steps: 250
+      tokens: 4096000
       batch_size: 32
       sequence_length: 512
       learning_rate: 0.0003

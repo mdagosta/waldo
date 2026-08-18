@@ -149,7 +149,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if len(prepared.Inputs) == 0 {
 		return Inspection{}, fmt.Errorf("stage %s has no verified shard inputs", stage.Name)
 	}
-	resolvedParameters, err := stage.ResolveParameters()
+	resolvedParameters, err := stage.ResolvePlanningParameters()
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s training profile: %w", stage.Name, err)
 	}
@@ -171,7 +171,18 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, fmt.Errorf("stage %s held-out evaluation partition: %w", stage.Name, err)
 	}
 	builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selected %d held-out records (%s text)", partition.Evaluation.Records, byteCount(partition.Evaluation.TextBytes))})
-	if stage.Parameters.Epochs > 0 {
+	if stage.Parameters.Steps == 0 && stage.Parameters.Tokens == 0 {
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("deriving optimizer steps from %d epochs", resolvedParameters.Epochs)})
+		derivedSteps, err := partition.TrainingSteps(ctx)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s derive epoch training steps: %w", stage.Name, err)
+		}
+		resolvedParameters, err = stage.ResolveParametersForSteps(derivedSteps)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s resolve epoch training parameters: %w", stage.Name, err)
+		}
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("planned %d optimizer steps from %d epochs", derivedSteps, resolvedParameters.Epochs)})
+	} else if stage.Parameters.Epochs > 0 {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("validating capacity for %d optimizer steps across %d explicit epochs", resolvedParameters.Steps, resolvedParameters.Epochs)})
 		availableSteps, sufficient, err := partition.TrainingStepCapacity(ctx, resolvedParameters.Steps)
 		if err != nil {
@@ -419,7 +430,9 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	progressMutex.Unlock()
 	if backendErr == nil {
 		observation = mergeProgress(run.Progress, observation)
-		planned := PlannedStage{Name: stage.Name, Parameters: stage.Parameters, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity}
+		plannedParameters := stage.Parameters
+		plannedParameters.Steps = runBOM.Parameters.Steps
+		planned := PlannedStage{Name: stage.Name, Parameters: plannedParameters, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity}
 		if err := validateBackendObservation(runDirectory, planned, observation); err != nil {
 			backendErr = fmt.Errorf("invalid backend observation: %w", err)
 		} else if set := runBOM.EvaluationSet; set != nil && set.Records > 0 && runBOM.Parameters.EvaluateEvery > 0 {
@@ -1255,9 +1268,15 @@ func validateStagedComposeRun(inspection Inspection, index int, prepared Prepare
 	if err != nil {
 		return err
 	}
-	parameters, err := prepared.Stage.ResolveParameters()
+	parameters, err := prepared.Stage.ResolvePlanningParameters()
 	if err != nil {
 		return err
+	}
+	if prepared.Stage.Parameters.Steps == 0 && prepared.Stage.Parameters.Tokens == 0 {
+		parameters, err = prepared.Stage.ResolveParametersForSteps(bom.Parameters.Steps)
+		if err != nil {
+			return err
+		}
 	}
 	if parameters.Data.Order == "corpus-weighted-shuffle-v1" {
 		parameters.Data.CorpusWeights, err = resolveCorpusWeights(parameters.Data.CorpusWeights, prepared.BOM.Paths)

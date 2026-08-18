@@ -72,6 +72,38 @@ func TestResolveParametersPinsVersionedDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+func TestResolveParametersSupportsTokenAndEpochBudgets(t *testing.T) {
+	tokenBudget := Parameters{Tokens: 101, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001}
+	resolved, err := ResolveParameters(tokenBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.RequestedTokens != 101 || resolved.Steps != 7 || resolved.PlannedTokenCapacity != 112 {
+		t.Fatalf("token budget = %+v", resolved)
+	}
+	for _, invalid := range []Parameters{
+		{Tokens: 100, Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001},
+		{Tokens: 100, Epochs: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001},
+		{BatchSize: 1, SequenceLength: 8, LearningRate: 0.001},
+	} {
+		if _, err := ResolvePlanningParameters(invalid); err == nil {
+			t.Fatalf("invalid training budget accepted: %+v", invalid)
+		}
+	}
+	epochBudget := Parameters{Epochs: 2, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001}
+	if _, err := ResolveParameters(epochBudget); err == nil {
+		t.Fatal("unresolved epoch budget accepted for execution")
+	}
+	planning, err := ResolvePlanningParameters(epochBudget)
+	if err != nil || planning.Epochs != 2 {
+		t.Fatalf("epoch planning = %+v, err = %v", planning, err)
+	}
+	resolved, err = ResolveParametersForSteps(epochBudget, 9)
+	if err != nil || resolved.Steps != 9 || resolved.PlannedTokenCapacity != 144 {
+		t.Fatalf("derived epoch budget = %+v, err = %v", resolved, err)
+	}
+}
+
 func TestBalancedProfilePinsCorpusBalancedDataAndEvaluation(t *testing.T) {
 	resolved, err := ResolveParameters(Parameters{Profile: BalancedProfile, Steps: 10, BatchSize: 2, SequenceLength: 8, LearningRate: 0.001, Seed: 42})
 	if err != nil {
@@ -498,6 +530,9 @@ func TestTrainingStepCapacityAccountsForHeldOutRecords(t *testing.T) {
 	}
 	if steps, sufficient, err = partition.TrainingStepCapacity(context.Background(), 2); err != nil || !sufficient || steps != 2 {
 		t.Fatalf("bounded capacity = %d, sufficient = %t, err = %v", steps, sufficient, err)
+	}
+	if steps, err = partition.TrainingSteps(context.Background()); err != nil || steps != 2 {
+		t.Fatalf("derived steps = %d, err = %v", steps, err)
 	}
 }
 

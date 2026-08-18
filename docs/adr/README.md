@@ -62,3 +62,4 @@ logs.
 - [0056: Persist a versioned model interaction contract](0056-versioned-model-interaction-contract.md)
 - [0057: Preserve scored dialogue metadata and explicit quality gates](0057-preserve-scored-dialogue-metadata.md)
 - [0058: Mask non-assistant dialogue targets during SFT](0058-assistant-response-training.md)
+- [0059: Separate token-budget and epoch-driven training](0059-token-and-epoch-training-budgets.md)

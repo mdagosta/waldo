@@ -81,6 +81,24 @@ func TestForecastAccountsForFullBatchVocabularyWorkspace(t *testing.T) {
 	}
 }
 
+func TestForecastReportsEpochDerivedStagesWithoutInventingTokens(t *testing.T) {
+	compose := validCompose()
+	compose.Stages[0].Parameters.Steps = 0
+	compose.Stages[0].Parameters.Epochs = 2
+	report, err := ForecastCompose(compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.PlannedTokens != 0 || len(report.EpochDerivedStages) != 1 || report.EpochDerivedStages[0] != "pretrain" || len(report.Configurations) == 0 {
+		t.Fatalf("epoch-derived forecast = %+v", report)
+	}
+	for _, configuration := range report.Configurations {
+		if configuration.ApproximateSeconds != -1 {
+			t.Fatalf("epoch-derived duration = %+v", configuration)
+		}
+	}
+}
+
 func TestForecastUsesExactObservedConfiguration(t *testing.T) {
 	recipe := validCompose()
 	architecture, err := recipe.Architecture.Forecast()

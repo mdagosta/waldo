@@ -256,13 +256,37 @@ func NewCorpusSelections(paths []string) []CorpusSelection {
 }
 
 func (stage Stage) ResolveParameters() (training.ResolvedParameters, error) {
+	parameters, err := stage.trainingParameters()
+	if err != nil {
+		return training.ResolvedParameters{}, err
+	}
+	return training.ResolveParameters(parameters)
+}
+
+func (stage Stage) ResolvePlanningParameters() (training.ResolvedParameters, error) {
+	parameters, err := stage.trainingParameters()
+	if err != nil {
+		return training.ResolvedParameters{}, err
+	}
+	return training.ResolvePlanningParameters(parameters)
+}
+
+func (stage Stage) ResolveParametersForSteps(steps int64) (training.ResolvedParameters, error) {
+	parameters, err := stage.trainingParameters()
+	if err != nil {
+		return training.ResolvedParameters{}, err
+	}
+	return training.ResolveParametersForSteps(parameters, steps)
+}
+
+func (stage Stage) trainingParameters() (training.Parameters, error) {
 	parameters := stage.Parameters
 	inline := false
 	for _, selection := range stage.Corpora {
 		inline = inline || selection.Weight != nil
 	}
 	if inline && len(parameters.CorpusWeights) != 0 {
-		return training.ResolvedParameters{}, fmt.Errorf("inline corpus weights cannot be combined with parameters.corpus_weights")
+		return training.Parameters{}, fmt.Errorf("inline corpus weights cannot be combined with parameters.corpus_weights")
 	}
 	if inline {
 		parameters.CorpusWeights = make(map[string]uint64, len(stage.Corpora))
@@ -272,7 +296,7 @@ func (stage Stage) ResolveParameters() (training.ResolvedParameters, error) {
 			}
 		}
 	}
-	return training.ResolveParameters(parameters)
+	return parameters, nil
 }
 
 func (stage Stage) RecordFilterPolicy(paths []string) (*corpus.RecordFilterPolicy, error) {
@@ -447,7 +471,7 @@ func (compose Compose) Validate() error {
 				return fmt.Errorf("stage %s filter: %w", stage.Name, err)
 			}
 		}
-		resolved, err := stage.ResolveParameters()
+		resolved, err := stage.ResolvePlanningParameters()
 		if err != nil {
 			return fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
 		}

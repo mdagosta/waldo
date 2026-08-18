@@ -26,6 +26,80 @@ const (
 )
 
 func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
+	steps, requestedTokens, err := resolveTrainingBudget(parameters)
+	if err != nil {
+		return ResolvedParameters{}, err
+	}
+	if steps == 0 {
+		return ResolvedParameters{}, fmt.Errorf("epoch-derived training steps have not been resolved")
+	}
+	return resolveParameters(parameters, steps, requestedTokens)
+}
+
+// ResolvePlanningParameters validates parameters needed to select and scan a
+// training stream before an epoch-derived step count is known.
+func ResolvePlanningParameters(parameters Parameters) (ResolvedParameters, error) {
+	steps, requestedTokens, err := resolveTrainingBudget(parameters)
+	if err != nil {
+		return ResolvedParameters{}, err
+	}
+	if steps == 0 {
+		steps = max(int64(1), optionalInt64(parameters.WarmupSteps), optionalInt64(parameters.CheckpointEvery), optionalInt64(parameters.EvaluateEvery))
+	}
+	return resolveParameters(parameters, steps, requestedTokens)
+}
+
+// ResolveParametersForSteps pins the step count derived from a finite epoch
+// stream. The declarative parameters remain epoch-driven.
+func ResolveParametersForSteps(parameters Parameters, steps int64) (ResolvedParameters, error) {
+	declaredSteps, requestedTokens, err := resolveTrainingBudget(parameters)
+	if err != nil {
+		return ResolvedParameters{}, err
+	}
+	if declaredSteps != 0 || requestedTokens != 0 {
+		return ResolvedParameters{}, fmt.Errorf("derived steps require an epoch-only training budget")
+	}
+	if steps <= 0 {
+		return ResolvedParameters{}, fmt.Errorf("derived steps must be positive")
+	}
+	return resolveParameters(parameters, steps, 0)
+}
+
+func resolveTrainingBudget(parameters Parameters) (int64, int64, error) {
+	if parameters.Steps < 0 || parameters.Tokens < 0 {
+		return 0, 0, fmt.Errorf("steps and tokens must not be negative")
+	}
+	if parameters.Tokens > 0 {
+		if parameters.Steps > 0 || parameters.Epochs > 0 {
+			return 0, 0, fmt.Errorf("tokens cannot be combined with steps or epochs")
+		}
+		capacity, overflow := multiplyInt64(parameters.BatchSize, parameters.SequenceLength)
+		if overflow {
+			return 0, 0, fmt.Errorf("training step token capacity overflows int64")
+		}
+		steps := parameters.Tokens / capacity
+		if parameters.Tokens%capacity != 0 {
+			steps++
+		}
+		return steps, parameters.Tokens, nil
+	}
+	if parameters.Steps > 0 {
+		return parameters.Steps, 0, nil
+	}
+	if parameters.Epochs > 0 {
+		return 0, 0, nil
+	}
+	return 0, 0, fmt.Errorf("one of tokens, epochs, or steps is required")
+}
+
+func optionalInt64(value *int64) int64 {
+	if value == nil {
+		return 0
+	}
+	return *value
+}
+
+func resolveParameters(parameters Parameters, steps, requestedTokens int64) (ResolvedParameters, error) {
 	profile := parameters.Profile
 	if profile == "" {
 		profile = DefaultProfile
@@ -34,7 +108,7 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if profile != DefaultProfile && profile != BalancedProfile && profile != WeightedProfile {
 		return ResolvedParameters{}, fmt.Errorf("unsupported training profile %q", profile)
 	}
-	if parameters.Steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {
+	if steps <= 0 || parameters.BatchSize <= 0 || parameters.SequenceLength <= 0 || parameters.LearningRate <= 0 || math.IsNaN(parameters.LearningRate) || math.IsInf(parameters.LearningRate, 0) {
 		return ResolvedParameters{}, fmt.Errorf("steps, batch_size, sequence_length, and learning_rate must be finite and positive")
 	}
 	epochs := parameters.Epochs
@@ -44,7 +118,7 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if epochs < 1 || epochs > 1_000_000 {
 		return ResolvedParameters{}, fmt.Errorf("epochs must be in 1..1000000")
 	}
-	capacity, overflow := multiplyInt64(parameters.Steps, parameters.BatchSize, parameters.SequenceLength)
+	capacity, overflow := multiplyInt64(steps, parameters.BatchSize, parameters.SequenceLength)
 	if overflow {
 		return ResolvedParameters{}, fmt.Errorf("planned token capacity overflows int64")
 	}
@@ -55,28 +129,28 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	if weightDecay < 0 || weightDecay > 1 || math.IsNaN(weightDecay) || math.IsInf(weightDecay, 0) {
 		return ResolvedParameters{}, fmt.Errorf("weight_decay must be finite and in 0..1")
 	}
-	warmup := min(int64(100), parameters.Steps/10)
-	if parameters.Steps > 1 && warmup == 0 {
+	warmup := min(int64(100), steps/10)
+	if steps > 1 && warmup == 0 {
 		warmup = 1
 	}
 	if parameters.WarmupSteps != nil {
 		warmup = *parameters.WarmupSteps
 	}
-	checkpointEvery := min(int64(500), parameters.Steps)
+	checkpointEvery := min(int64(500), steps)
 	if parameters.CheckpointEvery != nil {
 		checkpointEvery = *parameters.CheckpointEvery
 	}
-	evaluateEvery := min(int64(500), parameters.Steps)
+	evaluateEvery := min(int64(500), steps)
 	if parameters.EvaluateEvery != nil {
 		evaluateEvery = *parameters.EvaluateEvery
 	}
-	if warmup < 0 || warmup > parameters.Steps {
+	if warmup < 0 || warmup > steps {
 		return ResolvedParameters{}, fmt.Errorf("warmup_steps must be in 0..steps")
 	}
-	if checkpointEvery < 0 || checkpointEvery > parameters.Steps {
+	if checkpointEvery < 0 || checkpointEvery > steps {
 		return ResolvedParameters{}, fmt.Errorf("checkpoint_every must be in 0..steps")
 	}
-	if evaluateEvery < 0 || evaluateEvery > parameters.Steps {
+	if evaluateEvery < 0 || evaluateEvery > steps {
 		return ResolvedParameters{}, fmt.Errorf("evaluate_every must be in 0..steps")
 	}
 	shuffleBuffer := 1024
@@ -145,7 +219,7 @@ func ResolveParameters(parameters Parameters) (ResolvedParameters, error) {
 	}
 	return ResolvedParameters{
 		Profile: profile, ProfileSchema: profileSchema,
-		Epochs: epochs, Steps: parameters.Steps, BatchSize: parameters.BatchSize,
+		Epochs: epochs, RequestedTokens: requestedTokens, Steps: steps, BatchSize: parameters.BatchSize,
 		SequenceLength: parameters.SequenceLength, LearningRate: parameters.LearningRate,
 		Seed: parameters.Seed, PlannedTokenCapacity: capacity,
 		Optimizer:       Optimizer{Name: "adamw", WeightDecay: weightDecay, Beta1: 0.9, Beta2: 0.95, Epsilon: 1e-8},

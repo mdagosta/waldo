@@ -38,7 +38,7 @@ stages:
         weight: 2
     parameters:
       profile: causal-pretrain-weighted
-      steps: 366210
+      tokens: 11999969280
       batch_size: 16
       sequence_length: 2048
       learning_rate: 0.00013
@@ -72,7 +72,6 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       epochs: 3
-      steps: 6104
       batch_size: 8
       sequence_length: 2048
       learning_rate: 0.00004
@@ -102,7 +101,6 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       epochs: 3
-      steps: 3052
       batch_size: 8
       sequence_length: 2048
       learning_rate: 0.000015
@@ -138,7 +136,6 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       epochs: 2
-      steps: 24414
       batch_size: 8
       sequence_length: 2048
       learning_rate: 0.00001
@@ -166,7 +163,6 @@ stages:
     parameters:
       profile: causal-pretrain-weighted
       epochs: 4
-      steps: 1221
       batch_size: 8
       sequence_length: 2048
       learning_rate: 0.000008

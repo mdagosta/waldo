@@ -21,12 +21,12 @@ waldo model forecast composes/0003-tool-assistant.yaml
 waldo model train tool-assistant composes/0003-tool-assistant.yaml
 ```
 
-| Compose | Architecture | Planned tokens | Purpose |
+| Compose | Architecture | Training budget | Purpose |
 | --- | ---: | ---: | --- |
 | `0000-canary.yaml` | 13.6M parameters | 4.1M | Release-gate the training, artifact reload, accounting, and chat paths |
-| `0001-babble.yaml` | 76.4M parameters | 1.60B | Candidate compact model with coherent language and short basic interaction |
-| `0002-conversation.yaml` | 336.6M parameters | 12.12B | First validated conversational model |
-| `0003-tool-assistant.yaml` | 336.6M parameters | 12.57B | Extend basic conversation with assistant-only response and tool-use training |
+| `0001-babble.yaml` | 76.4M parameters | 1.57B pretraining tokens + 2 epoch-driven stages | Candidate compact model with coherent language and short basic interaction |
+| `0002-conversation.yaml` | 336.6M parameters | 12.0B pretraining tokens + 2 epoch-driven stages | Candidate derived from the first successful conversational model |
+| `0003-tool-assistant.yaml` | 336.6M parameters | 12.0B pretraining tokens + 4 epoch-driven stages | Extend conversation with assistant-only response and tool-use training |
 
 ## Canary
 
@@ -49,19 +49,27 @@ dialogue followed by the reviewed interaction contract and high-quality
 responses. Its `user-assistant-v1` declaration makes `waldo model chat` format
 and retain turns consistently.
 
+Reference pretraining stages declare fixed token budgets so large selected
+corpora do not silently multiply their compute. Mid-training and post-training
+declare epochs so every filtered conversational record participates. WALDO
+derives and persists their exact optimizer-step counts during preflight.
+
 ## Basic conversation
 
-`0002-conversation.yaml` preserves the recipe that produced WALDO's
-first useful conversational result. It builds a 336.6M-parameter language
-base, performs broad dialogue adaptation with OASST1/2, Aya, and Dolly, and
-then applies the interaction contract and quality-gated HelpSteer2 data. Its
-successful result is intentionally described as basic conversation: it can
-follow the interaction form but should not be represented as a knowledgeable,
-reliable general assistant.
+`0002-conversation.yaml` preserves the architecture, corpora, and stage order
+that produced WALDO's first useful conversational result. It builds a
+336.6M-parameter language base, performs broad dialogue adaptation with
+OASST1/2, Aya, and Dolly, and then applies the interaction contract and
+quality-gated HelpSteer2 data. That result is intentionally described as basic
+conversation: it can follow the interaction form but should not be represented
+as a knowledgeable, reliable general assistant.
 
-The recipe uses causal dialogue tuning because that is the exact validated
-sequence. Future experiments can compare assistant-response-only tuning
-without silently changing this reference.
+The revised compose replaces the successful run's redundant fine-tuning step
+caps with complete declared epochs. That change requires a new validation run;
+the earlier result remains evidence for the design, not for the new exact
+training budget. The recipe retains causal dialogue tuning so future
+assistant-response-only experiments do not silently change two variables at
+once.
 
 ## Tool assistant
 

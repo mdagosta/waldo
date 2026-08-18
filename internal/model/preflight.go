@@ -57,7 +57,7 @@ func PrepareStage(stage Stage, bom corpus.BOM, inputs []training.Input) (Prepare
 		expected[selected.SHA256] = value
 	}
 	seen := make(map[string]bool, len(inputs))
-	resolved, err := stage.ResolveParameters()
+	resolved, err := stage.ResolvePlanningParameters()
 	if err != nil {
 		return PreparedStage{}, fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
 	}
@@ -152,11 +152,15 @@ func forecastPlanForCompose(compose Compose) (Plan, error) {
 		return Plan{}, err
 	}
 	for _, stage := range compose.Stages {
-		capacity, overflow := multiplyInt64(stage.Parameters.Steps, stage.Parameters.BatchSize, stage.Parameters.SequenceLength)
-		if overflow {
-			return Plan{}, fmt.Errorf("stage %s planned token capacity overflows int64", stage.Name)
+		resolved, err := stage.ResolvePlanningParameters()
+		if err != nil {
+			return Plan{}, fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
 		}
-		plan.Stages = append(plan.Stages, PlannedStage{Name: stage.Name, Type: stage.Type, Objective: stage.Objective, Parameters: stage.Parameters, PlannedTokens: capacity})
+		plannedTokens := resolved.PlannedTokenCapacity
+		if stage.Parameters.Steps == 0 && stage.Parameters.Tokens == 0 {
+			plannedTokens = 0
+		}
+		plan.Stages = append(plan.Stages, PlannedStage{Name: stage.Name, Type: stage.Type, Objective: stage.Objective, Parameters: stage.Parameters, PlannedTokens: plannedTokens})
 	}
 	return plan, nil
 }
@@ -172,7 +176,7 @@ func validateStage(stage Stage, architecture Architecture) error {
 		return fmt.Errorf("stage %s has unsupported objective %q", stage.Name, stage.Objective)
 	}
 	parameters := stage.Parameters
-	if _, err := stage.ResolveParameters(); err != nil {
+	if _, err := stage.ResolvePlanningParameters(); err != nil {
 		return fmt.Errorf("stage %s training parameters: %w", stage.Name, err)
 	}
 	if architecture.ContextTokens > 0 && uint64(parameters.SequenceLength) > architecture.ContextTokens {

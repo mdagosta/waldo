@@ -132,7 +132,16 @@ func runModelIndexForecast(context Context, paths []string, stdout, warnings io.
 
 func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 	fmt.Fprintf(stdout, "PARAMETERS:  %s\n", humanModelParameters(report.ApproximateParameters))
-	fmt.Fprintf(stdout, "TOKENS:      %s\n", humanCount(report.PlannedTokens))
+	if len(report.EpochDerivedStages) == 0 {
+		fmt.Fprintf(stdout, "TOKENS:      %s\n", humanCount(report.PlannedTokens))
+	} else if report.PlannedTokens > 0 {
+		fmt.Fprintf(stdout, "TOKENS:      at least %s plus %d epoch-derived stage(s)\n", humanCount(report.PlannedTokens), len(report.EpochDerivedStages))
+	} else {
+		fmt.Fprintf(stdout, "TOKENS:      derived from %d epoch-driven stage(s) at training preflight\n", len(report.EpochDerivedStages))
+	}
+	if len(report.EpochDerivedStages) > 0 {
+		fmt.Fprintf(stdout, "EPOCHS:      %s resolve during training preflight\n", strings.Join(report.EpochDerivedStages, ", "))
+	}
 	fmt.Fprintln(stdout)
 
 	type row struct {
@@ -198,6 +207,9 @@ func hardwareMemory(bytes uint64) string {
 }
 
 func approximateDuration(seconds int64) string {
+	if seconds < 0 {
+		return "epoch-derived"
+	}
 	hours := float64(seconds) / float64(time.Hour/time.Second)
 	if hours < 1 {
 		return "under 1 hour"
