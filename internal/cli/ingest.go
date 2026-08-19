@@ -444,7 +444,7 @@ func shellQuote(value string) string {
 
 func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSink {
 	last := map[string]int64{}
-	var ingestBytes, ingestTotalBytes, ingestFiles, ingestTotalFiles, ingestDocs, ingestTokens int64
+	var ingestBytes, ingestTotalBytes, ingestFiles, ingestTotalFiles, ingestDocs, ingestTokens, ingestShards int64
 	return func(event ingest.ProgressEvent) {
 		if jsonOutput {
 			_ = json.NewEncoder(output).Encode(event)
@@ -492,16 +492,20 @@ func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSi
 			} else if event.Status == "completed" {
 				label = "ingest complete"
 			}
-			fmt.Fprintf(output, "%s  %s/%s files  %s/%s  %s docs  %s tokens\n",
+			fmt.Fprintf(output, "%s  %s/%s files  %s/%s  %s docs  %s tokens  %s output shards\n",
 				label, humanInteger(ingestFiles), humanInteger(ingestTotalFiles),
 				humanBytes(ingestBytes), humanBytes(ingestTotalBytes),
-				humanInteger(ingestDocs), humanInteger(ingestTokens))
+				humanInteger(ingestDocs), humanInteger(ingestTokens), humanInteger(ingestShards))
 		case event.Phase == "audit" && event.Status == "started":
 			fmt.Fprintf(output, "audit %d  %s started on worker %d\n", event.Sequence, short, event.Worker)
 		case event.Phase == "audit" && event.Status == "completed":
 			fmt.Fprintf(output, "audit %d  %s completed\n", event.Sequence, short)
+		case event.Phase == "shard" && event.Status == "creating":
+			fmt.Fprintf(output, "creating OpenWALDO Parquet file %d\n", event.Sequence)
 		case event.Phase == "shard" && event.Status == "ready":
-			fmt.Fprintf(output, "shard %d  %s ready (%s)\n", event.Sequence, short, humanBytes(event.Bytes))
+			ingestShards = max(ingestShards, int64(event.Sequence))
+			fmt.Fprintf(output, "created  OpenWALDO Parquet file %d  %s  %s  %s docs  %s tokens\n",
+				event.Sequence, short, humanBytes(event.Bytes), humanInteger(event.Docs), humanInteger(event.Tokens))
 		case event.Phase == "upload" && event.Status == "started":
 			fmt.Fprintf(output, "upload %d  %s started on worker %d\n", event.Sequence, short, event.Worker)
 		case event.Phase == "upload" && event.Status == "progress" && (event.Bytes == event.TotalBytes || event.Bytes-last[event.Shard] >= 64<<20):

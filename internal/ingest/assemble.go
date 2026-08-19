@@ -184,6 +184,7 @@ type objectAssembler struct {
 	counters       []tokenizer.Counter
 	progressDocs   int64
 	progressTokens int64
+	createdShards  int
 }
 
 type activeObject struct {
@@ -381,6 +382,8 @@ func (assembler *objectAssembler) writerFor() (*activeObject, error) {
 		writer: writer, licenses: map[string]bool{}, licenseUsage: map[string]index.Measures{}, sources: map[string]bool{}, lastUsed: assembler.clock,
 	}
 	assembler.active[""] = active
+	assembler.createdShards++
+	emitProgress(assembler.ctx, ProgressEvent{Phase: "shard", Status: "creating", Sequence: assembler.createdShards})
 	return active, nil
 }
 
@@ -538,7 +541,10 @@ func (pipeline *objectVerificationPipeline) collect(progressContext context.Cont
 				}
 			} else if firstErr == nil {
 				emitProgress(progressContext, ProgressEvent{Phase: "audit", Status: "completed", Shard: current.object.SHA256, Sequence: next, Bytes: current.object.Bytes, TotalBytes: current.object.Bytes})
-				emitProgress(progressContext, ProgressEvent{Phase: "shard", Status: "ready", Shard: current.object.SHA256, Sequence: next, Bytes: current.object.Bytes})
+				emitProgress(progressContext, ProgressEvent{
+					Phase: "shard", Status: "ready", Shard: current.object.SHA256, Sequence: next,
+					Bytes: current.object.Bytes, Docs: current.object.Docs, Tokens: current.object.Tokens,
+				})
 				if sink != nil {
 					if err := sink(current.object); err != nil {
 						firstErr = err

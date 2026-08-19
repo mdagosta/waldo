@@ -146,7 +146,7 @@ func TestExecuteAssemblyRefusesCorruptCheckpoint(t *testing.T) {
 	}
 }
 
-func TestExecutePublicationOverlapsUploadsAndPurgesVerifiedObjects(t *testing.T) {
+func TestExecutePublicationWaitsForAssemblyThenUploadsAndPurges(t *testing.T) {
 	input := publicationFixtureDirectory(t, "alpha", "beta", "gamma", "delta")
 	plan := textFixturePlan(t, input)
 	plan.Writer.RowGroupLogicalBytes = 5
@@ -172,21 +172,47 @@ func TestExecutePublicationOverlapsUploadsAndPurgesVerifiedObjects(t *testing.T)
 		}
 	}
 	var ready, verified, purged int
-	for _, event := range events {
+	lastReady, firstUpload := -1, -1
+	for position, event := range events {
 		switch event.Status {
 		case "ready":
 			ready++
+			lastReady = position
 		case "verified":
 			verified++
 		case "purged":
 			purged++
 		}
+		if event.Phase == "upload" && firstUpload == -1 {
+			firstUpload = position
+		}
 	}
 	if ready != len(assembly.Objects) || verified != ready || purged != ready {
 		t.Fatalf("progress ready=%d verified=%d purged=%d", ready, verified, purged)
 	}
+	if firstUpload <= lastReady {
+		t.Fatalf("upload began before assembly completed: last ready event %d, first upload event %d", lastReady, firstUpload)
+	}
 	if _, _, err := ExecutePublication(context.Background(), plan, staging, publisher, 2); err != nil {
 		t.Fatalf("resume published ingestion: %v", err)
+	}
+}
+
+func TestExecutePublicationDoesNotUploadWhenAssemblyFails(t *testing.T) {
+	input := publicationFixtureDirectory(t, "alpha", "beta", "gamma")
+	plan := textFixturePlan(t, input)
+	plan.Writer.RowGroupLogicalBytes = 5
+	plan.Writer.CompressedTarget = 1
+	plan.Writer.CompressedMaximum = 1 << 20
+	if err := os.WriteFile(plan.Inputs[len(plan.Inputs)-1].Artifact.Path, []byte("changed after planning"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	publisher := &fakePublisher{}
+	if _, _, err := ExecutePublication(context.Background(), plan, t.TempDir(), publisher, 2); err == nil {
+		t.Fatal("expected changed input to fail assembly")
+	}
+	if publisher.publishTry != 0 || len(publisher.objects) != 0 {
+		t.Fatalf("failed assembly attempted %d uploads and published %d objects", publisher.publishTry, len(publisher.objects))
 	}
 }
 

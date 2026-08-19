@@ -107,14 +107,11 @@ func ExecuteAssembly(ctx context.Context, plan Plan, stagingDirectory string) (A
 	return result, nil
 }
 
-// ExecutePublication assembles and publishes with bounded concurrency. Each
-// verified remote object is journaled before its staging file is removed, so
-// interruption is recoverable without trusting either side implicitly.
+// ExecutePublication completes and audits the entire local assembly before it
+// starts bounded-concurrency publication. Each verified remote object is
+// journaled before its staging file is removed, so publication interruption is
+// recoverable without trusting either side implicitly.
 func ExecutePublication(ctx context.Context, plan Plan, stagingDirectory string, publisher lookaside.Publisher, workers int) (AssemblyResult, PublicationResult, error) {
-	return ExecutePublicationWithSeed(ctx, plan, stagingDirectory, publisher, workers, nil)
-}
-
-func ExecutePublicationWithSeed(ctx context.Context, plan Plan, stagingDirectory string, publisher lookaside.Publisher, workers int, seed DedupSeed) (AssemblyResult, PublicationResult, error) {
 	if publisher == nil {
 		return AssemblyResult{}, PublicationResult{}, fmt.Errorf("lookaside publisher is required")
 	}
@@ -155,15 +152,40 @@ func ExecutePublicationWithSeed(ctx context.Context, plan Plan, stagingDirectory
 	if !exists {
 		journal = Journal{Kind: "waldo-ingest-journal", Schema: 1, PlanIdentity: identity}
 	}
+	// Journals written by the former streaming publisher entered publishing
+	// before assembly completed. Restart those locally; already uploaded
+	// content-addressed objects remain harmless and may be reused by Publish.
+	if journal.Status == "publishing" && journal.Assembly == nil {
+		journal.Status, journal.Publication = "assembling", nil
+		if err := writeJournal(journalPath, journal); err != nil {
+			return AssemblyResult{}, PublicationResult{}, err
+		}
+	}
+	var assembly AssemblyResult
+	if journal.Status == "publishing" {
+		assembly = *journal.Assembly
+	} else {
+		assembly, err = ExecuteAssembly(ctx, plan, abs)
+		if err != nil {
+			return AssemblyResult{}, PublicationResult{}, err
+		}
+		journal, _, err = loadJournal(journalPath)
+		if err != nil {
+			return AssemblyResult{}, PublicationResult{}, err
+		}
+	}
 	publication := PublicationResult{BaseURL: publisher.BaseURL(), Workers: workers}
 	if journal.Publication != nil && journal.Publication.BaseURL == publication.BaseURL {
 		publication.Objects = append(publication.Objects, journal.Publication.Objects...)
 	}
-	journal.Status, journal.Assembly, journal.Publication = "publishing", nil, &publication
-	if err := writeJournal(journalPath, journal); err != nil {
-		return AssemblyResult{}, PublicationResult{}, err
+	publication.Objects = publicationObjectsForAssembly(publication.Objects, assembly.Objects)
+	for _, object := range publication.Objects {
+		if _, err := publisher.Verify(ctx, object.SHA256, object.Bytes); err != nil {
+			return AssemblyResult{}, PublicationResult{}, fmt.Errorf("verify previously published object %s: %w", object.SHA256, err)
+		}
 	}
-	if err := cleanupIncompleteObjects(filepath.Join(abs, "objects")); err != nil {
+	journal.Status, journal.Assembly, journal.Publication = "publishing", &assembly, &publication
+	if err := writeJournal(journalPath, journal); err != nil {
 		return AssemblyResult{}, PublicationResult{}, err
 	}
 
@@ -233,17 +255,23 @@ func ExecutePublicationWithSeed(ctx context.Context, plan Plan, stagingDirectory
 		collectorDone <- firstErr
 	}()
 
-	sequence := 0
-	assembly, assemblyErr := assembleTextObjectsWithSeedAndSink(runCtx, plan, abs, seed, workers, func(object ObjectResult) error {
-		sequence++
+	published := make(map[string]bool, len(publication.Objects))
+	for _, object := range publication.Objects {
+		published[object.SHA256] = true
+	}
+queueObjects:
+	for position, object := range assembly.Objects {
+		if published[object.SHA256] {
+			continue
+		}
+		sequence := position + 1
 		emitProgress(ctx, ProgressEvent{Phase: "upload", Status: "queued", Shard: object.SHA256, Sequence: sequence, TotalBytes: object.Bytes})
 		select {
 		case jobs <- job{sequence: sequence, object: object}:
-			return nil
 		case <-runCtx.Done():
-			return runCtx.Err()
+			break queueObjects
 		}
-	})
+	}
 	close(jobs)
 	workerGroup.Wait()
 	close(outcomes)
@@ -251,14 +279,9 @@ func ExecutePublicationWithSeed(ctx context.Context, plan Plan, stagingDirectory
 	if collectorErr != nil {
 		return AssemblyResult{}, PublicationResult{}, collectorErr
 	}
-	if assemblyErr != nil {
-		return AssemblyResult{}, PublicationResult{}, assemblyErr
+	if err := ctx.Err(); err != nil {
+		return AssemblyResult{}, PublicationResult{}, err
 	}
-	// A resumed journal may contain verified objects from an older assembly
-	// produced by a previous adapter implementation. Keep only objects that
-	// belong to the assembly completed by this execution. The current objects
-	// were all published and verified above; stale lookaside objects remain
-	// harmlessly content-addressed and are never removed here.
 	publication.Objects = publicationObjectsForAssembly(publication.Objects, assembly.Objects)
 	slices.SortFunc(publication.Objects, func(a, b PublicationObject) int { return a.Sequence - b.Sequence })
 	if len(publication.Objects) != len(assembly.Objects) {
