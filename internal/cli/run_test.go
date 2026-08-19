@@ -125,7 +125,7 @@ func TestIndexIngestSourceDirectoryRecursesRawAndUsesManifest(t *testing.T) {
 	treeHash := sha256.Sum256([]byte(inventory))
 	manifest := fmt.Sprintf(`{
   "kind":"waldo-source-directory","schema":1,
-  "corpus":{"id":"source-example","title":"Source Example","description":"Fetcher handoff.","destination":"core/source-example"},
+  "corpus":{"id":"source-example","title":"Source Example","description":"Fetcher handoff."},
   "sources":[{"id":"source-example","path":"","license":"CC0-1.0","source":{"name":"Example","url":"https://example.test/data","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},"input":{},"artifacts":[{"url":"https://example.test/data/document.txt","path":"nested/document.txt"}]}],
   "fetcher":{},"raw":{"path":"raw","file_count":1,"byte_count":%d,"tree_sha256":"%x"}
 }`, len(content), treeHash)
@@ -138,7 +138,7 @@ func TestIndexIngestSourceDirectoryRecursesRawAndUsesManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--json", "index", "ingest", handoff, "--dry-run"}, &stdout, &stderr)
+	code := Run([]string{"--json", "index", "ingest", handoff, "core/source-example", "--dry-run"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}

@@ -1,8 +1,8 @@
 # Source directory contract
 
 A source-directory handoff contains a compact `manifest.json` beside a `raw/`
-directory. The manifest declares corpus, source, license, provenance, input
-profile, and intended index destination. WALDO converts the recursively
+directory. The manifest declares corpus, source, license, provenance, and input
+profile. Index placement is supplied separately to `waldo index ingest`. WALDO converts the recursively
 discovered records beneath `raw/` to canonical Parquet; it never treats the
 manifest itself as corpus content.
 

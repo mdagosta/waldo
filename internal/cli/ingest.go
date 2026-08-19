@@ -59,11 +59,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			options.Request.Profile = loadedRecipe.Recipe.Input
 		}
 	} else if isSourceDirectory {
+		if requestedDestination == "" {
+			return fmt.Errorf("source directory ingestion requires an explicit destination")
+		}
 		if len(options.MetadataOptions) > 0 {
 			return fmt.Errorf("source directory manifest owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
-		}
-		if requestedDestination != "" && requestedDestination != loadedSource.Corpus.Destination {
-			return fmt.Errorf("destination %q conflicts with source manifest destination %q", requestedDestination, loadedSource.Corpus.Destination)
 		}
 		loadedSource.Apply(&options.Request)
 		options.Inputs = loadedSource.InputPaths()

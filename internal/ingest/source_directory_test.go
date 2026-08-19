@@ -29,7 +29,7 @@ func TestLoadSourceDirectoryUsesOnlyRecursiveRawInputs(t *testing.T) {
   "kind":"waldo-source-directory",
   "schema":1,
   "retrieved_at":"2026-08-19T00:00:00Z",
-  "corpus":{"id":"example","title":"Example","description":"Recursive fixture.","destination":"tests/example"},
+  "corpus":{"id":"example","title":"Example","description":"Recursive fixture."},
   "sources":[{
     "id":"example","path":"","license":"CC0-1.0",
     "source":{"name":"Example","url":"https://example.test/data","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},
@@ -63,9 +63,9 @@ func TestLoadSourceDirectoryUsesOnlyRecursiveRawInputs(t *testing.T) {
 	if err := loaded.VerifyProbe(probe); err != nil {
 		t.Fatal(err)
 	}
-	request := PlanRequest{}
+	request := PlanRequest{Destination: "tests/explicit"}
 	loaded.Apply(&request)
-	if request.Destination != "tests/example" || len(request.Sources) != 1 || request.Sources[0].InputRoot != raw {
+	if request.Destination != "tests/explicit" || len(request.Sources) != 1 || request.Sources[0].InputRoot != raw {
 		t.Fatalf("request = %+v", request)
 	}
 }

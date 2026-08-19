@@ -40,7 +40,9 @@ type SourceDirectoryCorpus struct {
 	ID          string `json:"id"`
 	Title       string `json:"title"`
 	Description string `json:"description"`
-	Destination string `json:"destination"`
+	// Destination is accepted only for compatibility with early handoffs.
+	// Fetching does not choose an index destination and WALDO ignores it.
+	Destination string `json:"destination,omitempty"`
 }
 
 type SourceDirectorySource struct {
@@ -126,8 +128,8 @@ func (manifest SourceDirectoryManifest) Validate() error {
 		return fmt.Errorf("unsupported source directory identity %q schema %d", manifest.Kind, manifest.Schema)
 	}
 	if strings.TrimSpace(manifest.Corpus.ID) == "" || strings.TrimSpace(manifest.Corpus.Title) == "" ||
-		strings.TrimSpace(manifest.Corpus.Description) == "" || strings.TrimSpace(manifest.Corpus.Destination) == "" {
-		return fmt.Errorf("source manifest corpus id, title, description, and destination are required")
+		strings.TrimSpace(manifest.Corpus.Description) == "" {
+		return fmt.Errorf("source manifest corpus id, title, and description are required")
 	}
 	if manifest.Raw.Path != "raw" {
 		return fmt.Errorf("source manifest raw.path must be %q", "raw")
@@ -254,7 +256,6 @@ func (manifest SourceDirectoryManifest) InputPaths() []string {
 func (manifest SourceDirectoryManifest) Apply(request *PlanRequest) {
 	request.Title = manifest.Corpus.Title
 	request.Description = manifest.Corpus.Description
-	request.Destination = manifest.Corpus.Destination
 	request.Sources = make([]PlanSourceRequest, 0, len(manifest.Sources))
 	for _, source := range manifest.Sources {
 		name := source.Source.Name
