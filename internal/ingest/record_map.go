@@ -521,13 +521,13 @@ func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallb
 		for position := range conversation.Messages {
 			if strings.IndexByte(conversation.Messages[position].Content, 0) >= 0 {
 				if input.Profile.NUL != "space" {
-					return shard.TextRow{}, fmt.Errorf("conversation message %d contains NUL", position+1)
+					return shard.TextRow{}, fmt.Errorf("conversation message %d contains NUL; set nul = space in the fetcher [input] profile to replace NUL bytes", position+1)
 				}
 				conversation.Messages[position].Content = strings.ReplaceAll(conversation.Messages[position].Content, "\x00", " ")
 			}
 			if strings.IndexByte(conversation.Messages[position].Context, 0) >= 0 {
 				if input.Profile.NUL != "space" {
-					return shard.TextRow{}, fmt.Errorf("conversation message %d context contains NUL", position+1)
+					return shard.TextRow{}, fmt.Errorf("conversation message %d context contains NUL; set nul = space in the fetcher [input] profile to replace NUL bytes", position+1)
 				}
 				conversation.Messages[position].Context = strings.ReplaceAll(conversation.Messages[position].Context, "\x00", " ")
 			}
