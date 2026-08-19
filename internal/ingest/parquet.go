@@ -66,7 +66,7 @@ func streamParquetTextBatches(ctx context.Context, plan Plan, batchMaximum, reco
 			_ = file.Close()
 			return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
 		}
-		err = readProjectedText(ctx, file, input, plan, recordMaximum, func(row shard.TextRow, size int64) error {
+		err = readProjectedText(ctx, file, input, plan, recordMaximum, func(row shard.TextRow, size, inputBytes int64) error {
 			if len(batch.Rows) > 0 && batch.LogicalBytes+size > batchMaximum {
 				if err := flush(); err != nil {
 					return err
@@ -74,6 +74,7 @@ func streamParquetTextBatches(ctx context.Context, plan Plan, batchMaximum, reco
 			}
 			batch.Rows = append(batch.Rows, row)
 			batch.LogicalBytes += size
+			batch.InputBytes = inputBytes
 			if batch.LogicalBytes >= batchMaximum {
 				return flush()
 			}
@@ -98,7 +99,7 @@ func streamParquetTextBatches(ctx context.Context, plan Plan, batchMaximum, reco
 	return flush()
 }
 
-func readProjectedText(ctx context.Context, input *os.File, planned PlanInput, plan Plan, maximum int64, emit func(shard.TextRow, int64) error) error {
+func readProjectedText(ctx context.Context, input *os.File, planned PlanInput, plan Plan, maximum int64, emit func(shard.TextRow, int64, int64) error) error {
 	parquetFile, err := parquet.OpenFile(input, planned.Artifact.Bytes)
 	if err != nil {
 		return fmt.Errorf("open Parquet: %w", err)
@@ -160,7 +161,7 @@ func readProjectedText(ctx context.Context, input *os.File, planned PlanInput, p
 				License:       license,
 				MainContent:   true,
 			}
-			if err := emit(canonical, int64(len(textBytes))); err != nil {
+			if err := emit(canonical, int64(len(textBytes)), proportionalProgress(planned.Artifact.Bytes, rowNumber, parquetFile.NumRows())); err != nil {
 				return err
 			}
 		}

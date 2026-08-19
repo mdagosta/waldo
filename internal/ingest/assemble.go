@@ -263,7 +263,7 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 			assessmentText = strings.Join(parts, "\n")
 		}
 		assessment := assessContent(assessmentText)
-		_, remaining, err := redactPrivacy(assessmentText)
+		_, remaining, err := redactCanonicalPayload(assembler.plan.Writer.RecordKind, row.Text)
 		if err != nil {
 			return fmt.Errorf("verify canonical privacy redaction: %w", err)
 		}
@@ -317,7 +317,11 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 			}
 		}
 	}
-	emitProgress(assembler.ctx, ProgressEvent{Phase: "ingest", Status: "records", Docs: assembler.progressDocs, Tokens: assembler.progressTokens})
+	emitProgress(assembler.ctx, ProgressEvent{
+		Phase: "ingest", Status: "records", Docs: assembler.progressDocs, Tokens: assembler.progressTokens,
+		Bytes: batch.ProgressBytes, TotalBytes: batch.ProgressTotalBytes,
+		Files: batch.ProgressFiles, TotalFiles: batch.ProgressTotalFiles,
+	})
 	return nil
 }
 

@@ -23,12 +23,19 @@ import (
 
 // TextBatch is the typed boundary between text-family adapters and the
 // partitioning/writer stage. LogicalBytes counts payload bytes, not Go object
-// overhead or encoded Parquet bytes.
+// overhead or encoded Parquet bytes. InputBytes is the adapter's cumulative
+// encoded-input progress for the current artifact; the Progress fields are
+// populated by the multi-input pipeline before the writer receives the batch.
 type TextBatch struct {
-	Rows         []shard.TextRow
-	LogicalBytes int64
-	RejectedDocs int64
-	Rejections   map[string]int64
+	Rows               []shard.TextRow
+	LogicalBytes       int64
+	InputBytes         int64
+	ProgressBytes      int64
+	ProgressTotalBytes int64
+	ProgressFiles      int64
+	ProgressTotalFiles int64
+	RejectedDocs       int64
+	Rejections         map[string]int64
 }
 
 const (

@@ -63,7 +63,11 @@ func openDeduplicator(path string) (*deduplicator, error) {
 }
 
 func (dedup *deduplicator) filter(batch TextBatch) (TextBatch, error) {
-	result := TextBatch{Rows: make([]shard.TextRow, 0, len(batch.Rows)), RejectedDocs: batch.RejectedDocs, Rejections: batch.Rejections}
+	result := TextBatch{
+		Rows: make([]shard.TextRow, 0, len(batch.Rows)), RejectedDocs: batch.RejectedDocs, Rejections: batch.Rejections,
+		InputBytes: batch.InputBytes, ProgressBytes: batch.ProgressBytes, ProgressTotalBytes: batch.ProgressTotalBytes,
+		ProgressFiles: batch.ProgressFiles, ProgressTotalFiles: batch.ProgressTotalFiles,
+	}
 	dedup.rejected += batch.RejectedDocs
 	if dedup.reasons == nil {
 		dedup.reasons = make(map[string]int64)

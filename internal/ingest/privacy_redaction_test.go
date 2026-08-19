@@ -8,6 +8,8 @@ package ingest
 import (
 	"strings"
 	"testing"
+
+	"github.com/openwaldo/waldo/internal/record"
 )
 
 func TestPrivacyRedactionRemovesDirectIdentifiersAndRetainsNames(t *testing.T) {
@@ -96,6 +98,31 @@ func TestPrivacyRedactionIsGenerallyIdempotent(t *testing.T) {
 		if redactedAgain != redacted || !remaining.empty() {
 			t.Fatalf("case %d second-pass counts = %s", position, remaining.counts())
 		}
+	}
+}
+
+func TestConversationPrivacyInvariantKeepsMessageBoundaries(t *testing.T) {
+	payload, err := record.EncodeConversation(record.Conversation{Messages: []record.Message{
+		{Role: "user", Content: "Received: this is ordinary message content"},
+		{Role: "assistant", Content: "Subject: response\n\nNothing private here."},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	redacted, first, err := redactCanonicalPayload(record.KindConversation, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, remaining, err := redactCanonicalPayload(record.KindConversation, redacted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if redacted != payload || !first.empty() || !remaining.empty() {
+		t.Fatalf("conversation redaction changed ordinary messages: first=%s remaining=%s", first.counts(), remaining.counts())
+	}
+	_, joined := redactPrivacyPass("Received: this is ordinary message content\nSubject: response\n\nNothing private here.")
+	if joined.MailRoutingHeaders != 1 {
+		t.Fatalf("fixture did not reproduce joined-message false positive: %s", joined.counts())
 	}
 }
 

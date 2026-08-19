@@ -48,7 +48,7 @@ func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(Text
 		batch = TextBatch{}
 		return nil
 	}
-	emit := func(row shard.TextRow) error {
+	emit := func(row shard.TextRow, inputBytes int64) error {
 		size := int64(len(row.Text))
 		if len(batch.Rows) > 0 && batch.LogicalBytes+size > plan.Writer.AdapterBatchBytes {
 			if err := flush(); err != nil {
@@ -57,6 +57,7 @@ func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(Text
 		}
 		batch.Rows = append(batch.Rows, row)
 		batch.LogicalBytes += size
+		batch.InputBytes = inputBytes
 		if batch.LogicalBytes >= plan.Writer.AdapterBatchBytes {
 			return flush()
 		}
@@ -92,7 +93,7 @@ func StreamMappedRecordBatches(ctx context.Context, plan Plan, consume func(Text
 	return flush()
 }
 
-func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func(string) error) error {
+func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow, int64) error, reject func(string) error) error {
 	file, verified, err := openVerifiedInput(ctx, input.Artifact)
 	if err != nil {
 		return err
@@ -152,13 +153,13 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 		}
 		return err
 	}
-	if err := emit(row); err != nil {
+	if err := emit(row, input.Artifact.Bytes); err != nil {
 		return err
 	}
 	return unchangedInput(file, verified)
 }
 
-func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func(string) error) error {
+func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow, int64) error, reject func(string) error) error {
 	file, verified, err := openVerifiedInput(ctx, input.Artifact)
 	if err != nil {
 		return err
@@ -235,7 +236,7 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 			_ = reader.Close()
 			return fmt.Errorf("line %d: %w", line, err)
 		}
-		if err := emit(row); err != nil {
+		if err := emit(row, 0); err != nil {
 			_ = reader.Close()
 			return err
 		}
@@ -254,7 +255,7 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 	return unchangedInput(file, verified)
 }
 
-func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow) error, reject func(string) error) error {
+func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow, int64) error, reject func(string) error) error {
 	file, verified, err := openVerifiedInput(ctx, input.Artifact)
 	if err != nil {
 		return err
@@ -280,6 +281,7 @@ func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit f
 	defer rows.Close()
 	buffer := make([]parquet.Row, 1)
 	position := int64(0)
+	totalRows := parquetFile.NumRows()
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -312,7 +314,7 @@ func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit f
 				}
 				return fmt.Errorf("row %d: %w", position, err)
 			}
-			if err := emit(row); err != nil {
+			if err := emit(row, proportionalProgress(input.Artifact.Bytes, position, totalRows)); err != nil {
 				return err
 			}
 		}

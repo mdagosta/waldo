@@ -235,6 +235,45 @@ func TestRecordMapReadsMappedParquetFields(t *testing.T) {
 	}
 }
 
+func TestMappedParquetReportsProgressWithinFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.parquet")
+	if err := parquet.WriteFile(path, []mappedParquetRow{
+		{Title: "First", Body: "Body", ID: 1, Metadata: mappedParquetMetadata{License: "CC0-1.0"}},
+		{Title: "Second", Body: "Body", ID: 2, Metadata: mappedParquetMetadata{License: "CC0-1.0"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plan := mappedFixturePlan(t, path, InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{
+		Text: []string{"title", "body"}, ID: "id", License: "metadata.license",
+	}})
+	var progress []int64
+	err := streamMappedParquet(t.Context(), plan, plan.Inputs[0], func(_ shard.TextRow, inputBytes int64) error {
+		progress = append(progress, inputBytes)
+		return nil
+	}, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(progress) != 2 || progress[0] <= 0 || progress[0] >= plan.Inputs[0].Artifact.Bytes || progress[1] != plan.Inputs[0].Artifact.Bytes {
+		t.Fatalf("progress = %v, total = %d", progress, plan.Inputs[0].Artifact.Bytes)
+	}
+	plan.Writer.AdapterBatchBytes = 1
+	var events []ProgressEvent
+	ctx := WithProgress(t.Context(), func(event ProgressEvent) { events = append(events, event) })
+	if _, err := AssembleTextObjects(ctx, plan, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	foundIntermediate := false
+	for _, event := range events {
+		if event.Phase == "ingest" && event.Status == "records" && event.Bytes > 0 && event.Bytes < event.TotalBytes {
+			foundIntermediate = true
+		}
+	}
+	if !foundIntermediate {
+		t.Fatalf("ingest events lack intermediate byte progress: %+v", events)
+	}
+}
+
 func TestPerRecordLicensesShareObjectsAndRemainInManifest(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "licenses.jsonl")
 	contents := "{\"text\":\"same\",\"license\":\"CC0-1.0\"}\n{\"text\":\"same\",\"license\":\"CC-BY-4.0\"}\n"
@@ -377,6 +416,25 @@ func TestChatMessagesReadsNestedParquetLists(t *testing.T) {
 	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
 	if len(rows) != 1 || rows[0].Text != `{"messages":[{"role":"user","content":"Question"},{"role":"assistant","content":"Answer"}]}` {
 		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestChatMessagesPrivacyCheckPreservesMessageBoundaries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat.jsonl")
+	contents := `{"messages":[{"role":"user","content":"Received: this is ordinary message content"},{"role":"assistant","content":"Subject: response\n\nNothing private here."}]}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type:     ProfileChatMessages,
+		Messages: ChatMessagesMapping{Role: "messages[].role", Content: "messages[].content"},
+	}
+	result, err := AssembleTextObjects(t.Context(), mappedFixturePlan(t, path, profile), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.InputDocs != 1 || result.RetainedDocs != 1 {
+		t.Fatalf("assembly = %+v", result)
 	}
 }
 

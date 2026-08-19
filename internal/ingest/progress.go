@@ -55,3 +55,13 @@ func emitProgress(ctx context.Context, event ProgressEvent) {
 		emitter.sink(event)
 	}
 }
+
+func proportionalProgress(total, current, count int64) int64 {
+	if total <= 0 || current <= 0 || count <= 0 {
+		return 0
+	}
+	if current >= count {
+		return total
+	}
+	return int64(float64(total) * (float64(current) / float64(count)))
+}
