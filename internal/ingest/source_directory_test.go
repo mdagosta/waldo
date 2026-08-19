@@ -33,7 +33,7 @@ func TestLoadSourceDirectoryUsesOnlyRecursiveRawInputs(t *testing.T) {
   "sources":[{
     "id":"example","path":"","license":"CC0-1.0",
     "source":{"name":"Example","url":"https://example.test/data","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},
-    "input":{},"artifacts":[{"url":"https://example.test/data/record.txt","path":"nested/record.txt"}]
+    "input":{"format":"text"},"artifacts":[{"url":"https://example.test/data/record.txt","path":"nested/record.txt"}]
   }],
   "fetcher":{"script":"corpora/example.sh","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","dirty":false},
   "raw":{"path":"raw","file_count":1,"byte_count":%d,"tree_sha256":"%x"}

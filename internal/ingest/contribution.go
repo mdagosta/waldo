@@ -189,6 +189,7 @@ func sourceAcquisitionIdentity(plan Plan, sourceID string) (string, error) {
 		writeIdentityString(hasher, input.Artifact.Format)
 		writeIdentityString(hasher, input.Artifact.Compression)
 		writeIdentityString(hasher, input.Adapter)
+		writeIdentityString(hasher, input.DetectedFormat)
 		writeIdentityString(hasher, input.TextColumn)
 		writeIdentityString(hasher, input.SourcePath)
 		profile, err := json.Marshal(input.Profile)

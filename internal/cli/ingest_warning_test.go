@@ -34,3 +34,17 @@ func TestIngestTextFallbackWarningSaysContentIsRetained(t *testing.T) {
 		t.Fatalf("warning = %q", message)
 	}
 }
+
+func TestIngestForceFormatWarningIsProminent(t *testing.T) {
+	plan := ingest.Plan{Inputs: []ingest.PlanInput{{
+		DetectedFormat: "unknown",
+		Artifact:       ingest.Artifact{Format: "text"},
+	}}}
+	var output bytes.Buffer
+	emitIngestForceFormatWarning(&output, plan, false)
+	for _, want := range []string{"WARNING", "FORCE-FORMAT", "UNKNOWN->TEXT", "STILL PARSE AND VALIDATE"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("warning %q does not contain %q", output.String(), want)
+		}
+	}
+}

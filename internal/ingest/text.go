@@ -91,11 +91,7 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 				return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
 			}
 			if !valid {
-				emitOpaqueTextFallback(ctx, input)
-				if err := streamOpaqueInput(ctx, plan, input, batchMaximum, consume); err != nil {
-					return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
-				}
-				continue
+				return fmt.Errorf("adapt %s: selected text adapter requires NUL-free UTF-8", input.Artifact.Path)
 			}
 			if err := streamLargeTextInput(ctx, plan, input, min(batchMaximum, recordMaximum), consume); err != nil {
 				return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
@@ -105,14 +101,7 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 		row, size, err := readTextRow(ctx, plan, input, recordMaximum)
 		if err != nil {
 			if errors.Is(err, errTextRequiresOpaqueFallback) {
-				if err := flush(); err != nil {
-					return err
-				}
-				emitOpaqueTextFallback(ctx, input)
-				if err := streamOpaqueInput(ctx, plan, input, batchMaximum, consume); err != nil {
-					return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
-				}
-				continue
+				return fmt.Errorf("adapt %s: selected text adapter requires NUL-free UTF-8", input.Artifact.Path)
 			}
 			return fmt.Errorf("adapt %s: %w", input.Artifact.Path, err)
 		}
@@ -130,13 +119,6 @@ func streamTextBatches(ctx context.Context, plan Plan, batchMaximum, recordMaxim
 		}
 	}
 	return flush()
-}
-
-func emitOpaqueTextFallback(ctx context.Context, input PlanInput) {
-	emitProgress(ctx, ProgressEvent{
-		Phase: "convert", Status: "warning", Input: input.Artifact.Path, Adapter: "opaque-base64",
-		TotalBytes: input.Artifact.Bytes, Message: "text probe did not cover non-UTF-8 or NUL bytes; retaining the complete artifact losslessly",
-	})
 }
 
 func isNULFreeUTF8File(ctx context.Context, path string) (bool, error) {

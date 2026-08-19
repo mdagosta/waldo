@@ -46,7 +46,7 @@ The schema-1 manifest is:
         "url": "https://example.org/license"
       }
     },
-    "input": {}
+    "input": {"format": "text"}
   },
   "fetcher": {
     "name": "waldo-fetcher-1",
@@ -60,8 +60,8 @@ The schema-1 manifest is:
 }
 ```
 
-The source ID may be omitted; WALDO then uses the corpus ID. `input` is omitted
-when the raw format has an automatic reader.
+The source ID may be omitted; WALDO then uses the corpus ID. `input.format` is
+required even when the format has an automatic reader.
 
 ## Multiple sources
 
@@ -110,6 +110,7 @@ Each child manifest has this shape:
       "license_evidence": {"declaration": "CC0 1.0"}
     },
     "input": {
+      "format": "jsonl",
       "type": "record-map",
       "fields": {"text": ["text"]}
     }
@@ -141,7 +142,8 @@ file and rejects a mismatch.
 
 ## General input formats
 
-WALDO detects the physical format independently of filenames:
+The fetcher manifest declares the physical format, and WALDO independently
+probes the bytes to verify that declaration:
 
 | Format | Physical record |
 | --- | --- |

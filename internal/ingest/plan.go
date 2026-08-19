@@ -80,12 +80,13 @@ type WriterPlan struct {
 }
 
 type PlanInput struct {
-	Artifact   Artifact     `json:"artifact"`
-	Adapter    string       `json:"adapter"`
-	TextColumn string       `json:"text_column,omitempty"`
-	SourcePath string       `json:"source_path,omitempty"`
-	SourceID   string       `json:"source_id,omitempty"`
-	Profile    InputProfile `json:"profile,omitempty"`
+	Artifact       Artifact     `json:"artifact"`
+	Adapter        string       `json:"adapter"`
+	DetectedFormat string       `json:"detected_format,omitempty"`
+	TextColumn     string       `json:"text_column,omitempty"`
+	SourcePath     string       `json:"source_path,omitempty"`
+	SourceID       string       `json:"source_id,omitempty"`
+	Profile        InputProfile `json:"profile,omitempty"`
 }
 
 type PlanRequest struct {
@@ -97,6 +98,7 @@ type PlanRequest struct {
 	Mode               string
 	MemoryBytes        int64
 	TextColumn         string
+	ForceFormat        string
 	RecordMaximumBytes int64
 	Profile            InputProfile
 	InputRoot          string
@@ -121,6 +123,9 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 	}
 	if strings.TrimSpace(request.Destination) == "" || strings.TrimSpace(request.Title) == "" {
 		return Plan{}, fmt.Errorf("destination and title are required")
+	}
+	if request.ForceFormat != "" && !slices.Contains([]string{"text", "markdown", "mbox", "json", "jsonl", "parquet", "xml"}, request.ForceFormat) {
+		return Plan{}, fmt.Errorf("unsupported --force-format %q; use text, markdown, mbox, json, jsonl, parquet, or xml", request.ForceFormat)
 	}
 	if len(request.Sources) == 0 {
 		if strings.TrimSpace(request.License) == "" {
@@ -215,12 +220,26 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			profile, textColumn, inputRoot, sourceID = source.Profile, source.TextColumn, source.InputRoot, source.ID
 			sourceCode = contentIncludesSourceCode(source.Source.Content)
 		}
-		if sourceCode && artifact.Format == "json" {
-			recordTextFallback(&plan, artifact.Format, "text", artifact.Bytes)
+		if request.ForceFormat == "" && profile.Format != "" {
+			if !declaredFormatMatches(profile.Format, artifact, sourceCode) {
+				return Plan{}, fmt.Errorf("%s: manifest declares input format %q but WALDO detected %q; correct the fetcher INI and refetch, or correct the raw data", artifact.Path, profile.Format, artifact.Format)
+			}
+			if artifact.Format != profile.Format {
+				detected := artifact.Format
+				artifact.Format = profile.Format
+				artifact.Evidence = append(artifact.Evidence, "manifest-format:"+detected+"->"+profile.Format)
+			}
+		} else if request.ForceFormat == "" && sourceCode && sourceCodeTextFormat(artifact) {
 			artifact.Format = "text"
 			artifact.Evidence = append(artifact.Evidence, "source-code-context")
 		}
-		input := PlanInput{Artifact: artifact, Profile: profile, SourceID: sourceID}
+		detectedFormat := ""
+		if request.ForceFormat != "" {
+			detectedFormat = artifact.Format
+			artifact.Format = request.ForceFormat
+			artifact.Evidence = append(artifact.Evidence, "forced-format:"+detectedFormat+"->"+request.ForceFormat)
+		}
+		input := PlanInput{Artifact: artifact, Profile: profile, SourceID: sourceID, DetectedFormat: detectedFormat}
 		if inputRoot != "" {
 			root, err := filepath.Abs(inputRoot)
 			if err != nil {
@@ -265,7 +284,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 				input.Adapter = artifact.Format
 			case "parquet":
 				if textColumn == "" {
-					return Plan{}, fmt.Errorf("%s: Parquet input requires a record input profile or an explicit text column", artifact.Path)
+					return Plan{}, fmt.Errorf("%s: Parquet input requires a record input profile or an explicit text column; use a manifest [input] mapping or --input-profile/--text-column", artifact.Path)
 				}
 				column, err := chooseTextColumn(artifact, textColumn)
 				if err != nil {
@@ -274,11 +293,11 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 				input.Adapter = "parquet"
 				input.TextColumn = column
 			case "json", "jsonl":
-				return Plan{}, fmt.Errorf("%s: %s input requires a record input profile", artifact.Path, strings.ToUpper(artifact.Format))
+				return Plan{}, fmt.Errorf("%s: %s input requires a record input profile; use a manifest [input] mapping or --input-profile, or deliberately override it with --force-format text", artifact.Path, strings.ToUpper(artifact.Format))
 			case "xml":
-				return Plan{}, fmt.Errorf("%s: XML input requires an xml-record input profile", artifact.Path)
+				return Plan{}, fmt.Errorf("%s: XML input requires an xml-record input profile; use a manifest [input] mapping or --input-profile, or deliberately override it with --force-format text", artifact.Path)
 			default:
-				return Plan{}, fmt.Errorf("%s: unsupported raw format %q; add a general ingestion adapter before using this corpus", artifact.Path, artifact.Format)
+				return Plan{}, fmt.Errorf("%s: unsupported raw format %q; add a general ingestion adapter or deliberately select an existing one with --force-format", artifact.Path, artifact.Format)
 			}
 		}
 		plan.Inputs = append(plan.Inputs, input)
@@ -315,6 +334,30 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		return Plan{}, err
 	}
 	return plan, nil
+}
+
+func sourceCodeTextFormat(artifact Artifact) bool {
+	if artifact.Compression != "" {
+		return false
+	}
+	return slices.Contains([]string{"text", "markdown", "json", "jsonl", "html", "xml", "warc", "mbox"}, artifact.Format)
+}
+
+func declaredFormatMatches(expected string, artifact Artifact, sourceCode bool) bool {
+	if expected == artifact.Format {
+		return true
+	}
+	if artifact.Compression != "" {
+		return false
+	}
+	switch expected {
+	case "text":
+		return artifact.Format == "markdown" || sourceCode && sourceCodeTextFormat(artifact)
+	case "markdown":
+		return artifact.Format == "text" || artifact.Format == "markdown"
+	default:
+		return false
+	}
 }
 
 func recordTextFallback(plan *Plan, format, adapter string, bytes int64) {
@@ -472,6 +515,9 @@ func (plan Plan) Validate() error {
 		}
 		if _, license, err := plan.sourceFor(input); err != nil || license == "" {
 			return fmt.Errorf("input %s has invalid source assignment", artifact.Path)
+		}
+		if input.DetectedFormat != "" && !slices.Contains([]string{"empty", "text", "markdown", "mbox", "json", "jsonl", "parquet", "xml", "html", "warc", "compressed", "unknown"}, input.DetectedFormat) {
+			return fmt.Errorf("input %s has invalid overridden detected format %q", artifact.Path, input.DetectedFormat)
 		}
 		if err := input.Profile.Validate(); err != nil {
 			return fmt.Errorf("input %s: %w", artifact.Path, err)

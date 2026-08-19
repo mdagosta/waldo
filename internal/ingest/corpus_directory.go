@@ -178,6 +178,9 @@ func loadNestedSourceDirectory(directory, expectedID string) (LoadedDirectorySou
 }
 
 func validateDirectorySource(source DirectorySource) error {
+	if strings.TrimSpace(source.Input.Format) == "" {
+		return fmt.Errorf("input.format is required")
+	}
 	return validateSourceDirectorySource(SourceDirectorySource{
 		ID: source.ID, License: source.License, Source: source.Source, Input: source.Input, Artifacts: source.Artifacts,
 	})

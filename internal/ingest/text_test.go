@@ -7,7 +7,6 @@ package ingest
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -145,7 +144,7 @@ func TestStreamTextBatchesChunksOversizedFilesLosslessly(t *testing.T) {
 	}
 }
 
-func TestStreamTextBatchesFallsBackLosslesslyWhenProbeMissesNUL(t *testing.T) {
+func TestStreamTextBatchesRejectsLateNULWhenProbeMissesIt(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "MediaController.java")
 	original := append([]byte(strings.Repeat("a", probeBytes+1)), 0)
 	original = append(original, []byte("still retained")...)
@@ -166,19 +165,13 @@ func TestStreamTextBatchesFallsBackLosslesslyWhenProbeMissesNUL(t *testing.T) {
 	if plan.Inputs[0].Adapter != "text" {
 		t.Fatalf("adapter = %q", plan.Inputs[0].Adapter)
 	}
-	var rows []shard.TextRow
-	if err := streamTextBatches(context.Background(), plan, 1<<20, 1<<20, func(batch TextBatch) error {
-		rows = append(rows, batch.Rows...)
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if decoded := decodeOpaqueRows(t, rows); string(decoded) != string(original) {
-		t.Fatalf("decoded bytes = %d, want %d", len(decoded), len(original))
+	err = streamTextBatches(context.Background(), plan, 1<<20, 1<<20, func(batch TextBatch) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "requires NUL-free UTF-8") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestOversizedTextWithLateNULFallsBackBeforeEmittingTextChunks(t *testing.T) {
+func TestOversizedTextWithLateNULFailsBeforeEmittingTextChunks(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "large.java")
 	original := append([]byte(strings.Repeat("b", probeBytes+1)), 0)
 	original = append(original, []byte("tail")...)
@@ -197,35 +190,16 @@ func TestOversizedTextWithLateNULFallsBackBeforeEmittingTextChunks(t *testing.T)
 		t.Fatal(err)
 	}
 	var rows []shard.TextRow
-	if err := streamTextBatches(context.Background(), plan, 17, 17, func(batch TextBatch) error {
+	err = streamTextBatches(context.Background(), plan, 17, 17, func(batch TextBatch) error {
 		rows = append(rows, batch.Rows...)
 		return nil
-	}); err != nil {
-		t.Fatal(err)
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires NUL-free UTF-8") {
+		t.Fatalf("error = %v", err)
 	}
-	if decoded := decodeOpaqueRows(t, rows); string(decoded) != string(original) {
-		t.Fatalf("decoded bytes = %d, want %d", len(decoded), len(original))
+	if len(rows) != 0 {
+		t.Fatalf("emitted %d rows before validation failed", len(rows))
 	}
-}
-
-func decodeOpaqueRows(t *testing.T, rows []shard.TextRow) []byte {
-	t.Helper()
-	if len(rows) == 0 {
-		t.Fatal("opaque fallback emitted no rows")
-	}
-	var decoded []byte
-	for _, row := range rows {
-		parts := strings.SplitN(row.Text, "\n\n", 2)
-		if len(parts) != 2 || !strings.HasPrefix(parts[0], "WALDO_OPAQUE_BINARY_V1") {
-			t.Fatalf("row is not an opaque representation: %q", row.Text)
-		}
-		chunk, err := base64.StdEncoding.DecodeString(parts[1])
-		if err != nil {
-			t.Fatal(err)
-		}
-		decoded = append(decoded, chunk...)
-	}
-	return decoded
 }
 
 func writeFixture(t *testing.T, path, content string) {

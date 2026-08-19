@@ -126,7 +126,7 @@ func TestIndexIngestSourceDirectoryRecursesRawAndUsesManifest(t *testing.T) {
 	manifest := fmt.Sprintf(`{
   "kind":"waldo-source-directory","schema":1,
   "corpus":{"id":"source-example","title":"Source Example","description":"Fetcher handoff."},
-  "sources":[{"id":"source-example","path":"","license":"CC0-1.0","source":{"name":"Example","url":"https://example.test/data","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},"input":{},"artifacts":[{"url":"https://example.test/data/document.txt","path":"nested/document.txt"}]}],
+  "sources":[{"id":"source-example","path":"","license":"CC0-1.0","source":{"name":"Example","url":"https://example.test/data","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},"input":{"format":"text"},"artifacts":[{"url":"https://example.test/data/document.txt","path":"nested/document.txt"}]}],
   "fetcher":{},"raw":{"path":"raw","file_count":1,"byte_count":%d,"tree_sha256":"%x"}
 }`, len(content), treeHash)
 	if err := os.WriteFile(filepath.Join(handoff, "manifest.json"), []byte(manifest), 0o644); err != nil {

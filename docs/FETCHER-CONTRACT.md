@@ -20,6 +20,10 @@ The definitive handoff format is [SOURCE-DIRECTORY.md](SOURCE-DIRECTORY.md).
 - Resume protocols that safely support it; preserve partial state on failure.
 - Retain general raw formats without corpus-specific text or conversation
   rendering.
+- Declare each source's physical format and logical mapping in the INI, copy
+  them into its manifest, and validate fetched files before publication.
+- Preserve fetched data and emit a source/file/mapping-specific error when
+  post-fetch validation fails.
 - Safely unpack general archive containers only when WALDO cannot read them.
 - Record corpus identity, source URL/category, effective license, upstream
   license evidence, content selection, and known provenance.
@@ -32,7 +36,8 @@ The definitive handoff format is [SOURCE-DIRECTORY.md](SOURCE-DIRECTORY.md).
 
 - Recursively discover only the files inside declared manifest boundaries.
 - Verify raw-tree evidence and pin every input's size and SHA-256.
-- Detect general physical formats, including compressed JSONL and mbox.
+- Detect general physical formats, including compressed JSONL and mbox, and
+  reject disagreement with the source manifest's declared format.
 - Apply declarative logical mappings from the source manifest.
 - Reject unsupported or unmapped raw formats instead of creating fallback
   training records.

@@ -146,6 +146,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	emitIngestForceFormatWarning(stderr, plan, commandContext.JSON)
 	emitIngestFallbackWarning(stderr, plan, commandContext.JSON)
 	identity, err := plan.Identity()
 	if err != nil {

@@ -28,10 +28,11 @@ const (
 	ProfileXMLRecord              = "xml-record"
 )
 
-// InputProfile describes how one physical input record becomes canonical
-// text. The container remains a separately detected fact: JSON is one object,
-// JSONL is one object per line, and Parquet is one row per record.
+// InputProfile pins the expected physical format and describes how one input
+// record becomes canonical text. WALDO still probes the bytes and rejects a
+// source-directory manifest whose declared format does not match them.
 type InputProfile struct {
+	Format        string               `json:"format,omitempty" yaml:"format,omitempty"`
 	Type          string               `json:"type" yaml:"type"`
 	OnEmpty       string               `json:"on_empty,omitempty" yaml:"on_empty,omitempty"`
 	NUL           string               `json:"nul,omitempty" yaml:"nul,omitempty"`
@@ -122,6 +123,13 @@ type ConversationTree struct {
 }
 
 func (profile InputProfile) Validate() error {
+	if profile.Format != "" {
+		switch profile.Format {
+		case "text", "markdown", "mbox", "json", "jsonl", "parquet", "xml":
+		default:
+			return fmt.Errorf("unsupported input format %q", profile.Format)
+		}
+	}
 	policy, err := corpus.NewLicensePolicy(profile.LicensePolicy.Include, profile.LicensePolicy.Exclude)
 	if err != nil {
 		return err
@@ -164,6 +172,9 @@ func (profile InputProfile) Validate() error {
 		}
 		return nil
 	case ProfileRecordMap:
+		if profile.Format != "" && profile.Format != "json" && profile.Format != "jsonl" && profile.Format != "parquet" {
+			return fmt.Errorf("record-map requires format json, jsonl, or parquet")
+		}
 		if len(profile.Fields.Text) == 0 {
 			return fmt.Errorf("record-map requires fields.text")
 		}
@@ -176,6 +187,9 @@ func (profile InputProfile) Validate() error {
 			}
 		}
 	case ProfileDialoguePair:
+		if profile.Format != "" && profile.Format != "json" && profile.Format != "jsonl" && profile.Format != "parquet" {
+			return fmt.Errorf("dialogue-pair requires format json, jsonl, or parquet")
+		}
 		if len(profile.Fields.Text) == 0 || profile.Fields.Response == "" {
 			return fmt.Errorf("dialogue-pair requires fields.text and fields.response")
 		}
@@ -188,6 +202,9 @@ func (profile InputProfile) Validate() error {
 			}
 		}
 	case ProfileChatMessages:
+		if profile.Format != "" && profile.Format != "json" && profile.Format != "jsonl" && profile.Format != "parquet" {
+			return fmt.Errorf("chat-messages requires format json, jsonl, or parquet")
+		}
 		if profile.Messages.Role == "" || profile.Messages.Content == "" {
 			return fmt.Errorf("chat-messages requires messages.role and messages.content")
 		}
@@ -205,6 +222,9 @@ func (profile InputProfile) Validate() error {
 			}
 		}
 	case ProfileRankedConversationTree:
+		if profile.Format != "" && profile.Format != "json" && profile.Format != "jsonl" {
+			return fmt.Errorf("ranked-conversation-tree requires format json or jsonl")
+		}
 		if profile.Tree.Replies == "" || profile.Tree.Text == "" || profile.Tree.Rank == "" {
 			return fmt.Errorf("ranked-conversation-tree requires tree.replies, tree.text, and tree.rank")
 		}
@@ -215,6 +235,9 @@ func (profile InputProfile) Validate() error {
 			return fmt.Errorf("ranked-conversation-tree tree.missing_rank must be source-order")
 		}
 	case ProfileBoundedText:
+		if profile.Format != "" && profile.Format != "text" && profile.Format != "markdown" {
+			return fmt.Errorf("bounded-text requires format text or markdown")
+		}
 		if profile.Bounds.StartPattern == "" || profile.Bounds.EndPattern == "" {
 			return fmt.Errorf("bounded-text requires bounds.start_pattern and bounds.end_pattern")
 		}
@@ -228,6 +251,9 @@ func (profile InputProfile) Validate() error {
 			return fmt.Errorf("bounded-text accepts bounds and on_empty only")
 		}
 	case ProfileXMLRecord:
+		if profile.Format != "" && profile.Format != "xml" {
+			return fmt.Errorf("xml-record requires format xml")
+		}
 		if len(profile.Fields.Text) == 0 {
 			return fmt.Errorf("xml-record requires fields.text")
 		}

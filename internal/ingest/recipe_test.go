@@ -287,8 +287,8 @@ func TestSourceCodeRecipeTreatsJSONArrayJavaScriptAsText(t *testing.T) {
 	if got := plan.Inputs[0]; got.Adapter != "text" || got.Artifact.Format != "text" || !slices.Contains(got.Artifact.Evidence, "source-code-context") {
 		t.Fatalf("planned input = %+v", got)
 	}
-	if len(plan.TextFallbacks) != 1 || plan.TextFallbacks[0].DetectedFormat != "json" || plan.TextFallbacks[0].Adapter != "text" || plan.TextFallbacks[0].Artifacts != 1 {
-		t.Fatalf("text fallbacks = %+v", plan.TextFallbacks)
+	if len(plan.TextFallbacks) != 0 {
+		t.Fatalf("source-code interpretation was incorrectly recorded as a fallback: %+v", plan.TextFallbacks)
 	}
 }
 

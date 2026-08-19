@@ -198,6 +198,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	emitIngestForceFormatWarning(stderr, plan, context.JSON)
 	emitIngestFallbackWarning(stderr, plan, context.JSON)
 	identity, err := plan.Identity()
 	if err != nil {
@@ -377,6 +378,31 @@ func emitIngestFallbackWarning(output io.Writer, plan ingest.Plan, jsonOutput bo
 	}
 }
 
+func emitIngestForceFormatWarning(output io.Writer, plan ingest.Plan, jsonOutput bool) {
+	counts := map[string]int64{}
+	for _, input := range plan.Inputs {
+		if input.DetectedFormat != "" {
+			counts[input.DetectedFormat+"->"+input.Artifact.Format]++
+		}
+	}
+	if len(counts) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(counts))
+	for key := range counts {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		message := fmt.Sprintf("WALDO FORCE-FORMAT OVERRIDE %s FOR %s INPUT FILES; AUTOMATIC FORMAT SELECTION WAS OVERRIDDEN, BUT THE SELECTED ADAPTER WILL STILL PARSE AND VALIDATE CONTENT", strings.ToUpper(key), humanInteger(counts[key]))
+		if jsonOutput {
+			_ = json.NewEncoder(output).Encode(ingest.ProgressEvent{Phase: "plan", Status: "warning", Message: message})
+			continue
+		}
+		fmt.Fprintf(output, "WARNING: %s.\n", message)
+	}
+}
+
 type recipeJSONLogWriter struct {
 	mu     sync.Mutex
 	output io.Writer
@@ -525,6 +551,7 @@ func cobraIndexIngestOptions(context Context, args []string) (indexIngestOptions
 			Description: stringOption(context, "description"),
 			License:     stringOption(context, "license"),
 			TextColumn:  stringOption(context, "text-column"),
+			ForceFormat: stringOption(context, "force-format"),
 			Destination: destination,
 			Source: ingest.PlanSource{
 				URL:      stringOption(context, "source"),
