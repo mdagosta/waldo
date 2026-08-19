@@ -6,6 +6,7 @@
 package ingest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,9 +17,203 @@ import (
 )
 
 type ContributionResult struct {
-	Root    string   `json:"root"`
-	Files   []string `json:"files"`
-	Removed []string `json:"removed,omitempty"`
+	Root      string   `json:"root"`
+	Files     []string `json:"files"`
+	Removed   []string `json:"removed,omitempty"`
+	Applied   bool     `json:"applied,omitempty"`
+	IndexRoot string   `json:"index_root,omitempty"`
+}
+
+type contributionWrite struct {
+	relative string
+	target   string
+	data     []byte
+	original []byte
+	existed  bool
+	remove   bool
+}
+
+// ApplyContribution atomically replaces each individual index file, validates
+// the complete checkout, and restores the original files if any step fails.
+// The staged overlay is retained as a durable record of what was applied.
+func ApplyContribution(indexRoot string, contribution ContributionResult) (ContributionResult, error) {
+	root, err := filepath.Abs(indexRoot)
+	if err != nil {
+		return contribution, err
+	}
+	overlay, err := filepath.Abs(contribution.Root)
+	if err != nil {
+		return contribution, err
+	}
+	if pathWithin(root, overlay) {
+		return contribution, fmt.Errorf("contribution overlay must be outside the index checkout")
+	}
+	writes := make([]contributionWrite, 0, len(contribution.Files))
+	touched := map[string]bool{}
+	for _, relative := range contribution.Files {
+		target, err := safeContributionPath(root, relative)
+		if err != nil {
+			return contribution, err
+		}
+		source, err := safeContributionPath(overlay, relative)
+		if err != nil {
+			return contribution, err
+		}
+		info, err := os.Lstat(source)
+		if err != nil {
+			return contribution, err
+		}
+		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+			return contribution, fmt.Errorf("contribution file %s is not a regular file", relative)
+		}
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return contribution, err
+		}
+		write := contributionWrite{relative: relative, target: target, data: data}
+		if current, exists, readErr := readOptionalRegular(target); readErr != nil {
+			return contribution, fmt.Errorf("read index target %s: %w", relative, readErr)
+		} else if exists {
+			write.original, write.existed = current, true
+		}
+		writes = append(writes, write)
+		touched[relative] = true
+	}
+	for _, relative := range contribution.Removed {
+		if touched[relative] {
+			return contribution, fmt.Errorf("contribution both writes and removes %s", relative)
+		}
+		target, err := safeContributionPath(root, relative)
+		if err != nil {
+			return contribution, err
+		}
+		write := contributionWrite{relative: relative, target: target, remove: true}
+		if current, exists, readErr := readOptionalRegular(target); readErr != nil {
+			return contribution, fmt.Errorf("read removed index target %s: %w", relative, readErr)
+		} else if exists {
+			write.original, write.existed = current, true
+		}
+		writes = append(writes, write)
+		touched[relative] = true
+	}
+	rollback := func(applyErr error) error {
+		var rollbackErr error
+		for _, write := range writes {
+			if write.existed {
+				rollbackErr = errors.Join(rollbackErr, writeIndexFileAtomic(write.target, write.original))
+			} else if err := os.Remove(write.target); err != nil && !os.IsNotExist(err) {
+				rollbackErr = errors.Join(rollbackErr, err)
+			}
+		}
+		if rollbackErr != nil {
+			return errors.Join(applyErr, fmt.Errorf("rollback contribution: %w", rollbackErr))
+		}
+		return applyErr
+	}
+	for _, write := range writes {
+		if write.remove {
+			if err := os.Remove(write.target); err != nil && !os.IsNotExist(err) {
+				return contribution, rollback(err)
+			}
+			continue
+		}
+		if err := writeIndexFileAtomic(write.target, write.data); err != nil {
+			return contribution, rollback(err)
+		}
+	}
+	target, err := index.Resolve(root, "")
+	if err == nil {
+		err = index.WalkCorpora(target, func(index.Corpus) error { return nil })
+	}
+	if err != nil {
+		return contribution, rollback(fmt.Errorf("validate applied index: %w", err))
+	}
+	contribution.Applied, contribution.IndexRoot = true, root
+	return contribution, nil
+}
+
+func safeContributionPath(root, relative string) (string, error) {
+	clean := filepath.Clean(filepath.FromSlash(relative))
+	if relative == "" || filepath.IsAbs(clean) || clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid contribution path %q", relative)
+	}
+	target := filepath.Join(root, clean)
+	if !pathWithin(root, target) {
+		return "", fmt.Errorf("contribution path %q escapes its root", relative)
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("contribution root %s is not a non-symlink directory", root)
+	}
+	current := root
+	parts := strings.Split(filepath.Dir(clean), string(filepath.Separator))
+	for _, part := range parts {
+		if part == "." || part == "" {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("contribution path %q has a non-directory or symlink parent", relative)
+		}
+	}
+	return target, nil
+}
+
+func readOptionalRegular(path string) ([]byte, bool, error) {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return nil, false, fmt.Errorf("not a regular non-symlink file")
+	}
+	data, err := os.ReadFile(path)
+	return data, err == nil, err
+}
+
+func writeIndexFileAtomic(path string, data []byte) error {
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(directory, ".waldo-index-apply-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o644); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return err
+	}
+	return syncDirectory(directory)
 }
 
 // StageContribution writes a minimal overlay containing the new manifest,

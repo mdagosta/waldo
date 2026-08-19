@@ -55,18 +55,6 @@ func TestStageContributionProducesMinimalValidIndexOverlay(t *testing.T) {
 		if result.Files[index] != want[index] {
 			t.Fatalf("files = %v", result.Files)
 		}
-		source := filepath.Join(result.Root, filepath.FromSlash(want[index]))
-		destination := filepath.Join(root, filepath.FromSlash(want[index]))
-		data, err := os.ReadFile(source)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(destination, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
 	}
 	wantRemoved := []string{"core/index.json"}
 	if len(result.Removed) != len(wantRemoved) {
@@ -76,9 +64,16 @@ func TestStageContributionProducesMinimalValidIndexOverlay(t *testing.T) {
 		if result.Removed[position] != relative {
 			t.Fatalf("removed = %v", result.Removed)
 		}
-		if err := os.Remove(filepath.Join(root, filepath.FromSlash(relative))); err != nil {
-			t.Fatal(err)
-		}
+	}
+	result, err = ApplyContribution(root, result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Applied || result.IndexRoot != root {
+		t.Fatalf("applied contribution = %+v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, "core", "index.json")); !os.IsNotExist(err) {
+		t.Fatalf("superseded index still exists: %v", err)
 	}
 	target, err := index.Resolve(root, "")
 	if err != nil {
@@ -90,6 +85,31 @@ func TestStageContributionProducesMinimalValidIndexOverlay(t *testing.T) {
 	}
 	if verification.Corpora != 1 || verification.Shards != 1 {
 		t.Fatalf("verification = %+v", verification)
+	}
+}
+
+func TestApplyContributionRollsBackInvalidIndex(t *testing.T) {
+	root := t.TempDir()
+	original := index.Directory{Kind: "index", Schema: 1, Path: ""}
+	writeIndexJSON(t, filepath.Join(root, "index.json"), original)
+	before, err := os.ReadFile(filepath.Join(root, "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	overlay := t.TempDir()
+	if err := os.WriteFile(filepath.Join(overlay, "index.json"), []byte("not valid index data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = ApplyContribution(root, ContributionResult{Root: overlay, Files: []string{"index.json"}})
+	if err == nil {
+		t.Fatal("expected invalid applied index to fail")
+	}
+	after, readErr := os.ReadFile(filepath.Join(root, "index.json"))
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("rollback changed index:\n%s", after)
 	}
 }
 

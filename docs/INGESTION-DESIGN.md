@@ -475,12 +475,13 @@ publication of the contribution remains a separate atomic coordinator step.
 Remote execution is not required for the first implementation, but local file
 formats and identities must not preclude it.
 
-The local contribution step writes a minimal overlay: the new schema-1
-YAML manifest with additive provenance for record schema 1, its leaf `index.yaml`, and only the
-ancestor directory indexes that change. It validates the overlay against the
-same manifest contract used to read the public index and is idempotent only
-when every staged byte still matches. It never edits Git, uploads to the
-declared public object base, commits, pushes, or opens a pull request.
+The local contribution step writes a minimal overlay: the new schema-1 YAML
+manifest with additive provenance for record schema 1, its leaf `index.yaml`,
+and only the ancestor directory indexes that change. After publication, WALDO
+atomically applies each overlay file to the selected index working tree and
+validates the complete index. A failed application restores the prior files;
+the overlay is retained for recovery and review. WALDO does not commit, push,
+or open a pull request.
 
 Existing-corpus updates pin the current manifest's byte SHA-256 in the
 ingestion plan. Every update treats the supplied input as the complete

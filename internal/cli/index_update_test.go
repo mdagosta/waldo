@@ -49,7 +49,9 @@ func TestIndexIngestUpdateRebuildsFromAuthoritativeInput(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &created); err != nil {
 		t.Fatal(err)
 	}
-	applyTestContribution(t, root, created.Contribution)
+	if !created.Contribution.Applied || created.Contribution.IndexRoot != root {
+		t.Fatalf("created contribution was not applied: %+v", created.Contribution)
+	}
 
 	updateInput := t.TempDir()
 	if err := os.WriteFile(filepath.Join(updateInput, "old.txt"), []byte("already indexed"), 0o644); err != nil {
@@ -75,7 +77,10 @@ func TestIndexIngestUpdateRebuildsFromAuthoritativeInput(t *testing.T) {
 	if updated.Assembly.InputDocs != 2 || updated.Assembly.RetainedDocs != 2 || updated.Assembly.DuplicateDocs != 0 || len(updated.Assembly.Objects) != 1 {
 		t.Fatalf("assembly = %+v", updated.Assembly)
 	}
-	manifest, err := waldoindex.LoadManifest(filepath.Join(updated.Contribution.Root, "core", "example", "example.yaml"))
+	if !updated.Contribution.Applied || updated.Contribution.IndexRoot != root {
+		t.Fatalf("updated contribution was not applied: %+v", updated.Contribution)
+	}
+	manifest, err := waldoindex.LoadManifest(filepath.Join(root, "core", "example", "example.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,27 +130,5 @@ func TestIndexIngestUpdateRebuildUsesFetcherHandoffManifest(t *testing.T) {
 	}
 	if output.Plan.Title != "Replacement Books" || output.Plan.Update == nil || output.Plan.Update.Mode != "rebuild-shards" || len(output.Plan.Inputs) != 1 {
 		t.Fatalf("update plan = %+v", output.Plan)
-	}
-}
-
-func applyTestContribution(t *testing.T, root string, contribution ingest.ContributionResult) {
-	t.Helper()
-	for _, relative := range contribution.Files {
-		data, err := os.ReadFile(filepath.Join(contribution.Root, filepath.FromSlash(relative)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		destination := filepath.Join(root, filepath.FromSlash(relative))
-		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(destination, data, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, relative := range contribution.Removed {
-		if err := os.Remove(filepath.Join(root, filepath.FromSlash(relative))); err != nil && !os.IsNotExist(err) {
-			t.Fatal(err)
-		}
 	}
 }

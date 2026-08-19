@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -235,6 +234,10 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 				return err
 			}
 		}
+		contribution, err = ingest.ApplyContribution(target.Root, contribution)
+		if err != nil {
+			return fmt.Errorf("apply verified contribution %s: %w", contribution.Root, err)
+		}
 		emitIngestExclusionWarning(stderr, assembly, plan)
 		if context.JSON {
 			return writeJSON(stdout, struct {
@@ -257,7 +260,8 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		}
 		fmt.Fprintf(stdout, "  tokens       %s (%s)\n", humanCount(tokens), manifest.ConvertedBy.Tokenizer)
 		fmt.Fprintf(stdout, "  objects      %s published to %s\n", humanInteger(int64(len(publication.Objects))), publication.BaseURL)
-		fmt.Fprintf(stdout, "  contribution %s (%s writes, %s removals)\n", contribution.Root, humanInteger(int64(len(contribution.Files))), humanInteger(int64(len(contribution.Removed))))
+		fmt.Fprintf(stdout, "  index        applied %s writes, %s removals to %s\n", humanInteger(int64(len(contribution.Files))), humanInteger(int64(len(contribution.Removed))), contribution.IndexRoot)
+		fmt.Fprintf(stdout, "  contribution %s (retained)\n", contribution.Root)
 		for _, file := range contribution.Files {
 			fmt.Fprintf(stdout, "    %s\n", file)
 		}
@@ -268,15 +272,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			fmt.Fprintln(stdout, "local publication is for end-to-end testing only; do not commit this overlay to a shared index")
 			return nil
 		}
-		fmt.Fprintln(stdout, "next steps (after reviewing the overlay and confirming the checkout is unchanged):")
-		fmt.Fprintf(stdout, "  cp -R -- %s/. %s/\n", shellQuote(contribution.Root), shellQuote(target.Root))
-		if len(contribution.Removed) > 0 {
-			fmt.Fprintf(stdout, "  rm --")
-			for _, file := range contribution.Removed {
-				fmt.Fprintf(stdout, " %s", shellQuote(filepath.Join(target.Root, filepath.FromSlash(file))))
-			}
-			fmt.Fprintln(stdout)
-		}
+		fmt.Fprintln(stdout, "next steps (after reviewing the applied index changes):")
 		fmt.Fprintf(stdout, "  waldo index verify %s\n", shellQuote(target.Root))
 		fmt.Fprintf(stdout, "  git -C %s add --", shellQuote(target.Root))
 		for _, file := range contribution.Files {

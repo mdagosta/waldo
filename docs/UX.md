@@ -121,9 +121,10 @@ Inspect the complete ingest interface before use:
 waldo index ingest --help
 ```
 
-Ingestion accepts supported local files or a reviewed ingest recipe. It writes
-a contribution overlay for normal Git review; WALDO does not commit or open a
-pull request.
+Ingestion accepts supported local files or a reviewed ingest recipe. After all
+objects are audited and published, it retains a contribution overlay and
+atomically applies those metadata changes to the selected index working tree
+for normal Git review. WALDO does not commit, push, or open a pull request.
 
 ## Export data and inspect its BOM
 

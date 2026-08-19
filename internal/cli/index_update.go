@@ -231,6 +231,10 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 			return err
 		}
 	}
+	contribution, err = ingest.ApplyContribution(target.Root, contribution)
+	if err != nil {
+		return fmt.Errorf("apply verified contribution %s: %w", contribution.Root, err)
+	}
 	if commandContext.JSON {
 		emitIngestExclusionWarning(stderr, assembly, plan)
 		return writeJSON(stdout, struct {
@@ -249,7 +253,8 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "  shards        %s new at %s\n", humanInteger(int64(len(assembly.Objects))), publication.BaseURL)
-	fmt.Fprintf(stdout, "  contribution  %s\n", contribution.Root)
+	fmt.Fprintf(stdout, "  index         applied %s writes, %s removals to %s\n", humanInteger(int64(len(contribution.Files))), humanInteger(int64(len(contribution.Removed))), contribution.IndexRoot)
+	fmt.Fprintf(stdout, "  contribution  %s (retained)\n", contribution.Root)
 	for _, file := range contribution.Files {
 		fmt.Fprintf(stdout, "    write  %s\n", file)
 	}
