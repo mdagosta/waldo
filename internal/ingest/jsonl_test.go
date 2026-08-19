@@ -141,7 +141,7 @@ func TestCompressedJSONLRejectsMissingText(t *testing.T) {
 	}
 }
 
-func TestDefaultJSONLRetainsUnmappedLinesAsRawText(t *testing.T) {
+func TestDefaultJSONLRequiresInputProfile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "solidity.dict")
 	contents := "\"function()\"\n\"constructor()\"\n"
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
@@ -154,27 +154,12 @@ func TestDefaultJSONLRetainsUnmappedLinesAsRawText(t *testing.T) {
 	if probe.Artifacts[0].Format != "jsonl" {
 		t.Fatalf("artifact = %+v", probe.Artifacts[0])
 	}
-	plan, err := NewPlan(probe, PlanRequest{
+	_, err = NewPlan(probe, PlanRequest{
 		Destination: "code/example", Title: "Code", License: "Apache-2.0",
 		Source: PlanSource{Name: "example", URL: "https://example.test/code", Category: "public-dataset"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Inputs[0].Adapter != "text" || plan.Inputs[0].Artifact.Format != "text" {
-		t.Fatalf("plan = %+v", plan)
-	}
-	var text string
-	if err := StreamCanonicalTextBatches(context.Background(), plan, func(batch TextBatch) error {
-		for _, row := range batch.Rows {
-			text += row.Text
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if text != contents {
-		t.Fatalf("text = %q, want %q", text, contents)
+	if err == nil || !strings.Contains(err.Error(), "JSONL input requires a record input profile") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

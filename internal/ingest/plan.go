@@ -265,36 +265,20 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 				input.Adapter = artifact.Format
 			case "parquet":
 				if textColumn == "" {
-					recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
-					input.Adapter = "opaque-base64"
-					input.Artifact.Evidence = append(input.Artifact.Evidence, "opaque-fallback:undeclared-parquet-schema")
-				} else {
-					column, err := chooseTextColumn(artifact, textColumn)
-					if err != nil {
-						return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
-					}
-					input.Adapter = "parquet"
-					input.TextColumn = column
+					return Plan{}, fmt.Errorf("%s: Parquet input requires a record input profile or an explicit text column", artifact.Path)
 				}
-			case "jsonl":
-				if artifact.Compression == "" {
-					recordTextFallback(&plan, artifact.Format, "text", artifact.Bytes)
-					input.Artifact.Format = "text"
-					input.Artifact.Evidence = append(input.Artifact.Evidence, "raw-text-fallback:jsonl")
-					input.Adapter = "text"
-				} else {
-					recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
-					input.Adapter = "opaque-base64"
-					input.Artifact.Evidence = append(input.Artifact.Evidence, "opaque-fallback:compressed-jsonl")
+				column, err := chooseTextColumn(artifact, textColumn)
+				if err != nil {
+					return Plan{}, fmt.Errorf("%s: %w", artifact.Path, err)
 				}
-			case "json", "html", "xml", "warc":
-				recordTextFallback(&plan, artifact.Format, "text", artifact.Bytes)
-				input.Artifact.Format = "text"
-				input.Artifact.Evidence = append(input.Artifact.Evidence, "raw-text-fallback:"+artifact.Format)
-				input.Adapter = "text"
+				input.Adapter = "parquet"
+				input.TextColumn = column
+			case "json", "jsonl":
+				return Plan{}, fmt.Errorf("%s: %s input requires a record input profile", artifact.Path, strings.ToUpper(artifact.Format))
+			case "xml":
+				return Plan{}, fmt.Errorf("%s: XML input requires an xml-record input profile", artifact.Path)
 			default:
-				recordTextFallback(&plan, artifact.Format, "opaque-base64", artifact.Bytes)
-				input.Adapter = "opaque-base64"
+				return Plan{}, fmt.Errorf("%s: unsupported raw format %q; add a general ingestion adapter before using this corpus", artifact.Path, artifact.Format)
 			}
 		}
 		plan.Inputs = append(plan.Inputs, input)

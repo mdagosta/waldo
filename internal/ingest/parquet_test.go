@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/shard"
@@ -117,7 +118,7 @@ func TestPlanRejectsNestedParquetTextMapping(t *testing.T) {
 	}
 }
 
-func TestDefaultParquetWithoutTextColumnFallsBackLosslessly(t *testing.T) {
+func TestDefaultParquetWithoutTextColumnIsRejected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "file.parquet")
 	if err := parquet.WriteFile(path, []unmappedParquetFixture{{File: 42}}); err != nil {
 		t.Fatal(err)
@@ -126,15 +127,12 @@ func TestDefaultParquetWithoutTextColumnFallsBackLosslessly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := NewPlan(probe, PlanRequest{
+	_, err = NewPlan(probe, PlanRequest{
 		Destination: "code/example", Title: "Code", License: "Apache-2.0",
 		Source: PlanSource{Name: "example", URL: "https://example.test/code", Category: "public-dataset"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Inputs[0].Adapter != "opaque-base64" || len(plan.TextFallbacks) != 1 || plan.TextFallbacks[0].Adapter != "opaque-base64" {
-		t.Fatalf("plan = %+v", plan)
+	if err == nil || !strings.Contains(err.Error(), "Parquet input requires a record input profile or an explicit text column") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

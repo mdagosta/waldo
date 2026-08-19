@@ -139,7 +139,7 @@ func TestNewPlanPinsMappingsAndIdentity(t *testing.T) {
 	}
 }
 
-func TestNewPlanFallsBackForAmbiguousParquetMapping(t *testing.T) {
+func TestNewPlanRejectsParquetWithoutMapping(t *testing.T) {
 	type ambiguousRow struct {
 		Text    string `parquet:"text"`
 		Content string `parquet:"content"`
@@ -156,12 +156,8 @@ func TestNewPlanFallsBackForAmbiguousParquetMapping(t *testing.T) {
 		Destination: "core/example", Title: "Example", License: "CC0-1.0",
 		Source: PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
 	}
-	plan, err := NewPlan(probe, request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Inputs[0].Adapter != "opaque-base64" {
-		t.Fatalf("adapter = %q, want opaque-base64", plan.Inputs[0].Adapter)
+	if _, err := NewPlan(probe, request); err == nil || !strings.Contains(err.Error(), "Parquet input requires a record input profile or an explicit text column") {
+		t.Fatalf("error = %v", err)
 	}
 	request.TextColumn = "content"
 	if _, err := NewPlan(probe, request); err != nil {

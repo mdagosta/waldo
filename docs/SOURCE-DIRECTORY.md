@@ -160,6 +160,11 @@ formats and do not render corpus-specific conversation templates.
 Text must be NUL-free UTF-8. Archives that WALDO does not read directly must be
 safely unpacked by acquisition. Empty files are not trainable records. WALDO
 pins file identity before conversion and rejects files that change afterward.
+Every non-empty file must resolve to one of the supported adapters above.
+Structured JSON, JSONL, Parquet, and XML must carry the required logical input
+mapping. WALDO fails before conversion on unsupported, ambiguous, or unmapped
+formats; it does not silently convert raw markup to text or binary bytes to
+base64 training records.
 
 Before hashing, deduplication, measurement, and packing, WALDO applies its
 pinned privacy-redaction policy. Canonical shard and manifest statistics—not

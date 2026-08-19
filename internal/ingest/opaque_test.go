@@ -7,14 +7,13 @@ package ingest
 
 import (
 	"context"
-	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestOpaqueFallbackLosslesslyRetainsUnknownBytes(t *testing.T) {
+func TestUnknownBinaryFormatIsRejected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "asset.bin")
 	original := []byte{0x00, 0xff, 0x10, 0x80, 'W', 'A', 'L', 'D', 'O'}
 	if err := os.WriteFile(path, original, 0o644); err != nil {
@@ -24,37 +23,16 @@ func TestOpaqueFallbackLosslesslyRetainsUnknownBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := NewPlan(probe, PlanRequest{
+	_, err = NewPlan(probe, PlanRequest{
 		Destination: "mixed/example", Title: "Mixed", License: "CC0-1.0",
 		Source: PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Inputs[0].Adapter != "opaque-base64" || len(plan.TextFallbacks) != 1 || plan.TextFallbacks[0].Adapter != "opaque-base64" {
-		t.Fatalf("plan = %+v", plan)
-	}
-	var encoded string
-	if err := StreamOpaqueTextBatches(context.Background(), plan, func(batch TextBatch) error {
-		encoded = batch.Rows[0].Text
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	parts := strings.SplitN(encoded, "\n\n", 2)
-	if len(parts) != 2 {
-		t.Fatalf("opaque record = %q", encoded)
-	}
-	decoded, err := base64.StdEncoding.DecodeString(parts[1])
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(decoded) != string(original) {
-		t.Fatalf("decoded bytes = %x, want %x", decoded, original)
+	if err == nil || !strings.Contains(err.Error(), `unsupported raw format "unknown"`) {
+		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestOpaqueFallbackChunksLargeArtifactsIntoBoundedRows(t *testing.T) {
+func TestLargeUnknownBinaryFormatIsRejected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "asset.bin")
 	original := make([]byte, opaqueChunkBytes*2+17)
 	for position := range original {
@@ -67,40 +45,11 @@ func TestOpaqueFallbackChunksLargeArtifactsIntoBoundedRows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := NewPlan(probe, PlanRequest{
+	_, err = NewPlan(probe, PlanRequest{
 		Destination: "mixed/example", Title: "Mixed", License: "CC0-1.0",
 		Source: PlanSource{Name: "example", URL: "https://example.test", Category: "public-dataset"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var rows []string
-	batches := 0
-	if err := StreamOpaqueTextBatches(context.Background(), plan, func(batch TextBatch) error {
-		batches++
-		for _, row := range batch.Rows {
-			rows = append(rows, row.Text)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if batches != 1 || len(rows) != 3 {
-		t.Fatalf("batches/rows = %d/%d, want 1/3", batches, len(rows))
-	}
-	var decoded []byte
-	for _, row := range rows {
-		parts := strings.SplitN(row, "\n\n", 2)
-		if len(parts) != 2 {
-			t.Fatalf("opaque row = %q", row)
-		}
-		chunk, err := base64.StdEncoding.DecodeString(parts[1])
-		if err != nil {
-			t.Fatal(err)
-		}
-		decoded = append(decoded, chunk...)
-	}
-	if string(decoded) != string(original) {
-		t.Fatalf("decoded bytes = %d, want %d", len(decoded), len(original))
+	if err == nil || !strings.Contains(err.Error(), `unsupported raw format "unknown"`) {
+		t.Fatalf("error = %v", err)
 	}
 }

@@ -34,6 +34,8 @@ The definitive handoff format is [SOURCE-DIRECTORY.md](SOURCE-DIRECTORY.md).
 - Verify raw-tree evidence and pin every input's size and SHA-256.
 - Detect general physical formats, including compressed JSONL and mbox.
 - Apply declarative logical mappings from the source manifest.
+- Reject unsupported or unmapped raw formats instead of creating fallback
+  training records.
 - Preserve source identity and effective/per-record licenses.
 - Apply the pinned privacy-redaction and content-assessment policies.
 - Deduplicate, tokenize, partition, and write canonical Parquet.
