@@ -1,6 +1,8 @@
 # Release gate: exercise the complete training and inference path cheaply.
 kind: waldo-model-compose
 schema: 1
+interaction:
+  template: user-assistant-v1
 architecture:
   family: decoder-transformer
   context_tokens: 512
@@ -19,6 +21,9 @@ stages:
   - name: pretrain
     type: pre-training
     objective: causal-language-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
     filter:
       main_content: true
     corpora:
