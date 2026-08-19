@@ -430,6 +430,7 @@ func shellQuote(value string) string {
 
 func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSink {
 	last := map[string]int64{}
+	var ingestBytes, ingestTotalBytes, ingestFiles, ingestTotalFiles, ingestDocs, ingestTokens int64
 	return func(event ingest.ProgressEvent) {
 		if jsonOutput {
 			_ = json.NewEncoder(output).Encode(event)
@@ -452,6 +453,35 @@ func ingestProgressReporter(output io.Writer, jsonOutput bool) ingest.ProgressSi
 			fmt.Fprintf(output, "convert  %s using %s\n", event.Input, event.Adapter)
 		case event.Phase == "convert" && event.Status == "completed":
 			fmt.Fprintf(output, "converted %s (%s)\n", event.Input, humanBytes(event.Bytes))
+		case event.Phase == "ingest":
+			if event.TotalBytes > 0 {
+				ingestTotalBytes = event.TotalBytes
+			}
+			if event.TotalFiles > 0 {
+				ingestTotalFiles = event.TotalFiles
+			}
+			if event.Bytes > 0 {
+				ingestBytes = event.Bytes
+			}
+			if event.Files > 0 {
+				ingestFiles = event.Files
+			}
+			if event.Docs > 0 || event.Status == "completed" {
+				ingestDocs = event.Docs
+			}
+			if event.Tokens > 0 || event.Status == "completed" {
+				ingestTokens = event.Tokens
+			}
+			label := "ingest  "
+			if event.Status == "started" {
+				label = "ingest started "
+			} else if event.Status == "completed" {
+				label = "ingest complete"
+			}
+			fmt.Fprintf(output, "%s  %s/%s files  %s/%s  %s docs  %s tokens\n",
+				label, humanInteger(ingestFiles), humanInteger(ingestTotalFiles),
+				humanBytes(ingestBytes), humanBytes(ingestTotalBytes),
+				humanInteger(ingestDocs), humanInteger(ingestTokens))
 		case event.Phase == "audit" && event.Status == "started":
 			fmt.Fprintf(output, "audit %d  %s started on worker %d\n", event.Sequence, short, event.Worker)
 		case event.Phase == "audit" && event.Status == "completed":

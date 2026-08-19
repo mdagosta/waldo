@@ -20,6 +20,12 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 	if consume == nil {
 		return fmt.Errorf("text batch consumer is required")
 	}
+	var totalBytes int64
+	for _, input := range plan.Inputs {
+		totalBytes += input.Artifact.Bytes
+	}
+	emitProgress(ctx, ProgressEvent{Phase: "ingest", Status: "started", TotalBytes: totalBytes, TotalFiles: int64(len(plan.Inputs))})
+	var completedBytes, completedFiles int64
 	for _, input := range plan.Inputs {
 		emitProgress(ctx, ProgressEvent{Phase: "convert", Status: "started", Input: input.Artifact.Path, Adapter: input.Adapter, TotalBytes: input.Artifact.Bytes})
 		inputPlan := plan
@@ -31,6 +37,9 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 				return err
 			}
 			emitProgress(ctx, ProgressEvent{Phase: "convert", Status: "completed", Input: input.Artifact.Path, Adapter: input.Adapter, Bytes: input.Artifact.Bytes, TotalBytes: input.Artifact.Bytes})
+			completedBytes += input.Artifact.Bytes
+			completedFiles++
+			emitProgress(ctx, ProgressEvent{Phase: "ingest", Status: "progress", Bytes: completedBytes, TotalBytes: totalBytes, Files: completedFiles, TotalFiles: int64(len(plan.Inputs))})
 			continue
 		}
 		if input.Adapter == ProfileBoundedText || input.Adapter == ProfileXMLRecord {
@@ -39,6 +48,9 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 				return err
 			}
 			emitProgress(ctx, ProgressEvent{Phase: "convert", Status: "completed", Input: input.Artifact.Path, Adapter: input.Adapter, Bytes: input.Artifact.Bytes, TotalBytes: input.Artifact.Bytes})
+			completedBytes += input.Artifact.Bytes
+			completedFiles++
+			emitProgress(ctx, ProgressEvent{Phase: "ingest", Status: "progress", Bytes: completedBytes, TotalBytes: totalBytes, Files: completedFiles, TotalFiles: int64(len(plan.Inputs))})
 			continue
 		}
 		switch input.Adapter {
@@ -59,6 +71,9 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 			return err
 		}
 		emitProgress(ctx, ProgressEvent{Phase: "convert", Status: "completed", Input: input.Artifact.Path, Adapter: input.Adapter, Bytes: input.Artifact.Bytes, TotalBytes: input.Artifact.Bytes})
+		completedBytes += input.Artifact.Bytes
+		completedFiles++
+		emitProgress(ctx, ProgressEvent{Phase: "ingest", Status: "progress", Bytes: completedBytes, TotalBytes: totalBytes, Files: completedFiles, TotalFiles: int64(len(plan.Inputs))})
 	}
 	return nil
 }

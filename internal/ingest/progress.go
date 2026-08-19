@@ -24,6 +24,10 @@ type ProgressEvent struct {
 	Worker         int    `json:"worker,omitempty"`
 	Bytes          int64  `json:"bytes,omitempty"`
 	TotalBytes     int64  `json:"total_bytes,omitempty"`
+	Files          int64  `json:"files,omitempty"`
+	TotalFiles     int64  `json:"total_files,omitempty"`
+	Docs           int64  `json:"docs,omitempty"`
+	Tokens         int64  `json:"tokens,omitempty"`
 	ReclaimedBytes int64  `json:"reclaimed_bytes,omitempty"`
 	Message        string `json:"message,omitempty"`
 }

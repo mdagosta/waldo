@@ -144,25 +144,46 @@ func assembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 	}
 	if len(objects) == 0 {
 		if seed != nil && dedup.input > 0 {
-			return AssemblyResult{InputDocs: dedup.input + dedup.rejected, DuplicateDocs: dedup.input, RejectedDocs: dedup.rejected, Rejections: dedup.reasons}, nil
+			result := AssemblyResult{InputDocs: dedup.input + dedup.rejected, DuplicateDocs: dedup.input, RejectedDocs: dedup.rejected, Rejections: dedup.reasons}
+			emitIngestCompleted(ctx, plan, result, 0)
+			return result, nil
 		}
 		return AssemblyResult{}, fmt.Errorf("ingestion produced no canonical records")
 	}
-	return AssemblyResult{
+	result := AssemblyResult{
 		Objects: objects, InputDocs: dedup.input + dedup.rejected, RetainedDocs: dedup.kept,
 		DuplicateDocs: dedup.input - dedup.kept, RejectedDocs: dedup.rejected, Rejections: dedup.reasons,
-	}, nil
+	}
+	var tokens int64
+	for _, object := range objects {
+		tokens += object.Tokens
+	}
+	emitIngestCompleted(ctx, plan, result, tokens)
+	return result, nil
+}
+
+func emitIngestCompleted(ctx context.Context, plan Plan, result AssemblyResult, tokens int64) {
+	var bytes int64
+	for _, input := range plan.Inputs {
+		bytes += input.Artifact.Bytes
+	}
+	emitProgress(ctx, ProgressEvent{
+		Phase: "ingest", Status: "completed", Bytes: bytes, TotalBytes: bytes,
+		Files: int64(len(plan.Inputs)), TotalFiles: int64(len(plan.Inputs)), Docs: result.RetainedDocs, Tokens: tokens,
+	})
 }
 
 type objectAssembler struct {
-	ctx       context.Context
-	plan      Plan
-	directory string
-	active    map[string]*activeObject
-	clock     int64
-	sink      func(ObjectResult) error
-	workers   int
-	counters  []tokenizer.Counter
+	ctx            context.Context
+	plan           Plan
+	directory      string
+	active         map[string]*activeObject
+	clock          int64
+	sink           func(ObjectResult) error
+	workers        int
+	counters       []tokenizer.Counter
+	progressDocs   int64
+	progressTokens int64
 }
 
 type activeObject struct {
@@ -282,6 +303,8 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 			return fmt.Errorf("validate canonical ingest row: %w", err)
 		}
 		active.tokens += count
+		assembler.progressDocs++
+		assembler.progressTokens += count
 		if _, err := active.writer.Write([]shard.TextRow{row}); err != nil {
 			return err
 		}
@@ -294,6 +317,7 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 			}
 		}
 	}
+	emitProgress(assembler.ctx, ProgressEvent{Phase: "ingest", Status: "records", Docs: assembler.progressDocs, Tokens: assembler.progressTokens})
 	return nil
 }
 

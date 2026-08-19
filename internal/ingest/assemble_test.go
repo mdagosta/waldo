@@ -100,6 +100,46 @@ func TestAssembleTextObjectsDeduplicatesOnDisk(t *testing.T) {
 	}
 }
 
+func TestAssembleTextObjectsReportsIngestTotals(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture(t, filepath.Join(directory, "a.txt"), "first document")
+	writeFixture(t, filepath.Join(directory, "b.txt"), "second document")
+	probe, err := ProbePaths(context.Background(), []string{directory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := NewPlan(probe, PlanRequest{
+		Destination: "core/example", Title: "Example", License: "CC0-1.0",
+		Source: PlanSource{Name: "fixture", URL: "https://example.test/data", Category: "public-dataset"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []ProgressEvent
+	ctx := WithProgress(context.Background(), func(event ProgressEvent) { events = append(events, event) })
+	result, err := AssembleTextObjects(ctx, plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundStarted, foundRecords, foundCompleted := false, false, false
+	for _, event := range events {
+		if event.Phase != "ingest" {
+			continue
+		}
+		switch event.Status {
+		case "started":
+			foundStarted = event.TotalFiles == 2 && event.TotalBytes == probe.Totals.Bytes
+		case "records":
+			foundRecords = event.Docs == 2 && event.Tokens > 0
+		case "completed":
+			foundCompleted = event.Files == 2 && event.Bytes == probe.Totals.Bytes && event.Docs == result.RetainedDocs && event.Tokens == result.Objects[0].Tokens
+		}
+	}
+	if !foundStarted || !foundRecords || !foundCompleted {
+		t.Fatalf("ingest progress events = %+v", events)
+	}
+}
+
 func TestAssembleTextObjectsRefusesUnimplementedCanonicalMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.txt")
 	writeFixture(t, path, "text")

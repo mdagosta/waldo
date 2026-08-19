@@ -165,6 +165,12 @@ Before hashing, deduplication, measurement, and packing, WALDO applies its
 pinned privacy-redaction policy. Canonical shard and manifest statistics—not
 the handoff manifest—are authoritative for retained documents and tokens.
 
+During ingestion, the verified raw `file_count` and `byte_count` provide the
+known progress totals. WALDO reports completed files/bytes plus live retained
+document and token counts as canonical batches are processed. Exact final
+counts are persisted in the generated index manifest; fetcher manifests never
+guess token or retained-document totals.
+
 The earlier `waldo-source-directory` root containing a `raw/` directory remains
 readable for compatibility. New fetchers must produce the corpus-directory
 layout above.
