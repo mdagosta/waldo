@@ -614,11 +614,6 @@ func resolveIndexSelection(execution context.Context, args []string, progress io
 		var target waldoindex.Target
 		if len(targets) == 0 {
 			target, err = waldoindex.ResolveConfigured(knownRoot, value)
-			if err == nil && explicit && refresh {
-				if err = refreshIndexCheckout(execution, target.Root, progress); err == nil {
-					target, err = waldoindex.ResolveConfigured(knownRoot, value)
-				}
-			}
 		} else {
 			target, err = waldoindex.Resolve(knownRoot, value)
 		}

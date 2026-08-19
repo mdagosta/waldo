@@ -177,6 +177,24 @@ func TestConfiguredContributorCheckoutRefusesDirtyPull(t *testing.T) {
 	}
 }
 
+func TestExplicitIndexPathNeverRefreshesGit(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "waldo-index")
+	fixture := fixtureGitIndex(t)
+	if err := os.Rename(fixture, root); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	t.Chdir(parent)
+	selection, err := resolveIndexSelection(t.Context(), []string{"./waldo-index"}, nil, true)
+	if err != nil {
+		t.Fatalf("explicit local checkout attempted refresh: %v", err)
+	}
+	if len(selection.Targets) != 1 || selection.Targets[0].Root != root {
+		t.Fatalf("selection = %+v, want root %s", selection, root)
+	}
+}
+
 func fixtureGitIndex(t *testing.T) string {
 	t.Helper()
 	root := fixtureCLIIndex(t)

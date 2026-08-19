@@ -84,7 +84,7 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:     "waldo",
 		Short:   "Build and use auditable AI training data",
-		Long:    "Build and use auditable AI training data.\n\nRelative and omitted index paths use the configured contributor checkout, or the managed read-only checkout at ~/.waldo/index when index is unset. WALDO automatically fetches and fast-forwards the selected Git checkout before use, but refuses dirty, ahead, or diverged states. `waldo index verify --offline` uses the current local revision. Absolute paths and paths beginning with ~/ explicitly select another checkout. Omitting an index selection selects the entire resolved index.",
+		Long:    "Build and use auditable AI training data.\n\nRelative logical and omitted index paths use the configured contributor checkout, or the managed read-only checkout at ~/.waldo/index when index is unset. WALDO automatically fetches and fast-forwards that configured checkout before use, but refuses dirty, ahead, or diverged states. Explicit filesystem paths—including ./, ../, /, and ~/—always use the exact local checkout without Git network access. `waldo index verify --offline` additionally disables object-network verification. Omitting an index selection selects the entire resolved index.",
 		Version: version,
 	}
 	root.SetVersionTemplate("waldo {{.Version}}\n")

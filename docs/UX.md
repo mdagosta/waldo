@@ -73,10 +73,11 @@ Set `config.index` to use a writable contributor checkout:
 waldo config set index /path/to/waldo-index
 ```
 
-Relative index paths resolve beneath the selected checkout. Absolute and `~/`
-paths explicitly select another checkout. Omitting a path selects the whole
-resolved index. `waldo index verify --offline` performs local structural
-validation without synchronizing or accessing object storage.
+Logical index paths resolve beneath the selected checkout. Existing filesystem
+paths and paths beginning with `./`, `../`, `/`, or `~/` explicitly select the
+exact local checkout and never trigger Git network access. Omitting a path
+selects the whole resolved index. `waldo index verify --offline` additionally
+disables object-storage verification and performs local structural validation.
 
 ## Inspect and verify data
 
