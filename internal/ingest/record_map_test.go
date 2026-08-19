@@ -419,7 +419,7 @@ func TestChatMessagesReadsNestedParquetLists(t *testing.T) {
 	}
 }
 
-func TestChatMessagesNULPolicyIsActionableAndExplicit(t *testing.T) {
+func TestChatMessagesReplacesNULByDefaultAndSupportsStrictMode(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "chat.jsonl")
 	contents := `{"messages":[{"role":"user","content":"Question"},{"role":"assistant","content":"before\u0000after"}]}` + "\n"
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
@@ -429,18 +429,18 @@ func TestChatMessagesNULPolicyIsActionableAndExplicit(t *testing.T) {
 		Type:     ProfileChatMessages,
 		Messages: ChatMessagesMapping{Role: "messages[].role", Content: "messages[].content"},
 	}
-	err := StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, profile), func(TextBatch) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "set nul = space in the fetcher [input] profile") {
-		t.Fatalf("NUL policy error = %v", err)
-	}
-	profile.NUL = "space"
 	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
 	conversation, err := record.DecodeConversation(rows[0].Text)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := conversation.Messages[1].Content; got != "before after" {
-		t.Fatalf("normalized content = %q", got)
+		t.Fatalf("default normalized content = %q", got)
+	}
+	profile.NUL = "error"
+	err = StreamCanonicalTextBatches(context.Background(), mappedFixturePlan(t, path, profile), func(TextBatch) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "set nul = space in the fetcher [input] profile") {
+		t.Fatalf("NUL policy error = %v", err)
 	}
 }
 

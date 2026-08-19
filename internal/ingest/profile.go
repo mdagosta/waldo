@@ -45,6 +45,18 @@ type InputProfile struct {
 	LicensePolicy corpus.LicensePolicy `json:"license_policy,omitempty" yaml:"license_policy,omitempty"`
 }
 
+// withDefaults makes corpus-visible conversion choices explicit in the plan.
+// Structured records commonly contain stray NUL bytes from upstream exports;
+// replacing them with spaces is loss-minimizing and keeps one bad byte from
+// aborting an otherwise valid corpus. Callers may request strict rejection with
+// nul: error.
+func (profile InputProfile) withDefaults() InputProfile {
+	if profile.recordProfile() && profile.NUL == "" {
+		profile.NUL = "space"
+	}
+	return profile
+}
+
 type ChatMessagesMapping struct {
 	Role        string            `json:"role,omitempty" yaml:"role,omitempty"`
 	Content     string            `json:"content,omitempty" yaml:"content,omitempty"`

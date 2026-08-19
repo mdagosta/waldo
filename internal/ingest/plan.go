@@ -239,6 +239,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			artifact.Format = request.ForceFormat
 			artifact.Evidence = append(artifact.Evidence, "forced-format:"+detectedFormat+"->"+request.ForceFormat)
 		}
+		profile = profile.withDefaults()
 		input := PlanInput{Artifact: artifact, Profile: profile, SourceID: sourceID, DetectedFormat: detectedFormat}
 		if inputRoot != "" {
 			root, err := filepath.Abs(inputRoot)
