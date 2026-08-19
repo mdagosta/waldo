@@ -38,6 +38,7 @@ type Compose struct {
 }
 
 const InteractionUserAssistantV1 = "user-assistant-v1"
+const InteractionChatMLV1 = "chatml-v1"
 
 // Interaction is the portable inference-time prompt contract learned by a
 // model. The zero value deliberately means raw causal continuation.
@@ -48,14 +49,14 @@ type Interaction struct {
 func (interaction Interaction) IsZero() bool { return interaction.Template == "" }
 
 func (interaction Interaction) Validate() error {
-	if interaction.Template == "" || interaction.Template == InteractionUserAssistantV1 {
+	if interaction.Template == "" || interaction.Template == InteractionUserAssistantV1 || interaction.Template == InteractionChatMLV1 {
 		return nil
 	}
 	return fmt.Errorf("unsupported interaction template %q", interaction.Template)
 }
 
 func (interaction Interaction) Conversational() bool {
-	return interaction.Template == InteractionUserAssistantV1
+	return interaction.Template == InteractionUserAssistantV1 || interaction.Template == InteractionChatMLV1
 }
 
 func (interaction Interaction) Prompt(history, user string) string {
@@ -65,6 +66,13 @@ func (interaction Interaction) Prompt(history, user string) string {
 		}
 		return history + "\n" + user
 	}
+	if interaction.Template == InteractionChatMLV1 {
+		prefix := history
+		if prefix != "" && !strings.HasSuffix(prefix, "\n") {
+			prefix += "\n"
+		}
+		return prefix + "<|im_start|>user\n" + user + "<|im_end|>\n<|im_start|>assistant\n"
+	}
 	prefix := ""
 	if history != "" {
 		prefix = strings.TrimRight(history, "\n") + "\n\n"
@@ -73,6 +81,9 @@ func (interaction Interaction) Prompt(history, user string) string {
 }
 
 func (interaction Interaction) Stops() []string {
+	if interaction.Template == InteractionChatMLV1 {
+		return []string{"<|im_end|>"}
+	}
 	if interaction.Conversational() {
 		return []string{"\n\nUser:"}
 	}
@@ -86,6 +97,13 @@ func (interaction Interaction) TrimResponse(value string) string {
 		}
 	}
 	return strings.TrimRight(value, "\r\n")
+}
+
+func (interaction Interaction) CompleteTurn(prompt, response string) string {
+	if interaction.Template == InteractionChatMLV1 {
+		return prompt + response + "<|im_end|>\n"
+	}
+	return prompt + response
 }
 
 type ComposeBase struct {
@@ -115,12 +133,13 @@ type Tokenizer struct {
 }
 
 type Stage struct {
-	Name       string               `json:"name" yaml:"name"`
-	Type       string               `json:"type" yaml:"type"`
-	Objective  string               `json:"objective" yaml:"objective"`
-	Filter     *corpus.RecordFilter `json:"filter,omitempty" yaml:"filter,omitempty"`
-	Corpora    []CorpusSelection    `json:"corpora" yaml:"corpora"`
-	Parameters training.Parameters  `json:"parameters" yaml:"parameters"`
+	Name         string                          `json:"name" yaml:"name"`
+	Type         string                          `json:"type" yaml:"type"`
+	Objective    string                          `json:"objective" yaml:"objective"`
+	Conversation *training.ConversationTransform `json:"conversation,omitempty" yaml:"conversation,omitempty"`
+	Filter       *corpus.RecordFilter            `json:"filter,omitempty" yaml:"filter,omitempty"`
+	Corpora      []CorpusSelection               `json:"corpora" yaml:"corpora"`
+	Parameters   training.Parameters             `json:"parameters" yaml:"parameters"`
 }
 
 // CorpusSelection preserves the compact scalar form while allowing a corpus
@@ -446,6 +465,16 @@ func (compose Compose) Validate() error {
 		}
 		if stage.Objective != "causal-language-modeling" && stage.Objective != "assistant-response-modeling" {
 			return fmt.Errorf("stage %s has unsupported objective %q", stage.Name, stage.Objective)
+		}
+		if stage.Conversation != nil {
+			if err := stage.Conversation.Validate(); err != nil {
+				return fmt.Errorf("stage %s conversation: %w", stage.Name, err)
+			}
+			if compose.Interaction.Template != stage.Conversation.Template {
+				return fmt.Errorf("stage %s conversation template %q does not match interaction template %q", stage.Name, stage.Conversation.Template, compose.Interaction.Template)
+			}
+		} else if stage.Objective == "assistant-response-modeling" {
+			return fmt.Errorf("stage %s assistant-response-modeling requires conversation transformation", stage.Name)
 		}
 		if len(stage.Corpora) == 0 {
 			return fmt.Errorf("stage %s requires at least one index path in corpora", stage.Name)

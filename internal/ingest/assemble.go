@@ -18,9 +18,11 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/parquet-go/parquet-go"
@@ -31,6 +33,9 @@ import (
 // manifest facts.
 type ObjectResult struct {
 	Path                      string                    `json:"path"`
+	RecordKind                string                    `json:"record_kind"`
+	RecordSchema              int                       `json:"record_schema"`
+	WriterRecipe              string                    `json:"writer_recipe"`
 	SHA256                    string                    `json:"sha256"`
 	Bytes                     int64                     `json:"bytes"`
 	Docs                      int64                     `json:"docs"`
@@ -112,7 +117,7 @@ func assembleTextObjectsWithSeedAndSink(ctx context.Context, plan Plan, stagingD
 	verification := newObjectVerificationPipeline(ctx, objectDirectory, workers, sink, verifyAndStageObject)
 	assembler := objectAssembler{ctx: verification.ctx, plan: plan, directory: objectDirectory, sink: verification.enqueue, workers: workers}
 	err = StreamCanonicalTextBatches(verification.ctx, plan, func(batch TextBatch) error {
-		redacted, redactErr := redactCanonicalBatch(batch)
+		redacted, redactErr := redactCanonicalBatch(plan.Writer.RecordKind, batch)
 		if redactErr != nil {
 			return redactErr
 		}
@@ -221,8 +226,23 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 		}
 		count := counts[position]
 		row.TokenCount = &count
-		assessment := assessContent(row.Text)
-		_, remaining, err := redactPrivacy(row.Text)
+		assessmentText := row.Text
+		if assembler.plan.Writer.RecordKind == record.KindConversation {
+			conversation, err := record.DecodeConversation(row.Text)
+			if err != nil {
+				return err
+			}
+			var parts []string
+			for _, message := range conversation.Messages {
+				parts = append(parts, message.Content)
+				if message.Context != "" {
+					parts = append(parts, message.Context)
+				}
+			}
+			assessmentText = strings.Join(parts, "\n")
+		}
+		assessment := assessContent(assessmentText)
+		_, remaining, err := redactPrivacy(assessmentText)
 		if err != nil {
 			return fmt.Errorf("verify canonical privacy redaction: %w", err)
 		}
@@ -254,7 +274,11 @@ func (assembler *objectAssembler) addBatch(batch TextBatch) error {
 		if row.SourceName != nil && *row.SourceName != "" {
 			active.sources[*row.SourceName] = true
 		}
-		if err := shard.ValidateTextRow(row); err != nil {
+		validate := shard.ValidateTextRow
+		if assembler.plan.Writer.RecordKind == record.KindConversation {
+			validate = shard.ValidateConversationRow
+		}
+		if err := validate(row); err != nil {
 			return fmt.Errorf("validate canonical ingest row: %w", err)
 		}
 		active.tokens += count
@@ -320,9 +344,13 @@ func (assembler *objectAssembler) writerFor() (*activeObject, error) {
 		return nil, err
 	}
 	stream := newCountingHashWriter(file)
+	writer := shard.NewTextParquetWriter(stream)
+	if assembler.plan.Writer.RecordKind == record.KindConversation {
+		writer = shard.NewConversationParquetWriter(stream)
+	}
 	active := &activeObject{
 		path: file.Name(), file: file, stream: stream,
-		writer: shard.NewTextParquetWriter(stream), licenses: map[string]bool{}, licenseUsage: map[string]index.Measures{}, sources: map[string]bool{}, lastUsed: assembler.clock,
+		writer: writer, licenses: map[string]bool{}, licenseUsage: map[string]index.Measures{}, sources: map[string]bool{}, lastUsed: assembler.clock,
 	}
 	assembler.active[""] = active
 	return active, nil
@@ -373,6 +401,7 @@ func (assembler *objectAssembler) finishActive(active *activeObject) error {
 	licenses := sortedKeys(active.licenses)
 	result := ObjectResult{
 		Path: active.path, SHA256: digest, Bytes: active.stream.n,
+		RecordKind: assembler.plan.Writer.RecordKind, RecordSchema: assembler.plan.Writer.RecordSchema, WriterRecipe: assembler.plan.Writer.Recipe,
 		Docs: active.docs, Tokens: active.tokens, LogicalBytes: active.logicalBytes,
 		Licenses: licenses, Sources: sortedKeys(active.sources), LicenseUsage: active.licenseUsage,
 		EmailAddressRecords:       active.emailAddressRecords,
@@ -573,7 +602,7 @@ func setAggregateMetadata(active *activeObject, plan Plan) error {
 	if err != nil {
 		return err
 	}
-	shardBOM := shard.NewBOM(identity, tokenizer.Default, active.docs, active.tokens, active.logicalBytes, licenses)
+	shardBOM := shard.NewBOMForRecord(identity, plan.Writer.RecordKind, plan.Writer.RecordSchema, plan.Writer.Recipe, tokenizer.Default, active.docs, active.tokens, active.logicalBytes, licenses)
 	shardBOM.EmailAddressRecords = active.emailAddressRecords
 	shardBOM.RepetitiveContentRecords = active.repetitiveContentRecords
 	shardBOM.BoilerplateContentRecords = active.boilerplateContentRecords
@@ -634,10 +663,13 @@ func verifyAssembledObject(object ObjectResult) (int, error) {
 	if !slices.Equal(gotColumns, wantColumns) {
 		return 0, fmt.Errorf("assembled object columns are %v", gotColumns)
 	}
-	if value, ok := parquetFile.Lookup("waldo.record_schema"); !ok || value != fmt.Sprint(shard.TextRecordSchema) {
+	if value, ok := parquetFile.Lookup("waldo.record_schema"); !ok || value != fmt.Sprint(object.RecordSchema) {
 		return 0, fmt.Errorf("assembled object has invalid record schema metadata")
 	}
-	if value, ok := parquetFile.Lookup("waldo.recipe"); !ok || value != shard.TextWriterRecipe {
+	if value, ok := parquetFile.Lookup("waldo.record_kind"); !ok || value != object.RecordKind {
+		return 0, fmt.Errorf("assembled object has invalid record kind metadata")
+	}
+	if value, ok := parquetFile.Lookup("waldo.recipe"); !ok || value != object.WriterRecipe {
 		return 0, fmt.Errorf("assembled object has invalid writer recipe metadata")
 	}
 	audited, err := shard.VerifyWithOptions(context.Background(), []string{object.Path}, shard.AuditOptions{Workers: 1})

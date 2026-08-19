@@ -175,6 +175,7 @@ type Request struct {
 	RunID              string
 	Stage              string
 	Objective          string
+	Conversation       ConversationTransform
 	ArchitectureSHA256 string
 	Architecture       json.RawMessage
 	Tokenizer          TokenizerSpec

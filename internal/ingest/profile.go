@@ -47,6 +47,7 @@ type InputProfile struct {
 type ChatMessagesMapping struct {
 	Role        string            `json:"role,omitempty" yaml:"role,omitempty"`
 	Content     string            `json:"content,omitempty" yaml:"content,omitempty"`
+	Tools       string            `json:"tools,omitempty" yaml:"tools,omitempty"`
 	RoleAliases map[string]string `json:"role_aliases,omitempty" yaml:"role_aliases,omitempty"`
 }
 
@@ -264,7 +265,7 @@ func (mapping XMLMapping) empty() bool {
 }
 
 func (mapping ChatMessagesMapping) empty() bool {
-	return mapping.Role == "" && mapping.Content == "" && len(mapping.RoleAliases) == 0
+	return mapping.Role == "" && mapping.Content == "" && mapping.Tools == "" && len(mapping.RoleAliases) == 0
 }
 
 func (profile InputProfile) paths() []string {
@@ -273,7 +274,7 @@ func (profile InputProfile) paths() []string {
 	paths = append(paths, profile.Fields.ID, profile.Fields.Date, profile.Fields.Language,
 		profile.Fields.License, profile.Fields.Source, profile.Fields.Context, profile.Fields.Response,
 		profile.Tree.Root, profile.Tree.Replies, profile.Tree.Text, profile.Tree.Rank,
-		profile.Tree.Role, profile.Messages.Role, profile.Messages.Content)
+		profile.Tree.Role, profile.Messages.Role, profile.Messages.Content, profile.Messages.Tools)
 	for _, path := range profile.Fields.Meta {
 		paths = append(paths, path)
 	}

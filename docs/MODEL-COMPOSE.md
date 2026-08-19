@@ -132,8 +132,8 @@ field names and structure.
 
 ### Interaction fields
 
-Schema 1 supports `interaction.template: user-assistant-v1`. It renders each
-turn in the same general format produced by WALDO dialogue ingestion:
+Schema 1 supports `interaction.template: user-assistant-v1` and
+`interaction.template: chatml-v1`. The former renders each turn as:
 
 ```text
 User: <message>
@@ -141,7 +141,9 @@ User: <message>
 Assistant: <response>
 ```
 
-`waldo model chat` maintains that transcript across interactive turns and
+`chatml-v1` uses versioned `<|im_start|>` and `<|im_end|>` textual framing.
+Conversation ingestion does not select either template. `waldo model chat`
+maintains the selected transcript across interactive turns and
 stops generation before the model begins a new `User:` turn. The interaction
 contract is stored in the immutable model plan, model record, and model BOM.
 It changes model identity but not parameter count. Models without an
@@ -280,7 +282,8 @@ backends receive identical token IDs.
 | --- | --- | --- | --- |
 | `name` | yes | `^[a-z0-9][a-z0-9._-]{0,63}$` | Unique durable stage and run label. |
 | `type` | yes | `pre-training`, `fine-tuning`, `alignment`, or `other` | Records the stage's intended role in provenance. |
-| `objective` | yes | `causal-language-modeling` or `assistant-response-modeling` | Causal loss covers every next token; assistant-response loss supervises only assistant content and a final assistant EOS in role-formatted dialogue. |
+| `objective` | yes | `causal-language-modeling` or `assistant-response-modeling` | Causal loss covers every next token; assistant-response loss supervises roles selected by a structured conversation transformation. |
+| `conversation` | for assistant-response modeling and conversation shards | object | Pins `template` (`user-assistant-v1` or `chatml-v1`) and a non-empty `supervised_roles` list. It must match `interaction.template`. |
 | `filter` | no | record filter | Applies one record-level condition to every selected corpus. |
 | `corpora` | yes | non-empty list of unique scalar paths or configured corpus objects | Selects canonical corpus records for the stage. |
 | `parameters` | yes | object | Declares the portable training budget and controls. |

@@ -12,17 +12,97 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/openwaldo/waldo/internal/canon"
 )
 
 const (
-	Schema         = 1
-	KindPretrain   = "pretrain"
-	LangScoreScale = 1000
+	Schema           = 1
+	KindPretrain     = "pretrain"
+	KindConversation = "conversation"
+	LangScoreScale   = 1000
 )
+
+// Message is one normalized turn in a tokenizer-neutral conversation.
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	Context string `json:"context,omitempty"`
+}
+
+// Conversation is the canonical logical payload stored by conversation
+// shards. Tools is canonical JSON from the source when present; it remains
+// structured and is interpreted only by a selected training template.
+type Conversation struct {
+	Messages []Message       `json:"messages"`
+	Tools    json.RawMessage `json:"tools,omitempty"`
+}
+
+func (conversation Conversation) Validate() error {
+	if len(conversation.Messages) == 0 {
+		return errors.New("conversation messages: required")
+	}
+	hasUser, hasAssistant := false, false
+	for position, message := range conversation.Messages {
+		if message.Role != "system" && message.Role != "user" && message.Role != "assistant" && message.Role != "tool" {
+			return fmt.Errorf("conversation message %d has unsupported role %q", position+1, message.Role)
+		}
+		if message.Content == "" || !utf8.ValidString(message.Content) {
+			return fmt.Errorf("conversation message %d content must be non-empty UTF-8", position+1)
+		}
+		if !utf8.ValidString(message.Context) {
+			return fmt.Errorf("conversation message %d context must be UTF-8", position+1)
+		}
+		hasUser = hasUser || message.Role == "user"
+		hasAssistant = hasAssistant || message.Role == "assistant"
+	}
+	if !hasUser || !hasAssistant {
+		return errors.New("conversation requires at least one user and assistant message")
+	}
+	if len(conversation.Tools) > 0 && !json.Valid(conversation.Tools) {
+		return errors.New("conversation tools must be valid JSON")
+	}
+	return nil
+}
+
+func EncodeConversation(conversation Conversation) (string, error) {
+	if err := conversation.Validate(); err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(conversation)
+	return string(encoded), err
+}
+
+func DecodeConversation(encoded string) (Conversation, error) {
+	decoder := json.NewDecoder(strings.NewReader(encoded))
+	decoder.DisallowUnknownFields()
+	var conversation Conversation
+	if err := decoder.Decode(&conversation); err != nil {
+		return Conversation{}, err
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			err = errors.New("conversation payload has trailing JSON")
+		}
+		return Conversation{}, err
+	}
+	if err := conversation.Validate(); err != nil {
+		return Conversation{}, err
+	}
+	canonical, err := EncodeConversation(conversation)
+	if err != nil {
+		return Conversation{}, err
+	}
+	if canonical != encoded {
+		return Conversation{}, errors.New("conversation payload is not canonical JSON")
+	}
+	return conversation, nil
+}
 
 type Record struct {
 	SHA256     string
@@ -53,8 +133,13 @@ func (r Record) Validate() error {
 	if TextHash(r.Text) != r.SHA256 {
 		return fmt.Errorf("record sha256 %s does not match its text", r.SHA256)
 	}
-	if r.Kind != KindPretrain {
-		return fmt.Errorf("record kind %q: schema 1 defines only %q", r.Kind, KindPretrain)
+	if r.Kind != KindPretrain && r.Kind != KindConversation {
+		return fmt.Errorf("unsupported record kind %q", r.Kind)
+	}
+	if r.Kind == KindConversation {
+		if _, err := DecodeConversation(r.Text); err != nil {
+			return fmt.Errorf("record conversation: %w", err)
+		}
 	}
 	if r.Source == "" || r.License == "" {
 		return errors.New("record source and license are required")

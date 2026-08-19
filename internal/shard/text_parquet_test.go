@@ -15,6 +15,30 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
+func TestConversationWriterPinsDistinctLogicalSchema(t *testing.T) {
+	payload := `{"messages":[{"role":"user","content":"Question"},{"role":"assistant","content":"Answer"}]}`
+	digest := sha256.Sum256([]byte(payload))
+	count := int64(10)
+	var output bytes.Buffer
+	writer := NewConversationParquetWriter(&output)
+	if _, err := writer.Write([]TextRow{{ContentSHA256: digest, Text: payload, Source: "fixture", License: "CC0-1.0", TokenCount: &count, MainContent: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	file, err := parquet.OpenFile(bytes.NewReader(output.Bytes()), int64(output.Len()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kind, _ := file.Lookup("waldo.record_kind"); kind != "conversation" {
+		t.Fatalf("record kind = %q", kind)
+	}
+	if schema, _ := file.Lookup("waldo.record_schema"); schema != "1" {
+		t.Fatalf("record schema = %q", schema)
+	}
+}
+
 func TestTextRowPhysicalSchemaAndMetadata(t *testing.T) {
 	var output bytes.Buffer
 	writer := NewTextParquetWriter(&output)

@@ -342,7 +342,7 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		if len(roles) == 0 || len(roles) != len(contents) {
 			return shard.TextRow{}, fmt.Errorf("%w: chat roles and contents must be non-empty aligned arrays", errEmptyMappedRecord)
 		}
-		var rendered strings.Builder
+		messages := make([]waldorecord.Message, 0, len(roles))
 		hasUser, hasAssistant := false, false
 		for index, role := range roles {
 			role = strings.ToLower(strings.TrimSpace(role))
@@ -354,11 +354,7 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 			}
 			hasUser = hasUser || role == "user"
 			hasAssistant = hasAssistant || role == "assistant"
-			if rendered.Len() > 0 {
-				rendered.WriteString("\n\n")
-			}
-			rendered.WriteString(strings.ToUpper(role[:1]) + role[1:] + ": ")
-			rendered.WriteString(contents[index])
+			messages = append(messages, waldorecord.Message{Role: role, Content: contents[index]})
 		}
 		if !hasUser || !hasAssistant {
 			return shard.TextRow{}, fmt.Errorf("%w: chat requires at least one user and assistant message", errEmptyMappedRecord)
@@ -367,7 +363,26 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		if err != nil {
 			return shard.TextRow{}, err
 		}
-		return canonicalMappedRow(record, plan, input, fallbackSource, rendered.String(), meta)
+		var tools json.RawMessage
+		if input.Profile.Messages.Tools != "" {
+			value, err := optionalScalar(record, input.Profile.Messages.Tools)
+			if err != nil {
+				return shard.TextRow{}, err
+			}
+			if value != "" {
+				if json.Valid([]byte(value)) {
+					tools = json.RawMessage(value)
+				} else {
+					encoded, _ := json.Marshal(value)
+					tools = encoded
+				}
+			}
+		}
+		payload, err := waldorecord.EncodeConversation(waldorecord.Conversation{Messages: messages, Tools: tools})
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		return canonicalMappedRow(record, plan, input, fallbackSource, payload, meta)
 	}
 	mapText := func(paths []string) (string, error) {
 		parts := make([]string, 0, len(paths))
@@ -403,9 +418,6 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		if err != nil {
 			return shard.TextRow{}, err
 		}
-		if strings.TrimSpace(contextText) != "" {
-			text += "\n\n" + contextText
-		}
 		response, err := optionalScalar(record, input.Profile.Fields.Response)
 		if err != nil {
 			return shard.TextRow{}, err
@@ -413,7 +425,10 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		if strings.TrimSpace(response) == "" {
 			return shard.TextRow{}, fmt.Errorf("%w: mapped response field is empty or absent", errEmptyMappedRecord)
 		}
-		text = renderDialogue(text, response)
+		text, err = waldorecord.EncodeConversation(waldorecord.Conversation{Messages: []waldorecord.Message{{Role: "user", Content: text, Context: contextText}, {Role: "assistant", Content: response}}})
+		if err != nil {
+			return shard.TextRow{}, err
+		}
 		meta, err = dialogueMappedMeta(record, input.Profile.Fields.Meta, 2)
 		if err != nil {
 			return shard.TextRow{}, err
@@ -461,7 +476,7 @@ func mappedRecordMeta(record recordAccessor, fields map[string]string) (*string,
 }
 
 func dialogueMappedMeta(record recordAccessor, fields map[string]string, turns int) (*string, error) {
-	metadata := map[string]any{"format": "dialogue-flattened", "turns": turns}
+	metadata := map[string]any{"format": "structured-conversation", "turns": turns}
 	for name, path := range fields {
 		values, err := record.Values(path)
 		if err != nil {
@@ -496,6 +511,30 @@ func mapJSONCanonicalRecord(object map[string]any, plan Plan, input PlanInput, f
 }
 
 func canonicalMappedRow(record recordAccessor, plan Plan, input PlanInput, fallbackSource, text string, meta *string) (shard.TextRow, error) {
+	if plan.Writer.RecordKind == waldorecord.KindConversation {
+		conversation, err := waldorecord.DecodeConversation(text)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+		for position := range conversation.Messages {
+			if strings.IndexByte(conversation.Messages[position].Content, 0) >= 0 {
+				if input.Profile.NUL != "space" {
+					return shard.TextRow{}, fmt.Errorf("conversation message %d contains NUL", position+1)
+				}
+				conversation.Messages[position].Content = strings.ReplaceAll(conversation.Messages[position].Content, "\x00", " ")
+			}
+			if strings.IndexByte(conversation.Messages[position].Context, 0) >= 0 {
+				if input.Profile.NUL != "space" {
+					return shard.TextRow{}, fmt.Errorf("conversation message %d context contains NUL", position+1)
+				}
+				conversation.Messages[position].Context = strings.ReplaceAll(conversation.Messages[position].Context, "\x00", " ")
+			}
+		}
+		text, err = waldorecord.EncodeConversation(conversation)
+		if err != nil {
+			return shard.TextRow{}, err
+		}
+	}
 	if input.Profile.NUL == "space" {
 		text = strings.ReplaceAll(text, "\x00", " ")
 	}
@@ -624,12 +663,8 @@ func optionalLicense(record recordAccessor, path string) (string, *string, error
 	return effective, &raw, nil
 }
 
-func renderDialogue(user, assistant string) string {
-	return "User: " + user + "\n\nAssistant: " + assistant + "\n"
-}
-
 func dialogueMeta(turns int) *string {
-	value := fmt.Sprintf(`{"format":"dialogue-flattened","turns":%d}`, turns)
+	value := fmt.Sprintf(`{"format":"structured-conversation","turns":%d}`, turns)
 	return &value
 }
 
@@ -642,7 +677,7 @@ func renderRankedTree(object map[string]any, tree ConversationTree) (string, int
 		}
 		current = value
 	}
-	var output strings.Builder
+	var messages []waldorecord.Message
 	turns := 0
 	for current != nil {
 		node, ok := current.(map[string]any)
@@ -663,11 +698,11 @@ func renderRankedTree(object map[string]any, tree ConversationTree) (string, int
 				return "", 0, fmt.Errorf("conversation node %d role %q does not alternate as expected", turns+1, role)
 			}
 		}
-		label := "User"
+		role := "user"
 		if assistant {
-			label = "Assistant"
+			role = "assistant"
 		}
-		fmt.Fprintf(&output, "%s: %s\n\n", label, strings.TrimSpace(bodyValues[0]))
+		messages = append(messages, waldorecord.Message{Role: role, Content: strings.TrimSpace(bodyValues[0])})
 		turns++
 		repliesValue, exists, err := optionalJSONPathValue(node, tree.Replies)
 		if err != nil {
@@ -718,7 +753,8 @@ func renderRankedTree(object map[string]any, tree ConversationTree) (string, int
 	if turns == 0 {
 		return "", 0, fmt.Errorf("conversation tree contains no turns")
 	}
-	return strings.TrimRight(output.String(), "\n") + "\n", turns, nil
+	payload, err := waldorecord.EncodeConversation(waldorecord.Conversation{Messages: messages})
+	return payload, turns, err
 }
 
 func jsonPathValue(object map[string]any, path string) (any, error) {

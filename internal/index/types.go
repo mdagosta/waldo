@@ -54,6 +54,7 @@ type Manifest struct {
 	Sources      []Source              `json:"sources"`
 	ConvertedBy  Conversion            `json:"converted_by"`
 	RecordSchema int                   `json:"record_schema,omitempty"`
+	RecordKind   string                `json:"record_kind,omitempty"`
 	Assessment   *ContentAssessment    `json:"assessment,omitempty"`
 	Redaction    *ContentRedaction     `json:"redaction,omitempty"`
 	Processing   *Processing           `json:"processing,omitempty"`

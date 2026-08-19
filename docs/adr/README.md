@@ -63,3 +63,4 @@ logs.
 - [0057: Preserve scored dialogue metadata and explicit quality gates](0057-preserve-scored-dialogue-metadata.md)
 - [0058: Mask non-assistant dialogue targets during SFT](0058-assistant-response-training.md)
 - [0059: Separate token-budget and epoch-driven training](0059-token-and-epoch-training-budgets.md)
+- [0060: Preserve conversations and render them in training views](0060-structured-conversation-training-views.md)

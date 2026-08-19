@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 )
 
@@ -60,13 +61,13 @@ var privacyPlaceholderInvariant = validatePrivacyPlaceholders()
 
 // redactCanonicalBatch applies the mandatory schema-2 privacy policy before
 // content identity, deduplication, token measurement, or Parquet encoding.
-func redactCanonicalBatch(batch TextBatch) (TextBatch, error) {
+func redactCanonicalBatch(kind string, batch TextBatch) (TextBatch, error) {
 	batch.LogicalBytes = 0
 	for position := range batch.Rows {
 		row := &batch.Rows[position]
-		redactedText, redaction, err := redactPrivacy(row.Text)
+		redactedText, redaction, err := redactCanonicalPayload(kind, row.Text)
 		if err != nil {
-			return TextBatch{}, fmt.Errorf("redact canonical text: %w", err)
+			return TextBatch{}, fmt.Errorf("redact canonical payload: %w", err)
 		}
 		row.Text = redactedText
 		addRowRedaction(row, redaction)
@@ -89,6 +90,41 @@ func redactCanonicalBatch(batch TextBatch) (TextBatch, error) {
 		batch.LogicalBytes += int64(len(row.Text))
 	}
 	return batch, nil
+}
+
+func redactCanonicalPayload(kind, payload string) (string, privacyRedaction, error) {
+	if kind != record.KindConversation {
+		return redactPrivacy(payload)
+	}
+	conversation, err := record.DecodeConversation(payload)
+	if err != nil {
+		return "", privacyRedaction{}, err
+	}
+	var total privacyRedaction
+	for position := range conversation.Messages {
+		redacted, one, err := redactPrivacy(conversation.Messages[position].Content)
+		if err != nil {
+			return "", privacyRedaction{}, err
+		}
+		conversation.Messages[position].Content = redacted
+		addPrivacyRedaction(&total, one)
+		redacted, one, err = redactPrivacy(conversation.Messages[position].Context)
+		if err != nil {
+			return "", privacyRedaction{}, err
+		}
+		conversation.Messages[position].Context = redacted
+		addPrivacyRedaction(&total, one)
+	}
+	if len(conversation.Tools) > 0 {
+		redacted, one, err := redactJSONStrings(string(conversation.Tools))
+		if err != nil {
+			return "", privacyRedaction{}, err
+		}
+		conversation.Tools = json.RawMessage(redacted)
+		addPrivacyRedaction(&total, one)
+	}
+	encoded, err := record.EncodeConversation(conversation)
+	return encoded, total, err
 }
 
 func redactString(text string) (string, privacyRedaction, error) {

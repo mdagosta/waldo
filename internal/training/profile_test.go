@@ -565,8 +565,11 @@ func TestTrainingStepCapacityAccountsForRecordFilters(t *testing.T) {
 }
 
 func TestTrainingStepCapacityAccountsForAssistantLossMasks(t *testing.T) {
-	text := "User: " + strings.Repeat("u", 20) + "\n\nAssistant: " + strings.Repeat("a", 20)
-	input := writeTrainingShard(t, []string{text})
+	payload, err := record.EncodeConversation(record.Conversation{Messages: []record.Message{{Role: "user", Content: strings.Repeat("u", 20)}, {Role: "assistant", Content: strings.Repeat("a", 20)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := writeTrainingRows(t, []shard.Row{{SHA256: record.TextHash(payload), Kind: record.KindConversation, Text: payload, Source: "fixture", License: "CC0-1.0", Tokens: 1}})
 	zeroFraction, zeroRecords, zeroBytes := 0.0, 0, int64(0)
 	parameters, err := ResolveParameters(Parameters{
 		Steps: 3, BatchSize: 1, SequenceLength: 16, LearningRate: 0.001, Seed: 7,
@@ -575,7 +578,7 @@ func TestTrainingStepCapacityAccountsForAssistantLossMasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	partition, err := NewRecordPartitionContextWithTokenizerAndObjective(context.Background(), []Input{input}, parameters, byteCodec{}, "assistant-response-modeling", nil)
+	partition, err := NewRecordPartitionContextWithTransform(context.Background(), []Input{input}, parameters, byteCodec{}, "assistant-response-modeling", ConversationTransform{Template: ConversationTemplateUserAssistantV1, SupervisedRoles: []string{"assistant"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

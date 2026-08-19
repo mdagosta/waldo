@@ -15,19 +15,21 @@ import (
 )
 
 const (
-	TextRecordSchema        = 2
-	FormerTextRecordSchema  = 1
-	TextWriterRecipe        = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction"
-	FormerMainContentRecipe = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v8-main-content"
-	FormerAssessmentRecipe  = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v7-content-assessment"
-	FormerTextBOMRecipe     = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v5-bom"
-	FormerTextRecipe        = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v4"
-	EmailDetector           = "waldo/email-address-v1"
-	RepetitionDetector      = "waldo/gopher-ngram-repetition-v1"
-	BoilerplateDetector     = "waldo/gopher-structural-duplication-v1"
-	PrivacyRedactionPolicy  = "waldo/privacy-redaction-v1"
-	TextRowGroupBytes       = 64 << 20
-	TextPageBytes           = 1 << 20
+	TextRecordSchema         = 2
+	FormerTextRecordSchema   = 1
+	TextWriterRecipe         = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction"
+	ConversationRecordSchema = 1
+	ConversationWriterRecipe = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/conversation-v1"
+	FormerMainContentRecipe  = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v8-main-content"
+	FormerAssessmentRecipe   = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v7-content-assessment"
+	FormerTextBOMRecipe      = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v5-bom"
+	FormerTextRecipe         = "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v4"
+	EmailDetector            = "waldo/email-address-v1"
+	RepetitionDetector       = "waldo/gopher-ngram-repetition-v1"
+	BoilerplateDetector      = "waldo/gopher-structural-duplication-v1"
+	PrivacyRedactionPolicy   = "waldo/privacy-redaction-v1"
+	TextRowGroupBytes        = 64 << 20
+	TextPageBytes            = 1 << 20
 )
 
 // TextRow is the canonical tokenizer-neutral pretraining row for record schema
@@ -116,8 +118,20 @@ type textRowV1 struct {
 func NewTextParquetWriter(output io.Writer) *parquet.GenericWriter[TextRow] {
 	writer := parquet.NewGenericWriter[TextRow](output, proposedTextWriterOptions()...)
 	writer.SetKeyValueMetadata("waldo.object", "shard")
+	writer.SetKeyValueMetadata("waldo.record_kind", "pretrain")
 	writer.SetKeyValueMetadata("waldo.record_schema", fmt.Sprint(TextRecordSchema))
 	writer.SetKeyValueMetadata("waldo.recipe", TextWriterRecipe)
+	return writer
+}
+
+// NewConversationParquetWriter writes canonical JSON Conversation payloads
+// into the physical text carrier without rendering a model prompt template.
+func NewConversationParquetWriter(output io.Writer) *parquet.GenericWriter[TextRow] {
+	writer := parquet.NewGenericWriter[TextRow](output, proposedTextWriterOptions()...)
+	writer.SetKeyValueMetadata("waldo.object", "shard")
+	writer.SetKeyValueMetadata("waldo.record_kind", "conversation")
+	writer.SetKeyValueMetadata("waldo.record_schema", fmt.Sprint(ConversationRecordSchema))
+	writer.SetKeyValueMetadata("waldo.recipe", ConversationWriterRecipe)
 	return writer
 }
 

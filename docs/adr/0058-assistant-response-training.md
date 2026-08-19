@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Superseded by ADR 0060. The optional worker loss-mask protocol remains in use;
+conversation flattening and prefix reparsing do not.
 
 ## Decision
 

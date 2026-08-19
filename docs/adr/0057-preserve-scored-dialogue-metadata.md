@@ -4,6 +4,9 @@
 
 Accepted.
 
+ADR 0060 replaces the flattened dialogue payload with structured messages;
+this decision's scored metadata and filtering contract remains unchanged.
+
 ## Decision
 
 The general `dialogue-pair` input profile accepts named `fields.meta` mappings

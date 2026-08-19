@@ -66,6 +66,7 @@ type PlanSource struct {
 
 type WriterPlan struct {
 	Format               string `json:"format"`
+	RecordKind           string `json:"record_kind"`
 	RecordSchema         int    `json:"record_schema"`
 	Recipe               string `json:"recipe"`
 	AdapterRecipe        string `json:"adapter_recipe"`
@@ -173,7 +174,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		RecipeEvidence: request.RecipeEvidence,
 		Update:         request.Update,
 		Writer: WriterPlan{
-			Format: "parquet", RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
+			Format: "parquet", RecordKind: record.KindPretrain, RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
 			AdapterRecipe:    "canonical-adapters-2",
 			CompressedTarget: 256 << 20, CompressedMaximum: 512 << 20,
 			RowGroupLogicalBytes: 64 << 20, PageBytes: 1 << 20,
@@ -309,6 +310,23 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			}
 		}
 	}
+	logicalKind := ""
+	for _, input := range plan.Inputs {
+		kind := record.KindPretrain
+		if input.Profile.Type == ProfileDialoguePair || input.Profile.Type == ProfileChatMessages || input.Profile.Type == ProfileRankedConversationTree {
+			kind = record.KindConversation
+		}
+		if logicalKind != "" && logicalKind != kind {
+			return Plan{}, fmt.Errorf("one ingestion plan cannot mix %s and %s logical records", logicalKind, kind)
+		}
+		logicalKind = kind
+		if kind == record.KindConversation {
+			plan.Writer.RecordKind = record.KindConversation
+			plan.Writer.RecordSchema = shard.ConversationRecordSchema
+			plan.Writer.Recipe = shard.ConversationWriterRecipe
+			plan.Writer.AdapterRecipe = "canonical-conversation-adapters-1"
+		}
+	}
 	if err := plan.Validate(); err != nil {
 		return Plan{}, err
 	}
@@ -408,7 +426,9 @@ func chooseTextColumn(artifact Artifact, requested string) (string, error) {
 }
 
 func (plan Plan) Validate() error {
-	if plan.Kind != "waldo-ingest-plan" || plan.Schema != 1 || plan.Writer.Format != "parquet" || plan.Writer.RecordSchema != shard.TextRecordSchema || plan.Writer.Recipe != shard.TextWriterRecipe || plan.Writer.AdapterRecipe != "canonical-adapters-2" {
+	textWriter := plan.Writer.RecordKind == record.KindPretrain && plan.Writer.RecordSchema == shard.TextRecordSchema && plan.Writer.Recipe == shard.TextWriterRecipe && plan.Writer.AdapterRecipe == "canonical-adapters-2"
+	conversationWriter := plan.Writer.RecordKind == record.KindConversation && plan.Writer.RecordSchema == shard.ConversationRecordSchema && plan.Writer.Recipe == shard.ConversationWriterRecipe && plan.Writer.AdapterRecipe == "canonical-conversation-adapters-1"
+	if plan.Kind != "waldo-ingest-plan" || plan.Schema != 1 || plan.Writer.Format != "parquet" || (!textWriter && !conversationWriter) {
 		return fmt.Errorf("unsupported ingestion plan identity or writer")
 	}
 	cleanDestination := filepath.ToSlash(filepath.Clean(plan.Destination))

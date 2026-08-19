@@ -161,18 +161,22 @@ func verifyManifest(path string, manifest Manifest) error {
 	if !validConversion(manifest.ConvertedBy) {
 		return fmt.Errorf("%s: converted_by requires tool, version, profile, and recipe", path)
 	}
+	if manifest.RecordKind != "" && manifest.RecordKind != "pretrain" && manifest.RecordKind != "conversation" {
+		return fmt.Errorf("%s: unsupported record_kind %q", path, manifest.RecordKind)
+	}
 	if len(manifest.Shards) == 0 && manifest.Rollup == nil {
 		return fmt.Errorf("%s: shards or rollup is required", path)
 	}
 	if len(manifest.Shards) > 0 && manifest.Rollup != nil {
 		return fmt.Errorf("%s: shards and rollup are mutually exclusive", path)
 	}
-	if manifest.RecordSchema >= 2 {
+	conversation := manifest.RecordKind == "conversation"
+	if conversation || manifest.RecordSchema >= 2 {
 		if err := validateContentAssessment(manifest.Assessment, -1); err != nil {
 			return fmt.Errorf("%s: manifest assessment: %w", path, err)
 		}
 	}
-	privacyRedacted := manifest.ConvertedBy.Recipe == "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction"
+	privacyRedacted := manifest.ConvertedBy.Recipe == "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction" || manifest.ConvertedBy.Recipe == "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/conversation-v1"
 	if privacyRedacted {
 		if err := validateContentRedaction(manifest.Redaction); err != nil {
 			return fmt.Errorf("%s: manifest redaction: %w", path, err)
@@ -255,7 +259,7 @@ func verifyManifest(path string, manifest Manifest) error {
 		if shard.ConvertedBy != nil && !validConversion(*shard.ConvertedBy) {
 			return fmt.Errorf("%s: shard %s has an incomplete converted_by override", path, shard.SHA256[:12])
 		}
-		if manifest.RecordSchema >= 2 {
+		if conversation || manifest.RecordSchema >= 2 {
 			if err := validateContentAssessment(shard.Assessment, shard.Docs); err != nil {
 				return fmt.Errorf("%s: shard %s assessment: %w", path, shard.SHA256[:12], err)
 			}
@@ -263,7 +267,7 @@ func verifyManifest(path string, manifest Manifest) error {
 			assessedRepetitiveRecords += shard.Assessment.RepetitiveContent.Records
 			assessedBoilerplateRecords += shard.Assessment.BoilerplateContent.Records
 		}
-		shardPrivacyRedacted := privacyRedacted || shard.ConvertedBy != nil && shard.ConvertedBy.Recipe == "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction"
+		shardPrivacyRedacted := privacyRedacted || shard.ConvertedBy != nil && (shard.ConvertedBy.Recipe == "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction" || shard.ConvertedBy.Recipe == "parquet-go/0.30.1/zstd-6/page-1m/rg-64m/conversation-v1")
 		if shardPrivacyRedacted {
 			anyPrivacyRedacted = true
 			if err := validateContentRedaction(shard.Redaction); err != nil {
@@ -276,7 +280,7 @@ func verifyManifest(path string, manifest Manifest) error {
 			redaction.Credentials += shard.Redaction.Credentials
 		}
 	}
-	if manifest.RecordSchema >= 2 && manifest.Rollup == nil && (manifest.Assessment.EmailAddresses.Records != assessedEmailRecords || manifest.Assessment.RepetitiveContent.Records != assessedRepetitiveRecords || manifest.Assessment.BoilerplateContent.Records != assessedBoilerplateRecords) {
+	if (conversation || manifest.RecordSchema >= 2) && manifest.Rollup == nil && (manifest.Assessment.EmailAddresses.Records != assessedEmailRecords || manifest.Assessment.RepetitiveContent.Records != assessedRepetitiveRecords || manifest.Assessment.BoilerplateContent.Records != assessedBoilerplateRecords) {
 		return fmt.Errorf("%s: manifest content assessment does not equal shard counts", path)
 	}
 	if anyPrivacyRedacted && manifest.Rollup == nil {

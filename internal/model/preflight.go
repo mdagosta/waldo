@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/openwaldo/waldo/internal/training"
 )
@@ -37,8 +38,20 @@ func PrepareStage(stage Stage, bom corpus.BOM, inputs []training.Input) (Prepare
 		return PreparedStage{}, fmt.Errorf("stage %s corpus selection contains no training records", stage.Name)
 	}
 	for _, selected := range bom.Shards {
-		if selected.Format != "parquet" || selected.RecordSchema < shard.FormerTextRecordSchema || selected.RecordSchema > shard.TextRecordSchema {
+		kind := selected.RecordKind
+		if kind == "" {
+			kind = record.KindPretrain
+		}
+		supportedText := kind == record.KindPretrain && selected.RecordSchema >= shard.FormerTextRecordSchema && selected.RecordSchema <= shard.TextRecordSchema
+		supportedConversation := kind == record.KindConversation && selected.RecordSchema == shard.ConversationRecordSchema
+		if selected.Format != "parquet" || (!supportedText && !supportedConversation) {
 			return PreparedStage{}, fmt.Errorf("stage %s shard %s is %s record schema %d; causal-language-modeling requires supported Parquet record schema", stage.Name, selected.SHA256[:12], selected.Format, selected.RecordSchema)
+		}
+		if stage.Objective == "assistant-response-modeling" && !supportedConversation {
+			return PreparedStage{}, fmt.Errorf("stage %s assistant-response-modeling requires structured conversation shards; %s is %s", stage.Name, selected.SHA256[:12], kind)
+		}
+		if supportedConversation && stage.Conversation == nil {
+			return PreparedStage{}, fmt.Errorf("stage %s selects conversation shard %s without a conversation transformation", stage.Name, selected.SHA256[:12])
 		}
 	}
 	if len(inputs) == 0 {
@@ -174,6 +187,13 @@ func validateStage(stage Stage, architecture Architecture) error {
 	}
 	if stage.Objective != "causal-language-modeling" && stage.Objective != "assistant-response-modeling" {
 		return fmt.Errorf("stage %s has unsupported objective %q", stage.Name, stage.Objective)
+	}
+	if stage.Conversation != nil {
+		if err := stage.Conversation.Validate(); err != nil {
+			return fmt.Errorf("stage %s conversation: %w", stage.Name, err)
+		}
+	} else if stage.Objective == "assistant-response-modeling" {
+		return fmt.Errorf("stage %s assistant-response-modeling requires conversation transformation", stage.Name)
 	}
 	parameters := stage.Parameters
 	if _, err := stage.ResolvePlanningParameters(); err != nil {

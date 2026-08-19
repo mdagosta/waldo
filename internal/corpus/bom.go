@@ -63,6 +63,7 @@ type ManifestPin struct {
 	LicenseSet   []string                    `json:"license_set,omitempty"`
 	Format       string                      `json:"format"`
 	RecordSchema int                         `json:"record_schema"`
+	RecordKind   string                      `json:"record_kind,omitempty"`
 	ConvertedBy  index.Conversion            `json:"converted_by"`
 	Sources      []index.Source              `json:"sources"`
 	Processing   *index.Processing           `json:"processing,omitempty"`
@@ -81,6 +82,7 @@ type ShardPin struct {
 	SHA256            string                    `json:"sha256"`
 	Format            string                    `json:"format"`
 	RecordSchema      int                       `json:"record_schema"`
+	RecordKind        string                    `json:"record_kind,omitempty"`
 	License           string                    `json:"license"`
 	Licenses          []string                  `json:"licenses,omitempty"`
 	LicenseUsage      map[string]index.Measures `json:"license_usage,omitempty"`
@@ -159,6 +161,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 		LicenseSet:   append([]string(nil), corpus.Manifest.Licenses...),
 		Format:       effectiveFormat(corpus.Manifest.Format, ""),
 		RecordSchema: effectiveRecordSchema(corpus.Manifest.RecordSchema),
+		RecordKind:   corpus.Manifest.RecordKind,
 		ConvertedBy:  corpus.Manifest.ConvertedBy,
 		Sources:      append([]index.Source(nil), corpus.Manifest.Sources...),
 		Processing:   corpus.Manifest.Processing,
@@ -185,6 +188,7 @@ func (bom *BOM) addManifest(ctx context.Context, root string, corpus index.Corpu
 			SHA256:            shard.SHA256,
 			Format:            effectiveFormat(corpus.Manifest.Format, shard.Format),
 			RecordSchema:      effectiveRecordSchema(corpus.Manifest.RecordSchema),
+			RecordKind:        corpus.Manifest.RecordKind,
 			LicenseUsage:      maps.Clone(shard.LicenseUsage),
 			Sources:           append([]string(nil), shard.Sources...),
 			ConvertedBy:       convertedBy,
@@ -384,6 +388,13 @@ func effectiveRecordSchema(manifestSchema int) int {
 		return record.Schema
 	}
 	return manifestSchema
+}
+
+func effectiveRecordKind(kind string) string {
+	if kind == "" {
+		return record.KindPretrain
+	}
+	return kind
 }
 
 func (bom *BOM) ensureModalities() index.Modalities {

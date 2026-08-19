@@ -756,7 +756,7 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 	if err != nil {
 		return training.Request{}, fmt.Errorf("resolve primary plan tokenizer: %w", err)
 	}
-	partition, err := training.NewRecordPartitionContextWithTokenizerAndObjective(commandContext.Execution, inputs, plan.Parameters, codec, plan.Objective, nil)
+	partition, err := training.NewRecordPartitionContextWithTransform(commandContext.Execution, inputs, plan.Parameters, codec, plan.Objective, plan.Conversation, nil)
 	if err != nil {
 		return training.Request{}, fmt.Errorf("reselect held-out evaluation split: %w", err)
 	}
@@ -776,6 +776,7 @@ func secondaryTrainingRequest(commandContext Context, plan model.MultiNodePlan, 
 	}
 	return training.Request{
 		RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
+		Conversation:       plan.Conversation,
 		ArchitectureSHA256: plan.ArchitectureSHA256, Architecture: plan.Architecture,
 		Parameters: plan.Parameters, Records: records, EvaluationRecords: partition.EvaluationRecords(),
 		EvaluationSet: model.EvaluationSetValue(plan.EvaluationSet), Initialization: initialization,
@@ -1340,7 +1341,7 @@ func runInteractiveChat(ctx context.Context, opened inference.Opened, interactio
 		if err := markdownOutput.Finish(); err != nil {
 			return err
 		}
-		history = boundChatHistory(prompt+response, opened.Description.ContextTokens)
+		history = boundChatHistory(interaction.CompleteTurn(prompt, response), opened.Description.ContextTokens)
 		if errors.Is(err, io.EOF) {
 			return nil
 		}

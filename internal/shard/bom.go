@@ -31,6 +31,7 @@ type BOM struct {
 	Schema                    int                    `json:"schema"`
 	Subject                   string                 `json:"subject"`
 	PlanSHA256                string                 `json:"plan_sha256"`
+	RecordKind                string                 `json:"record_kind"`
 	RecordSchema              int                    `json:"record_schema"`
 	WriterRecipe              string                 `json:"writer_recipe"`
 	Tokenizer                 string                 `json:"tokenizer"`
@@ -63,12 +64,16 @@ type Attestation struct {
 }
 
 func NewBOM(planSHA256, tokenizer string, records, tokens, contentBytes int64, licenses []string) BOM {
+	return NewBOMForRecord(planSHA256, "pretrain", TextRecordSchema, TextWriterRecipe, tokenizer, records, tokens, contentBytes, licenses)
+}
+
+func NewBOMForRecord(planSHA256, recordKind string, recordSchema int, writerRecipe, tokenizer string, records, tokens, contentBytes int64, licenses []string) BOM {
 	licenses = append([]string(nil), licenses...)
 	slices.Sort(licenses)
 	return BOM{
 		Kind: "openwaldo-bom", Schema: BOMSchema, Subject: "shard",
-		PlanSHA256: planSHA256, RecordSchema: TextRecordSchema,
-		WriterRecipe: TextWriterRecipe, Tokenizer: tokenizer,
+		PlanSHA256: planSHA256, RecordKind: recordKind, RecordSchema: recordSchema,
+		WriterRecipe: writerRecipe, Tokenizer: tokenizer,
 		Records: records, Tokens: tokens, ContentBytes: contentBytes, Licenses: licenses,
 		Redaction:  index.ContentRedaction{Policy: PrivacyRedactionPolicy, NamesRetained: true},
 		Validation: Validation{CanonicalRecords: true, ContentHashes: true, TokenCounts: true, ExactLicenseDedup: true},
@@ -82,7 +87,10 @@ func (bom BOM) Validate() error {
 	if !validDigest(bom.PlanSHA256) {
 		return fmt.Errorf("shard BOM plan_sha256 must be 64 lowercase hexadecimal characters")
 	}
-	supported := bom.RecordSchema == TextRecordSchema && (bom.WriterRecipe == TextWriterRecipe || bom.WriterRecipe == FormerMainContentRecipe || bom.WriterRecipe == FormerAssessmentRecipe) || bom.RecordSchema == FormerTextRecordSchema && bom.WriterRecipe == FormerTextBOMRecipe
+	if bom.RecordKind == "" {
+		bom.RecordKind = "pretrain"
+	}
+	supported := bom.RecordKind == "pretrain" && (bom.RecordSchema == TextRecordSchema && (bom.WriterRecipe == TextWriterRecipe || bom.WriterRecipe == FormerMainContentRecipe || bom.WriterRecipe == FormerAssessmentRecipe) || bom.RecordSchema == FormerTextRecordSchema && bom.WriterRecipe == FormerTextBOMRecipe) || bom.RecordKind == "conversation" && bom.RecordSchema == ConversationRecordSchema && bom.WriterRecipe == ConversationWriterRecipe
 	if !supported || bom.Tokenizer == "" {
 		return fmt.Errorf("shard BOM has unsupported record, writer, or tokenizer identity")
 	}
@@ -98,7 +106,7 @@ func (bom BOM) Validate() error {
 	if bom.BoilerplateContentRecords < 0 || bom.BoilerplateContentRecords > bom.Records {
 		return fmt.Errorf("shard BOM has invalid boilerplate-content record count")
 	}
-	if bom.WriterRecipe == TextWriterRecipe {
+	if bom.WriterRecipe == TextWriterRecipe || bom.WriterRecipe == ConversationWriterRecipe {
 		if err := validateRedaction(bom.Redaction); err != nil {
 			return fmt.Errorf("shard BOM redaction: %w", err)
 		}
@@ -140,6 +148,9 @@ func ReadBOM(file *parquet.File) (BOM, error) {
 		}
 		return BOM{}, fmt.Errorf("decode embedded shard BOM: %w", err)
 	}
+	if bom.RecordKind == "" {
+		bom.RecordKind = "pretrain"
+	}
 	if err := bom.Validate(); err != nil {
 		return BOM{}, err
 	}
@@ -154,7 +165,7 @@ func InspectAttestation(path string) (Attestation, error) {
 	defer file.Close()
 	recipe, _ := parquetFile.Lookup("waldo.recipe")
 	switch recipe {
-	case TextWriterRecipe, FormerMainContentRecipe, FormerAssessmentRecipe, FormerTextBOMRecipe:
+	case TextWriterRecipe, ConversationWriterRecipe, FormerMainContentRecipe, FormerAssessmentRecipe, FormerTextBOMRecipe:
 		if _, err := verifyAttestedOne(path); err != nil {
 			return Attestation{}, err
 		}

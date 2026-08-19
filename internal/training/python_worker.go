@@ -228,14 +228,14 @@ func workerBeginFromRequest(request Request) WorkerBegin {
 
 func tokenizedWorkerSources(request Request) (RecordSource, RecordSource, error) {
 	records, evaluationRecords := request.Records, request.EvaluationRecords
-	if request.Tokenizer.Name != "byte" || request.Objective == "assistant-response-modeling" {
+	if request.Tokenizer.Name != "byte" || request.Objective == "assistant-response-modeling" || request.Conversation.Template != "" {
 		_, codec, err := ResolveTokenizer(request.Tokenizer.Name, request.Tokenizer.Revision, uint64(request.Tokenizer.VocabularySize))
 		if err != nil {
 			return nil, nil, err
 		}
-		records = tokenizedRecordSource{source: records, codec: codec, objective: request.Objective}
+		records = tokenizedRecordSource{source: records, codec: codec, objective: request.Objective, conversation: request.Conversation}
 		if evaluationRecords != nil {
-			evaluationRecords = tokenizedRecordSource{source: evaluationRecords, codec: codec, objective: request.Objective}
+			evaluationRecords = tokenizedRecordSource{source: evaluationRecords, codec: codec, objective: request.Objective, conversation: request.Conversation}
 		}
 	}
 	return records, evaluationRecords, nil

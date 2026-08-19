@@ -188,6 +188,20 @@ pretraining `text` column:
 - task-specific additions use a new schema or typed optional field, not an
   undocumented shape inside `meta`.
 
+Conversation schema 1 stores a canonical JSON payload containing ordered
+`messages` (`role`, `content`, and optional mapped `context`) and optional `tools`. Its Parquet object is
+identified by `waldo.record_kind=conversation`; its payload is never a rendered
+prompt. Source mappings, role aliases, ranked-branch selection, privacy
+redaction, and validation are pinned ingestion transformations. Chat templates,
+special-token framing, supervised roles, truncation, and packing are pinned
+model-training transformations. ADR 0060 defines this boundary.
+
+For a conversation shard, the manifest `token_count` is the reproducible
+reference-counter measurement of that canonical JSON payload. It is useful for
+storage and corpus accounting, but is not a claim about the size of every
+possible rendered conversation. Model preflight computes the exact target count
+after applying the stage's pinned conversation template and supervised roles.
+
 The common identity, source, license, and evidence vocabulary is shared. The
 payload is schema-specific.
 

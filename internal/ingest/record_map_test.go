@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/parquet-go/parquet-go"
 )
@@ -290,7 +291,7 @@ func TestDialoguePairRendersPromptContextAndResponse(t *testing.T) {
 		Text: []string{"instruction"}, Context: "context", Response: "response",
 	}})
 	rows := collectMappedRows(t, plan)
-	want := "User: Summarize\n\nA long passage\n\nAssistant: Short summary\n"
+	want := `{"messages":[{"role":"user","content":"Summarize","context":"A long passage"},{"role":"assistant","content":"Short summary"}]}`
 	if len(rows) != 1 || rows[0].Text != want || rows[0].Meta == nil || !strings.Contains(*rows[0].Meta, `"turns":2`) {
 		t.Fatalf("rows = %+v", rows)
 	}
@@ -310,14 +311,14 @@ func TestDialoguePairPreservesMappedMetadata(t *testing.T) {
 		},
 	}
 	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
-	if len(rows) != 1 || rows[0].Meta == nil || !strings.Contains(*rows[0].Meta, `"helpfulness":"4"`) || !strings.Contains(*rows[0].Meta, `"correctness":"3"`) || !strings.Contains(*rows[0].Meta, `"format":"dialogue-flattened"`) {
+	if len(rows) != 1 || rows[0].Meta == nil || !strings.Contains(*rows[0].Meta, `"helpfulness":"4"`) || !strings.Contains(*rows[0].Meta, `"correctness":"3"`) || !strings.Contains(*rows[0].Meta, `"format":"structured-conversation"`) {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
 
 func TestChatMessagesPreservesRolesAndToolResults(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "chat.jsonl")
-	contents := `{"id":"tool-1","messages":[{"role":"human","content":"Weather?"},{"role":"model","content":"<tool_call>weather</tool_call>"},{"role":"tool","content":"Sunny"},{"role":"model","content":"It is sunny."}]}` + "\n"
+	contents := `{"id":"tool-1","tools":"[{\"name\":\"weather\"}]","messages":[{"role":"human","content":"Weather?"},{"role":"model","content":"<tool_call>weather</tool_call>"},{"role":"tool","content":"Sunny"},{"role":"model","content":"It is sunny."}]}` + "\n"
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -325,14 +326,26 @@ func TestChatMessagesPreservesRolesAndToolResults(t *testing.T) {
 		Type:   ProfileChatMessages,
 		Fields: ProfileFields{ID: "id"},
 		Messages: ChatMessagesMapping{
-			Role: "messages[].role", Content: "messages[].content",
+			Role: "messages[].role", Content: "messages[].content", Tools: "tools",
 			RoleAliases: map[string]string{"human": "user", "model": "assistant"},
 		},
 	}
-	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
-	want := "User: Weather?\n\nAssistant: <tool_call>weather</tool_call>\n\nTool: Sunny\n\nAssistant: It is sunny."
+	plan := mappedFixturePlan(t, path, profile)
+	rows := collectMappedRows(t, plan)
+	want := `{"messages":[{"role":"user","content":"Weather?"},{"role":"assistant","content":"\u003ctool_call\u003eweather\u003c/tool_call\u003e"},{"role":"tool","content":"Sunny"},{"role":"assistant","content":"It is sunny."}],"tools":[{"name":"weather"}]}`
 	if len(rows) != 1 || rows[0].Text != want || rows[0].Meta == nil || !strings.Contains(*rows[0].Meta, `"turns":4`) {
 		t.Fatalf("rows = %+v", rows)
+	}
+	assembly, err := AssembleTextObjects(context.Background(), plan, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := BuildManifest(plan, assembly, "s3://openwaldo/lookaside/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assembly.Objects) != 1 || assembly.Objects[0].RecordKind != record.KindConversation || manifest.RecordKind != record.KindConversation || manifest.ConvertedBy.Recipe != shard.ConversationWriterRecipe {
+		t.Fatalf("conversation assembly = %+v, manifest = %+v", assembly, manifest)
 	}
 }
 
@@ -362,7 +375,7 @@ func TestChatMessagesReadsNestedParquetLists(t *testing.T) {
 		Messages: ChatMessagesMapping{Role: "messages[].role", Content: "messages[].content"},
 	}
 	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
-	if len(rows) != 1 || rows[0].Text != "User: Question\n\nAssistant: Answer" {
+	if len(rows) != 1 || rows[0].Text != `{"messages":[{"role":"user","content":"Question"},{"role":"assistant","content":"Answer"}]}` {
 		t.Fatalf("rows = %+v", rows)
 	}
 }
@@ -410,7 +423,7 @@ func TestRankedConversationTreeChoosesLowestRankAtEveryLevel(t *testing.T) {
 		Tree:   ConversationTree{Root: "prompt", Replies: "children.replies", Text: "text", Rank: "rank", Role: "role", AssistantRole: "assistant"},
 	})
 	rows := collectMappedRows(t, plan)
-	want := "User: Question\n\nAssistant: Better\n\nUser: Follow up\n\nAssistant: Final answer\n"
+	want := `{"messages":[{"role":"user","content":"Question"},{"role":"assistant","content":"Better"},{"role":"user","content":"Follow up"},{"role":"assistant","content":"Final answer"}]}`
 	if len(rows) != 1 || rows[0].Text != want || rows[0].Source != "tree-1" || rows[0].Meta == nil || !strings.Contains(*rows[0].Meta, `"turns":4`) {
 		t.Fatalf("rows = %+v", rows)
 	}
@@ -435,7 +448,7 @@ func TestRankedConversationTreeUsesDeclaredSourceOrderForUnrankedLevel(t *testin
 		Tree: ConversationTree{Root: "prompt", Replies: "replies", Text: "text", Rank: "rank", MissingRank: "source-order", Role: "role", AssistantRole: "assistant"},
 	})
 	rows := collectMappedRows(t, plan)
-	want := "User: Question\n\nAssistant: Ranked answer\n\nUser: First follow up\n"
+	want := `{"messages":[{"role":"user","content":"Question"},{"role":"assistant","content":"Ranked answer"},{"role":"user","content":"First follow up"}]}`
 	if len(rows) != 1 || rows[0].Text != want {
 		t.Fatalf("rows = %+v", rows)
 	}

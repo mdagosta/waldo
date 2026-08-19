@@ -9,6 +9,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/openwaldo/waldo/internal/record"
 )
 
 func TestCL100KTokenizerRoundTripAndSpecialFraming(t *testing.T) {
@@ -68,19 +70,74 @@ func TestTokenizedRecordSourceRemovesRawText(t *testing.T) {
 }
 
 func TestAssistantResponseModelingMasksNonAssistantTurns(t *testing.T) {
-	text := "System: Be concise.\n\nUser: Hello\n\nAssistant: Hi\n\nTool: ignored\n\nAssistant: Done"
-	tokens, mask, err := tokenizeAssistantResponses(text, byteCodec{})
+	conversation := record.Conversation{Messages: []record.Message{{Role: "system", Content: "Be concise."}, {Role: "user", Content: "Hello"}, {Role: "assistant", Content: "Hi"}, {Role: "tool", Content: "ignored"}, {Role: "assistant", Content: "Done"}}}
+	tokens, mask, err := (ConversationTransform{Template: ConversationTemplateUserAssistantV1, SupervisedRoles: []string{"assistant"}}).render(conversation, byteCodec{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(mask) != len(tokens)+1 || !mask[len(mask)-1] {
-		t.Fatalf("mask framing = %d tokens, %d mask values, eos=%v", len(tokens), len(mask), mask[len(mask)-1])
+	if len(mask) != len(tokens) {
+		t.Fatalf("mask framing = %d tokens, %d mask values", len(tokens), len(mask))
 	}
 	for index, token := range tokens {
 		character := byte(token - 3)
 		if mask[index] && !strings.Contains("HiDone", string(character)) {
 			t.Fatalf("supervised non-assistant byte %q at %d", character, index)
 		}
+	}
+}
+
+func TestUserAssistantTemplateUsesInferenceCompletionBoundary(t *testing.T) {
+	conversation := record.Conversation{Messages: []record.Message{{Role: "user", Content: "Hello"}, {Role: "assistant", Content: "Hi"}}}
+	tokens, _, err := (ConversationTransform{Template: ConversationTemplateUserAssistantV1, SupervisedRoles: []string{"assistant"}}).render(conversation, byteCodec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rendered := (byteCodec{}).Decode(tokens); rendered != "User: Hello\n\nAssistant:Hi" {
+		t.Fatalf("rendered conversation = %q", rendered)
+	}
+}
+
+func TestConversationTransformPreservesContextAndToolsUntilTraining(t *testing.T) {
+	conversation := record.Conversation{
+		Messages: []record.Message{
+			{Role: "user", Content: "Use the lookup.", Context: "Account 42"},
+			{Role: "assistant", Content: "Done."},
+		},
+		Tools: []byte(`[{"name":"lookup"}]`),
+	}
+	tokens, mask, err := (ConversationTransform{Template: ConversationTemplateChatMLV1, SupervisedRoles: []string{"assistant"}}).render(conversation, byteCodec{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := byteCodec{}.Decode(tokens)
+	for _, expected := range []string{"Available tools:\n[{\"name\":\"lookup\"}]", "Use the lookup.\n\nAccount 42", "<|im_start|>assistant\nDone.<|im_end|>"} {
+		if !strings.Contains(rendered, expected) {
+			t.Fatalf("rendered conversation %q does not contain %q", rendered, expected)
+		}
+	}
+	var supervised []byte
+	for index, token := range tokens {
+		if mask[index] {
+			supervised = append(supervised, byte(token-3))
+		}
+	}
+	if string(supervised) != "Done.<|im_end|>\n" {
+		t.Fatalf("supervised content = %q", supervised)
+	}
+}
+
+func TestAssistantResponseModelingRejectsFlatText(t *testing.T) {
+	_, _, err := tokenizeRecord(Record{Text: "User: hello\n\nAssistant: hi"}, byteCodec{}, "assistant-response-modeling", ConversationTransform{})
+	if err == nil || !strings.Contains(err.Error(), "structured conversation") {
+		t.Fatalf("flat-text error = %v", err)
+	}
+}
+
+func TestAssistantResponseModelingRequiresMatchingSupervisedRole(t *testing.T) {
+	conversation := record.Conversation{Messages: []record.Message{{Role: "user", Content: "Hello"}, {Role: "assistant", Content: "Hi"}}}
+	_, _, err := tokenizeRecord(Record{Conversation: &conversation}, byteCodec{}, "assistant-response-modeling", ConversationTransform{Template: ConversationTemplateUserAssistantV1, SupervisedRoles: []string{"tool"}})
+	if err == nil || !strings.Contains(err.Error(), "no targets") {
+		t.Fatalf("missing target error = %v", err)
 	}
 }
 

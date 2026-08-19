@@ -35,12 +35,12 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 	name := path.Base(plan.Destination)
 	manifest := index.Manifest{
 		Kind: "manifest", Schema: index.ManifestSchema, Name: name, Title: plan.Title,
-		Description:  plan.Description,
-		RecordSchema: shard.TextRecordSchema,
+		Description: plan.Description,
+		RecordKind:  plan.Writer.RecordKind, RecordSchema: plan.Writer.RecordSchema,
 		ConvertedBy: index.Conversion{
 			Tool: "waldo index ingest", Version: "0.1.0-dev",
 			Collector: compactCollector(plan.RecipeEvidence), Profile: conversionProfile(plan),
-			Recipe: shard.TextWriterRecipe, Tokenizer: tokenizer.Default,
+			Recipe: plan.Writer.Recipe, Tokenizer: tokenizer.Default,
 		},
 	}
 	manifest.Assessment = newContentAssessment(0, 0, 0)

@@ -164,7 +164,11 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
 	}
 	builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))})
-	partition, err := training.NewRecordPartitionContextWithTokenizerAndObjective(ctx, prepared.Inputs, resolvedParameters, codec, stage.Objective, func(event training.PartitionProgress) {
+	conversation := training.ConversationTransform{}
+	if stage.Conversation != nil {
+		conversation = *stage.Conversation
+	}
+	partition, err := training.NewRecordPartitionContextWithTransform(ctx, prepared.Inputs, resolvedParameters, codec, stage.Objective, conversation, func(event training.PartitionProgress) {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("evaluation selection %d/%d shards, %d records indexed", event.CurrentShard, event.TotalShards, event.Records)})
 	})
 	if err != nil {
@@ -250,6 +254,9 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		CorpusBOMSHA256:    bomHash, CorpusBOM: prepared.BOM, Parameters: resolvedParameters,
 		EvaluationSet: &partition.Evaluation, Initialization: initialization,
 	}
+	if stage.Conversation != nil {
+		runBOM.Conversation = *stage.Conversation
+	}
 	runBOMHash, err := hashJSON(runBOM)
 	if err != nil {
 		return Inspection{}, err
@@ -295,7 +302,11 @@ func resumableRun(inspection Inspection, stage Stage, parameters training.Resolv
 	index := len(inspection.Runs) - 1
 	run := inspection.Runs[index]
 	bom := inspection.RunBOMs[index]
-	if !resumableRunState(run, parameters) || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !equivalentTrainingParameters(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
+	conversation := training.ConversationTransform{}
+	if stage.Conversation != nil {
+		conversation = *stage.Conversation
+	}
+	if !resumableRunState(run, parameters) || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || bom.CorpusBOMSHA256 != corpusHash || !equivalentTrainingParameters(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
 		return 0, false
 	}
 	return index, true
@@ -418,6 +429,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	artifactPrefix := "artifacts"
 	observation, backendErr := selection.Backend.Run(ctx, training.Request{
 		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
+		Conversation:       runBOM.Conversation,
 		ArchitectureSHA256: record.ArchitectureSHA256,
 		Architecture:       architectureJSON, Tokenizer: tokenizerSpec, BOM: prepared.BOM, Inputs: prepared.Inputs,
 		Parameters: runBOM.Parameters, Records: records, EvaluationRecords: evaluationRecords, EvaluationSet: EvaluationSetValue(runBOM.EvaluationSet), Initialization: initializationForAttempt(runBOM.Initialization, resume), Resume: resume,
@@ -548,6 +560,9 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 		ArchitectureSHA256: runBOM.ArchitectureSHA256, Architecture: architectureJSON,
 		Parameters: runBOM.Parameters, CorpusBOM: prepared.BOM,
 		EvaluationSet: runBOM.EvaluationSet, Initialization: runBOM.Initialization,
+	}
+	if stage.Conversation != nil {
+		plan.Conversation = *stage.Conversation
 	}
 	if runBOM.Initialization != nil {
 		if runBOM.Initialization.Path == "" {
@@ -1284,7 +1299,11 @@ func validateStagedComposeRun(inspection Inspection, index int, prepared Prepare
 			return err
 		}
 	}
-	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || bom.CorpusBOMSHA256 != corpusHash || !equivalentTrainingParameters(bom.Parameters, parameters) {
+	conversation := training.ConversationTransform{}
+	if prepared.Stage.Conversation != nil {
+		conversation = *prepared.Stage.Conversation
+	}
+	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || bom.CorpusBOMSHA256 != corpusHash || !equivalentTrainingParameters(bom.Parameters, parameters) {
 		return fmt.Errorf("run %d immutable facts do not match stage %s", index+1, prepared.Stage.Name)
 	}
 	return nil

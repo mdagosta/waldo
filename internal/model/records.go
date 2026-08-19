@@ -122,22 +122,23 @@ type RunPin struct {
 }
 
 type RunBOM struct {
-	Kind               string                      `json:"kind"`
-	Schema             int                         `json:"schema"`
-	Subject            string                      `json:"subject"`
-	ID                 string                      `json:"id"`
-	ModelID            string                      `json:"model_id"`
-	Stage              string                      `json:"stage"`
-	StageType          string                      `json:"stage_type"`
-	Ordinal            int                         `json:"ordinal"`
-	Objective          string                      `json:"objective"`
-	Execution          training.Execution          `json:"execution"`
-	ArchitectureSHA256 string                      `json:"architecture_sha256"`
-	CorpusBOMSHA256    string                      `json:"corpus_bom_sha256"`
-	CorpusBOM          corpus.BOM                  `json:"corpus_bom"`
-	Parameters         training.ResolvedParameters `json:"parameters"`
-	EvaluationSet      *training.EvaluationSet     `json:"evaluation_set,omitempty"`
-	Initialization     *training.Initialization    `json:"initialization,omitempty"`
+	Kind               string                         `json:"kind"`
+	Schema             int                            `json:"schema"`
+	Subject            string                         `json:"subject"`
+	ID                 string                         `json:"id"`
+	ModelID            string                         `json:"model_id"`
+	Stage              string                         `json:"stage"`
+	StageType          string                         `json:"stage_type"`
+	Ordinal            int                            `json:"ordinal"`
+	Objective          string                         `json:"objective"`
+	Conversation       training.ConversationTransform `json:"conversation,omitzero"`
+	Execution          training.Execution             `json:"execution"`
+	ArchitectureSHA256 string                         `json:"architecture_sha256"`
+	CorpusBOMSHA256    string                         `json:"corpus_bom_sha256"`
+	CorpusBOM          corpus.BOM                     `json:"corpus_bom"`
+	Parameters         training.ResolvedParameters    `json:"parameters"`
+	EvaluationSet      *training.EvaluationSet        `json:"evaluation_set,omitempty"`
+	Initialization     *training.Initialization       `json:"initialization,omitempty"`
 }
 
 const MultiNodePlanSchema = 1
@@ -145,21 +146,22 @@ const MultiNodePlanSchema = 1
 const MultiNodePlanKind = "openwaldo-multinode-plan"
 
 type MultiNodePlan struct {
-	Kind               string                      `json:"kind"`
-	Schema             int                         `json:"schema"`
-	RunID              string                      `json:"run_id"`
-	Stage              string                      `json:"stage"`
-	StageOrdinal       int                         `json:"stage_ordinal"`
-	StageCount         int                         `json:"stage_count"`
-	Nodes              int                         `json:"nodes"`
-	Objective          string                      `json:"objective"`
-	ArchitectureSHA256 string                      `json:"architecture_sha256"`
-	Architecture       json.RawMessage             `json:"architecture"`
-	Parameters         training.ResolvedParameters `json:"parameters"`
-	CorpusBOM          corpus.BOM                  `json:"corpus_bom"`
-	EvaluationSet      *training.EvaluationSet     `json:"evaluation_set,omitempty"`
-	Initialization     *training.Initialization    `json:"initialization,omitempty"`
-	InitializationPath string                      `json:"initialization_path,omitempty"`
+	Kind               string                         `json:"kind"`
+	Schema             int                            `json:"schema"`
+	RunID              string                         `json:"run_id"`
+	Stage              string                         `json:"stage"`
+	StageOrdinal       int                            `json:"stage_ordinal"`
+	StageCount         int                            `json:"stage_count"`
+	Nodes              int                            `json:"nodes"`
+	Objective          string                         `json:"objective"`
+	Conversation       training.ConversationTransform `json:"conversation,omitzero"`
+	ArchitectureSHA256 string                         `json:"architecture_sha256"`
+	Architecture       json.RawMessage                `json:"architecture"`
+	Parameters         training.ResolvedParameters    `json:"parameters"`
+	CorpusBOM          corpus.BOM                     `json:"corpus_bom"`
+	EvaluationSet      *training.EvaluationSet        `json:"evaluation_set,omitempty"`
+	Initialization     *training.Initialization       `json:"initialization,omitempty"`
+	InitializationPath string                         `json:"initialization_path,omitempty"`
 }
 
 func MultiNodePlanPath(root, rendezvousID string) string {

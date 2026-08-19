@@ -36,6 +36,7 @@ var legacyColumns = []string{"sha256", "kind", "text", "source", "source_name", 
 
 type RecordView struct {
 	ID                 string `json:"id"`
+	Kind               string `json:"kind"`
 	Text               string `json:"-"`
 	Source             string `json:"source"`
 	SourceName         string `json:"source_name,omitempty"`
@@ -286,7 +287,7 @@ func verifyAttestedOne(path string) (Summary, error) {
 	}
 	recipe, _ := parquetFile.Lookup("waldo.recipe")
 	switch recipe {
-	case TextWriterRecipe, FormerMainContentRecipe, FormerAssessmentRecipe, FormerTextBOMRecipe:
+	case TextWriterRecipe, ConversationWriterRecipe, FormerMainContentRecipe, FormerAssessmentRecipe, FormerTextBOMRecipe:
 		if _, ok := parquetFile.Lookup(BOMMetadataKey); !ok {
 			return Summary{}, errDeepScanRequired
 		}
@@ -598,6 +599,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 		return err
 	}
 	defer file.Close()
+	kind := shardRecordKind(parquetFile)
 	if err := validateRecordPositions(parquetFile.NumRows(), positions); err != nil {
 		return err
 	}
@@ -617,7 +619,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 				return fmt.Errorf("read record %d: %w", position, readErr)
 			}
 			row := rows[0]
-			view := RecordView{ID: row.SHA256, Text: row.Text, Source: row.Source, SourceName: row.SourceName, License: row.License, Language: row.Lang, LanguageScore: row.LangScore, Date: row.Date, Tokens: row.Tokens, Bytes: int64(len(row.Text)), MainContent: true}
+			view := RecordView{ID: row.SHA256, Kind: kind, Text: row.Text, Source: row.Source, SourceName: row.SourceName, License: row.License, Language: row.Lang, LanguageScore: row.LangScore, Date: row.Date, Tokens: row.Tokens, Bytes: int64(len(row.Text)), MainContent: true}
 			if err := callback(position, view); err != nil {
 				return err
 			}
@@ -641,6 +643,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 			}
 			row := rows[0]
 			view := recordViewV1(row)
+			view.Kind = kind
 			if err := callback(position, view); err != nil {
 				return err
 			}
@@ -664,6 +667,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 			}
 			row := rows[0]
 			view := recordViewV2(row)
+			view.Kind = kind
 			if err := callback(position, view); err != nil {
 				return err
 			}
@@ -687,7 +691,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 			}
 			row := rows[0]
 			email, repetitive, boilerplate := row.EmailAddresses, row.RepetitiveContent, row.BoilerplateContent
-			view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &email, RepetitiveContent: &repetitive, BoilerplateContent: &boilerplate, MainContent: row.MainContent}
+			view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Kind: kind, Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &email, RepetitiveContent: &repetitive, BoilerplateContent: &boilerplate, MainContent: row.MainContent}
 			if err := callback(position, view); err != nil {
 				return err
 			}
@@ -712,7 +716,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 		emailAddresses := row.EmailAddresses
 		repetitiveContent := row.RepetitiveContent
 		boilerplateContent := row.BoilerplateContent
-		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &emailAddresses, RepetitiveContent: &repetitiveContent, BoilerplateContent: &boilerplateContent, MainContent: row.MainContent}
+		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Kind: kind, Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &emailAddresses, RepetitiveContent: &repetitiveContent, BoilerplateContent: &boilerplateContent, MainContent: row.MainContent}
 		if err := callback(position, view); err != nil {
 			return err
 		}
@@ -790,11 +794,24 @@ func openShard(path string) (*os.File, *parquet.File, int64, error) {
 		return nil, nil, 0, fmt.Errorf("columns are %v, want schema-2 %v or established schema-1 %v", got, canonicalColumns, canonicalV1Columns)
 	}
 	value, ok := pf.Lookup("waldo.record_schema")
-	if (canonical || canonicalV3 || canonicalV2) && (!ok || value != strconv.Itoa(TextRecordSchema)) || canonicalV1 && (!ok || value != strconv.Itoa(FormerTextRecordSchema)) || legacy && ok && value != strconv.Itoa(FormerTextRecordSchema) {
+	if rawKind, exists := pf.Lookup("waldo.record_kind"); exists && rawKind != record.KindPretrain && rawKind != record.KindConversation {
+		file.Close()
+		return nil, nil, 0, fmt.Errorf("unsupported waldo.record_kind %q", rawKind)
+	}
+	kind := shardRecordKind(pf)
+	currentConversation := canonical && kind == record.KindConversation && ok && value == strconv.Itoa(ConversationRecordSchema)
+	if !currentConversation && ((canonical || canonicalV3 || canonicalV2) && (!ok || value != strconv.Itoa(TextRecordSchema)) || canonicalV1 && (!ok || value != strconv.Itoa(FormerTextRecordSchema)) || legacy && ok && value != strconv.Itoa(FormerTextRecordSchema)) {
 		file.Close()
 		return nil, nil, 0, fmt.Errorf("unsupported or missing waldo.record_schema")
 	}
 	return file, pf, info.Size(), nil
+}
+
+func shardRecordKind(file *parquet.File) string {
+	if kind, ok := file.Lookup("waldo.record_kind"); ok && kind == record.KindConversation {
+		return kind
+	}
+	return record.KindPretrain
 }
 
 func footerSummary(file *parquet.File, size int64) (Summary, bool) {
@@ -819,11 +836,13 @@ func footerSummary(file *parquet.File, size int64) (Summary, bool) {
 	emailAddressRecords, emailOK := footerAssessment(file, "waldo.email_address_records", values["waldo.records"])
 	repetitiveContentRecords, repetitiveOK := footerAssessment(file, "waldo.repetitive_content_records", values["waldo.records"])
 	boilerplateContentRecords, boilerplateOK := footerAssessment(file, "waldo.boilerplate_content_records", values["waldo.records"])
-	if schema, _ := file.Lookup("waldo.record_schema"); schema == strconv.Itoa(TextRecordSchema) && (!emailOK || !repetitiveOK || !boilerplateOK) {
-		return Summary{}, false
+	if recipe == TextWriterRecipe || recipe == ConversationWriterRecipe {
+		if !emailOK || !repetitiveOK || !boilerplateOK {
+			return Summary{}, false
+		}
 	}
 	redaction := index.ContentRedaction{}
-	if recipe == TextWriterRecipe {
+	if recipe == TextWriterRecipe || recipe == ConversationWriterRecipe {
 		policy, ok := file.Lookup("waldo.privacy_redaction_policy")
 		if !ok || policy != PrivacyRedactionPolicy {
 			return Summary{}, false
@@ -914,6 +933,7 @@ func scanCanonical(file *parquet.File, validate bool, callback func(int64, Recor
 		for i := 0; i < count; i++ {
 			row := rows[i]
 			canonical := canonicalTextRow(row)
+			canonical.Kind = shardRecordKind(file)
 			emailAddresses := row.EmailAddresses
 			repetitiveContent := row.RepetitiveContent
 			boilerplateContent := row.BoilerplateContent
@@ -993,10 +1013,19 @@ func scanCanonicalV1(file *parquet.File, validate bool, callback func(int64, Rec
 // before ingestion writes a row. Published shards therefore carry builder
 // evidence for checks that do not need to be repeated after object hashing.
 func ValidateTextRow(row TextRow) error {
+	return validateRow(record.KindPretrain, row)
+}
+
+func ValidateConversationRow(row TextRow) error {
+	return validateRow(record.KindConversation, row)
+}
+
+func validateRow(kind string, row TextRow) error {
 	if row.TokenCount == nil {
 		return fmt.Errorf("token_count is required")
 	}
 	canonical := canonicalTextRow(row)
+	canonical.Kind = kind
 	if err := canonical.Validate(); err != nil {
 		return err
 	}
@@ -1100,7 +1129,7 @@ func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPres
 			return fmt.Errorf("record %d (%s): meta is not a JSON object", position, canonical.SHA256)
 		}
 	}
-	view := RecordView{ID: canonical.SHA256, Text: canonical.Text, Source: canonical.Source, SourceName: canonical.SourceName, License: canonical.License, Language: canonical.Lang, LanguageScore: canonical.LangScore, Date: canonical.Date, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text)), EmailAddresses: emailAddresses, RepetitiveContent: repetitiveContent, BoilerplateContent: boilerplateContent, MainContent: mainContent}
+	view := RecordView{ID: canonical.SHA256, Kind: canonical.Kind, Text: canonical.Text, Source: canonical.Source, SourceName: canonical.SourceName, License: canonical.License, Language: canonical.Lang, LanguageScore: canonical.LangScore, Date: canonical.Date, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text)), EmailAddresses: emailAddresses, RepetitiveContent: repetitiveContent, BoilerplateContent: boilerplateContent, MainContent: mainContent}
 	if consumer.callback != nil {
 		if err := consumer.callback(position, view, canonical, meta); err != nil {
 			return err

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/index"
+	"github.com/openwaldo/waldo/internal/record"
 	waldoshard "github.com/openwaldo/waldo/internal/shard"
 )
 
@@ -52,13 +53,14 @@ func (bom BOM) Validate() error {
 	manifestRepetitiveRecords := make(map[string]int64, len(bom.Manifests))
 	manifestBoilerplateRecords := make(map[string]int64, len(bom.Manifests))
 	for _, manifest := range bom.Manifests {
+		manifest.RecordKind = effectiveRecordKind(manifest.RecordKind)
 		if manifest.Path == "" || manifests[manifest.Path].Path != "" {
 			return fmt.Errorf("manifest paths must be non-empty and unique: %q", manifest.Path)
 		}
 		if !validSHA256(manifest.SHA256) {
 			return fmt.Errorf("manifest %s has invalid sha256 %q", manifest.Path, manifest.SHA256)
 		}
-		if manifest.Name == "" || manifest.Title == "" || manifest.Description == "" || (manifest.License == "") == (len(manifest.LicenseSet) == 0) || manifest.Format == "" || manifest.RecordSchema <= 0 {
+		if manifest.Name == "" || manifest.Title == "" || manifest.Description == "" || (manifest.License == "") == (len(manifest.LicenseSet) == 0) || manifest.Format == "" || manifest.RecordSchema <= 0 || (manifest.RecordKind != record.KindPretrain && manifest.RecordKind != record.KindConversation) {
 			return fmt.Errorf("manifest %s is missing resolved identity or format fields", manifest.Path)
 		}
 		if len(manifest.LicenseSet) > 0 && (!slices.IsSorted(manifest.LicenseSet) || hasDuplicate(manifest.LicenseSet)) {
@@ -92,12 +94,12 @@ func (bom BOM) Validate() error {
 				return fmt.Errorf("manifest %s composed_by: %w", manifest.Path, err)
 			}
 		}
-		if manifest.RecordSchema >= waldoshard.TextRecordSchema {
+		if manifest.RecordKind == record.KindConversation || manifest.RecordSchema >= waldoshard.TextRecordSchema {
 			if err := validateAssessment(manifest.Assessment, manifest.Totals.Docs); err != nil {
 				return fmt.Errorf("manifest %s assessment: %w", manifest.Path, err)
 			}
 		}
-		if manifest.ConvertedBy.Recipe == waldoshard.TextWriterRecipe {
+		if manifest.ConvertedBy.Recipe == waldoshard.TextWriterRecipe || manifest.ConvertedBy.Recipe == waldoshard.ConversationWriterRecipe {
 			if err := validateRedaction(manifest.Redaction); err != nil {
 				return fmt.Errorf("manifest %s redaction: %w", manifest.Path, err)
 			}
@@ -119,10 +121,11 @@ func (bom BOM) Validate() error {
 	calculatedModalities := index.Modalities{}
 	licenses := map[string]index.Measures{}
 	for position, shard := range bom.Shards {
+		shard.RecordKind = effectiveRecordKind(shard.RecordKind)
 		if manifests[shard.Manifest].Path == "" {
 			return fmt.Errorf("shard %d refers to unknown manifest %q", position+1, shard.Manifest)
 		}
-		if shard.URL == "" || !validSHA256(shard.SHA256) || shard.Format == "" || shard.RecordSchema <= 0 || (shard.License == "") == (len(shard.Licenses) == 0) {
+		if shard.URL == "" || !validSHA256(shard.SHA256) || shard.Format == "" || shard.RecordSchema <= 0 || (shard.RecordKind != record.KindPretrain && shard.RecordKind != record.KindConversation) || (shard.License == "") == (len(shard.Licenses) == 0) {
 			return fmt.Errorf("shard %d has incomplete resolved identity", position+1)
 		}
 		if len(shard.Licenses) > 0 && (!slices.IsSorted(shard.Licenses) || hasDuplicate(shard.Licenses)) {
@@ -146,7 +149,7 @@ func (bom BOM) Validate() error {
 		if len(shard.Modalities) > 0 && modalityTokens(shard.Modalities) != shard.Tokens {
 			return fmt.Errorf("shard %s modality tokens do not match its token total", shard.SHA256[:12])
 		}
-		if shard.RecordSchema >= waldoshard.TextRecordSchema {
+		if shard.RecordKind == record.KindConversation || shard.RecordSchema >= waldoshard.TextRecordSchema {
 			if err := validateAssessment(shard.Assessment, shard.Docs); err != nil {
 				return fmt.Errorf("shard %s assessment: %w", shard.SHA256[:12], err)
 			}
@@ -154,7 +157,7 @@ func (bom BOM) Validate() error {
 			manifestRepetitiveRecords[shard.Manifest] += shard.Assessment.RepetitiveContent.Records
 			manifestBoilerplateRecords[shard.Manifest] += shard.Assessment.BoilerplateContent.Records
 		}
-		if shard.ConvertedBy.Recipe == waldoshard.TextWriterRecipe {
+		if shard.ConvertedBy.Recipe == waldoshard.TextWriterRecipe || shard.ConvertedBy.Recipe == waldoshard.ConversationWriterRecipe {
 			if err := validateRedaction(shard.Redaction); err != nil {
 				return fmt.Errorf("shard %s redaction: %w", shard.SHA256[:12], err)
 			}
@@ -313,7 +316,7 @@ func validateShardAttestation(pin ShardPin) error {
 		if pin.Redaction != nil {
 			redaction = *pin.Redaction
 		}
-		if attestation.WriterRecipe != attestation.BOM.WriterRecipe || attestation.BOM.RecordSchema != pin.RecordSchema || attestation.BOM.Records != pin.Docs || attestation.BOM.Tokens != pin.Tokens || attestation.BOM.EmailAddressRecords != emailRecords || attestation.BOM.RepetitiveContentRecords != repetitiveRecords || attestation.BOM.BoilerplateContentRecords != boilerplateRecords || attestation.BOM.Redaction != redaction || !slices.Equal(attestation.BOM.Licenses, licenses) {
+		if attestation.WriterRecipe != attestation.BOM.WriterRecipe || effectiveRecordKind(attestation.BOM.RecordKind) != effectiveRecordKind(pin.RecordKind) || attestation.BOM.RecordSchema != pin.RecordSchema || attestation.BOM.Records != pin.Docs || attestation.BOM.Tokens != pin.Tokens || attestation.BOM.EmailAddressRecords != emailRecords || attestation.BOM.RepetitiveContentRecords != repetitiveRecords || attestation.BOM.BoilerplateContentRecords != boilerplateRecords || attestation.BOM.Redaction != redaction || !slices.Equal(attestation.BOM.Licenses, licenses) {
 			return fmt.Errorf("shard %s embedded BOM differs from its corpus pin", pin.SHA256[:12])
 		}
 	case "implicit-v4":
