@@ -37,6 +37,10 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	loadedCorpus, isCorpusDirectory, err := ingest.LoadCorpusDirectory(options.Inputs[0])
+	if err != nil {
+		return err
+	}
 	loadedSource, isSourceDirectory, err := ingest.LoadSourceDirectory(options.Inputs[0])
 	if err != nil {
 		return err
@@ -58,6 +62,15 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
 			options.Request.Profile = loadedRecipe.Recipe.Input
 		}
+	} else if isCorpusDirectory {
+		if requestedDestination == "" {
+			return fmt.Errorf("corpus directory ingestion requires an explicit destination")
+		}
+		if len(options.MetadataOptions) > 0 {
+			return fmt.Errorf("corpus directory manifest owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
+		}
+		loadedCorpus.Apply(&options.Request)
+		options.Inputs = loadedCorpus.InputPaths()
 	} else if isSourceDirectory {
 		if requestedDestination == "" {
 			return fmt.Errorf("source directory ingestion requires an explicit destination")
@@ -171,7 +184,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		if err != nil {
 			return err
 		}
-		if isSourceDirectory {
+		if isCorpusDirectory {
+			if err := loadedCorpus.VerifyProbe(probe); err != nil {
+				return err
+			}
+		} else if isSourceDirectory {
 			if err := loadedSource.VerifyProbe(probe); err != nil {
 				return err
 			}
