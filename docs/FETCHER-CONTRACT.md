@@ -10,11 +10,10 @@ repository's release. They download upstream material into a supplied local
 directory and stop. They never publish to a lookaside, mutate an index, convert
 canonical Parquet, or start model training.
 
-WALDO normally consumes ordinary local files and directories through
-`waldo index ingest`. It can also consume a strict ingest recipe from the
-fetcher repository. That recipe names reviewed scripts and corpus metadata;
-WALDO executes the scripts into private staging and then treats their output as
-ordinary local input. Conversely, `waldo index export` materializes an already
+WALDO consumes a completed fetcher handoff with
+`waldo index ingest /path/to/handoff`. Fetching and ingestion are separate
+processes. Legacy strict ingest recipes and direct file/directory ingestion
+remain supported. Conversely, `waldo index export` materializes an already
 indexed corpus and its OpenWALDO BOM into a local directory.
 
 ## A fetcher owns
@@ -53,12 +52,12 @@ indexed corpus and its OpenWALDO BOM into a local directory.
 
 ## Local output shape
 
-A fetcher produces only a directory satisfying the
-[source directory contract](SOURCE-DIRECTORY.md). It may contain faithfully
-copied raw artifacts or a normalized JSONL/Parquet deposit, but no sidecar
-acquisition manifest. Shared acquisition facts belong in the recipe; per-record
-upstream evidence belongs in the records. WALDO independently orders, hashes,
-and probes every resulting file.
+A fetcher produces `manifest.json` and `raw/` as defined by the
+[source directory contract](SOURCE-DIRECTORY.md). `raw/` may contain faithfully
+copied raw artifacts in general supported formats. Shared acquisition facts
+belong in the root manifest; per-record upstream evidence belongs in the
+records. WALDO independently orders, hashes, and recursively probes every
+declared raw path.
 
 The local acquisition must retain enough evidence for the source and corpus
 manifests to support the EU GPAI training-content projection described in

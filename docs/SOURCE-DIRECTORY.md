@@ -1,12 +1,15 @@
 # Source directory contract
 
-A source directory is a recursive collection of raw inputs for one declared
-source. WALDO converts its records to canonical Parquet; the directory itself
-contains no WALDO-specific manifest.
+A source-directory handoff contains a compact `manifest.json` beside a `raw/`
+directory. The manifest declares corpus, source, license, provenance, input
+profile, and intended index destination. WALDO converts the recursively
+discovered records beneath `raw/` to canonical Parquet; it never treats the
+manifest itself as corpus content.
 
 ## Directory rules
 
-- Every entry below the root is examined in stable path order.
+- Every entry below each manifest-declared path beneath `raw/` is examined in
+  stable path order.
 - Files must be regular files. Symlinks and special files reject the source.
 - Every non-empty file must use a supported container. A source has at most one
   input profile, and it must apply to every file in that source.
@@ -14,8 +17,8 @@ contains no WALDO-specific manifest.
   the source. Archives must be safely extracted by acquisition first.
 - Files must not change after probing. WALDO pins their paths, sizes, and
   SHA-256 identities before conversion.
-- Do not add metadata sidecars: WALDO will treat them as inputs. Put shared
-  source facts in the CLI/recipe declaration and per-record facts in the
+- Do not add metadata sidecars beneath `raw/`: WALDO will treat them as inputs.
+  Put shared source facts in the root manifest and per-record facts in the
   records themselves.
 
 During canonical assembly WALDO automatically assesses, but does not alter,
@@ -29,7 +32,8 @@ declared source must still produce at least one supported non-empty input.
 
 ## Shared source evidence
 
-Shared facts live in the CLI or recipe, never in directory sidecars:
+Shared facts live in the root manifest (or in direct-ingest CLI flags and
+legacy recipes), never in sidecars beneath `raw/`:
 
 - `license` is WALDO's normalized effective/default license;
   `source.license_evidence` preserves the upstream declaration and/or URL.

@@ -37,7 +37,15 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
+	loadedSource, isSourceDirectory, err := ingest.LoadSourceDirectory(options.Inputs[0])
+	if err != nil {
+		return err
+	}
+	requestedDestination := options.Request.Destination
 	if isRecipe {
+		if requestedDestination == "" {
+			return fmt.Errorf("ingest recipes require an explicit destination")
+		}
 		if len(options.MetadataOptions) > 0 {
 			return fmt.Errorf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
 		}
@@ -50,6 +58,17 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 			options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
 			options.Request.Profile = loadedRecipe.Recipe.Input
 		}
+	} else if isSourceDirectory {
+		if len(options.MetadataOptions) > 0 {
+			return fmt.Errorf("source directory manifest owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
+		}
+		if requestedDestination != "" && requestedDestination != loadedSource.Corpus.Destination {
+			return fmt.Errorf("destination %q conflicts with source manifest destination %q", requestedDestination, loadedSource.Corpus.Destination)
+		}
+		loadedSource.Apply(&options.Request)
+		options.Inputs = loadedSource.InputPaths()
+	} else if options.Request.Destination == "" {
+		return fmt.Errorf("direct index ingest requires a destination")
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
 		return fmt.Errorf("direct index ingest requires --title, --license, --source, and --source-category")
 	}
@@ -151,6 +170,11 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		probe, err = ingest.ProbePathsWithWorkers(execution, options.Inputs, workers)
 		if err != nil {
 			return err
+		}
+		if isSourceDirectory {
+			if err := loadedSource.VerifyProbe(probe); err != nil {
+				return err
+			}
 		}
 	}
 	plan, err := ingest.NewPlan(probe, options.Request)
@@ -440,6 +464,10 @@ type indexIngestOptions struct {
 }
 
 func cobraIndexIngestOptions(context Context, args []string) (indexIngestOptions, error) {
+	destination := ""
+	if len(args) > 1 {
+		destination = args[1]
+	}
 	options := indexIngestOptions{
 		Inputs:       []string{args[0]},
 		DryRun:       boolOption(context, "dry-run"),
@@ -450,7 +478,7 @@ func cobraIndexIngestOptions(context Context, args []string) (indexIngestOptions
 			Description: stringOption(context, "description"),
 			License:     stringOption(context, "license"),
 			TextColumn:  stringOption(context, "text-column"),
-			Destination: args[1],
+			Destination: destination,
 			Source: ingest.PlanSource{
 				URL:      stringOption(context, "source"),
 				Name:     stringOption(context, "source-name"),

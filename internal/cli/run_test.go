@@ -8,6 +8,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -106,6 +107,57 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	}
 	if len(output.Identity) != 64 || output.Plan.Kind != "waldo-ingest-plan" || output.Plan.Destination != "core/example" || output.Plan.Writer.RecordSchema != shard.TextRecordSchema || len(output.Plan.Inputs) != 1 || output.Plan.Inputs[0].Adapter != "markdown" {
 		t.Fatalf("index ingest output = %+v", output)
+	}
+}
+
+func TestIndexIngestSourceDirectoryRecursesRawAndUsesManifest(t *testing.T) {
+	handoff := t.TempDir()
+	raw := filepath.Join(handoff, "raw", "nested")
+	if err := os.MkdirAll(raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("Training text.\n")
+	if err := os.WriteFile(filepath.Join(raw, "document.txt"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fileHash := sha256.Sum256(content)
+	inventory := fmt.Sprintf("%x\t%d\tnested/document.txt\n", fileHash, len(content))
+	treeHash := sha256.Sum256([]byte(inventory))
+	manifest := fmt.Sprintf(`{
+  "kind":"waldo-source-directory","schema":1,
+  "corpus":{"id":"source-example","title":"Source Example","description":"Fetcher handoff.","destination":"core/source-example"},
+  "sources":[{"id":"source-example","path":"","license":"CC0-1.0","source":{"name":"Example","url":"https://example.test/data","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},"input":{},"artifacts":[{"url":"https://example.test/data/document.txt","path":"nested/document.txt"}]}],
+  "fetcher":{},"raw":{"path":"raw","file_count":1,"byte_count":%d,"tree_sha256":"%x"}
+}`, len(content), treeHash)
+	if err := os.WriteFile(filepath.Join(handoff, "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	indexRoot := emptyCLIIndex(t)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Index: indexRoot}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "index", "ingest", handoff, "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
+	}
+	var output struct {
+		Plan struct {
+			Destination string `json:"destination"`
+			Inputs      []struct {
+				Artifact struct {
+					Path string `json:"path"`
+				} `json:"artifact"`
+			} `json:"inputs"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Plan.Destination != "core/source-example" || len(output.Plan.Inputs) != 1 ||
+		output.Plan.Inputs[0].Artifact.Path != filepath.Join(raw, "document.txt") {
+		t.Fatalf("source-directory plan = %+v", output.Plan)
 	}
 }
 
