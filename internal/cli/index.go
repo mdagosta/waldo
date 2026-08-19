@@ -208,7 +208,7 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 			if event.Phase != "complete" {
 				return
 			}
-			if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
+			if shouldReportIndexProgress(event.Current, event.Total) {
 				fmt.Fprintf(progress, "  fetched %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
 			}
 		})
@@ -485,7 +485,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 		fmt.Fprintf(progress, "checking %s canonical object URLs (%s declared; headers only)\n",
 			humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes))
 		availability, err := corpus.CheckAvailability(context.Execution, bom, cache, 8, func(event corpus.AvailabilityProgress) {
-			if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
+			if shouldReportIndexProgress(event.Current, event.Total) {
 				fmt.Fprintf(progress, "  %s/%s  %s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12], event.Probe.Method)
 			}
 		})
@@ -515,7 +515,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 		if event.Phase != "complete" {
 			return
 		}
-		if event.Current == 1 || event.Current == event.Total || event.Current%25 == 0 {
+		if shouldReportIndexProgress(event.Current, event.Total) {
 			fmt.Fprintf(progress, "  %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
 		}
 	})
@@ -543,6 +543,10 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 		displayPath(target.Rel), humanInteger(verification.Directories), humanInteger(verification.Corpora),
 		humanInteger(int64(len(materialized.Objects))), humanBytes(bom.Totals.Bytes))
 	return nil
+}
+
+func shouldReportIndexProgress(current, total int) bool {
+	return total <= 25 || current == 1 || current == total || current%25 == 0
 }
 
 func resolveIndexArgument(execution context.Context, args []string, warnings io.Writer) (waldoindex.Target, error) {
