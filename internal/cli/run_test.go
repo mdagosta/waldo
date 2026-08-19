@@ -174,7 +174,7 @@ func TestIndexIngestResolvesRelativeDestinationAgainstConfiguredIndex(t *testing
 	t.Chdir(t.TempDir())
 	var stdout, stderr bytes.Buffer
 	code := Run([]string{
-		"--json", "index", "ingest", input, "./core/example",
+		"--json", "index", "ingest", input, "core/example",
 		"--title", "Example", "--license", "CC0-1.0",
 		"--source", "https://example.test/data", "--source-category", "public-dataset", "--dry-run",
 	}, &stdout, &stderr)
@@ -190,6 +190,39 @@ func TestIndexIngestResolvesRelativeDestinationAgainstConfiguredIndex(t *testing
 		t.Fatal(err)
 	}
 	if output.Plan.Destination != "core/example" {
+		t.Fatalf("destination = %q", output.Plan.Destination)
+	}
+}
+
+func TestIndexIngestExplicitRelativeDestinationOverridesMissingConfiguredIndex(t *testing.T) {
+	input := filepath.Join(t.TempDir(), "document.txt")
+	if err := os.WriteFile(input, []byte("Training text.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := fixtureGitIndex(t)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Index: filepath.Join(t.TempDir(), "missing-index")}); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(root)
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{
+		"--json", "index", "ingest", input, "./post-train/sft/example",
+		"--title", "Example", "--license", "CC0-1.0",
+		"--source", "https://example.test/data", "--source-category", "public-dataset", "--dry-run",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
+	}
+	var output struct {
+		Plan struct {
+			Destination string `json:"destination"`
+		} `json:"plan"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Plan.Destination != "post-train/sft/example" {
 		t.Fatalf("destination = %q", output.Plan.Destination)
 	}
 }
@@ -876,7 +909,7 @@ func TestConfigSetIndexEnablesLogicalIndexPaths(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"index", "summary", "./books"}, &stdout, &stderr); code != 0 {
+	if code := Run([]string{"index", "summary", "books"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("summary code = %d, stderr = %q", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "tokens   2") {
@@ -892,7 +925,7 @@ func TestConfigSetIndexEnablesLogicalIndexPaths(t *testing.T) {
 	}
 	stdout.Reset()
 	stderr.Reset()
-	if code := Run([]string{"index", "summary", "."}, &stdout, &stderr); code != 0 || strings.Contains(stderr.String(), "warning:") {
+	if code := Run([]string{"index", "summary", root}, &stdout, &stderr); code != 0 || strings.Contains(stderr.String(), "warning:") {
 		t.Fatalf("explicit root code = %d, stderr = %q", code, stderr.String())
 	}
 }

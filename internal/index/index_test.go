@@ -101,30 +101,30 @@ func TestResolveAcceptsLogicalCorpusPathPrintedByList(t *testing.T) {
 	}
 }
 
-func TestResolveConfiguredTreatsEveryRelativePathAsIndexRelative(t *testing.T) {
+func TestResolveConfiguredDistinguishesLogicalAndFilesystemPaths(t *testing.T) {
 	root := fixtureIndex(t)
-	t.Chdir(t.TempDir())
-	for _, test := range []struct {
-		path string
-		rel  string
-	}{
-		{path: "alpha", rel: "alpha"},
-		{path: "./alpha", rel: "alpha"},
-		{path: ".", rel: ""},
-	} {
-		target, err := ResolveConfigured(root, test.path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if target.Root != root || target.Rel != test.rel {
-			t.Errorf("ResolveConfigured(%q) = root %q rel %q, want root %q rel %q", test.path, target.Root, target.Rel, root, test.rel)
-		}
+	working := t.TempDir()
+	t.Chdir(working)
+	target, err := ResolveConfigured(root, "alpha")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := ResolveConfigured(root, "../outside"); err == nil || !strings.Contains(err.Error(), "outside index checkout") {
-		t.Fatalf("ResolveConfigured() escape error = %v", err)
+	if target.Root != root || target.Rel != "alpha" {
+		t.Fatalf("logical target = %+v", target)
 	}
+
+	local := fixtureIndex(t)
+	t.Chdir(local)
+	target, err = ResolveConfigured(root, "./alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Root != local || target.Rel != "alpha" {
+		t.Fatalf("explicit local target = %+v", target)
+	}
+
 	other := fixtureIndex(t)
-	target, err := ResolveConfigured(root, filepath.Join(other, "alpha"))
+	target, err = ResolveConfigured(root, filepath.Join(other, "alpha"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,15 +147,37 @@ func TestResolveDestinationNormalizesProspectiveAbsolutePath(t *testing.T) {
 func TestResolveDestinationConfiguredUsesConfiguredCheckout(t *testing.T) {
 	root := fixtureIndex(t)
 	t.Chdir(t.TempDir())
-	target, err := ResolveDestinationConfigured(root, "./alpha/new/corpus")
+	target, err := ResolveDestinationConfigured(root, "alpha/new/corpus")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if target.Root != root || target.Rel != "alpha/new/corpus" || target.Abs != filepath.Join(root, "alpha", "new", "corpus") {
 		t.Fatalf("ResolveDestinationConfigured() = %+v", target)
 	}
-	if _, err := ResolveDestinationConfigured(root, "../outside"); err == nil || !strings.Contains(err.Error(), "beneath checkout") {
-		t.Fatalf("ResolveDestinationConfigured() escape error = %v", err)
+	local := fixtureIndex(t)
+	t.Chdir(local)
+	target, err = ResolveDestinationConfigured(root, "./alpha/new/corpus")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.Root != local || target.Rel != "alpha/new/corpus" || target.Abs != filepath.Join(local, "alpha", "new", "corpus") {
+		t.Fatalf("local destination = %+v", target)
+	}
+}
+
+func TestIsFilesystemPathRecognizesExistingRelativeParent(t *testing.T) {
+	working := t.TempDir()
+	t.Chdir(working)
+	if err := os.Mkdir("checkout", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"./missing", "../missing", "/missing", "checkout", "checkout/new"} {
+		if !IsFilesystemPath(value) {
+			t.Errorf("IsFilesystemPath(%q) = false", value)
+		}
+	}
+	if IsFilesystemPath("logical/new") {
+		t.Fatal("nonexistent unprefixed logical path treated as filesystem path")
 	}
 }
 

@@ -106,24 +106,9 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if managedDefault && !explicitIndexPath(options.Request.Destination) {
 		return managedIndexMutationError("ingest into")
 	}
-	explicitDestination := explicitIndexPath(options.Request.Destination)
-	if !explicitDestination {
-		if err := refreshIndexCheckout(context.Execution, configuredRoot, stderr); err != nil {
-			return err
-		}
-	}
 	target, err := waldoindex.ResolveDestinationConfigured(configuredRoot, options.Request.Destination)
 	if err != nil {
 		return err
-	}
-	if explicitDestination {
-		if err := refreshIndexCheckout(context.Execution, target.Root, stderr); err != nil {
-			return err
-		}
-		target, err = waldoindex.ResolveDestinationConfigured(configuredRoot, options.Request.Destination)
-		if err != nil {
-			return err
-		}
 	}
 	managed, err := config.IsManagedIndexPath(target.Root)
 	if err != nil {

@@ -26,11 +26,21 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	targets, err := resolveIndexArguments(commandContext.Execution, []string{options.Request.Destination}, stderr)
+	pathConfiguration, err := config.Load()
 	if err != nil {
 		return err
 	}
-	target := targets[0]
+	configuredRoot, managedDefault, err := config.EffectiveIndexRoot(pathConfiguration)
+	if err != nil {
+		return err
+	}
+	if managedDefault && !explicitIndexPath(options.Request.Destination) {
+		return managedIndexMutationError("update")
+	}
+	target, err := waldoindex.ResolveConfigured(configuredRoot, options.Request.Destination)
+	if err != nil {
+		return err
+	}
 	managed, err := config.IsManagedIndexPath(target.Root)
 	if err != nil {
 		return err

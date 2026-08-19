@@ -69,15 +69,14 @@ func Resolve(knownRoot, target string) (Target, error) {
 	return within(root, target)
 }
 
-// ResolveConfigured gives explicit absolute filesystem paths precedence over a
-// machine default. Every relative path, including ./ paths, is confined to the
-// configured checkout when one exists.
+// ResolveConfigured gives explicit filesystem paths precedence over a machine
+// default. Unadorned logical paths are confined to the configured checkout.
 func ResolveConfigured(configuredRoot, target string) (Target, error) {
 	expanded, err := expandUser(target)
 	if err != nil {
 		return Target{}, err
 	}
-	if target != "" && filepath.IsAbs(expanded) {
+	if target != "" && IsFilesystemPath(expanded) {
 		return Resolve("", expanded)
 	}
 	return Resolve(configuredRoot, target)
@@ -100,14 +99,15 @@ func ResolveDestinationConfigured(configuredRoot, target string) (Target, error)
 	if err != nil {
 		return Target{}, err
 	}
+	filesystemPath := IsFilesystemPath(expanded)
 	var abs, root string
-	if configuredRoot != "" && !filepath.IsAbs(expanded) {
+	if configuredRoot != "" && !filesystemPath {
 		root, err = findRoot(configuredRoot)
 		if err != nil {
 			return Target{}, fmt.Errorf("index checkout %s: %w", configuredRoot, err)
 		}
 		abs = filepath.Join(root, filepath.FromSlash(expanded))
-	} else if isFilesystemPath(expanded) {
+	} else if filesystemPath {
 		abs, err = filepath.Abs(expanded)
 		if err != nil {
 			return Target{}, err
@@ -282,6 +282,29 @@ func indexedManifestPath(logicalPath string) (string, bool, error) {
 
 func isFilesystemPath(value string) bool {
 	return filepath.IsAbs(value) || strings.HasPrefix(value, ".") || strings.HasPrefix(value, "~")
+}
+
+// IsFilesystemPath reports whether a positional index argument clearly names
+// the local filesystem rather than a logical path in the configured index.
+// Explicit path syntax always wins. An unprefixed relative path also wins when
+// it or its non-current-directory parent already exists locally.
+func IsFilesystemPath(value string) bool {
+	if isFilesystemPath(value) {
+		return true
+	}
+	expanded, err := expandUser(value)
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(expanded); err == nil {
+		return true
+	}
+	parent := filepath.Dir(expanded)
+	if parent == "." || parent == "" {
+		return false
+	}
+	info, err := os.Stat(parent)
+	return err == nil && info.IsDir()
 }
 
 func expandUser(value string) (string, error) {

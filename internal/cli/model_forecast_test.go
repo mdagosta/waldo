@@ -47,7 +47,7 @@ func TestModelForecastAcceptsConfiguredMultipleIndexPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--json", "model", "forecast", "./books", "books/books.json"}, &stdout, &stderr)
+	code := Run([]string{"--json", "model", "forecast", "books", "books/books.json"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}

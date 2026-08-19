@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
 	"sync"
 	"text/tabwriter"
 
@@ -674,7 +673,7 @@ func refreshIndexCheckout(execution context.Context, root string, progress io.Wr
 }
 
 func explicitIndexPath(value string) bool {
-	return filepath.IsAbs(value) || value == "~" || strings.HasPrefix(value, "~/")
+	return waldoindex.IsFilesystemPath(value)
 }
 
 func managedIndexMutationError(action string) error {

@@ -159,11 +159,18 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		if len(values) != 1 {
 			return oneConfigValue(key)
 		}
+		managed, err := config.IsManagedIndexPath(values[0])
+		if err != nil {
+			return err
+		}
+		if managed {
+			return fmt.Errorf("the managed index is already the default; leave index unset or configure a separate contributor checkout")
+		}
 		target, err := waldoindex.Resolve("", values[0])
 		if err != nil {
 			return fmt.Errorf("index must name an existing WALDO index checkout: %v", err)
 		}
-		managed, err := config.IsManagedIndexPath(target.Root)
+		managed, err = config.IsManagedIndexPath(target.Root)
 		if err != nil {
 			return err
 		}
