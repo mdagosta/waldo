@@ -48,6 +48,8 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 			err = StreamParquetTextBatches(ctx, inputPlan, consume)
 		case "jsonl":
 			err = StreamJSONLTextBatches(ctx, inputPlan, consume)
+		case "mbox":
+			err = StreamMboxTextBatches(ctx, inputPlan, consume)
 		case "opaque-base64":
 			err = StreamOpaqueTextBatches(ctx, inputPlan, consume)
 		default:

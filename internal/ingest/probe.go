@@ -276,9 +276,9 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 		if inspectErr != nil && compressedJSONLExtension(artifact.Path) {
 			return fmt.Errorf("invalid compressed JSONL: %w", inspectErr)
 		}
-		if format == "jsonl" {
-			artifact.Format = "jsonl"
-			artifact.Evidence = append(artifact.Evidence, "jsonl-structure")
+		if format == "jsonl" || format == "mbox" {
+			artifact.Format = format
+			artifact.Evidence = append(artifact.Evidence, format+"-structure")
 		}
 		return nil
 	}
@@ -288,6 +288,11 @@ func detect(file *os.File, sample []byte, artifact *Artifact) error {
 		return nil
 	}
 	trimmed := bytes.TrimSpace(sample)
+	if looksMbox(sample) {
+		artifact.Format = "mbox"
+		artifact.Evidence = []string{"mbox-envelope"}
+		return nil
+	}
 	if bytes.HasPrefix(trimmed, []byte("WARC/")) {
 		artifact.Format = "warc"
 		artifact.Evidence = []string{"warc-header"}
@@ -361,6 +366,9 @@ func detectCompressedContent(file *os.File, artifactPath, compression string) (s
 		sample = sample[:probeBytes]
 	}
 	trimmed := bytes.TrimSpace(sample)
+	if looksMbox(sample) {
+		return "mbox", nil
+	}
 	format := detectJSON(trimmed, complete)
 	compoundJSONL := compressedJSONLExtension(artifactPath)
 	if format == "jsonl" || (format == "json" && compoundJSONL) ||
@@ -368,6 +376,23 @@ func detectCompressedContent(file *os.File, artifactPath, compression string) (s
 		return "jsonl", nil
 	}
 	return "", nil
+}
+
+func looksMbox(sample []byte) bool {
+	if !bytes.HasPrefix(sample, []byte("From ")) {
+		return false
+	}
+	firstLineEnd := bytes.IndexByte(sample, '\n')
+	if firstLineEnd < 0 {
+		return false
+	}
+	headers := sample[firstLineEnd+1:]
+	for _, name := range [][]byte{[]byte("From:"), []byte("Date:"), []byte("Subject:"), []byte("Message-ID:")} {
+		if bytes.HasPrefix(headers, name) || bytes.Contains(headers, append([]byte("\n"), name...)) {
+			return true
+		}
+	}
+	return false
 }
 
 func compressedJSONLExtension(path string) bool {
