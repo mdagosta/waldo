@@ -115,7 +115,7 @@ func declaredList(values []string) string {
 	if len(values) == 0 {
 		return "(unknown)"
 	}
-	return strings.Join(values, ",")
+	return truncateDisplay(strings.Join(values, ","), 40)
 }
 
 func runIndexShow(context Context, args []string, stdout, stderr io.Writer) error {

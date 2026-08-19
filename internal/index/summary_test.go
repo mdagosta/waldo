@@ -13,7 +13,7 @@ func TestDeclaredLanguagesUsesCorpusDeclarationAndSourceFallback(t *testing.T) {
 	}
 	manifest.Content = &Content{Languages: []string{"en"}, ProgrammingLanguages: []string{"Go"}}
 	human, programming = DeclaredLanguages(manifest)
-	if len(human) != 1 || human[0] != "en" || len(programming) != 1 || programming[0] != "Go" {
+	if len(human) != 2 || human[0] != "en" || human[1] != "es" || len(programming) != 2 || programming[0] != "Go" || programming[1] != "Python" {
 		t.Fatalf("corpus declaration = %v / %v", human, programming)
 	}
 }

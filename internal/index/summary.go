@@ -95,10 +95,8 @@ func DeclaredLanguages(manifest Manifest) ([]string, []string) {
 		}
 	}
 	add(manifest.Content)
-	if manifest.Content == nil {
-		for _, source := range manifest.Sources {
-			add(source.Content)
-		}
+	for _, source := range manifest.Sources {
+		add(source.Content)
 	}
 	humanList := make([]string, 0, len(human))
 	programmingList := make([]string, 0, len(programming))
