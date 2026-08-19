@@ -39,7 +39,7 @@ func TestIndexIngestUpdateRebuildsFromAuthoritativeInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--json", "index", "ingest", initial, filepath.Join(root, "core", "example"), "--title", "Example", "--description", "Example corpus.", "--license", "CC0-1.0", "--source", "https://example.test/data", "--source-category", "public-dataset"}, &stdout, &stderr)
+	code := Run([]string{"--json", "index", "ingest", initial, filepath.Join(root, "core", "example"), "--title", "Example", "--description", "Example corpus.", "--license", "CC0-1.0", "--source", "https://example.test/data", "--source-category", "public-dataset", "--language", "en"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("ingest code=%d stderr=%q", code, stderr.String())
 	}
@@ -63,7 +63,7 @@ func TestIndexIngestUpdateRebuildsFromAuthoritativeInput(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	manifestPath := filepath.Join(root, "core", "example", "example.yaml")
-	code = Run([]string{"--json", "index", "ingest", updateInput, manifestPath, "--update", "--title", "Example", "--description", "Example corpus.", "--license", "CC0-1.0", "--source", "https://example.test/data", "--source-category", "public-dataset"}, &stdout, &stderr)
+	code = Run([]string{"--json", "index", "ingest", updateInput, manifestPath, "--update", "--title", "Example", "--description", "Example corpus.", "--license", "CC0-1.0", "--source", "https://example.test/data", "--source-category", "public-dataset", "--language", "en"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("update code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}

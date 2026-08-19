@@ -15,6 +15,7 @@ import (
 func TestYAMLManifestRoundTripsInlineAndRollupShards(t *testing.T) {
 	inline := Manifest{
 		Kind: "manifest", Schema: 1, Name: "books", Title: "Books", Description: "Readable YAML.", License: "CC0-1.0",
+		Content: &Content{Languages: []string{"en"}, ProgrammingLanguages: []string{"Python"}},
 		Sources: []Source{{
 			Name: "source", Source: "Source", URL: "https://example.test", Category: SourcePublicDataset, SHA256: strings.Repeat("a", 64), CollectedFrom: "2024-01-01",
 			LicenseEvidence: &LicenseEvidence{Declaration: "Creative Commons Zero v1.0", URL: "https://example.test/license"},
@@ -39,7 +40,7 @@ func TestYAMLManifestRoundTripsInlineAndRollupShards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded.Shards) != 1 || loaded.Shards[0].Tokens != 3 || loaded.Sources[0].CollectedFrom != "2024-01-01" || loaded.Sources[0].LicenseEvidence == nil || loaded.Sources[0].Content == nil || loaded.Sources[0].Content.Selection != "Complete pinned release." || loaded.Sources[0].Acquisition == nil {
+	if len(loaded.Shards) != 1 || loaded.Shards[0].Tokens != 3 || loaded.Content == nil || len(loaded.Content.ProgrammingLanguages) != 1 || loaded.Content.ProgrammingLanguages[0] != "Python" || loaded.Sources[0].CollectedFrom != "2024-01-01" || loaded.Sources[0].LicenseEvidence == nil || loaded.Sources[0].Content == nil || loaded.Sources[0].Content.Selection != "Complete pinned release." || loaded.Sources[0].Acquisition == nil {
 		t.Fatalf("loaded inline manifest = %+v", loaded)
 	}
 

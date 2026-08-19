@@ -83,7 +83,7 @@ func TestIndexAddDryRunProducesImmutablePlan(t *testing.T) {
 	code := Run([]string{
 		"index", "ingest", input, filepath.Join(root, "core", "example"),
 		"--title", "Example", "--license", "CC0-1.0",
-		"--source", "https://example.test/data", "--source-category", "public-dataset",
+		"--source", "https://example.test/data", "--source-category", "public-dataset", "--language", "en",
 		"--dry-run", "--json",
 	}, &stdout, &stderr)
 	if code != 0 {
@@ -176,7 +176,7 @@ func TestIndexIngestResolvesRelativeDestinationAgainstConfiguredIndex(t *testing
 	code := Run([]string{
 		"--json", "index", "ingest", input, "core/example",
 		"--title", "Example", "--license", "CC0-1.0",
-		"--source", "https://example.test/data", "--source-category", "public-dataset", "--dry-run",
+		"--source", "https://example.test/data", "--source-category", "public-dataset", "--language", "en", "--dry-run",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
@@ -209,7 +209,7 @@ func TestIndexIngestExplicitRelativeDestinationOverridesMissingConfiguredIndex(t
 	code := Run([]string{
 		"--json", "index", "ingest", input, "./post-train/sft/example",
 		"--title", "Example", "--license", "CC0-1.0",
-		"--source", "https://example.test/data", "--source-category", "public-dataset", "--dry-run",
+		"--source", "https://example.test/data", "--source-category", "public-dataset", "--language", "en", "--dry-run",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
@@ -248,7 +248,7 @@ func TestIndexIngestRejectsFormerToOption(t *testing.T) {
 	code := Run([]string{
 		"index", "ingest", "input", "destination", "--to", "other",
 		"--title", "Example", "--license", "CC0-1.0",
-		"--source", "https://example.test/data", "--source-category", "public-dataset", "--dry-run",
+		"--source", "https://example.test/data", "--source-category", "public-dataset", "--language", "en", "--dry-run",
 	}, &stdout, &stderr)
 	if code != 1 || !strings.Contains(stderr.String(), "unknown flag: --to") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
@@ -261,7 +261,7 @@ func TestIndexIngestRejectsRemovedModeFlags(t *testing.T) {
 		args := []string{
 			"index", "ingest", "input", "destination",
 			"--title", "Example", "--license", "CC0-1.0",
-			"--source", "https://example.test/data", "--source-category", "public-dataset",
+			"--source", "https://example.test/data", "--source-category", "public-dataset", "--language", "en",
 			"--dry-run", removed,
 		}
 		if removed != "--local-only" {
@@ -281,7 +281,7 @@ func TestIndexIngestExecutionRequiresWritableLookaside(t *testing.T) {
 	code := Run([]string{
 		"index", "ingest", "/does/not/need/to/exist", filepath.Join(root, "core", "example"),
 		"--title", "Example", "--license", "CC0-1.0",
-		"--source", "https://example.test/data", "--source-category", "public-dataset",
+		"--source", "https://example.test/data", "--source-category", "public-dataset", "--language", "en",
 	}, &stdout, &stderr)
 	if code != 1 || !strings.Contains(stderr.String(), "needs a writable lookaside") {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
@@ -322,7 +322,7 @@ func TestIndexIngestPublishesAndBuildsContributionOverlay(t *testing.T) {
 		"--json", "index", "ingest", input, filepath.Join(root, "core", "example"),
 		"--title", "Example", "--description", "Example corpus.",
 		"--license", "CC0-1.0", "--source", "https://example.test/data",
-		"--source-category", "public-dataset",
+		"--source-category", "public-dataset", "--language", "en",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
@@ -392,7 +392,7 @@ func TestIndexIngestPublishesToConfiguredLocalLookaside(t *testing.T) {
 	code := Run([]string{
 		"--json", "index", "ingest", input, filepath.Join(root, "core", "local-published"),
 		"--title", "Locally Published", "--license", "CC0-1.0",
-		"--source", "https://example.test/local", "--source-category", "public-dataset",
+		"--source", "https://example.test/local", "--source-category", "public-dataset", "--language", "en",
 	}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())

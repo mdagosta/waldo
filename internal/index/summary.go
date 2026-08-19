@@ -18,8 +18,10 @@ type CorpusInfo struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Measures
-	Licenses []string `json:"licenses"`
-	Sources  int      `json:"sources"`
+	Licenses             []string `json:"licenses"`
+	Sources              int      `json:"sources"`
+	Languages            []string `json:"languages,omitempty"`
+	ProgrammingLanguages []string `json:"programming_languages,omitempty"`
 }
 
 // ListCorpora returns one summary for every manifest beneath target, ordered by
@@ -57,6 +59,7 @@ func ListCorpora(target Target) ([]CorpusInfo, error) {
 			licenseList = append(licenseList, license)
 		}
 		sort.Strings(licenseList)
+		languages, programmingLanguages := DeclaredLanguages(manifest)
 		corpora = append(corpora, CorpusInfo{
 			Path:        logicalCorpusPath(corpus.Path, manifest.Name),
 			Manifest:    corpus.Path,
@@ -66,11 +69,48 @@ func ListCorpora(target Target) ([]CorpusInfo, error) {
 			Measures:    measures,
 			Licenses:    licenseList,
 			Sources:     len(manifest.Sources),
+			Languages:   languages, ProgrammingLanguages: programmingLanguages,
 		})
 		return nil
 	})
 	sort.Slice(corpora, func(i, j int) bool { return corpora[i].Path < corpora[j].Path })
 	return corpora, err
+}
+
+// DeclaredLanguages returns corpus-level language declarations. It falls back
+// to source declarations so older manifests become searchable when annotated
+// without requiring their canonical shards to be rebuilt.
+func DeclaredLanguages(manifest Manifest) ([]string, []string) {
+	human := map[string]bool{}
+	programming := map[string]bool{}
+	add := func(content *Content) {
+		if content == nil {
+			return
+		}
+		for _, language := range content.Languages {
+			human[language] = true
+		}
+		for _, language := range content.ProgrammingLanguages {
+			programming[language] = true
+		}
+	}
+	add(manifest.Content)
+	if manifest.Content == nil {
+		for _, source := range manifest.Sources {
+			add(source.Content)
+		}
+	}
+	humanList := make([]string, 0, len(human))
+	programmingList := make([]string, 0, len(programming))
+	for language := range human {
+		humanList = append(humanList, language)
+	}
+	for language := range programming {
+		programmingList = append(programmingList, language)
+	}
+	sort.Strings(humanList)
+	sort.Strings(programmingList)
+	return humanList, programmingList
 }
 
 // Summarize computes exact totals from the manifests indexed beneath target.

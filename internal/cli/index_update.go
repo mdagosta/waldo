@@ -93,8 +93,8 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 		}
 		loadedSource.Apply(&options.Request)
 		options.Inputs = loadedSource.InputPaths()
-	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
-		return fmt.Errorf("direct index ingest --update requires --title, --license, --source, and --source-category")
+	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" || options.Request.Source.Content == nil || len(options.Request.Source.Content.Languages) == 0 {
+		return fmt.Errorf("direct index ingest --update requires --title, --license, --source, --source-category, and --language (repeat for each human language; use und if unknown)")
 	}
 	if !isRecipe && options.InputProfile != "" {
 		options.Request.Profile, err = ingest.LoadInputProfile(options.InputProfile)

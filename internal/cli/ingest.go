@@ -84,8 +84,8 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		options.Inputs = loadedSource.InputPaths()
 	} else if options.Request.Destination == "" {
 		return fmt.Errorf("direct index ingest requires a destination")
-	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
-		return fmt.Errorf("direct index ingest requires --title, --license, --source, and --source-category")
+	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" || options.Request.Source.Content == nil || len(options.Request.Source.Content.Languages) == 0 {
+		return fmt.Errorf("direct index ingest requires --title, --license, --source, --source-category, and --language (repeat for each human language; use und if unknown)")
 	}
 	if !isRecipe && options.InputProfile != "" {
 		options.Request.Profile, err = ingest.LoadInputProfile(options.InputProfile)
@@ -529,6 +529,12 @@ func cobraIndexIngestOptions(context Context, args []string) (indexIngestOptions
 	if len(args) > 1 {
 		destination = args[1]
 	}
+	languages := repeatedCommaOptions(context, "language")
+	programmingLanguages := repeatedCommaOptions(context, "programming-language")
+	var content *waldoindex.Content
+	if len(languages) > 0 || len(programmingLanguages) > 0 {
+		content = &waldoindex.Content{Languages: languages, ProgrammingLanguages: programmingLanguages}
+	}
 	options := indexIngestOptions{
 		Inputs:       []string{args[0]},
 		DryRun:       boolOption(context, "dry-run"),
@@ -545,16 +551,32 @@ func cobraIndexIngestOptions(context Context, args []string) (indexIngestOptions
 				URL:      stringOption(context, "source"),
 				Name:     stringOption(context, "source-name"),
 				Category: stringOption(context, "source-category"),
+				Content:  content,
 			},
 		},
 	}
 	if options.Workers < 0 || options.Workers > 32 {
 		return indexIngestOptions{}, fmt.Errorf("--workers must be an integer from 1 to 32, or 0 to use lookaside.workers")
 	}
-	for _, name := range []string{"title", "description", "license", "source", "source-name", "source-category", "text-column", "input-profile"} {
+	for _, name := range []string{"title", "description", "license", "source", "source-name", "source-category", "language", "programming-language", "text-column", "input-profile"} {
 		if optionChanged(context, name) {
 			options.MetadataOptions = append(options.MetadataOptions, "--"+name)
 		}
 	}
 	return options, nil
+}
+
+func repeatedCommaOptions(context Context, name string) []string {
+	seen := map[string]bool{}
+	var values []string
+	for _, raw := range stringArrayOption(context, name) {
+		for _, value := range splitComma(raw) {
+			if !seen[value] {
+				seen[value] = true
+				values = append(values, value)
+			}
+		}
+	}
+	sort.Strings(values)
+	return values
 }

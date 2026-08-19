@@ -28,6 +28,11 @@ const (
 var modalityNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 
 func validateManifestProvenance(manifest Manifest) error {
+	if manifest.Content != nil {
+		if err := validateContent(*manifest.Content); err != nil {
+			return fmt.Errorf("content: %w", err)
+		}
+	}
 	hasModalityFacts := manifest.Rollup != nil && len(manifest.Rollup.Modalities) > 0
 	shardModalities := Modalities{}
 	if manifest.Rollup != nil {
@@ -200,7 +205,8 @@ func addModalities(target Modalities, source Modalities) {
 func validateContent(content Content) error {
 	for label, values := range map[string][]string{
 		"types": content.Types, "languages": content.Languages,
-		"geographies": content.Geographies, "demographics": content.Demographics,
+		"programming_languages": content.ProgrammingLanguages,
+		"geographies":           content.Geographies, "demographics": content.Demographics,
 	} {
 		if err := validateStrings(label, values, true); err != nil {
 			return err

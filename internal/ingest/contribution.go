@@ -64,6 +64,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 			SHA256: sourceHash,
 		})
 	}
+	manifest.Content = aggregateDeclaredLanguages(manifest.Sources)
 	licenseSet := map[string]bool{}
 	for _, object := range assembly.Objects {
 		licenses := object.Licenses
@@ -112,6 +113,35 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		return index.Manifest{}, err
 	}
 	return manifest, nil
+}
+
+func aggregateDeclaredLanguages(sources []index.Source) *index.Content {
+	human := map[string]bool{}
+	programming := map[string]bool{}
+	for _, source := range sources {
+		if source.Content == nil {
+			continue
+		}
+		for _, language := range source.Content.Languages {
+			human[language] = true
+		}
+		for _, language := range source.Content.ProgrammingLanguages {
+			programming[language] = true
+		}
+	}
+	if len(human) == 0 && len(programming) == 0 {
+		return nil
+	}
+	content := &index.Content{}
+	for language := range human {
+		content.Languages = append(content.Languages, language)
+	}
+	for language := range programming {
+		content.ProgrammingLanguages = append(content.ProgrammingLanguages, language)
+	}
+	sort.Strings(content.Languages)
+	sort.Strings(content.ProgrammingLanguages)
+	return content
 }
 
 func newContentRedaction() *index.ContentRedaction {

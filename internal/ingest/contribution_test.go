@@ -29,7 +29,7 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	}
 	plan, err := NewPlan(probe, PlanRequest{
 		Destination: "core/fixture", Title: "Fixture", Description: "Fixture corpus.", License: "CC0-1.0",
-		Source: PlanSource{Name: "fixture-source", URL: "https://example.test/data", Category: "public-dataset"},
+		Source: PlanSource{Name: "fixture-source", URL: "https://example.test/data", Category: "public-dataset", Content: &index.Content{Languages: []string{"en"}, ProgrammingLanguages: []string{"Go"}}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -45,7 +45,10 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	if manifest.Schema != index.ManifestSchema || manifest.RecordSchema != shard.TextRecordSchema || len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Shards[0].Tokens <= 0 {
 		t.Fatalf("manifest = %+v", manifest)
 	}
-	if manifest.Format != "" || manifest.Processing != nil || manifest.ComposedBy != nil || len(manifest.Sources[0].Files) != 0 || len(manifest.Sources[0].Usage) != 0 || manifest.Sources[0].Content != nil || len(manifest.Shards[0].Modalities) != 0 {
+	if manifest.Content == nil || len(manifest.Content.Languages) != 1 || manifest.Content.Languages[0] != "en" || len(manifest.Content.ProgrammingLanguages) != 1 || manifest.Content.ProgrammingLanguages[0] != "Go" {
+		t.Fatalf("manifest language declaration = %+v", manifest.Content)
+	}
+	if manifest.Format != "" || manifest.Processing != nil || manifest.ComposedBy != nil || len(manifest.Sources[0].Files) != 0 || len(manifest.Sources[0].Usage) != 0 || manifest.Sources[0].Content == nil || len(manifest.Shards[0].Modalities) != 0 {
 		t.Fatalf("generated manifest contains expanded metadata: %+v", manifest)
 	}
 	if manifest.ConvertedBy.Tokenizer != tokenizer.Default {
@@ -55,7 +58,7 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{`"files"`, `"usage"`, `"content"`, `"processing"`, `"composed_by"`, `"modalities"`, `"format"`} {
+	for _, forbidden := range []string{`"files"`, `"usage"`, `"processing"`, `"composed_by"`, `"modalities"`, `"format"`} {
 		if bytes.Contains(data, []byte(forbidden)) {
 			t.Fatalf("manifest contains expanded field %s: %s", forbidden, data)
 		}
@@ -207,7 +210,7 @@ func TestSourceEvidenceChangesPlanAndAcquisitionIdentity(t *testing.T) {
 		Destination: "core/evidence", Title: "Evidence", License: "Apache-2.0",
 		Source: PlanSource{
 			Name: "evidence", URL: "https://example.test/data", Category: "public-dataset",
-			Content: &index.Content{Types: []string{"text"}, Selection: "All records."},
+			Content: &index.Content{Types: []string{"text"}, Languages: []string{"en"}, ProgrammingLanguages: []string{"Python"}, Selection: "All records."},
 		},
 	})
 	if err != nil {

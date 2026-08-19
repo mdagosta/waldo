@@ -98,7 +98,7 @@ func TestManagedIndexRejectsAuthoring(t *testing.T) {
 	managed := filepath.Join(home, ".waldo", "index")
 
 	var stdout, stderr bytes.Buffer
-	args := []string{"index", "ingest", "input.txt", "core/new", "--title", "New", "--license", "CC0-1.0", "--source", "https://example.invalid", "--source-category", "public-dataset", "--dry-run"}
+	args := []string{"index", "ingest", "input.txt", "core/new", "--title", "New", "--license", "CC0-1.0", "--source", "https://example.invalid", "--source-category", "public-dataset", "--language", "en", "--dry-run"}
 	if code := Run(args, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "managed read-only index") {
 		t.Fatalf("ingest code=%d stderr=%q", code, stderr.String())
 	}
@@ -118,7 +118,7 @@ func TestManagedIndexRejectsCorpusUpdateAndConfigurationOverride(t *testing.T) {
 	managed := filepath.Join(home, ".waldo", "index")
 
 	var stdout, stderr bytes.Buffer
-	args := []string{"index", "ingest", "input.txt", "books/books.json", "--update", "--title", "Books", "--license", "CC0-1.0", "--source", "https://example.invalid", "--source-category", "public-dataset", "--dry-run"}
+	args := []string{"index", "ingest", "input.txt", "books/books.json", "--update", "--title", "Books", "--license", "CC0-1.0", "--source", "https://example.invalid", "--source-category", "public-dataset", "--language", "en", "--dry-run"}
 	if code := Run(args, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "cannot update the managed read-only index") {
 		t.Fatalf("update code=%d stderr=%q", code, stderr.String())
 	}

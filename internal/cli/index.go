@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"text/tabwriter"
 
@@ -60,6 +61,9 @@ func runIndexList(context Context, args []string, stdout, stderr io.Writer) erro
 	if err != nil {
 		return err
 	}
+	languages := repeatedCommaOptions(context, "language")
+	programmingLanguages := repeatedCommaOptions(context, "programming-language")
+	corpora = filterCorporaByLanguage(corpora, languages, programmingLanguages)
 	if context.JSON {
 		return writeJSON(stdout, struct {
 			Path    string                  `json:"path"`
@@ -71,13 +75,47 @@ func runIndexList(context Context, args []string, stdout, stderr io.Writer) erro
 		return nil
 	}
 	table := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "PATH\tTITLE\tSHARDS\tDOCS\tTOKENS\tSIZE\tLICENSE")
+	fmt.Fprintln(table, "PATH\tTITLE\tLANGUAGES\tPROGRAMMING\tSHARDS\tDOCS\tTOKENS\tSIZE\tLICENSE")
 	for _, corpus := range corpora {
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			corpus.Path, corpus.Title, humanInteger(corpus.Shards), humanCount(corpus.Docs),
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			corpus.Path, corpus.Title, declaredList(corpus.Languages), declaredList(corpus.ProgrammingLanguages), humanInteger(corpus.Shards), humanCount(corpus.Docs),
 			humanCount(corpus.Tokens), humanBytes(corpus.Bytes), licenseSummary(corpus.Licenses))
 	}
 	return table.Flush()
+}
+
+func filterCorporaByLanguage(corpora []waldoindex.CorpusInfo, languages, programmingLanguages []string) []waldoindex.CorpusInfo {
+	if len(languages) == 0 && len(programmingLanguages) == 0 {
+		return corpora
+	}
+	filtered := make([]waldoindex.CorpusInfo, 0, len(corpora))
+	for _, corpus := range corpora {
+		if matchesAnyFold(corpus.Languages, languages) && matchesAnyFold(corpus.ProgrammingLanguages, programmingLanguages) {
+			filtered = append(filtered, corpus)
+		}
+	}
+	return filtered
+}
+
+func matchesAnyFold(declared, requested []string) bool {
+	if len(requested) == 0 {
+		return true
+	}
+	for _, want := range requested {
+		for _, have := range declared {
+			if strings.EqualFold(have, want) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func declaredList(values []string) string {
+	if len(values) == 0 {
+		return "(unknown)"
+	}
+	return strings.Join(values, ",")
 }
 
 func runIndexShow(context Context, args []string, stdout, stderr io.Writer) error {
@@ -696,6 +734,9 @@ func printManifest(w io.Writer, path string, manifest waldoindex.Manifest) {
 	fmt.Fprintf(w, "  name         %s\n", manifest.Name)
 	fmt.Fprintf(w, "  license      %s\n", manifest.License)
 	fmt.Fprintf(w, "  description  %s\n", manifest.Description)
+	languages, programmingLanguages := waldoindex.DeclaredLanguages(manifest)
+	fmt.Fprintf(w, "  languages    %s\n", declaredList(languages))
+	fmt.Fprintf(w, "  programming  %s\n", declaredList(programmingLanguages))
 	var shards, docs, tokens, bytes int64
 	if manifest.Rollup != nil {
 		shards, docs, tokens, bytes = manifest.Rollup.Count, manifest.Rollup.Docs, manifest.Rollup.Tokens, manifest.Rollup.Bytes
