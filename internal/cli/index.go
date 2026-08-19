@@ -208,9 +208,7 @@ func runIndexAudit(context Context, args []string, stdout, progress io.Writer) e
 			if event.Phase != "complete" {
 				return
 			}
-			if shouldReportIndexProgress(event.Current, event.Total) {
-				fmt.Fprintf(progress, "  fetched %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
-			}
+			writeIndexProgressRange(progress, event.Current, event.Total, "objects fetched")
 		})
 		if err != nil {
 			return err
@@ -485,9 +483,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 		fmt.Fprintf(progress, "checking %s canonical object URLs (%s declared; headers only)\n",
 			humanInteger(int64(len(bom.Shards))), humanBytes(bom.Totals.Bytes))
 		availability, err := corpus.CheckAvailability(context.Execution, bom, cache, 8, func(event corpus.AvailabilityProgress) {
-			if shouldReportIndexProgress(event.Current, event.Total) {
-				fmt.Fprintf(progress, "  %s/%s  %s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12], event.Probe.Method)
-			}
+			writeIndexProgressRange(progress, event.Current, event.Total, "objects checked")
 		})
 		if err != nil {
 			return err
@@ -515,9 +511,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 		if event.Phase != "complete" {
 			return
 		}
-		if shouldReportIndexProgress(event.Current, event.Total) {
-			fmt.Fprintf(progress, "  %s/%s  %s\n", humanInteger(int64(event.Current)), humanInteger(int64(event.Total)), event.Shard.SHA256[:12])
-		}
+		writeIndexProgressRange(progress, event.Current, event.Total, "objects verified")
 	})
 	if err != nil {
 		return err
@@ -545,8 +539,21 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	return nil
 }
 
-func shouldReportIndexProgress(current, total int) bool {
-	return total <= 25 || current == 1 || current == total || current%25 == 0
+func indexProgressRange(current, total int) (int, int, bool) {
+	if current <= 0 || total <= 0 || current > total || current != total && current%25 != 0 {
+		return 0, 0, false
+	}
+	return (current-1)/25*25 + 1, current, true
+}
+
+func writeIndexProgressRange(output io.Writer, current, total int, label string) {
+	start, end, report := indexProgressRange(current, total)
+	if !report {
+		return
+	}
+	fmt.Fprintf(output, "  %s-%s/%s  %s %s\n",
+		humanInteger(int64(start)), humanInteger(int64(end)), humanInteger(int64(total)),
+		humanInteger(int64(end-start+1)), label)
 }
 
 func resolveIndexArgument(execution context.Context, args []string, warnings io.Writer) (waldoindex.Target, error) {

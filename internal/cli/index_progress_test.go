@@ -7,19 +7,24 @@ package cli
 
 import "testing"
 
-func TestIndexProgressShowsEverySmallSelection(t *testing.T) {
-	for current := 1; current <= 4; current++ {
-		if !shouldReportIndexProgress(current, 4) {
-			t.Fatalf("small selection suppressed %d/4", current)
+func TestIndexProgressReportsSmallSelectionAsOneRange(t *testing.T) {
+	for current := 1; current < 4; current++ {
+		if _, _, report := indexProgressRange(current, 4); report {
+			t.Fatalf("small selection reported incomplete range at %d/4", current)
 		}
+	}
+	if start, end, report := indexProgressRange(4, 4); !report || start != 1 || end != 4 {
+		t.Fatalf("small range = %d-%d, report %t", start, end, report)
 	}
 }
 
-func TestIndexProgressLimitsLargeSelections(t *testing.T) {
-	want := map[int]bool{1: true, 25: true, 50: true, 75: true, 100: true}
-	for current := 1; current <= 100; current++ {
-		if got := shouldReportIndexProgress(current, 100); got != want[current] {
-			t.Fatalf("report %d/100 = %t, want %t", current, got, want[current])
+func TestIndexProgressReportsCompleteLargeRanges(t *testing.T) {
+	want := map[int][2]int{25: {1, 25}, 50: {26, 50}, 75: {51, 75}, 100: {76, 100}, 107: {101, 107}}
+	for current := 1; current <= 107; current++ {
+		start, end, report := indexProgressRange(current, 107)
+		rangeWant, wanted := want[current]
+		if report != wanted || wanted && (start != rangeWant[0] || end != rangeWant[1]) {
+			t.Fatalf("range at %d/107 = %d-%d, report %t, want %v", current, start, end, report, rangeWant)
 		}
 	}
 }
