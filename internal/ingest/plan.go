@@ -489,7 +489,7 @@ func (plan Plan) Validate() error {
 	}
 	if plan.Update != nil {
 		cleanManifest := filepath.ToSlash(filepath.Clean(filepath.FromSlash(plan.Update.Manifest)))
-		if cleanManifest == "." || cleanManifest != plan.Update.Manifest || filepath.IsAbs(filepath.FromSlash(plan.Update.Manifest)) || strings.HasPrefix(cleanManifest, "../") || !validSHA256(plan.Update.ManifestSHA256) || (plan.Update.Mode != "append" && plan.Update.Mode != "rebuild-shards") {
+		if cleanManifest == "." || cleanManifest != plan.Update.Manifest || filepath.IsAbs(filepath.FromSlash(plan.Update.Manifest)) || strings.HasPrefix(cleanManifest, "../") || !validSHA256(plan.Update.ManifestSHA256) || plan.Update.Mode != "rebuild-shards" {
 			return fmt.Errorf("ingestion update has invalid manifest identity or mode")
 		}
 	}

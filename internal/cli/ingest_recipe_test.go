@@ -137,7 +137,7 @@ func TestIndexUpdateRecipeRebuildsWithoutReadingOldShardAndMigratesYAML(t *testi
 	t.Cleanup(func() { newIngestPublisher = originalPublisher })
 
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--json", "index", "update", recipePath, filepath.Join(root, "core", "example.json"), "--rebuild-shards"}, &stdout, &stderr)
+	code := Run([]string{"--json", "index", "update", recipePath, filepath.Join(root, "core", "example.json")}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}

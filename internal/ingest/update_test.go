@@ -9,14 +9,13 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/record"
 )
 
-func TestAppendSeedDropsExistingContentWithoutProducingShard(t *testing.T) {
+func TestDedupSeedDropsExistingContentWithoutProducingShard(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "document.txt")
 	writeFixture(t, input, "already indexed")
 	plan := textFixturePlan(t, input)
@@ -31,12 +30,12 @@ func TestAppendSeedDropsExistingContentWithoutProducingShard(t *testing.T) {
 	}
 }
 
-func TestAppendRequiresRebuildAcrossRecordSchemas(t *testing.T) {
+func TestRebuildReplacesOldRecordSchema(t *testing.T) {
 	input := filepath.Join(t.TempDir(), "document.txt")
 	writeFixture(t, input, "new document")
 	plan := textFixturePlan(t, input)
 	plan.License = "MIT"
-	plan.Update = &UpdatePlan{Manifest: "example.json", ManifestSHA256: fmt.Sprintf("%064x", 3), Mode: "append"}
+	plan.Update = &UpdatePlan{Manifest: "example.json", ManifestSHA256: fmt.Sprintf("%064x", 3), Mode: "rebuild-shards"}
 	assembly, err := AssembleTextObjects(context.Background(), plan, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -48,13 +47,16 @@ func TestAppendRequiresRebuildAcrossRecordSchemas(t *testing.T) {
 		ConvertedBy: index.Conversion{Tool: "waldo", Version: "1", Profile: "text", Recipe: "parquet-v1"},
 		Shards:      []index.Shard{{URL: "https://example.test/object", SHA256: fmt.Sprintf("%064x", 2), Sources: []string{"legacy"}, Docs: 1, Tokens: 2, Bytes: 3}},
 	}
-	_, err = BuildUpdatedManifest(plan, existing, assembly, "https://example.test/objects", "example.yaml")
-	if err == nil || !strings.Contains(err.Error(), "cannot append schema") {
-		t.Fatalf("schema migration error = %v", err)
+	updated, err := BuildUpdatedManifest(plan, existing, assembly, "https://example.test/objects", "example.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.RecordSchema == existing.RecordSchema || len(updated.Shards) != 1 {
+		t.Fatalf("updated manifest = %+v", updated)
 	}
 }
 
-func TestAppendRecomputesContentAssessment(t *testing.T) {
+func TestRebuildReplacesContentAssessment(t *testing.T) {
 	firstInput := filepath.Join(t.TempDir(), "first.txt")
 	writeFixture(t, firstInput, "contact maintainer@example.org")
 	firstPlan := textFixturePlan(t, firstInput)
@@ -70,7 +72,7 @@ func TestAppendRecomputesContentAssessment(t *testing.T) {
 	secondInput := filepath.Join(t.TempDir(), "second.txt")
 	writeFixture(t, secondInput, "no contact details")
 	secondPlan := textFixturePlan(t, secondInput)
-	secondPlan.Update = &UpdatePlan{Manifest: "example.json", ManifestSHA256: fmt.Sprintf("%064x", 3), Mode: "append"}
+	secondPlan.Update = &UpdatePlan{Manifest: "example.json", ManifestSHA256: fmt.Sprintf("%064x", 3), Mode: "rebuild-shards"}
 	secondAssembly, err := AssembleTextObjects(context.Background(), secondPlan, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -79,10 +81,10 @@ func TestAppendRecomputesContentAssessment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(updated.Shards) != 2 || updated.Assessment == nil || updated.Assessment.EmailAddresses == nil || updated.Assessment.EmailAddresses.Records != 0 {
+	if len(updated.Shards) != 1 || updated.Assessment == nil || updated.Assessment.EmailAddresses == nil || updated.Assessment.EmailAddresses.Records != 0 {
 		t.Fatalf("updated assessment = %+v across %d shards", updated.Assessment, len(updated.Shards))
 	}
-	if updated.Redaction == nil || updated.Redaction.EmailAddresses != 1 {
+	if updated.Redaction == nil || updated.Redaction.EmailAddresses != 0 {
 		t.Fatalf("updated redaction = %+v", updated.Redaction)
 	}
 	if updated.Assessment.RepetitiveContent == nil || updated.Assessment.RepetitiveContent.Records != 0 || updated.Assessment.BoilerplateContent == nil || updated.Assessment.BoilerplateContent.Records != 0 {

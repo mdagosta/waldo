@@ -6,22 +6,17 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/config"
-	"github.com/openwaldo/waldo/internal/corpus"
 	waldoindex "github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/ingest"
-	"github.com/openwaldo/waldo/internal/lookaside"
-	"github.com/openwaldo/waldo/internal/shard"
 )
 
 func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Writer) error {
-	rebuild := boolOption(commandContext, "rebuild-shards")
 	options, err := cobraIndexIngestOptions(commandContext, args)
 	if err != nil {
 		return err
@@ -57,10 +52,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	mode := "append"
-	if rebuild {
-		mode = "rebuild-shards"
-	}
+	const mode = "rebuild-shards"
 	logicalDestination := strings.TrimSuffix(corpusTarget.Path, filepath.Ext(corpusTarget.Path))
 	options.Request.Destination = logicalDestination
 	options.Request.Update = &ingest.UpdatePlan{Manifest: corpusTarget.Path, ManifestSHA256: manifestHash, Mode: mode}
@@ -222,14 +214,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
-	var seed ingest.DedupSeed
-	if !rebuild {
-		seed, err = updateDedupSeed(commandContext.Execution, target)
-		if err != nil {
-			return err
-		}
-	}
-	assembly, publication, err := ingest.ExecutePublicationWithSeed(execution, plan, staging, publisher, workers, seed)
+	assembly, publication, err := ingest.ExecutePublication(execution, plan, staging, publisher, workers)
 	if err != nil {
 		return err
 	}
@@ -257,13 +242,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 		}{identity, plan, assembly, publication, contribution})
 	}
 	emitIngestExclusionWarning(stderr, assembly, plan)
-	verb := "appended"
-	if rebuild {
-		verb = "rebuilt"
-	} else if assembly.RetainedDocs == 0 {
-		verb = "unchanged"
-	}
-	fmt.Fprintf(stdout, "updated %s (%s)\n", corpusTarget.Path, verb)
+	fmt.Fprintf(stdout, "updated %s (rebuilt)\n", corpusTarget.Path)
 	fmt.Fprintf(stdout, "  records       %s input, %s retained, %s duplicate", humanInteger(assembly.InputDocs), humanInteger(assembly.RetainedDocs), humanInteger(assembly.DuplicateDocs))
 	if assembly.RejectedDocs > 0 {
 		fmt.Fprintf(stdout, ", %s rejected %s", humanInteger(assembly.RejectedDocs), rejectionLabel(plan))
@@ -311,60 +290,4 @@ func recipeUpdateState(mode, manifest, digest string, existing waldoindex.Manife
 		state.Bytes += object.Bytes
 	}
 	return state
-}
-
-func updateDedupSeed(ctx context.Context, target waldoindex.Target) (ingest.DedupSeed, error) {
-	policy, err := corpus.NewLicensePolicy(nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	cache, err := lookaside.DefaultCache()
-	if err != nil {
-		return nil, err
-	}
-	bom, err := corpus.BuildBOM(ctx, []waldoindex.Target{target}, policy, cache)
-	if err != nil {
-		return nil, err
-	}
-	materialized, err := corpus.Materialize(ctx, bom, cache, nil)
-	if err != nil {
-		return nil, err
-	}
-	paths := make([]string, 0, len(materialized.Objects))
-	seen := map[string]bool{}
-	for _, object := range materialized.Objects {
-		if !seen[object.Path] {
-			seen[object.Path] = true
-			paths = append(paths, object.Path)
-		}
-	}
-	if _, err := shard.Audit(ctx, paths); err != nil {
-		return nil, fmt.Errorf("audit existing update corpus: %w", err)
-	}
-	return func(add func([]ingest.DedupIdentity) error) error {
-		const batchSize = 8192
-		batch := make([]ingest.DedupIdentity, 0, batchSize)
-		flush := func() error {
-			if len(batch) == 0 {
-				return nil
-			}
-			if err := add(batch); err != nil {
-				return err
-			}
-			batch = batch[:0]
-			return nil
-		}
-		for _, path := range paths {
-			if err := shard.WalkRecords(path, func(_ int64, record shard.RecordView) error {
-				batch = append(batch, ingest.DedupIdentity{SHA256: record.ID, License: record.License})
-				if len(batch) == batchSize {
-					return flush()
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-		}
-		return flush()
-	}, nil
 }

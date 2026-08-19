@@ -11,9 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/index"
@@ -23,135 +21,22 @@ func BuildUpdatedManifest(plan Plan, existing index.Manifest, assembly AssemblyR
 	if plan.Update == nil {
 		return index.Manifest{}, fmt.Errorf("update plan is required")
 	}
-	if plan.Update.Mode == "append" && len(assembly.Objects) == 0 {
-		return existing, nil
+	if plan.Update.Mode != "rebuild-shards" {
+		return index.Manifest{}, fmt.Errorf("update mode must be rebuild-shards")
 	}
 	fresh, err := BuildManifest(plan, assembly, objectBase)
 	if err != nil {
 		return index.Manifest{}, err
 	}
 	fresh.Name = existing.Name
-	if plan.Update.Mode == "rebuild-shards" {
-		fresh.Sources = preserveSourceContext(existing.Sources, fresh.Sources)
-		if fresh.Processing == nil {
-			fresh.Processing = existing.Processing
-		}
-		if err := index.ValidateManifest(manifestPath, fresh); err != nil {
-			return index.Manifest{}, err
-		}
-		return fresh, nil
+	fresh.Sources = preserveSourceContext(existing.Sources, fresh.Sources)
+	if fresh.Processing == nil {
+		fresh.Processing = existing.Processing
 	}
-	if existing.Rollup != nil {
-		return index.Manifest{}, fmt.Errorf("append update does not support rollup-backed manifest %s; use --rebuild-shards", manifestPath)
-	}
-	if existing.RecordSchema != 0 && existing.RecordSchema != fresh.RecordSchema {
-		return index.Manifest{}, fmt.Errorf("existing record schema %d cannot append schema %d", existing.RecordSchema, fresh.RecordSchema)
-	}
-	updated := existing
-	if updated.Format == "" {
-		updated.Format = fresh.Format
-	}
-	if updated.RecordSchema == 0 {
-		updated.RecordSchema = fresh.RecordSchema
-	}
-	// Schema-1 shards may inherit the manifest's single default license. Resolve
-	// that inheritance before a multi-license append changes the manifest union.
-	for position := range updated.Shards {
-		shard := &updated.Shards[position]
-		if shard.License != "" || len(shard.Licenses) > 0 {
-			continue
-		}
-		licenses := updated.EffectiveLicenses(*shard)
-		if len(licenses) == 1 {
-			shard.License = licenses[0]
-		} else {
-			shard.Licenses = licenses
-		}
-	}
-	sourceNames := map[string]string{}
-	for _, incoming := range fresh.Sources {
-		resolved := incoming
-		known := false
-		for _, candidate := range updated.Sources {
-			if candidate.Name == incoming.Name && candidate.SHA256 == incoming.SHA256 {
-				resolved.Name, known = candidate.Name, true
-				break
-			}
-		}
-		if !known {
-			resolved.Name = uniqueSourceName(updated.Sources, incoming)
-			updated.Sources = append(updated.Sources, resolved)
-		}
-		sourceNames[incoming.Name] = resolved.Name
-	}
-	for _, shard := range fresh.Shards {
-		for position, name := range shard.Sources {
-			shard.Sources[position] = sourceNames[name]
-		}
-		if !reflect.DeepEqual(updated.ConvertedBy, fresh.ConvertedBy) {
-			conversion := fresh.ConvertedBy
-			shard.ConvertedBy = &conversion
-		}
-		updated.Shards = append(updated.Shards, shard)
-	}
-	licenses := map[string]bool{}
-	for _, license := range updated.Licenses {
-		licenses[license] = true
-	}
-	if updated.License != "" {
-		licenses[updated.License] = true
-	}
-	for _, license := range fresh.Licenses {
-		licenses[license] = true
-	}
-	if fresh.License != "" {
-		licenses[fresh.License] = true
-	}
-	updated.License, updated.Licenses = "", nil
-	for license := range licenses {
-		updated.Licenses = append(updated.Licenses, license)
-	}
-	sort.Strings(updated.Licenses)
-	if len(updated.Licenses) == 1 {
-		updated.License, updated.Licenses = updated.Licenses[0], nil
-	}
-	if updated.RecordSchema >= 2 {
-		assessment := &index.ContentAssessment{EmailAddresses: &index.DetectionMeasure{}, RepetitiveContent: &index.DetectionMeasure{}, BoilerplateContent: &index.DetectionMeasure{}}
-		for _, shard := range updated.Shards {
-			if shard.Assessment == nil || shard.Assessment.EmailAddresses == nil || shard.Assessment.RepetitiveContent == nil || shard.Assessment.BoilerplateContent == nil {
-				return index.Manifest{}, fmt.Errorf("schema-%d shard %s is missing content assessment", updated.RecordSchema, shard.SHA256[:12])
-			}
-			for _, pair := range []struct{ aggregate, incoming *index.DetectionMeasure }{
-				{assessment.EmailAddresses, shard.Assessment.EmailAddresses},
-				{assessment.RepetitiveContent, shard.Assessment.RepetitiveContent},
-				{assessment.BoilerplateContent, shard.Assessment.BoilerplateContent},
-			} {
-				if pair.aggregate.Detector == "" {
-					pair.aggregate.Detector = pair.incoming.Detector
-				} else if pair.aggregate.Detector != pair.incoming.Detector {
-					return index.Manifest{}, fmt.Errorf("schema-%d shards use different content-assessment detectors", updated.RecordSchema)
-				}
-				pair.aggregate.Records += pair.incoming.Records
-			}
-		}
-		updated.Assessment = assessment
-	}
-	var redaction *index.ContentRedaction
-	for _, shard := range updated.Shards {
-		if shard.Redaction == nil {
-			continue
-		}
-		if redaction == nil {
-			redaction = newContentRedaction()
-		}
-		addContentRedaction(redaction, *shard.Redaction)
-	}
-	updated.Redaction = redaction
-	updated.Schema = index.ManifestSchema
-	if err := index.ValidateManifest(manifestPath, updated); err != nil {
+	if err := index.ValidateManifest(manifestPath, fresh); err != nil {
 		return index.Manifest{}, err
 	}
-	return updated, nil
+	return fresh, nil
 }
 
 func preserveSourceContext(existing, fresh []index.Source) []index.Source {
@@ -178,30 +63,6 @@ func preserveSourceContext(existing, fresh []index.Source) []index.Source {
 		}
 	}
 	return fresh
-}
-
-func uniqueSourceName(existing []index.Source, source index.Source) string {
-	for _, candidate := range existing {
-		if candidate.Name == source.Name && candidate.SHA256 == source.SHA256 {
-			return candidate.Name
-		}
-	}
-	base := source.Name
-	for _, candidate := range existing {
-		if candidate.Name == base {
-			base += "-" + source.SHA256[:12]
-			break
-		}
-	}
-	used := map[string]bool{}
-	for _, candidate := range existing {
-		used[candidate.Name] = true
-	}
-	name := base
-	for suffix := 2; used[name]; suffix++ {
-		name = fmt.Sprintf("%s-%d", base, suffix)
-	}
-	return name
 }
 
 func StageUpdateContribution(indexRoot, stagingDirectory string, plan Plan, manifest index.Manifest) (ContributionResult, error) {

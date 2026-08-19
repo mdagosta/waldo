@@ -478,14 +478,10 @@ when every staged byte still matches. It never edits Git, uploads to the
 declared public object base, commits, pushes, or opens a pull request.
 
 Existing-corpus updates pin the current manifest's byte SHA-256 in the
-ingestion plan. Append mode verifies and scans existing canonical shards into
-the same exact disk-backed content-identity set used for within-run
-deduplication, then appends only newly admitted objects and source evidence.
-Complete `--rebuild-shards` mode instead treats the supplied recipe output as
-the authoritative corpus and never reads old shard bodies. It replaces shard
-and source arrays after normal publication verification. Both modes write the
-touched metadata as schema-1 YAML and preserve old lookaside objects by
-default.
+ingestion plan. Every update treats the supplied input as the complete
+authoritative corpus and never reads old shard bodies. It replaces shard and
+source arrays after normal publication verification, writes touched metadata
+as schema-1 YAML, and preserves old lookaside objects by default.
 
 ## Multimodal material
 

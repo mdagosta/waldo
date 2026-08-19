@@ -20,7 +20,7 @@ import (
 	"github.com/openwaldo/waldo/internal/ingest"
 )
 
-func TestIndexUpdateAppendFiltersExistingRecords(t *testing.T) {
+func TestIndexUpdateRebuildsFromAuthoritativeInput(t *testing.T) {
 	root := emptyCLIIndex(t)
 	lookasideRoot := t.TempDir()
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
@@ -72,14 +72,14 @@ func TestIndexUpdateAppendFiltersExistingRecords(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &updated); err != nil {
 		t.Fatal(err)
 	}
-	if updated.Assembly.InputDocs != 2 || updated.Assembly.RetainedDocs != 1 || updated.Assembly.DuplicateDocs != 1 || len(updated.Assembly.Objects) != 1 {
+	if updated.Assembly.InputDocs != 2 || updated.Assembly.RetainedDocs != 2 || updated.Assembly.DuplicateDocs != 0 || len(updated.Assembly.Objects) != 1 {
 		t.Fatalf("assembly = %+v", updated.Assembly)
 	}
 	manifest, err := waldoindex.LoadManifest(filepath.Join(updated.Contribution.Root, "core", "example", "example.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Shards) != 2 || len(manifest.Sources) != 2 || manifest.Shards[1].Sources[0] == manifest.Shards[0].Sources[0] {
+	if len(manifest.Shards) != 1 || len(manifest.Sources) != 1 || manifest.Shards[0].Docs != 2 {
 		t.Fatalf("updated manifest = %+v", manifest)
 	}
 }
@@ -113,7 +113,7 @@ func TestIndexUpdateRebuildUsesFetcherHandoffManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--json", "index", "update", handoff, filepath.Join(root, "books", "books.json"), "--rebuild-shards", "--dry-run"}, &stdout, &stderr)
+	code := Run([]string{"--json", "index", "update", handoff, filepath.Join(root, "books", "books.json"), "--dry-run"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("update code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
