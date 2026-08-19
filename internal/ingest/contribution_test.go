@@ -45,6 +45,9 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	if manifest.Schema != index.ManifestSchema || manifest.RecordSchema != shard.TextRecordSchema || len(manifest.Shards) != 1 || manifest.Shards[0].Docs != 1 || manifest.Shards[0].Tokens <= 0 {
 		t.Fatalf("manifest = %+v", manifest)
 	}
+	if len(manifest.Shards[0].LicenseUsage) != 0 {
+		t.Fatalf("single-license shard has redundant license usage: %+v", manifest.Shards[0].LicenseUsage)
+	}
 	if manifest.Content == nil || len(manifest.Content.Languages) != 1 || manifest.Content.Languages[0] != "en" || len(manifest.Content.ProgrammingLanguages) != 1 || manifest.Content.ProgrammingLanguages[0] != "Go" {
 		t.Fatalf("manifest language declaration = %+v", manifest.Content)
 	}

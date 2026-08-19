@@ -81,10 +81,14 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		if err != nil {
 			return index.Manifest{}, err
 		}
+		shardLicenseUsage := object.LicenseUsage
+		if len(licenses) == 1 {
+			shardLicenseUsage = nil
+		}
 		manifest.Shards = append(manifest.Shards, index.Shard{
 			URL: objectURL, SHA256: object.SHA256, Sources: object.Sources,
 			Docs: object.Docs, Tokens: object.Tokens, Bytes: object.Bytes,
-			LicenseUsage: object.LicenseUsage,
+			LicenseUsage: shardLicenseUsage,
 			Assessment:   newContentAssessment(object.EmailAddressRecords, object.RepetitiveContentRecords, object.BoilerplateContentRecords),
 			Redaction:    cloneContentRedaction(object.Redaction),
 		})

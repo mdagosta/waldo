@@ -298,6 +298,9 @@ func TestPerRecordLicensesShareObjectsAndRemainInManifest(t *testing.T) {
 	if got := strings.Join(manifest.Licenses, ","); got != "CC-BY-4.0,CC0-1.0" || len(manifest.Shards) != 1 || strings.Join(manifest.Shards[0].Licenses, ",") != got {
 		t.Fatalf("manifest shards = %+v", manifest.Shards)
 	}
+	if len(manifest.Shards[0].LicenseUsage) != 2 {
+		t.Fatalf("mixed-license shard usage = %+v", manifest.Shards[0].LicenseUsage)
+	}
 }
 
 func TestMappedLicensePolicyExcludesAndCountsRows(t *testing.T) {
