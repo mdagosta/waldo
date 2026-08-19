@@ -29,6 +29,9 @@ var newIngestPublisher = func(ctx context.Context, publish config.Publish) (look
 var ingestRecipeRunner ingest.CommandRunner = ingest.ExecCommandRunner{}
 
 func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) error {
+	if boolOption(context, "update") {
+		return runIndexIngestUpdate(context, args, stdout, stderr)
+	}
 	options, err := cobraIndexIngestOptions(context, args)
 	if err != nil {
 		return err

@@ -119,7 +119,6 @@ Inspect the complete ingest interface before use:
 
 ```bash
 waldo index ingest --help
-waldo index update --help
 ```
 
 Ingestion accepts supported local files or a reviewed ingest recipe. It writes

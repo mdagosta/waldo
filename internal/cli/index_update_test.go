@@ -20,7 +20,7 @@ import (
 	"github.com/openwaldo/waldo/internal/ingest"
 )
 
-func TestIndexUpdateRebuildsFromAuthoritativeInput(t *testing.T) {
+func TestIndexIngestUpdateRebuildsFromAuthoritativeInput(t *testing.T) {
 	root := emptyCLIIndex(t)
 	lookasideRoot := t.TempDir()
 	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
@@ -61,7 +61,7 @@ func TestIndexUpdateRebuildsFromAuthoritativeInput(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	manifestPath := filepath.Join(root, "core", "example", "example.yaml")
-	code = Run([]string{"--json", "index", "update", updateInput, manifestPath, "--title", "Example", "--description", "Example corpus.", "--license", "CC0-1.0", "--source", "https://example.test/data", "--source-category", "public-dataset"}, &stdout, &stderr)
+	code = Run([]string{"--json", "index", "ingest", updateInput, manifestPath, "--update", "--title", "Example", "--description", "Example corpus.", "--license", "CC0-1.0", "--source", "https://example.test/data", "--source-category", "public-dataset"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("update code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}
@@ -84,7 +84,7 @@ func TestIndexUpdateRebuildsFromAuthoritativeInput(t *testing.T) {
 	}
 }
 
-func TestIndexUpdateRebuildUsesFetcherHandoffManifest(t *testing.T) {
+func TestIndexIngestUpdateRebuildUsesFetcherHandoffManifest(t *testing.T) {
 	handoff := t.TempDir()
 	raw := filepath.Join(handoff, "raw")
 	if err := os.MkdirAll(raw, 0o755); err != nil {
@@ -113,7 +113,7 @@ func TestIndexUpdateRebuildUsesFetcherHandoffManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := Run([]string{"--json", "index", "update", handoff, filepath.Join(root, "books", "books.json"), "--dry-run"}, &stdout, &stderr)
+	code := Run([]string{"--json", "index", "ingest", handoff, filepath.Join(root, "books", "books.json"), "--update", "--dry-run"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("update code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
 	}

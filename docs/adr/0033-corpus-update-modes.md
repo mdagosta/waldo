@@ -12,7 +12,7 @@ cannot prove record membership. A corpus update needs one unambiguous meaning.
 
 ## Decision
 
-`waldo index update <input-or-recipe> <manifest>` always performs an
+`waldo index ingest --update <input-or-recipe> <manifest>` always performs an
 authoritative rebuild. Its input must contain the complete desired corpus.
 Input may be a direct path, recipe, or fetcher handoff directory; handoff
 manifests own the same metadata and input mappings during update as during
@@ -32,6 +32,7 @@ the original manifest hash, and remains separate from the Git worktree.
 
 - Public-index migration can rebuild 150 MB-era corpora into new 256 MiB-target
   shards solely from reviewed recipes without downloading the old objects.
+- Ingest refuses an existing destination unless `--update` is explicit.
 - Every update has the same complete-replacement semantics.
 - There is no flag or implicit mode that appends records to existing shards.
 - Git history retains the retired shard references; lookaside deletion is a

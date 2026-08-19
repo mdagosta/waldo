@@ -25,16 +25,16 @@ is clean and behind its configured tracking branch. Mutation commands never
 implicitly synchronize a contributor checkout.
 
 The managed checkout is read-only from the corpus-authoring perspective.
-`index init`, `index ingest`, and `index update` reject it. Contributors use an
-explicit Git checkout and select it with `waldo config set index <directory>`
-or a filesystem destination. Paths beginning with `/`, `./`, `../`, or `~/`
-always name the filesystem; an unprefixed relative path is also local when it
-or its parent already exists.
+`index init` and `index ingest` reject it. Contributors use an explicit Git
+checkout and select it with `waldo config set index <directory>` or a
+filesystem destination. Paths beginning with `/`, `./`, `../`, or `~/` always
+name the filesystem; an unprefixed relative path is also local when it or its
+parent already exists.
 
 Git transport is implemented in `internal/git` with `go-git`. Read commands
-may refresh a selected checkout. Mutation commands such as `index ingest` and
-`index update` trust the local checkout and never contact its remote; users
-explicitly synchronize it with `waldo index pull`. Pull derives the current
+may refresh a selected checkout. Mutation commands such as `index ingest`
+trust the local checkout and never contact its remote; users explicitly
+synchronize it with `waldo index pull`. Pull derives the current
 branch's tracking remote and performs only a clean fast-forward; it refuses
 dirty worktrees, local commits, divergence, detached HEAD, and missing tracking
 configuration.

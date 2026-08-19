@@ -16,7 +16,7 @@ import (
 	"github.com/openwaldo/waldo/internal/ingest"
 )
 
-func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Writer) error {
+func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr io.Writer) error {
 	options, err := cobraIndexIngestOptions(commandContext, args)
 	if err != nil {
 		return err
@@ -94,7 +94,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 		loadedSource.Apply(&options.Request)
 		options.Inputs = loadedSource.InputPaths()
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
-		return fmt.Errorf("direct index update requires --title, --license, --source, and --source-category")
+		return fmt.Errorf("direct index ingest --update requires --title, --license, --source, and --source-category")
 	}
 	if !isRecipe && options.InputProfile != "" {
 		options.Request.Profile, err = ingest.LoadInputProfile(options.InputProfile)
@@ -114,7 +114,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 				Recipe         ingest.LoadedRecipe `json:"recipe"`
 			}{mode, corpusTarget.Path, manifestHash, loadedRecipe})
 		}
-		fmt.Fprintf(stdout, "index update preflight\n  mode      %s\n  manifest  %s (%s)\n", mode, corpusTarget.Path, manifestHash[:12])
+		fmt.Fprintf(stdout, "index ingest --update preflight\n  mode      %s\n  manifest  %s (%s)\n", mode, corpusTarget.Path, manifestHash[:12])
 		return writeRecipePreflight(commandContext, stdout, loadedRecipe, logicalDestination)
 	}
 	var configuration config.Config
@@ -124,7 +124,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 			return err
 		}
 		if configuration.Lookaside.Publish == nil {
-			return fmt.Errorf("index update needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`")
+			return fmt.Errorf("index ingest --update needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`")
 		}
 	}
 	workers := options.Workers
@@ -196,7 +196,7 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 				Plan     ingest.Plan `json:"plan"`
 			}{identity, plan})
 		}
-		fmt.Fprintf(stdout, "index update plan %s\n  mode      %s\n  manifest  %s (%s)\n  input     %s files, %s\n", identity[:12], mode, corpusTarget.Path, manifestHash[:12], humanInteger(int64(len(plan.Inputs))), humanBytes(probe.Totals.Bytes))
+		fmt.Fprintf(stdout, "index ingest --update plan %s\n  mode      %s\n  manifest  %s (%s)\n  input     %s files, %s\n", identity[:12], mode, corpusTarget.Path, manifestHash[:12], humanInteger(int64(len(plan.Inputs))), humanBytes(probe.Totals.Bytes))
 		return nil
 	}
 	staging, err := config.EffectiveStagingRoot(configuration, identity)
@@ -272,7 +272,7 @@ func resolveSingleUpdateCorpus(target waldoindex.Target) (waldoindex.Corpus, err
 		for _, value := range corpora {
 			paths = append(paths, value.Path)
 		}
-		return waldoindex.Corpus{}, fmt.Errorf("index update target must resolve exactly one manifest; found %d: %s", len(corpora), strings.Join(paths, ", "))
+		return waldoindex.Corpus{}, fmt.Errorf("index ingest --update target must resolve exactly one manifest; found %d: %s", len(corpora), strings.Join(paths, ", "))
 	}
 	return corpora[0], nil
 }
