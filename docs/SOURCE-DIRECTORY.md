@@ -71,6 +71,10 @@ material or `und` when unknown. Programming languages are declared separately
 in `content.programming_languages`. These are corpus/source declarations, not
 inferred per-record statistics.
 
+WALDO preserves the verified `input.format` declaration in the generated index
+manifest as `sources[].input_formats`. This records the upstream physical input
+format; canonical WALDO shards remain Parquet regardless of the source format.
+
 ## Multiple sources
 
 Different sources or effective licenses use separate child directories. The

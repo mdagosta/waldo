@@ -29,7 +29,8 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	}
 	plan, err := NewPlan(probe, PlanRequest{
 		Destination: "core/fixture", Title: "Fixture", Description: "Fixture corpus.", License: "CC0-1.0",
-		Source: PlanSource{Name: "fixture-source", URL: "https://example.test/data", Category: "public-dataset", Content: &index.Content{Languages: []string{"en"}, ProgrammingLanguages: []string{"Go"}}},
+		Source:  PlanSource{Name: "fixture-source", URL: "https://example.test/data", Category: "public-dataset", Content: &index.Content{Languages: []string{"en"}, ProgrammingLanguages: []string{"Go"}}},
+		Profile: InputProfile{Format: "text"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +51,9 @@ func TestBuildManifestMatchesCurrentIndexContract(t *testing.T) {
 	}
 	if manifest.Content == nil || len(manifest.Content.Languages) != 1 || manifest.Content.Languages[0] != "en" || len(manifest.Content.ProgrammingLanguages) != 1 || manifest.Content.ProgrammingLanguages[0] != "Go" {
 		t.Fatalf("manifest language declaration = %+v", manifest.Content)
+	}
+	if formats := manifest.Sources[0].InputFormats; len(formats) != 1 || formats[0] != "text" {
+		t.Fatalf("source input formats = %v", formats)
 	}
 	if manifest.Format != "" || manifest.Processing != nil || manifest.ComposedBy != nil || len(manifest.Sources[0].Files) != 0 || len(manifest.Sources[0].Usage) != 0 || manifest.Sources[0].Content == nil || len(manifest.Shards[0].Modalities) != 0 {
 		t.Fatalf("generated manifest contains expanded metadata: %+v", manifest)

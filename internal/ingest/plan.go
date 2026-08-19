@@ -55,6 +55,7 @@ type PlanSource struct {
 	Name            string                 `json:"name"`
 	License         string                 `json:"license,omitempty"`
 	Version         string                 `json:"version,omitempty"`
+	InputFormats    []string               `json:"input_formats,omitempty"`
 	URL             string                 `json:"url"`
 	Category        string                 `json:"category"`
 	CollectedFrom   string                 `json:"collected_from,omitempty"`
@@ -131,6 +132,9 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		if strings.TrimSpace(request.License) == "" {
 			return Plan{}, fmt.Errorf("license is required")
 		}
+		if request.Profile.Format != "" {
+			request.Source.InputFormats = []string{request.Profile.Format}
+		}
 		if err := normalizePlanSource(&request.Source); err != nil {
 			return Plan{}, err
 		}
@@ -147,6 +151,9 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			seen[source.ID] = true
 			source.Source.ID = source.ID
 			source.Source.License = record.NormalizeLicense(source.License)
+			if source.Profile.Format != "" {
+				source.Source.InputFormats = []string{source.Profile.Format}
+			}
 			if source.Source.License == "" {
 				return Plan{}, fmt.Errorf("source %q license is required", source.ID)
 			}
@@ -395,7 +402,7 @@ func normalizePlanSource(source *PlanSource) error {
 	source.Category = category
 	return index.ValidateSourceProvenance(index.Source{
 		Category: category, CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo,
-		LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
+		InputFormats: source.InputFormats, LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
 	})
 }
 
@@ -577,7 +584,7 @@ func validatePlanSource(source PlanSource) error {
 	}
 	return index.ValidateSourceProvenance(index.Source{
 		Category: category, CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo,
-		LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
+		InputFormats: source.InputFormats, LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
 	})
 }
 

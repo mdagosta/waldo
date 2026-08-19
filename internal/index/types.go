@@ -138,6 +138,7 @@ type Source struct {
 	Name            string           `json:"name"`
 	Source          string           `json:"source"`
 	Version         string           `json:"version,omitempty"`
+	InputFormats    []string         `json:"input_formats,omitempty"`
 	License         string           `json:"license,omitempty"`
 	LicenseEvidence *LicenseEvidence `json:"license_evidence,omitempty"`
 	URL             string           `json:"url"`

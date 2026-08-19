@@ -58,7 +58,7 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		}
 		manifest.Sources = append(manifest.Sources, index.Source{
 			Name: source.Name, Source: source.Name, URL: source.URL, License: source.License,
-			Version: source.Version, Category: source.Category,
+			Version: source.Version, InputFormats: source.InputFormats, Category: source.Category,
 			CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo,
 			LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
 			SHA256: sourceHash,
