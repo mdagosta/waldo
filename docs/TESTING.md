@@ -17,7 +17,8 @@ Run the complete local suite with:
 ```
 
 The complete suite runs unit tests, static analysis, ingestion lifecycles, the
-fake model lifecycle, and hardware-dependent MLX, PyTorch, and TorchTitan
+structured-conversation ingestion and training lifecycle, the general fake
+model lifecycle, and hardware-dependent MLX, PyTorch, and TorchTitan
 lifecycles. Hardware tests report a skip when their runtime or device is not
 available.
 
@@ -26,6 +27,7 @@ Individual end-to-end tests are available under `testing/e2e/`:
 ```bash
 ./testing/e2e/ingest-direct.sh
 ./testing/e2e/ingest-recipe.sh
+./testing/e2e/structured-conversation.sh
 ./testing/e2e/model-fake.sh
 ./testing/e2e/model-mlx.sh
 ./testing/e2e/model-pytorch.sh
