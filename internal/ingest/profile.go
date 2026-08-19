@@ -60,6 +60,7 @@ func (profile InputProfile) withDefaults() InputProfile {
 type ChatMessagesMapping struct {
 	Role        string            `json:"role,omitempty" yaml:"role,omitempty"`
 	Content     string            `json:"content,omitempty" yaml:"content,omitempty"`
+	System      string            `json:"system,omitempty" yaml:"system,omitempty"`
 	Tools       string            `json:"tools,omitempty" yaml:"tools,omitempty"`
 	RoleAliases map[string]string `json:"role_aliases,omitempty" yaml:"role_aliases,omitempty"`
 }
@@ -74,6 +75,7 @@ type ProfileFields struct {
 	Source       string            `json:"source,omitempty" yaml:"source,omitempty"`
 	Context      string            `json:"context,omitempty" yaml:"context,omitempty"`
 	Response     string            `json:"response,omitempty" yaml:"response,omitempty"`
+	Tools        string            `json:"tools,omitempty" yaml:"tools,omitempty"`
 	Meta         map[string]string `json:"meta,omitempty" yaml:"meta,omitempty"`
 }
 
@@ -190,7 +192,7 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) == 0 {
 			return fmt.Errorf("record-map requires fields.text")
 		}
-		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || !profile.Messages.empty() || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Tools != "" || profile.Tree != (ConversationTree{}) || !profile.Messages.empty() || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("record-map accepts text, id, date, language, license, source, and meta fields only")
 		}
 		for name, path := range profile.Fields.Meta {
@@ -220,7 +222,7 @@ func (profile InputProfile) Validate() error {
 		if profile.Messages.Role == "" || profile.Messages.Content == "" {
 			return fmt.Errorf("chat-messages requires messages.role and messages.content")
 		}
-		if len(profile.Fields.Text) > 0 || len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
+		if len(profile.Fields.Text) > 0 || len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Tools != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("chat-messages accepts identity, source, and meta fields plus messages only")
 		}
 		for source, target := range profile.Messages.RoleAliases {
@@ -295,7 +297,7 @@ func (profile InputProfile) Validate() error {
 
 func (fields ProfileFields) empty() bool {
 	return len(fields.Text) == 0 && len(fields.TextFallback) == 0 && fields.ID == "" && fields.Date == "" && fields.Language == "" &&
-		fields.License == "" && fields.Source == "" && fields.Context == "" && fields.Response == "" && len(fields.Meta) == 0
+		fields.License == "" && fields.Source == "" && fields.Context == "" && fields.Response == "" && fields.Tools == "" && len(fields.Meta) == 0
 }
 
 func (mapping XMLMapping) empty() bool {
@@ -303,16 +305,16 @@ func (mapping XMLMapping) empty() bool {
 }
 
 func (mapping ChatMessagesMapping) empty() bool {
-	return mapping.Role == "" && mapping.Content == "" && mapping.Tools == "" && len(mapping.RoleAliases) == 0
+	return mapping.Role == "" && mapping.Content == "" && mapping.System == "" && mapping.Tools == "" && len(mapping.RoleAliases) == 0
 }
 
 func (profile InputProfile) paths() []string {
 	paths := append([]string(nil), profile.Fields.Text...)
 	paths = append(paths, profile.Fields.TextFallback...)
 	paths = append(paths, profile.Fields.ID, profile.Fields.Date, profile.Fields.Language,
-		profile.Fields.License, profile.Fields.Source, profile.Fields.Context, profile.Fields.Response,
+		profile.Fields.License, profile.Fields.Source, profile.Fields.Context, profile.Fields.Response, profile.Fields.Tools,
 		profile.Tree.Root, profile.Tree.Replies, profile.Tree.Text, profile.Tree.Rank,
-		profile.Tree.Role, profile.Messages.Role, profile.Messages.Content, profile.Messages.Tools)
+		profile.Tree.Role, profile.Messages.Role, profile.Messages.Content, profile.Messages.System, profile.Messages.Tools)
 	for _, path := range profile.Fields.Meta {
 		paths = append(paths, path)
 	}

@@ -162,7 +162,7 @@ probes the bytes to verify that declaration:
 | --- | --- |
 | UTF-8 text or Markdown | one file |
 | mbox, plain/gzip/zstd | one RFC 822 message |
-| JSON | one top-level object |
+| JSON | one top-level object or one top-level array of objects |
 | JSONL, plain/gzip/zstd | one object per nonblank line |
 | Parquet | one row |
 | XML | one file |

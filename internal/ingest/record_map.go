@@ -99,64 +99,117 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 		return err
 	}
 	defer file.Close()
-	rejectVerified := func(reason string) error {
-		if err := reject(reason); err != nil {
+	progress := &jsonProgressReader{reader: &contextReader{ctx: ctx, reader: file}}
+	decoder := json.NewDecoder(progress)
+	decoder.UseNumber()
+	position := int64(0)
+	mapRecord := func(value any) error {
+		position++
+		object, ok := value.(map[string]any)
+		if !ok {
+			if plan.RecipeEvidence != nil {
+				if err := reject(RejectionMapping); err != nil {
+					return err
+				}
+				return nil
+			}
+			return fmt.Errorf("JSON record %d must be an object", position)
+		}
+		fallback := fmt.Sprintf("sha256:%s#record=%d", input.Artifact.SHA256, position)
+		row, err := mapJSONCanonicalRecord(object, plan, input, fallback)
+		if err != nil {
+			if errors.Is(err, errMainContentMapping) {
+				return err
+			}
+			if errors.Is(err, errLicensePolicy) {
+				if err := reject(RejectionLicense); err != nil {
+					return err
+				}
+				return nil
+			}
+			if errors.Is(err, errEmptyMappedRecord) && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) {
+				if err := reject(RejectionEmpty); err != nil {
+					return err
+				}
+				return nil
+			}
+			if plan.RecipeEvidence != nil {
+				if err := reject(RejectionMapping); err != nil {
+					return err
+				}
+				return nil
+			}
+			return fmt.Errorf("record %d: %w", position, err)
+		}
+		return emit(row, min(progress.bytes, input.Artifact.Bytes))
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("decode JSON: %w", err)
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok || (delimiter != '{' && delimiter != '[') {
+		return fmt.Errorf("top-level JSON value must be an object or array of objects")
+	}
+	if delimiter == '{' {
+		object := map[string]any{}
+		for decoder.More() {
+			name, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := name.(string)
+			if !ok {
+				return fmt.Errorf("JSON object key is not a string")
+			}
+			var value any
+			if err := decoder.Decode(&value); err != nil {
+				return err
+			}
+			object[key] = value
+		}
+		if _, err := decoder.Token(); err != nil {
 			return err
 		}
-		return unchangedInput(file, verified)
+		if err := mapRecord(object); err != nil {
+			return err
+		}
+	} else {
+		for decoder.More() {
+			var value any
+			if err := decoder.Decode(&value); err != nil {
+				return err
+			}
+			if err := mapRecord(value); err != nil {
+				return err
+			}
+		}
+		if _, err := decoder.Token(); err != nil {
+			return err
+		}
 	}
-	decoder := json.NewDecoder(io.LimitReader(&contextReader{ctx: ctx, reader: file}, plan.MemoryBytes/2+1))
-	decoder.UseNumber()
-	var raw any
-	if err := decoder.Decode(&raw); err != nil {
-		if plan.RecipeEvidence != nil {
-			return rejectVerified(RejectionMalformed)
-		}
-		return fmt.Errorf("decode JSON object: %w", err)
-	}
-	object, ok := raw.(map[string]any)
-	if !ok {
-		if plan.RecipeEvidence != nil {
-			return rejectVerified(RejectionMapping)
-		}
-		if _, array := raw.([]any); array {
-			return fmt.Errorf("top-level JSON arrays are not supported; JSON input is exactly one object per file (use a future explicit json-array container)")
-		}
-		return fmt.Errorf("top-level JSON value must be an object")
+	if position == 0 {
+		return fmt.Errorf("JSON input contains no records")
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		if plan.RecipeEvidence != nil {
-			return rejectVerified(RejectionMalformed)
-		}
 		if err == nil {
 			return fmt.Errorf("JSON input contains more than one top-level value")
 		}
 		return err
 	}
-	row, err := mapJSONCanonicalRecord(object, plan, input, "sha256:"+input.Artifact.SHA256)
-	if err != nil {
-		if errors.Is(err, errMainContentMapping) {
-			return err
-		}
-		if errors.Is(err, errLicensePolicy) {
-			return rejectVerified(RejectionLicense)
-		}
-		if errors.Is(err, errEmptyMappedRecord) && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) {
-			if err := reject(RejectionEmpty); err != nil {
-				return err
-			}
-			return unchangedInput(file, verified)
-		}
-		if plan.RecipeEvidence != nil {
-			return rejectVerified(RejectionMapping)
-		}
-		return err
-	}
-	if err := emit(row, input.Artifact.Bytes); err != nil {
-		return err
-	}
 	return unchangedInput(file, verified)
+}
+
+type jsonProgressReader struct {
+	reader io.Reader
+	bytes  int64
+}
+
+func (reader *jsonProgressReader) Read(buffer []byte) (int, error) {
+	count, err := reader.reader.Read(buffer)
+	reader.bytes += int64(count)
+	return count, err
 }
 
 func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit func(shard.TextRow, int64) error, reject func(string) error) error {
@@ -344,7 +397,16 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		if len(roles) == 0 || len(roles) != len(contents) {
 			return shard.TextRow{}, fmt.Errorf("%w: chat roles and contents must be non-empty aligned arrays", errEmptyMappedRecord)
 		}
-		messages := make([]waldorecord.Message, 0, len(roles))
+		messages := make([]waldorecord.Message, 0, len(roles)+1)
+		if input.Profile.Messages.System != "" {
+			system, err := optionalScalar(record, input.Profile.Messages.System)
+			if err != nil {
+				return shard.TextRow{}, err
+			}
+			if strings.TrimSpace(system) != "" {
+				messages = append(messages, waldorecord.Message{Role: "system", Content: system})
+			}
+		}
 		hasUser, hasAssistant := false, false
 		for index, role := range roles {
 			role = strings.ToLower(strings.TrimSpace(role))
@@ -427,7 +489,21 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		if strings.TrimSpace(response) == "" {
 			return shard.TextRow{}, fmt.Errorf("%w: mapped response field is empty or absent", errEmptyMappedRecord)
 		}
-		text, err = waldorecord.EncodeConversation(waldorecord.Conversation{Messages: []waldorecord.Message{{Role: "user", Content: text, Context: contextText}, {Role: "assistant", Content: response}}})
+		var tools json.RawMessage
+		if input.Profile.Fields.Tools != "" {
+			value, err := optionalScalar(record, input.Profile.Fields.Tools)
+			if err != nil {
+				return shard.TextRow{}, err
+			}
+			if value != "" {
+				if json.Valid([]byte(value)) {
+					tools = json.RawMessage(value)
+				} else {
+					tools, _ = json.Marshal(value)
+				}
+			}
+		}
+		text, err = waldorecord.EncodeConversation(waldorecord.Conversation{Messages: []waldorecord.Message{{Role: "user", Content: text, Context: contextText}, {Role: "assistant", Content: response}}, Tools: tools})
 		if err != nil {
 			return shard.TextRow{}, err
 		}

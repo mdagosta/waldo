@@ -19,6 +19,12 @@ waldo model train conversation composes/0002-conversation.yaml
 
 waldo model forecast composes/0003-technology.yaml
 waldo model train technology composes/0003-technology.yaml
+
+waldo model forecast composes/0004-reasoning.yaml
+waldo model train reasoning composes/0004-reasoning.yaml
+
+waldo model forecast composes/0005-reasoning-tools.yaml
+waldo model train reasoning-tools composes/0005-reasoning-tools.yaml
 ```
 
 | Compose | Architecture | Training budget | Purpose |
@@ -27,6 +33,8 @@ waldo model train technology composes/0003-technology.yaml
 | `0001-babble.yaml` | 76.4M parameters | 1.57B pretraining tokens + 2 epoch-driven stages | Candidate compact model with coherent language and short basic interaction |
 | `0002-conversation.yaml` | 336.6M parameters | 12.0B pretraining tokens + 2 epoch-driven stages | Candidate derived from the first successful conversational model |
 | `0003-technology.yaml` | 336.6M parameters | 16.0B pretraining tokens + 3 epoch-driven stages | Build a conversational model grounded in technical prose, source, and engineering discussions |
+| `0004-reasoning.yaml` | 336.6M parameters | 20.0B pretraining tokens + 3 epoch-driven stages | Add worked-reasoning training to a broad technical and educational foundation |
+| `0005-reasoning-tools.yaml` | 336.6M parameters | 20.0B pretraining tokens + 4 epoch-driven stages | Repeat the reasoning curriculum, then add tool selection, calls, results, and grounded answers |
 
 ## Canary
 
@@ -87,6 +95,35 @@ that already completed any selected corpora skips those recorded corpus paths.
 The later stages add broad conversation, UltraChat, and curated Tulu 3. The
 final stage applies loss only to assistant content. Tool-use training remains a
 future capability milestone rather than being implied by this compose's name.
+
+## Basic reasoning
+
+`0004-reasoning.yaml` is the next capability milestone after technology. It
+keeps technical and general reference material, adds synthetic educational
+prose, adapts on broad dialogue, and gives worked reasoning a separate
+supervised stage. A small final alignment stage reinforces concise assistant
+behavior without overwhelming the reasoning data.
+
+## Basic reasoning with tools
+
+`0005-reasoning-tools.yaml` repeats the first four stages of the basic
+reasoning curriculum before adding tool-use examples. Its final stage mixes
+function definitions, calls, tool results, and grounded final responses from
+independently produced corpora. Benchmark tasks remain outside the training
+set so they can measure the resulting capability.
+
+The new source directories must be ingested at these exact index paths before
+the corresponding compose can pass preflight:
+
+| Fetcher configuration | Index destination | Needed by |
+| --- | --- | --- |
+| `cosmopedia-v2.ini` | `core/synthetic/cosmopedia-v2` | 0004, 0005 |
+| `smol-smoltalk.ini` | `post-train/sft/smol-smoltalk` | 0004, 0005 |
+| `openthoughts-114k.ini` | `post-train/sft/openthoughts-114k` | 0004, 0005 |
+| `toolace.ini` | `post-train/sft/toolace` | 0005 |
+| `xlam-function-calling-60k.ini` | `post-train/sft/xlam-function-calling-60k` | 0005 |
+| `smoltalk2-tools.ini` | `post-train/sft/smoltalk2-tools` | 0005 |
+| `openthoughts-agent.ini` | `post-train/sft/openthoughts-agent` | 0005 |
 
 Hardware is a deployment decision. Use `waldo model forecast` to compare a
 compose against the accelerator catalog and locally observed calibration.

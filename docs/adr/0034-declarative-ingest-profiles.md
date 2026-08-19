@@ -1,6 +1,6 @@
 # 0034: Keep ingest profiles corpus-neutral
 
-Status: accepted
+Status: amended by [0061](0061-stream-json-record-arrays.md)
 
 ## Decision
 

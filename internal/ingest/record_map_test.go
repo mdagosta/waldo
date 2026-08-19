@@ -109,15 +109,56 @@ func TestRecordMapUsesFallbackTextOnlyWhenPrimaryTextIsEmpty(t *testing.T) {
 	}
 }
 
-func TestRecordMapRejectsTopLevelJSONArray(t *testing.T) {
+func TestRecordMapAcceptsTopLevelJSONArray(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.json")
 	if err := os.WriteFile(path, []byte(`[{"text":"one"},{"text":"two"}]`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	plan := mappedFixturePlan(t, path, InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"text"}}})
-	err := StreamCanonicalTextBatches(context.Background(), plan, func(TextBatch) error { return nil })
-	if err == nil || !strings.Contains(err.Error(), "top-level JSON arrays are not supported") {
-		t.Fatalf("error = %v", err)
+	rows := collectMappedRows(t, plan)
+	if len(rows) != 2 || rows[0].Text != "one" || rows[1].Text != "two" {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
+func TestChatMessagesPreservesSeparateSystemPrompt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "chat.json")
+	contents := `{"system":"Use careful reasoning.","messages":[{"role":"user","content":"Why?"},{"role":"assistant","content":"Because."}]}`
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{Type: ProfileChatMessages, Messages: ChatMessagesMapping{
+		Role: "messages[].role", Content: "messages[].content", System: "system",
+	}}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	conversation, err := record.DecodeConversation(rows[0].Text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conversation.Messages) != 3 || conversation.Messages[0].Role != "system" || conversation.Messages[0].Content != "Use careful reasoning." {
+		t.Fatalf("conversation = %+v", conversation)
+	}
+}
+
+func TestDialoguePairPreservesTools(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tools.json")
+	contents := `{"query":"Find it","answer":"[{\"name\":\"search\"}]","tools":"[{\"name\":\"search\"}]"}`
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{Type: ProfileDialoguePair, Fields: ProfileFields{
+		Text: []string{"query"}, Response: "answer", Tools: "tools",
+	}}
+	rows := collectMappedRows(t, mappedFixturePlan(t, path, profile))
+	conversation, err := record.DecodeConversation(rows[0].Text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(conversation.Tools) != `[{"name":"search"}]` {
+		t.Fatalf("tools = %s", conversation.Tools)
 	}
 }
 

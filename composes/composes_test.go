@@ -125,8 +125,9 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 4 || files[0] != "0000-canary.yaml" || files[1] != "0001-babble.yaml" || files[2] != "0002-conversation.yaml" || files[3] != "0003-technology.yaml" {
-		t.Fatalf("reference composes = %v, want canary, babble, basic conversation, and technology", files)
+	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-technology.yaml", "0004-reasoning.yaml", "0005-reasoning-tools.yaml"}
+	if !reflect.DeepEqual(files, want) {
+		t.Fatalf("reference composes = %v, want %v", files, want)
 	}
 	compose, _, err := model.LoadCompose("0000-canary.yaml")
 	if err != nil {
@@ -145,6 +146,38 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if forecast.ApproximateParameters != 13620736 || forecast.PlannedTokens != 4096000 {
 		t.Fatalf("canary forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
+}
+
+func TestReasoningAndToolingCapabilitySequence(t *testing.T) {
+	reasoning, _, err := model.LoadCompose("0004-reasoning.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tooling, _, err := model.LoadCompose("0005-reasoning-tools.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reasoning.Stages) != 4 || reasoning.Stages[2].Name != "reasoning-sft" {
+		t.Fatalf("reasoning curriculum = %+v", reasoning.Stages)
+	}
+	if len(tooling.Stages) != 5 || tooling.Stages[2].Name != "reasoning-sft" || tooling.Stages[4].Name != "tool-use-sft" {
+		t.Fatalf("tooling curriculum = %+v", tooling.Stages)
+	}
+	if !reflect.DeepEqual(reasoning.Stages, tooling.Stages[:len(reasoning.Stages)]) {
+		t.Fatal("reasoning-plus-tools does not preserve the complete basic-reasoning curriculum")
+	}
+	wantTools := []string{"post-train/sft/hermes-function-calling", "post-train/sft/toolace", "post-train/sft/xlam-function-calling-60k", "post-train/sft/smoltalk2-tools", "post-train/sft/openthoughts-agent", "post-train/sft/interaction-contract-v1"}
+	if got := corpusPaths(tooling.Stages[4].Corpora); !reflect.DeepEqual(got, wantTools) {
+		t.Fatalf("tool-use corpora = %v, want %v", got, wantTools)
+	}
+}
+
+func corpusPaths(selections []model.CorpusSelection) []string {
+	paths := make([]string, len(selections))
+	for index, selection := range selections {
+		paths[index] = selection.Path
+	}
+	return paths
 }
 
 func TestTechnologyComposeIncludesTechnicalSourcesAndAssistantTraining(t *testing.T) {
