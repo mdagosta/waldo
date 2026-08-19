@@ -68,6 +68,14 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	loadedCorpus, isCorpusDirectory, err := ingest.LoadCorpusDirectory(options.Inputs[0])
+	if err != nil {
+		return err
+	}
+	loadedSource, isSourceDirectory, err := ingest.LoadSourceDirectory(options.Inputs[0])
+	if err != nil {
+		return err
+	}
 	if isRecipe {
 		if len(options.MetadataOptions) > 0 {
 			return fmt.Errorf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
@@ -81,8 +89,26 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 			options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
 			options.Request.Profile = loadedRecipe.Recipe.Input
 		}
+	} else if isCorpusDirectory {
+		if len(options.MetadataOptions) > 0 {
+			return fmt.Errorf("corpus directory manifest owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
+		}
+		loadedCorpus.Apply(&options.Request)
+		options.Inputs = loadedCorpus.InputPaths()
+	} else if isSourceDirectory {
+		if len(options.MetadataOptions) > 0 {
+			return fmt.Errorf("source directory manifest owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
+		}
+		loadedSource.Apply(&options.Request)
+		options.Inputs = loadedSource.InputPaths()
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" {
 		return fmt.Errorf("direct index update requires --title, --license, --source, and --source-category")
+	}
+	if !isRecipe && options.InputProfile != "" {
+		options.Request.Profile, err = ingest.LoadInputProfile(options.InputProfile)
+		if err != nil {
+			return fmt.Errorf("load input profile: %w", err)
+		}
 	}
 	if options.Request.Source.Name == "" {
 		options.Request.Source.Name = corpusTarget.Manifest.Name
@@ -150,6 +176,15 @@ func runIndexUpdate(commandContext Context, args []string, stdout, stderr io.Wri
 		probe, err = ingest.ProbePathsWithWorkers(execution, options.Inputs, workers)
 		if err != nil {
 			return err
+		}
+		if isCorpusDirectory {
+			if err := loadedCorpus.VerifyProbe(probe); err != nil {
+				return err
+			}
+		} else if isSourceDirectory {
+			if err := loadedSource.VerifyProbe(probe); err != nil {
+				return err
+			}
 		}
 	}
 	plan, err := ingest.NewPlan(probe, options.Request)

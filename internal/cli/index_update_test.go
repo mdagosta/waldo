@@ -7,7 +7,9 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -79,6 +81,50 @@ func TestIndexUpdateAppendFiltersExistingRecords(t *testing.T) {
 	}
 	if len(manifest.Shards) != 2 || len(manifest.Sources) != 2 || manifest.Shards[1].Sources[0] == manifest.Shards[0].Sources[0] {
 		t.Fatalf("updated manifest = %+v", manifest)
+	}
+}
+
+func TestIndexUpdateRebuildUsesFetcherHandoffManifest(t *testing.T) {
+	handoff := t.TempDir()
+	raw := filepath.Join(handoff, "raw")
+	if err := os.MkdirAll(raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("Replacement training text.\n")
+	if err := os.WriteFile(filepath.Join(raw, "document.txt"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fileHash := sha256.Sum256(content)
+	inventory := fmt.Sprintf("%x\t%d\tdocument.txt\n", fileHash, len(content))
+	treeHash := sha256.Sum256([]byte(inventory))
+	manifest := fmt.Sprintf(`{
+  "kind":"waldo-source-directory","schema":1,
+  "corpus":{"id":"books","title":"Replacement Books","description":"Fetcher handoff."},
+  "sources":[{"id":"books","path":"","license":"CC0-1.0","source":{"name":"Example","url":"https://example.test/data","category":"public-dataset","license_evidence":{"declaration":"CC0-1.0"}},"input":{"format":"text"},"artifacts":[]}],
+  "fetcher":{},"raw":{"path":"raw","file_count":1,"byte_count":%d,"tree_sha256":"%x"}
+}`, len(content), treeHash)
+	if err := os.WriteFile(filepath.Join(handoff, "manifest.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := fixtureCLIIndex(t)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Index: root}); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"--json", "index", "update", handoff, filepath.Join(root, "books", "books.json"), "--rebuild-shards", "--dry-run"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("update code=%d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	var output struct {
+		Plan ingest.Plan `json:"plan"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	if output.Plan.Title != "Replacement Books" || output.Plan.Update == nil || output.Plan.Update.Mode != "rebuild-shards" || len(output.Plan.Inputs) != 1 {
+		t.Fatalf("update plan = %+v", output.Plan)
 	}
 }
 

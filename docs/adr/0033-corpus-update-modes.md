@@ -14,12 +14,14 @@ cannot prove record membership.
 
 ## Decision
 
-`waldo index update <input-or-recipe> <manifest>` is append mode. It pins the
-manifest, audits and materializes existing shards, and seeds their exact record
-content hashes into a disk-backed set. New input passes through the normal
-streaming ingestion and publication pipeline; only absent records become new
-shards. Recipes receive existing source and aggregate facts in the temporary
-file named by `WALDO_UPDATE_STATE`.
+`waldo index update <input-or-recipe> <manifest>` is append mode. Input may be
+a direct path, recipe, or fetcher handoff directory; handoff manifests own the
+same metadata and input mappings during update as during initial ingestion. It
+pins the existing index manifest, audits and materializes existing shards, and
+seeds their exact record content hashes into a disk-backed set. New input
+passes through the normal streaming ingestion and publication pipeline; only
+absent records become new shards. Recipes receive existing source and aggregate
+facts in the temporary file named by `WALDO_UPDATE_STATE`.
 
 `--rebuild-shards` is an authoritative replacement mode. Its input must contain
 the complete desired corpus. WALDO does not read old shard bodies, deduplicates
