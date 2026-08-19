@@ -41,6 +41,10 @@ The schema-1 manifest is:
       "name": "Example upstream",
       "url": "https://example.org/data",
       "category": "public-dataset",
+      "content": {
+        "languages": ["en"],
+        "programming_languages": ["Python"]
+      },
       "license_evidence": {
         "declaration": "Creative Commons Attribution 4.0",
         "url": "https://example.org/license"
@@ -61,7 +65,11 @@ The schema-1 manifest is:
 ```
 
 The source ID may be omitted; WALDO then uses the corpus ID. `input.format` is
-required even when the format has an automatic reader.
+required even when the format has an automatic reader. `content.languages`
+declares human languages using BCP 47 tags; use `mul` for known multilingual
+material or `und` when unknown. Programming languages are declared separately
+in `content.programming_languages`. These are corpus/source declarations, not
+inferred per-record statistics.
 
 ## Multiple sources
 
@@ -107,6 +115,7 @@ Each child manifest has this shape:
       "name": "Source one",
       "url": "https://example.org/one",
       "category": "public-dataset",
+      "content": {"languages": ["en"]},
       "license_evidence": {"declaration": "CC0 1.0"}
     },
     "input": {

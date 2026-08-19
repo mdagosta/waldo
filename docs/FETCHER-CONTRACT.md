@@ -26,7 +26,8 @@ The definitive handoff format is [SOURCE-DIRECTORY.md](SOURCE-DIRECTORY.md).
   post-fetch validation fails.
 - Safely unpack general archive containers only when WALDO cannot read them.
 - Record corpus identity, source URL/category, effective license, upstream
-  license evidence, content selection, and known provenance.
+  license evidence, content selection, declared human languages, separately
+  declared programming languages, and known provenance.
 - Keep different sources or licenses in separate manifest boundaries.
 - Reject unsafe paths, symlinks, special files, and silent output conflicts.
 - Write compact manifests last, after raw-tree hashing succeeds.
