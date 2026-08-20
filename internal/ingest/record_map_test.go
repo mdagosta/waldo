@@ -162,6 +162,13 @@ func TestDialoguePairPreservesTools(t *testing.T) {
 	}
 }
 
+func TestParquetMappingMatchesTerminalRepeatedScalar(t *testing.T) {
+	physical := []string{"chat_template_kwargs", "xml_tools", "list", "element"}
+	if !parquetPathMatches("chat_template_kwargs.xml_tools[]", physical) {
+		t.Fatal("terminal repeated scalar did not match its Parquet LIST wrappers")
+	}
+}
+
 func TestRecordMapUsesExistingCompressedJSONLReader(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.jsonl.zst")
 	writeCompressedJSONL(t, path, "zstd", "{\"payload\":{\"body\":\"first\"}}\n{\"payload\":{\"body\":\"second\"}}\n")
