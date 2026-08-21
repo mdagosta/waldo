@@ -141,7 +141,7 @@ func TestPurgeUsedRemovesSuccessfulFetches(t *testing.T) {
 	}
 }
 
-func TestPersistentCacheRetainsVerifiedObjectAndCleansScratch(t *testing.T) {
+func TestConfiguredCachePurgesSuccessfulObjectAndCleansScratch(t *testing.T) {
 	root, scratch := t.TempDir(), t.TempDir()
 	content := "retained verified object"
 	digest := digestOf(content)
@@ -154,11 +154,11 @@ func TestPersistentCacheRetainsVerifiedObjectAndCleansScratch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if purged, err := cache.PurgeUsed(); err != nil || purged.Objects != 0 {
+	if purged, err := cache.PurgeUsed(); err != nil || purged.Objects != 1 || purged.Bytes != int64(len(content)) {
 		t.Fatalf("PurgeUsed() = %+v, %v", purged, err)
 	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("retained object: %v", err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("successfully consumed object remains: %v", err)
 	}
 	entries, err := os.ReadDir(scratch)
 	if err != nil {
@@ -174,8 +174,39 @@ func TestPersistentCacheRetainsVerifiedObjectAndCleansScratch(t *testing.T) {
 	if _, err := second.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content))); err != nil {
 		t.Fatal(err)
 	}
+	if transport.requests != 2 {
+		t.Fatalf("purged cache made %d requests, want 2", transport.requests)
+	}
+}
+
+func TestConfiguredCacheRetainsObjectUntilSuccessfulConsumerPurges(t *testing.T) {
+	root, scratch := t.TempDir(), t.TempDir()
+	content := "resume after interruption"
+	digest := digestOf(content)
+	transport := &fakeTransport{content: content}
+	first, err := NewCache(root, &http.Client{Transport: transport}, WithPersistentStorage(scratch, 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := first.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("interrupted operation cache object: %v", err)
+	}
+	second, err := NewCache(root, &http.Client{Transport: transport}, WithPersistentStorage(scratch, 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
 	if transport.requests != 1 {
-		t.Fatalf("persistent cache made %d requests, want 1", transport.requests)
+		t.Fatalf("resume made %d requests, want one initial download", transport.requests)
+	}
+	if purged, err := second.PurgeUsed(); err != nil || purged.Objects != 1 {
+		t.Fatalf("resumed PurgeUsed() = %+v, %v", purged, err)
 	}
 }
 

@@ -558,7 +558,7 @@ func runIndexVerifyWithProgress(context Context, args []string, stdout, progress
 	if err != nil {
 		return fmt.Errorf("purge successful verification cache: %w", err)
 	}
-	if !cache.Retained() {
+	if purged.Objects > 0 {
 		fmt.Fprintf(progress, "purged %s cached objects (%s)\n", humanInteger(purged.Objects), humanBytes(purged.Bytes))
 	}
 	if context.JSON {

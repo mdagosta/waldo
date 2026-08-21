@@ -19,7 +19,11 @@ waldo config set lookaside.cache /fast-disk/waldo-cache
 ```
 
 Defaults are `~/.waldo/models` and a user-scoped lookaside cache beneath the
-operating system's temporary directory.
+operating system's temporary directory. Verified objects remain available
+while an operation is active and across a failure or interruption. After a
+successful operation commits, WALDO removes every cache object that operation
+used. `lookaside.cache.max-size` bounds recovery objects left by incomplete
+operations; it is not a post-success retention target.
 `model.backend` defaults to `auto`. On macOS it selects MLX and requires Apple
 Silicon. On Linux it probes Python environments in deterministic order,
 preferring an installed TorchTitan and then an installed PyTorch. It never

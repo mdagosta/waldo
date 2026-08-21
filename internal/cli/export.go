@@ -94,7 +94,7 @@ func runIndexExport(context Context, args []string, stdout, stderr io.Writer) er
 	if err != nil {
 		return fmt.Errorf("purge successful export cache: %w", err)
 	}
-	if !cache.Retained() {
+	if purged.Objects > 0 {
 		fmt.Fprintf(stderr, "purged %s cached objects (%s)\n", humanInteger(purged.Objects), humanBytes(purged.Bytes))
 	}
 	existing := 0

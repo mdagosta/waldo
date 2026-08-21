@@ -115,6 +115,9 @@ func runModelIndexForecast(context Context, paths []string, stdout, warnings io.
 	if err != nil {
 		return err
 	}
+	if _, err := cache.PurgeUsed(); err != nil {
+		return fmt.Errorf("purge successful forecast cache: %w", err)
+	}
 	if context.JSON {
 		return writeJSON(stdout, struct {
 			Index      any                    `json:"index"`
@@ -639,15 +642,16 @@ func runModelTrainWorker(commandContext Context, _ []string, stdout, stderr io.W
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if _, purgeErr := cache.PurgeUsed(); purgeErr != nil {
-			fmt.Fprintf(stderr, "warning: purge secondary training scratch: %v\n", purgeErr)
-		}
-	}()
 	run := func(runCluster training.Cluster, request training.Request) error {
 		return training.RunSecondaryTorchTitan(commandContext.Execution, runCluster, request)
 	}
-	return runSecondaryStages(commandContext, cluster, modelRoot, scratch, cache, planWait, run, stdout, stderr)
+	if err := runSecondaryStages(commandContext, cluster, modelRoot, scratch, cache, planWait, run, stdout, stderr); err != nil {
+		return err
+	}
+	if _, err := cache.PurgeUsed(); err != nil {
+		return fmt.Errorf("purge successful secondary training cache: %w", err)
+	}
+	return nil
 }
 
 func runSecondaryStages(commandContext Context, cluster training.Cluster, modelRoot, scratch string, cache *lookaside.Cache, planWait time.Duration, run func(training.Cluster, training.Request) error, stdout, stderr io.Writer) error {

@@ -64,6 +64,7 @@ func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer
 
 	references := map[string][]string{}
 	indexPath := ""
+	var referenceCache *lookaside.Cache
 	if indexArgument != "" {
 		target, err := resolveIndexArgument(commandContext.Execution, []string{indexArgument}, nil)
 		if err != nil {
@@ -80,6 +81,7 @@ func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer
 		if err != nil {
 			return err
 		}
+		referenceCache = cache
 		bom, err := corpus.BuildBOM(commandContext.Execution, []waldoindex.Target{target}, policy, cache)
 		if err != nil {
 			return err
@@ -146,6 +148,11 @@ func runLookasideList(commandContext Context, args []string, stdout, _ io.Writer
 		Objects: len(displayed), Canonical: displayedCanonical, Bytes: displayedBytes, Referenced: referenced,
 		NotInIndex: canonical - referenced, MissingIndex: len(missing), WithinLookaside: displayedWithin,
 		InventoryObjects: len(listed), InventoryBytes: totalBytes,
+	}
+	if referenceCache != nil {
+		if _, err := referenceCache.PurgeUsed(); err != nil {
+			return fmt.Errorf("purge successful lookaside-list cache: %w", err)
+		}
 	}
 
 	if commandContext.JSON {

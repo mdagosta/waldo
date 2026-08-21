@@ -65,3 +65,4 @@ logs.
 - [0059: Separate token-budget and epoch-driven training](0059-token-and-epoch-training-budgets.md)
 - [0060: Preserve conversations and render them in training views](0060-structured-conversation-training-views.md)
 - [0061: Stream record arrays in the JSON container](0061-stream-json-record-arrays.md)
+- [0062: Purge verified cache objects after successful use](0062-purge-successful-lookaside-cache.md)

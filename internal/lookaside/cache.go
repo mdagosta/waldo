@@ -93,9 +93,9 @@ func DefaultCache() (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A pre-cache configuration that names only lookaside.scratch retains its
-	// historical purge-on-success behavior. New/default configurations use the
-	// distinct retained cache and disposable download scratch.
+	// A pre-cache configuration that names only lookaside.scratch uses that
+	// directory for both verified objects and partial downloads. New/default
+	// configurations separate the bounded recovery cache from download scratch.
 	if configuration.Lookaside.Cache == "" && configuration.Lookaside.Scratch != "" {
 		return NewCache(configuration.Lookaside.Scratch, nil, WithMirrors(configuration.Lookaside.Mirrors))
 	}
@@ -297,14 +297,10 @@ func (cache *Cache) FetchWithProgress(ctx context.Context, objectURL, digest str
 
 // PurgeUsed removes only objects successfully returned by Fetch on this Cache
 // instance. Callers invoke it after the consuming operation commits; failures
-// deliberately leave objects available for diagnosis and retry.
+// deliberately leave objects available for diagnosis and retry. Configured
+// caches use separate download scratch and a size bound, but successful use is
+// not a reason to retain a second copy of an immutable lookaside object.
 func (cache *Cache) PurgeUsed() (Stats, error) {
-	if cache.retain {
-		cache.mu.Lock()
-		cache.used = map[string]bool{}
-		cache.mu.Unlock()
-		return Stats{}, nil
-	}
 	cache.mu.Lock()
 	paths := make([]string, 0, len(cache.used))
 	for path := range cache.used {

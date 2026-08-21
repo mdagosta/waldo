@@ -1,6 +1,6 @@
 # ADR 0007: Verify objects before admission and export
 
-- Status: accepted
+- Status: accepted; cache retention amended by ADR 0062
 - Date: 2026-08-04
 
 ## Context
@@ -17,8 +17,9 @@ then atomically install it into a hash-derived retained cache path. Re-hash an
 existing object before materialization. Partial downloads use a separate
 disposable scratch directory and never appear at a cache path until complete.
 Bound the retained cache by least-recently-used file time and provide an
-independent scrub. Configurations created before this distinction that set only
-`lookaside.scratch` retain their historical purge-on-success behavior.
+independent scrub. [ADR 0062](0062-purge-successful-lookaside-cache.md) later
+standardized purge-on-success for every cache location while retaining objects
+after failed or interrupted operations.
 
 Native export copies and re-verifies bytes into an atomic destination file; it
 does not hard-link exports to the cache. Existing export files are resumed only
@@ -35,7 +36,7 @@ a fresh conversion produces the same bytes.
 
 - A successful materialization has one clear verified-byte guarantee.
 - Cache hits spend sequential I/O to defend against local corruption.
-- Repeated audits and exports reuse verified objects without redownloading.
+- Failed and interrupted audits and exports reuse verified objects when resumed.
 - Exports use additional disk rather than sharing cache inodes.
 - Interrupted downloads and copies never appear at their final paths.
 - Mirror and transport implementations can change without changing object

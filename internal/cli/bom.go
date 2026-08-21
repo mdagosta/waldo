@@ -53,6 +53,9 @@ func runIndexBOM(context Context, args []string, stdout, progress io.Writer) err
 	if err != nil {
 		return err
 	}
+	if _, err := cache.PurgeUsed(); err != nil {
+		return fmt.Errorf("purge successful BOM cache: %w", err)
+	}
 	return writeJSON(stdout, document)
 }
 
