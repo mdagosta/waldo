@@ -125,7 +125,7 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-technology.yaml", "0004-reasoning.yaml", "0005-reasoning-tools.yaml"}
+	want := []string{"0000-canary.yaml", "0001-babble.yaml", "0002-conversation.yaml", "0003-tool-use.yaml"}
 	if !reflect.DeepEqual(files, want) {
 		t.Fatalf("reference composes = %v, want %v", files, want)
 	}
@@ -148,27 +148,39 @@ func TestReferenceCanaryIsExecutableAndCompact(t *testing.T) {
 	}
 }
 
-func TestReasoningAndToolingCapabilitySequence(t *testing.T) {
-	reasoning, _, err := model.LoadCompose("0004-reasoning.yaml")
+func TestToolUseComposeHasSizedBaseAndStructuredToolStage(t *testing.T) {
+	tooling, _, err := model.LoadCompose("0003-tool-use.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	tooling, _, err := model.LoadCompose("0005-reasoning-tools.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(reasoning.Stages) != 4 || reasoning.Stages[2].Name != "reasoning-sft" {
-		t.Fatalf("reasoning curriculum = %+v", reasoning.Stages)
-	}
-	if len(tooling.Stages) != 5 || tooling.Stages[2].Name != "reasoning-sft" || tooling.Stages[4].Name != "tool-use-sft" {
+	if len(tooling.Stages) != 3 || tooling.Stages[2].Name != "tool-use-sft" {
 		t.Fatalf("tooling curriculum = %+v", tooling.Stages)
 	}
-	if !reflect.DeepEqual(reasoning.Stages, tooling.Stages[:len(reasoning.Stages)]) {
-		t.Fatal("reasoning-plus-tools does not preserve the complete basic-reasoning curriculum")
+	if tooling.Interaction.Template != model.InteractionChatMLV1 || tooling.Stages[2].Objective != "assistant-response-modeling" || tooling.Stages[2].Conversation == nil || !reflect.DeepEqual(tooling.Stages[2].Conversation.SupervisedRoles, []string{"assistant"}) {
+		t.Fatalf("tool interaction contract = %+v / %+v", tooling.Interaction, tooling.Stages[2])
 	}
-	wantTools := []string{"post-train/sft/hermes-function-calling", "post-train/sft/toolace", "post-train/sft/xlam-function-calling-60k", "post-train/sft/smoltalk2-tools", "post-train/sft/openthoughts-agent", "post-train/sft/interaction-contract-v1"}
-	if got := corpusPaths(tooling.Stages[4].Corpora); !reflect.DeepEqual(got, wantTools) {
+	wantTools := []string{"post-train/sft/hermes-function-calling", "post-train/sft/interaction-contract-v1"}
+	if got := corpusPaths(tooling.Stages[2].Corpora); !reflect.DeepEqual(got, wantTools) {
 		t.Fatalf("tool-use corpora = %v, want %v", got, wantTools)
+	}
+	forecast, err := model.ForecastCompose(tooling)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const pretrainingTokens = int64(24000004096)
+	if forecast.ApproximateParameters != 1178476544 || tooling.Stages[0].Parameters.Tokens != pretrainingTokens {
+		t.Fatalf("tool forecast = %d parameters/%d pretraining tokens", forecast.ApproximateParameters, tooling.Stages[0].Parameters.Tokens)
+	}
+	tokensPerParameter := float64(pretrainingTokens) / float64(forecast.ApproximateParameters)
+	if tokensPerParameter < 20 || tokensPerParameter > 21 {
+		t.Fatalf("tool pretraining ratio = %.2f tokens/parameter", tokensPerParameter)
+	}
+	if tooling.Stages[1].Parameters.Tokens > int64(forecast.ApproximateParameters/4) {
+		t.Fatalf("conversation SFT budget %d is too large for %d parameters", tooling.Stages[1].Parameters.Tokens, forecast.ApproximateParameters)
+	}
+	wantPretraining := []string{"core/synthetic/cosmopedia-v2", "core/common-pile/wikimedia", "core/common-pile/stackexchange", "core/common-pile/pressbooks", "science/plos", "science/arxiv-abstracts", "code/permissive", "code/cloud-native-core"}
+	if got := corpusPaths(tooling.Stages[0].Corpora); !reflect.DeepEqual(got, wantPretraining) {
+		t.Fatalf("tool pretraining corpora = %v, want %v", got, wantPretraining)
 	}
 }
 
@@ -178,35 +190,6 @@ func corpusPaths(selections []model.CorpusSelection) []string {
 		paths[index] = selection.Path
 	}
 	return paths
-}
-
-func TestTechnologyComposeIncludesTechnicalSourcesAndAssistantTraining(t *testing.T) {
-	compose, _, err := model.LoadCompose("0003-technology.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(compose.Stages) != 4 || compose.Stages[3].Objective != "assistant-response-modeling" {
-		t.Fatalf("technology stages = %+v", compose.Stages)
-	}
-	if compose.Stages[3].Corpora[0].Path != "post-train/sft/ultrachat-200k" || compose.Stages[3].Corpora[1].Path != "post-train/sft/tulu3" {
-		t.Fatalf("technology assistant corpora = %+v", compose.Stages[3].Corpora)
-	}
-	technologyCorpora := map[string]bool{}
-	for _, selection := range compose.Stages[0].Corpora {
-		technologyCorpora[selection.Path] = true
-	}
-	for _, path := range []string{"core/common-pile/stackexchange", "core/common-pile/python-enhancement-proposals/peps", "code/copyleft/linux-core", "code/permissive/linux-core", "code/cloud-native-core", "community/linux-kernel-mailing-list", "community/alpine-linux-mailing-list", "community/gcc-mailing-lists", "community/git-mailing-list", "community/glibc-mailing-lists", "community/qemu-devel-mailing-list"} {
-		if !technologyCorpora[path] {
-			t.Fatalf("technology pretraining is missing %s", path)
-		}
-	}
-	forecast, err := model.ForecastCompose(compose)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 15999991808 || len(forecast.EpochDerivedStages) != 3 {
-		t.Fatalf("technology forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
-	}
 }
 
 func TestBasicConversationPreservesValidatedTrainingSequence(t *testing.T) {
