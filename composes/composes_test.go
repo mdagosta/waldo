@@ -159,9 +159,12 @@ func TestToolUseComposeHasSizedBaseAndStructuredToolStage(t *testing.T) {
 	if tooling.Interaction.Template != model.InteractionChatMLV1 || tooling.Stages[2].Objective != "assistant-response-modeling" || tooling.Stages[2].Conversation == nil || !reflect.DeepEqual(tooling.Stages[2].Conversation.SupervisedRoles, []string{"assistant"}) {
 		t.Fatalf("tool interaction contract = %+v / %+v", tooling.Interaction, tooling.Stages[2])
 	}
-	wantTools := []string{"post-train/sft/hermes-function-calling", "post-train/sft/interaction-contract-v1"}
+	wantTools := []string{"post-train/sft/hermes-function-calling", "post-train/sft/toolace", "post-train/sft/xlam-function-calling-60k", "post-train/sft/smoltalk2-tools", "post-train/sft/openthoughts-agent", "post-train/sft/interaction-contract-v1"}
 	if got := corpusPaths(tooling.Stages[2].Corpora); !reflect.DeepEqual(got, wantTools) {
 		t.Fatalf("tool-use corpora = %v, want %v", got, wantTools)
+	}
+	if tooling.Stages[2].Parameters.Epochs != 1 {
+		t.Fatalf("tool-use epochs = %d, want one bounded pass", tooling.Stages[2].Parameters.Epochs)
 	}
 	forecast, err := model.ForecastCompose(tooling)
 	if err != nil {

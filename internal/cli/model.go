@@ -34,6 +34,7 @@ import (
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/modelexport"
 	"github.com/openwaldo/waldo/internal/modelquant"
+	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 	"github.com/openwaldo/waldo/internal/signing"
 	"github.com/openwaldo/waldo/internal/training"
@@ -1584,7 +1585,7 @@ func emitUnassessedFilterWarning(output io.Writer, stageName string, bom corpus.
 	fields := map[string]bool{}
 	affected := 0
 	for _, selected := range bom.Shards {
-		if selected.RecordSchema >= shard.TextRecordSchema {
+		if selected.RecordKind == record.KindConversation || selected.RecordSchema >= shard.TextRecordSchema {
 			continue
 		}
 		corpusPath := selectedCorpusGroup(selected.Manifest, bom.Paths)

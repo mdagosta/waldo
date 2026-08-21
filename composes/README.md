@@ -59,17 +59,16 @@ evaluation gate has passed.
 `0003-tool-use.yaml` uses ChatML because system, user, assistant, and tool roles
 must remain distinct. Its approximately 1.18B parameters are matched to 24B
 pretraining tokens. Cosmopedia supplies clean explanatory and procedural text;
-it improves the foundation but does not itself teach tool calling. Hermes
-Function Calling and the OpenWALDO interaction contract provide the actual
-structured tool examples.
+it improves the foundation but does not itself teach tool calling. Hermes,
+ToolACE, xLAM, SmolTalk2 tool traces, OpenThoughts Agent, and the OpenWALDO
+interaction contract provide complementary structured tool examples. The tool
+stage makes one complete pass over that mixture to limit synthetic overtraining.
 
 Before training this rung:
 
 - ingest Cosmopedia-v2 and confirm its logical path;
-- reingest the selected post-training corpora with current WALDO so their
-  structured conversations and schema-2 row assessments are present;
-- inspect several Hermes rows to confirm tools, assistant calls, tool results,
-  and final answers all survived conversion; and
+- inspect samples from each tool corpus to confirm tools, assistant calls, tool
+  results, and final answers all survived conversion; and
 - forecast the compose and verify memory and runtime on the intended host.
 
 The current `waldo model chat` interface can exercise learned textual tool-call

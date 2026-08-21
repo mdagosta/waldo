@@ -101,10 +101,14 @@ stages:
     filter: *quality
     corpora:
       - post-train/sft/hermes-function-calling
+      - post-train/sft/toolace
+      - post-train/sft/xlam-function-calling-60k
+      - post-train/sft/smoltalk2-tools
+      - post-train/sft/openthoughts-agent
       - post-train/sft/interaction-contract-v1
     parameters:
       profile: causal-pretrain-shuffled
-      epochs: 2
+      epochs: 1
       batch_size: 8
       sequence_length: 4096
       learning_rate: 0.000006

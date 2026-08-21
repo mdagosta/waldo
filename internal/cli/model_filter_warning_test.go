@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/corpus"
+	"github.com/openwaldo/waldo/internal/record"
 	"github.com/openwaldo/waldo/internal/shard"
 )
 
@@ -31,5 +32,23 @@ func TestUnassessedContentFilterWarning(t *testing.T) {
 	warning := output.String()
 	if !strings.Contains(warning, "warning: stage pretrain: 1 schema-1 shard") || !strings.Contains(warning, "boilerplate_content, repetitive_content filters will be ignored") {
 		t.Fatalf("warning = %q", warning)
+	}
+}
+
+func TestCurrentConversationSchemaDoesNotWarnAsUnassessed(t *testing.T) {
+	present := true
+	bom := corpus.BOM{
+		Paths: []string{"post-train"},
+		RecordFilter: &corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema, Global: &corpus.RecordFilter{Exclude: &corpus.ExclusionFilter{
+			RepetitiveContent: &present, BoilerplateContent: &present,
+		}}},
+		Shards: []corpus.ShardPin{{
+			Manifest: "post-train/tools.yaml", RecordKind: record.KindConversation, RecordSchema: shard.ConversationRecordSchema,
+		}},
+	}
+	var output bytes.Buffer
+	emitUnassessedFilterWarning(&output, "tool-use-sft", bom)
+	if output.Len() != 0 {
+		t.Fatalf("current conversation schema warning = %q", output.String())
 	}
 }
