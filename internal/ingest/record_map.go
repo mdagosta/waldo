@@ -218,7 +218,8 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 		return err
 	}
 	defer file.Close()
-	reader, err := openDecompressed(&contextReader{ctx: ctx, reader: file}, input.Artifact.Compression)
+	progress := &jsonProgressReader{reader: &contextReader{ctx: ctx, reader: file}}
+	reader, err := openDecompressed(progress, input.Artifact.Compression)
 	if err != nil {
 		return err
 	}
@@ -289,7 +290,7 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 			_ = reader.Close()
 			return fmt.Errorf("line %d: %w", line, err)
 		}
-		if err := emit(row, 0); err != nil {
+		if err := emit(row, min(progress.bytes, input.Artifact.Bytes)); err != nil {
 			_ = reader.Close()
 			return err
 		}

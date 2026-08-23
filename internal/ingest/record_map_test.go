@@ -179,6 +179,40 @@ func TestRecordMapUsesExistingCompressedJSONLReader(t *testing.T) {
 	}
 }
 
+func TestMappedCompressedJSONLReportsEncodedInputProgress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.jsonl.gz")
+	writeCompressedJSONL(t, path, "gzip", "{\"text\":\"first document\"}\n{\"text\":\"second document\"}\n")
+	plan := mappedFixturePlan(t, path, InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"text"}}})
+	var progress []int64
+	err := streamMappedJSONL(t.Context(), plan, plan.Inputs[0], func(_ shard.TextRow, inputBytes int64) error {
+		progress = append(progress, inputBytes)
+		return nil
+	}, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(progress) != 2 {
+		t.Fatalf("progress = %v", progress)
+	}
+	for _, encodedBytes := range progress {
+		if encodedBytes <= 0 || encodedBytes > plan.Inputs[0].Artifact.Bytes {
+			t.Fatalf("progress = %v, total = %d", progress, plan.Inputs[0].Artifact.Bytes)
+		}
+	}
+	plan.Writer.AdapterBatchBytes = 1
+	var events []ProgressEvent
+	ctx := WithProgress(t.Context(), func(event ProgressEvent) { events = append(events, event) })
+	if _, err := AssembleTextObjects(ctx, plan, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	for _, event := range events {
+		if event.Phase == "ingest" && event.Status == "records" && event.Bytes > 0 {
+			return
+		}
+	}
+	t.Fatalf("ingest events lack encoded byte progress: %+v", events)
+}
+
 func TestRecordMapClassifiesMainContentFromOneScalarField(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "wikimedia.jsonl")
 	contents := "{\"text\":\"Article\",\"metadata\":{\"namespace\":0}}\n" +
