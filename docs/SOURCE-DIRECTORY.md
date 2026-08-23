@@ -138,7 +138,9 @@ Each child manifest has this shape:
 ```
 
 The child directory name and source ID must match. Undeclared root entries,
-symlinks, special files, and nested manifests are rejected.
+symlinks, special files, and nested WALDO boundary manifests are rejected.
+An ordinary raw file named `manifest.json`, such as a web application manifest,
+remains source content and is included in raw-tree evidence.
 
 ## Raw-tree evidence
 

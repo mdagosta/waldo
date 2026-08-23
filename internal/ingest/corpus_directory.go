@@ -209,10 +209,16 @@ func sourceBoundaryFiles(root string) ([]string, error) {
 			return fmt.Errorf("source entry is not a regular file: %s", path)
 		}
 		if entry.Name() == "manifest.json" {
-			if filepath.Dir(path) != root {
-				return fmt.Errorf("conflicting nested manifest: %s", path)
+			if filepath.Dir(path) == root {
+				return nil
 			}
-			return nil
+			boundary, err := isWALDOBoundaryManifest(path, info.Size())
+			if err != nil {
+				return err
+			}
+			if boundary {
+				return fmt.Errorf("conflicting nested WALDO manifest: %s", path)
+			}
 		}
 		files = append(files, path)
 		return nil
@@ -225,6 +231,23 @@ func sourceBoundaryFiles(root string) ([]string, error) {
 		return nil, fmt.Errorf("source directory contains no raw files: %s", root)
 	}
 	return files, nil
+}
+
+func isWALDOBoundaryManifest(path string, size int64) (bool, error) {
+	if size > sourceManifestMaximum {
+		return false, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, err
+	}
+	var header struct {
+		Kind string `json:"kind"`
+	}
+	if json.Unmarshal(data, &header) != nil {
+		return false, nil
+	}
+	return header.Kind == CorpusDirectoryKind || header.Kind == SourceDirectoryKind, nil
 }
 
 func regularDirectory(path string) (string, bool, error) {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/index"
@@ -21,7 +22,8 @@ import (
 func TestCorpusDirectorySingleSourceBoundary(t *testing.T) {
 	root := t.TempDir()
 	writeProbeFile(t, filepath.Join(root, "nested", "document.txt"), "single source\n")
-	raw := testDirectoryRaw(t, root, []string{"nested/document.txt"})
+	writeProbeFile(t, filepath.Join(root, "web", "manifest.json"), `{"name":"Example web application"}`)
+	raw := testDirectoryRaw(t, root, []string{"nested/document.txt", "web/manifest.json"})
 	manifest := CorpusDirectory{
 		Kind: CorpusDirectoryKind, Schema: SourceDirectorySchema,
 		Corpus: SourceDirectoryCorpus{ID: "example", Title: "Example", Description: "Single source."},
@@ -33,7 +35,7 @@ func TestCorpusDirectorySingleSourceBoundary(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatalf("LoadCorpusDirectory() = ok %v, err %v", ok, err)
 	}
-	if len(loaded.InputPaths()) != 1 || filepath.Base(loaded.InputPaths()[0]) != "document.txt" {
+	if len(loaded.InputPaths()) != 2 || filepath.Base(loaded.InputPaths()[0]) != "document.txt" || filepath.Base(loaded.InputPaths()[1]) != "manifest.json" {
 		t.Fatalf("InputPaths() = %v", loaded.InputPaths())
 	}
 	probe, err := ProbePaths(context.Background(), loaded.InputPaths())
@@ -47,6 +49,26 @@ func TestCorpusDirectorySingleSourceBoundary(t *testing.T) {
 	loaded.Apply(&request)
 	if request.Destination != "core/example" || len(request.Sources) != 1 || request.Sources[0].InputRoot != root {
 		t.Fatalf("request = %+v", request)
+	}
+}
+
+func TestCorpusDirectoryRejectsNestedWALDOBoundaryManifest(t *testing.T) {
+	root := t.TempDir()
+	writeProbeFile(t, filepath.Join(root, "nested", "document.txt"), "single source\n")
+	writeJSONFile(t, filepath.Join(root, "nested", "manifest.json"), sourceDirectoryWire{
+		Kind: SourceDirectoryKind, Schema: SourceDirectorySchema,
+		Source: *testDirectorySource("nested", "CC0-1.0"),
+	})
+	raw := testDirectoryRaw(t, root, []string{"nested/document.txt", "nested/manifest.json"})
+	writeJSONFile(t, filepath.Join(root, "manifest.json"), CorpusDirectory{
+		Kind: CorpusDirectoryKind, Schema: SourceDirectorySchema,
+		Corpus: SourceDirectoryCorpus{ID: "example", Title: "Example", Description: "Single source."},
+		Source: testDirectorySource("example", "CC0-1.0"), Raw: &raw,
+	})
+
+	_, ok, err := LoadCorpusDirectory(root)
+	if !ok || err == nil || !strings.Contains(err.Error(), "conflicting nested WALDO manifest") {
+		t.Fatalf("LoadCorpusDirectory() = ok %v, err %v", ok, err)
 	}
 }
 
