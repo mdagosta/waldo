@@ -87,6 +87,7 @@ destination="$index_root/core/e2e/mlx"
   --description Disposable-real-MLX-training-input \
   --license CC0-1.0 \
   --source https://example.invalid/mlx-e2e \
+  --language en \
   --source-category public-dataset >/dev/null
 
 contribution=""
