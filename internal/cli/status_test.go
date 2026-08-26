@@ -25,6 +25,11 @@ func TestStatusExplainsEveryUnavailableReadiness(t *testing.T) {
 	if code := Run([]string{"status"}, &stdout, &stderr); code != 0 {
 		t.Fatalf("status code = %d, stderr = %q", code, stderr.String())
 	}
+	for _, heading := range []string{"Host\n", "Index\n", "Lookaside\n", "Training\n", "Overall\n"} {
+		if !strings.Contains(stdout.String(), heading) {
+			t.Errorf("status output missing section %q:\n%s", heading, stdout.String())
+		}
+	}
 	for _, want := range []string{"Host", "Memory", "Index", root, "Lookaside", "Training", "Ready", "no", "Reason", "fake backend"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("status output missing %q:\n%s", want, stdout.String())

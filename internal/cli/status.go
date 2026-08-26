@@ -22,55 +22,62 @@ func runStatus(context Context, _ []string, stdout, _ io.Writer) error {
 	if context.JSON {
 		return writeJSON(stdout, report)
 	}
-	fmt.Fprintf(stdout, "Host          %s/%s, %d CPUs\n", report.Host.OS, report.Host.Architecture, report.Host.CPUs)
-	fmt.Fprintf(stdout, "Memory        %s\n", humanBytesUint(report.Host.MemoryBytes))
-	fmt.Fprintf(stdout, "Disk          %s available / %s total\n", humanBytesUint(report.Host.DiskFree), humanBytesUint(report.Host.DiskBytes))
+	fmt.Fprintln(stdout, "Host")
+	printStatusField(stdout, "Platform", fmt.Sprintf("%s/%s", report.Host.OS, report.Host.Architecture))
+	printStatusField(stdout, "CPUs", fmt.Sprintf("%d", report.Host.CPUs))
+	printStatusField(stdout, "Memory", humanBytesUint(report.Host.MemoryBytes))
+	printStatusField(stdout, "Disk", fmt.Sprintf("%s available / %s total", humanBytesUint(report.Host.DiskFree), humanBytesUint(report.Host.DiskBytes)))
 	fmt.Fprintln(stdout)
-	fmt.Fprintf(stdout, "Index         %s\n", report.Index.Path)
-	fmt.Fprintf(stdout, "  Ready       %s\n", readiness(report.Index.Ready))
+	fmt.Fprintln(stdout, "Index")
+	printStatusField(stdout, "Path", report.Index.Path)
+	printStatusField(stdout, "Ready", readiness(report.Index.Ready))
 	if !report.Index.Ready {
-		fmt.Fprintf(stdout, "  Reason      %s\n", report.Index.Reason)
-	}
-	fmt.Fprintf(stdout, "Lookaside     %s\n", report.Lookaside.Cache)
-	if report.Lookaside.Publish == nil {
-		fmt.Fprintln(stdout, "  Publish     (not configured)")
-	} else {
-		fmt.Fprintf(stdout, "  Publish     %s\n", report.Lookaside.Publish.URL)
+		printStatusField(stdout, "Reason", report.Index.Reason)
 	}
 	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Lookaside")
+	printStatusField(stdout, "Cache", report.Lookaside.Cache)
+	if report.Lookaside.Publish == nil {
+		printStatusField(stdout, "Publish", "(not configured)")
+	} else {
+		printStatusField(stdout, "Publish", report.Lookaside.Publish.URL)
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "Training")
 	if report.Training.Execution == nil {
-		fmt.Fprintln(stdout, "Training      unavailable")
+		printStatusField(stdout, "Backend", "unavailable")
 	} else {
 		printTrainingExecution(stdout, *report.Training.Execution)
 	}
-	fmt.Fprintf(stdout, "  Ready       %s\n", readiness(report.Training.Ready))
+	printStatusField(stdout, "Ready", readiness(report.Training.Ready))
 	if !report.Training.Ready {
-		fmt.Fprintf(stdout, "  Reason      %s\n", report.Training.Reason)
+		printStatusField(stdout, "Reason", report.Training.Reason)
 	}
 	fmt.Fprintln(stdout)
-	fmt.Fprintf(stdout, "Ready         %s\n", readiness(report.Ready))
+	fmt.Fprintln(stdout, "Overall")
+	printStatusField(stdout, "Ready", readiness(report.Ready))
 	if !report.Ready {
 		for _, reason := range report.Reasons {
-			fmt.Fprintf(stdout, "Reason        %s\n", singleLine(reason))
+			printStatusField(stdout, "Reason", singleLine(reason))
 		}
 	}
 	return nil
 }
 
 func printTrainingExecution(output io.Writer, execution training.Execution) {
-	fmt.Fprintf(output, "Training      %s@%s\n", execution.Backend.Name, execution.Backend.Revision)
-	fmt.Fprintf(output, "  Runtime     %s\n", singleLine(execution.Runtime))
+	printStatusField(output, "Backend", execution.Backend.Name+"@"+execution.Backend.Revision)
+	printStatusField(output, "Runtime", singleLine(execution.Runtime))
 	if len(execution.Accelerators) == 0 {
-		fmt.Fprintln(output, "  Accelerator CPU")
+		printStatusField(output, "Accelerator", "CPU")
 		return
 	}
-	for index, accelerator := range execution.Accelerators {
-		label := "Accelerator"
-		if index > 0 {
-			label = ""
-		}
-		fmt.Fprintf(output, "  %-11s %s, %s\n", label, acceleratorDisplay(accelerator), humanBytesUint(accelerator.MemoryBytes))
+	for _, accelerator := range execution.Accelerators {
+		printStatusField(output, "Accelerator", fmt.Sprintf("%s, %s", acceleratorDisplay(accelerator), humanBytesUint(accelerator.MemoryBytes)))
 	}
+}
+
+func printStatusField(output io.Writer, label, value string) {
+	fmt.Fprintf(output, "  %-11s %s\n", label, singleLine(value))
 }
 
 func acceleratorDisplay(accelerator training.Accelerator) string {
