@@ -25,7 +25,7 @@ type ResourceForecast struct {
 	EpochDerivedStages    []string                `json:"epoch_derived_stages,omitempty"`
 	TrainingFLOPs         float64                 `json:"training_flops"`
 	Calibrations          []ForecastCalibration   `json:"calibrations,omitempty"`
-	Configurations        []HardwareConfiguration `json:"configurations"`
+	Configurations        []HardwareConfiguration `json:"configurations,omitempty"`
 }
 
 // ForecastCalibration is aggregate, reproducible evidence from completed

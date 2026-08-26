@@ -43,6 +43,7 @@ With no configured index, read-only index commands use a managed checkout at
 `~/.waldo/index`:
 
 ```bash
+waldo status
 waldo index list
 waldo index summary
 waldo index verify --offline

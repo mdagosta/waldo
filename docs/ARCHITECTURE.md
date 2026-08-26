@@ -76,6 +76,8 @@ contract. Export conversion is split across `internal/modelexport`,
 ### Cross-cutting packages
 
 - `internal/config`: machine-local transport and execution preferences.
+- `internal/host`: framework-independent local CPU, memory, and filesystem facts.
+- `internal/status`: read-only index, lookaside, and training readiness orchestration.
 - `internal/canon`: deterministic serialization helpers.
 - `internal/calibration`: forecast and quantization calibration evidence.
 - `internal/disclosure`: EU GPAI disclosure projection.
