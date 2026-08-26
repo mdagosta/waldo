@@ -59,6 +59,16 @@ const (
 	ggufArray   = 9
 )
 
+// Add tools capability to Ollama exports.
+// Does not mean the model has actually been trained in tools.
+const ollamaToolTemplate = `TEMPLATE """{{ if .System }}{{ .System }}
+{{ end }}{{ if .Tools }}You have access to the following tools:
+{{ range .Tools }}{{ .Function.Name }}: {{ .Function.Description }}
+{{ end }}
+{{ end }}{{ range .Messages }}{{ .Role }}: {{ .Content }}
+{{ end }}assistant: """
+`
+
 func ExportGGUF(ctx context.Context, inspection model.Inspection, destination string, options Options) (string, error) {
 	return exportGGUFPackage(ctx, inspection, destination, options, false)
 }
@@ -124,7 +134,7 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	roles := map[string]string{"model.gguf": "weights", "EU-BOM.json": "regulatory-disclosure"}
 	if ollama {
 		format = "ollama"
-		modelfile := fmt.Sprintf("FROM ./model.gguf\nPARAMETER num_ctx %d\n", inspection.Model.Architecture.ContextTokens)
+		modelfile := fmt.Sprintf("FROM ./model.gguf\nPARAMETER num_ctx %d\n%s", inspection.Model.Architecture.ContextTokens, ollamaToolTemplate)
 		if err := os.WriteFile(filepath.Join(temporary, "Modelfile"), []byte(modelfile), 0o644); err != nil {
 			return "", err
 		}
