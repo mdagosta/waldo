@@ -48,11 +48,35 @@ func runModelForecast(context Context, args []string, stdout, stderr io.Writer) 
 		if err != nil {
 			return err
 		}
+		if !isCompose {
+			isCompose, err = composeLookingForecastInput(args[0])
+			if err != nil {
+				return err
+			}
+		}
 		if isCompose {
 			return runModelComposeForecast(context, args[0], stdout, stderr)
 		}
 	}
 	return runModelIndexForecast(context, args, stdout, stderr)
+}
+
+func composeLookingForecastInput(path string) (bool, error) {
+	extension := strings.ToLower(filepath.Ext(path))
+	if extension != ".yaml" && extension != ".yml" && extension != ".json" {
+		return false, nil
+	}
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		// A single metadata filename is the documented compose form. Existing
+		// index manifests are still identified by their content and resolved
+		// through the normal index path.
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !info.IsDir() && info.Size() == 0, nil
 }
 
 func runModelComposeForecast(context Context, path string, stdout, progress io.Writer) error {

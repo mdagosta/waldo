@@ -8,6 +8,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -100,6 +101,35 @@ func TestModelForecastAcceptsConfiguredMultipleIndexPaths(t *testing.T) {
 	code = Run([]string{"model", "forecast", filepath.Join(root, "books"), "--compare-hosts"}, &stdout, &stderr)
 	if code != 0 || !strings.Contains(stdout.String(), "HOST COMPARISON") || !strings.Contains(stdout.String(), "MFR") {
 		t.Fatalf("comparison forecast code = %d, stderr = %q:\n%s", code, stderr.String(), stdout.String())
+	}
+}
+
+func TestModelForecastDistinguishesComposeInputErrorsFromIndexSelections(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"model", "forecast", missing}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "model compose") || !strings.Contains(stderr.String(), "does not exist") || strings.Contains(stderr.String(), "index path") {
+		t.Fatalf("missing compose code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+
+	empty := filepath.Join(t.TempDir(), "empty.yaml")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"model", "forecast", empty}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "model compose") || !strings.Contains(stderr.String(), "is empty") || strings.Contains(stderr.String(), "index path") {
+		t.Fatalf("empty compose code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+
+	root := fixtureCLIIndex(t)
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	if err := config.Save(config.Config{Index: root, Model: config.Model{Backend: "fake"}}); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := Run([]string{"model", "forecast", "missing/corpus"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "index path missing/corpus") || strings.Contains(stderr.String(), "model compose") {
+		t.Fatalf("missing index code = %d, stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
 	}
 }
 

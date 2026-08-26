@@ -63,6 +63,20 @@ func TestLoadComposeIsStrictAndKeepsIndexPathsLogical(t *testing.T) {
 	}
 }
 
+func TestLoadComposeExplainsMissingAndEmptyFiles(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	if _, _, err := LoadCompose(missing); err == nil || !strings.Contains(err.Error(), "model compose") || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("missing compose error = %v", err)
+	}
+	empty := filepath.Join(t.TempDir(), "empty.yaml")
+	if err := os.WriteFile(empty, []byte(" \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadCompose(empty); err == nil || !strings.Contains(err.Error(), "model compose") || !strings.Contains(err.Error(), "is empty") {
+		t.Fatalf("empty compose error = %v", err)
+	}
+}
+
 func TestComposeConversationInteractionIsStrictAndChangesPlanIdentity(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "conversation.yaml")
 	document := strings.Replace(composeYAML(""), "architecture:\n", "interaction:\n  template: user-assistant-v1\narchitecture:\n", 1)

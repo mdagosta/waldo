@@ -375,7 +375,13 @@ func LoadCompose(path string) (Compose, string, error) {
 	}
 	data, err := os.ReadFile(absolute)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return Compose{}, "", fmt.Errorf("model compose %s does not exist", absolute)
+		}
 		return Compose{}, "", err
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return Compose{}, "", fmt.Errorf("model compose %s is empty", absolute)
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)

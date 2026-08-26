@@ -469,7 +469,9 @@ resolve a deduplicated selection, recommend the largest model rung supported by
 roughly 20 tokens per parameter, and forecast one pass. Forecast creates no
 model or run state. Human forecasts report the derived approximate parameter
 count in both compact and exact form; JSON exposes the same value as
-`approximate_parameters`.
+`approximate_parameters`. WALDO reports missing or empty compose files as input
+errors rather than treating their filenames as corpus paths. Logical corpus
+selections use the normal configured-index refresh before resolution.
 
 By default the forecast resolves the same MLX, PyTorch, or TorchTitan harness
 that training would use, compares the workload with the current host's memory,
