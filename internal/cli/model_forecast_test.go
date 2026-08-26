@@ -142,3 +142,23 @@ func TestWriteModelForecastIdentifiesEpochDerivedWork(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteModelForecastRecommendsRemoteComputeWithoutCatalogFit(t *testing.T) {
+	report := model.ResourceForecast{
+		ApproximateParameters: 1_000_000_000_000,
+		PlannedTokens:         1,
+		CatalogNote:           "no configuration in the forecast catalog has sufficient memory for this workload",
+	}
+	host := model.HostForecast{
+		Reason:         "training requires 1.0 TiB per device, but this host has 128.0 GiB",
+		Recommendation: "use remote compute with at least 1.0 TiB of usable memory per device",
+		Execution:      training.Execution{Host: training.Host{OS: "linux", Architecture: "amd64"}},
+	}
+	var output bytes.Buffer
+	writeModelForecast(&output, report, host, true)
+	for _, want := range []string{"READY:       no", "REASON:", "RECOMMEND:   use remote compute", "HOST COMPARISON", "NOTE:        no configuration"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("forecast output missing %q:\n%s", want, output.String())
+		}
+	}
+}

@@ -19,6 +19,7 @@ const (
 
 type ResourceForecast struct {
 	Catalog               string                  `json:"catalog"`
+	CatalogNote           string                  `json:"catalog_note,omitempty"`
 	Formula               string                  `json:"formula"`
 	ApproximateParameters uint64                  `json:"approximate_parameters"`
 	PlannedTokens         int64                   `json:"planned_tokens"`
@@ -171,7 +172,7 @@ func forecastPlanWithCalibration(plan Plan, calibrations []ForecastCalibration) 
 		}
 	}
 	if len(report.Configurations) == 0 {
-		return ResourceForecast{}, fmt.Errorf("model does not fit any hardware configuration in forecast catalog %s", forecastCatalog)
+		report.CatalogNote = fmt.Sprintf("no configuration in forecast catalog %s has sufficient memory for this workload", forecastCatalog)
 	}
 	sort.Slice(report.Configurations, func(i, j int) bool {
 		left, right := report.Configurations[i], report.Configurations[j]

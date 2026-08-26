@@ -182,6 +182,10 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast, hostFor
 }
 
 func writeHostComparison(stdout io.Writer, report model.ResourceForecast) {
+	if len(report.Configurations) == 0 {
+		fmt.Fprintf(stdout, "NOTE:        %s\n", singleLine(report.CatalogNote))
+		return
+	}
 	type row struct {
 		manufacturer string
 		accelerator  string
@@ -252,6 +256,9 @@ func writeHostModelForecast(stdout io.Writer, forecast model.HostForecast) {
 	fmt.Fprintf(stdout, "READY:       %s\n", readiness(forecast.Ready))
 	if !forecast.Ready {
 		fmt.Fprintf(stdout, "REASON:      %s\n", singleLine(forecast.Reason))
+		if forecast.Recommendation != "" {
+			fmt.Fprintf(stdout, "RECOMMEND:   %s\n", singleLine(forecast.Recommendation))
+		}
 		return
 	}
 	if forecast.ApproximateSeconds != nil {

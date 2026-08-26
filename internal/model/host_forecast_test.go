@@ -46,7 +46,7 @@ func TestAssessComposeHostExplainsInsufficientCPUMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assessment.Ready || assessment.Reason == "" || assessment.AvailableMemory != 1<<30 || assessment.RequiredMemory == 0 {
+	if assessment.Ready || assessment.Reason == "" || assessment.Recommendation == "" || assessment.AvailableMemory != 1<<30 || assessment.RequiredMemory == 0 {
 		t.Fatalf("assessment = %+v", assessment)
 	}
 }

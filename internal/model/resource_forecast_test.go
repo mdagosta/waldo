@@ -209,7 +209,7 @@ func TestLoadForecastCalibrationUsesVerifiedLocalModels(t *testing.T) {
 	}
 }
 
-func TestForecastPlanRejectsModelTooLargeForCatalog(t *testing.T) {
+func TestForecastPlanReportsModelTooLargeForCatalog(t *testing.T) {
 	architecture := Architecture{
 		Family: "decoder-transformer", ContextTokens: 2048, VocabularySize: 32000,
 		HiddenSize: 65_536, IntermediateSize: 262_144, Layers: 256,
@@ -220,11 +220,14 @@ func TestForecastPlanRejectsModelTooLargeForCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = forecastPlan(Plan{
+	report, err := forecastPlan(Plan{
 		Architecture: architecture, Forecast: forecast,
 		Stages: []PlannedStage{{Name: "pretrain", Parameters: validCompose().Stages[0].Parameters, PlannedTokens: 1}},
 	})
-	if err == nil || !strings.Contains(err.Error(), "does not fit any hardware configuration") {
-		t.Fatalf("error = %v", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Configurations) != 0 || !strings.Contains(report.CatalogNote, "no configuration") || report.ApproximateParameters == 0 || report.PlannedTokens != 1 {
+		t.Fatalf("report = %+v", report)
 	}
 }

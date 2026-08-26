@@ -475,7 +475,10 @@ By default the forecast resolves the same MLX, PyTorch, or TorchTitan harness
 that training would use, compares the workload with the current host's memory,
 and reports `Ready: yes` or explains why it is not ready. A matching catalog or
 observed-run profile also supplies an approximate duration. Backend discovery
-or local readiness failure does not discard the workload forecast.
+or local readiness failure does not discard the workload forecast. When the
+workload exceeds local memory, WALDO recommends remote compute with sufficient
+usable memory. A workload larger than every dated catalog configuration still
+returns its conservative resource forecast instead of failing.
 
 `--compare-hosts` additionally shows fitting catalog configurations from
 slowest to fastest:

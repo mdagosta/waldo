@@ -17,6 +17,7 @@ import (
 type HostForecast struct {
 	Ready              bool               `json:"ready"`
 	Reason             string             `json:"reason,omitempty"`
+	Recommendation     string             `json:"recommendation,omitempty"`
 	Execution          training.Execution `json:"execution"`
 	AvailableMemory    uint64             `json:"available_memory_bytes"`
 	RequiredMemory     uint64             `json:"required_memory_bytes"`
@@ -88,6 +89,7 @@ func assessHost(plan Plan, report ResourceForecast, execution training.Execution
 	usable := available - available/10
 	if required > usable {
 		assessment.Reason = fmt.Sprintf("training requires %s per device including workspace, but this host has %s", forecastMemory(required), forecastMemory(available))
+		assessment.Recommendation = fmt.Sprintf("use remote compute with at least %s of usable memory per device, or reduce the model, batch size, or sequence length", forecastMemory(required))
 		return assessment, nil
 	}
 	assessment.Ready = true
