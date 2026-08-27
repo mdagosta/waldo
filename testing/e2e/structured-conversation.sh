@@ -148,6 +148,7 @@ stages:
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
+      tools: true
     corpora:
       - post-train/sft/structured-conversation-e2e
     parameters:

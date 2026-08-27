@@ -81,4 +81,8 @@ preserves BF16 or F16 matrices, and promotes one-dimensional normalization
 weights to F32. WALDO's schema-1 byte tokenizer is encoded as an explicit
 GPT-2-style byte vocabulary with no merges and no implicit BOS or EOS token.
 The Ollama adapter adds only a relative `Modelfile`; it does not create a
-second weight representation.
+second weight representation. Its default prompt remains raw. An explicit
+`--ollama-tools` export may add a tool-capable template only when a completed
+assistant-response run records `conversation.tools: true` and matches the
+model's pinned interaction template. This preserves full tool schemas,
+assistant calls, and tool results without claiming unrecorded capability.

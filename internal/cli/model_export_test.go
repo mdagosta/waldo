@@ -56,3 +56,24 @@ func TestParseModelExportQuantization(t *testing.T) {
 		}
 	}
 }
+
+func TestParseModelExportOllamaTools(t *testing.T) {
+	context, args, err := parseCobraCommand(t, []string{"model", "export"}, []string{"model", "release", "--format", "ollama", "--ollama-tools"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := cobraModelExportOptions(context, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.OllamaTools {
+		t.Fatalf("parsed = %+v", parsed)
+	}
+	context, args, err = parseCobraCommand(t, []string{"model", "export"}, []string{"model", "release", "--format", "gguf", "--ollama-tools"})
+	if err == nil {
+		_, err = cobraModelExportOptions(context, args)
+	}
+	if err == nil {
+		t.Fatal("accepted --ollama-tools for a non-Ollama export")
+	}
+}

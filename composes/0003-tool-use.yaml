@@ -97,7 +97,10 @@ stages:
   - name: tool-use-sft
     type: fine-tuning
     objective: assistant-response-modeling
-    conversation: *assistant
+    conversation:
+      template: chatml-v1
+      supervised_roles: [assistant]
+      tools: true
     filter: *quality
     corpora:
       - post-train/sft/hermes-function-calling

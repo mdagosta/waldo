@@ -23,7 +23,10 @@ training template.
 
 Schema-1 model composes initially support `user-assistant-v1` and `chatml-v1`.
 Tool definitions are deterministically added to the leading system message by
-these template versions. A template behavior change requires a new identifier.
+these template versions. A stage that accepts tool-bearing conversations must
+declare `tools: true`, making tool capability explicit in its run BOM; such a
+stage must supervise assistant responses. A template behavior change requires
+a new identifier.
 
 Existing flattened text shards remain readable as `pretrain` records. They are
 not accepted by `assistant-response-modeling`, because reconstructing message

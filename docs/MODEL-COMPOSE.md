@@ -283,7 +283,7 @@ backends receive identical token IDs.
 | `name` | yes | `^[a-z0-9][a-z0-9._-]{0,63}$` | Unique durable stage and run label. |
 | `type` | yes | `pre-training`, `fine-tuning`, `alignment`, or `other` | Records the stage's intended role in provenance. |
 | `objective` | yes | `causal-language-modeling` or `assistant-response-modeling` | Causal loss covers every next token; assistant-response loss supervises roles selected by a structured conversation transformation. |
-| `conversation` | for assistant-response modeling and conversation shards | object | Pins `template` (`user-assistant-v1` or `chatml-v1`) and a non-empty `supervised_roles` list. It must match `interaction.template`. |
+| `conversation` | for assistant-response modeling and conversation shards | object | Pins `template` (`user-assistant-v1` or `chatml-v1`) and a non-empty `supervised_roles` list. It must match `interaction.template`. Set `tools: true` only for stages intentionally training on tool definitions, assistant tool calls, and tool results; `assistant` must be supervised. |
 | `filter` | no | record filter | Applies one record-level condition to every selected corpus. |
 | `corpora` | yes | non-empty list of unique scalar paths or configured corpus objects | Selects canonical corpus records for the stage. |
 | `parameters` | yes | object | Declares the portable training budget and controls. |

@@ -59,6 +59,34 @@ const (
 	ggufArray   = 9
 )
 
+const ollamaUserAssistantToolTemplate = `TEMPLATE """{{- if .System }}System: {{ .System }}{{ end }}{{- if .Tools }}{{ if .System }}
+
+{{ end }}System: Available tools:
+{{ json .Tools }}{{ end }}{{- range .Messages }}
+
+{{- if eq .Role "assistant" }}Assistant:{{ if .Content }}{{ .Content }}{{ end }}{{- if .ToolCalls }}[{{ range $index, $_ := .ToolCalls }}{{ if $index }},{{ end }}{"name":{{ json .Function.Name }},"arguments":{{ json .Function.Arguments }}}{{ end }}]{{ end }}
+{{- else if eq .Role "tool" }}Tool: {{ .Content }}
+{{- else if eq .Role "user" }}User: {{ .Content }}
+{{- else }}System: {{ .Content }}
+{{- end }}{{- end }}
+
+Assistant:"""
+`
+
+const ollamaChatMLToolTemplate = `TEMPLATE """{{- if or .System .Tools }}<|im_start|>system
+{{- if .System }}{{ .System }}{{ end }}{{- if .Tools }}{{ if .System }}
+
+{{ end }}Available tools:
+{{ json .Tools }}{{ end }}<|im_end|>
+{{- end }}{{- range .Messages }}<|im_start|>{{ .Role }}
+{{- if eq .Role "assistant" }}{{ if .Content }}{{ .Content }}{{ end }}{{- if .ToolCalls }}[{{ range $index, $_ := .ToolCalls }}{{ if $index }},{{ end }}{"name":{{ json .Function.Name }},"arguments":{{ json .Function.Arguments }}}{{ end }}]{{ end }}
+{{- else if eq .Role "tool" }}{{ .Content }}
+{{- else }}{{ .Content }}
+{{- end }}<|im_end|>
+{{- end }}<|im_start|>assistant
+"""
+`
+
 func ExportGGUF(ctx context.Context, inspection model.Inspection, destination string, options Options) (string, error) {
 	return exportGGUFPackage(ctx, inspection, destination, options, false)
 }
@@ -124,7 +152,10 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	roles := map[string]string{"model.gguf": "weights", "EU-BOM.json": "regulatory-disclosure"}
 	if ollama {
 		format = "ollama"
-		modelfile := fmt.Sprintf("FROM ./model.gguf\nPARAMETER num_ctx %d\n", inspection.Model.Architecture.ContextTokens)
+		modelfile, err := ollamaModelfile(inspection, options)
+		if err != nil {
+			return "", err
+		}
 		if err := os.WriteFile(filepath.Join(temporary, "Modelfile"), []byte(modelfile), 0o644); err != nil {
 			return "", err
 		}
@@ -166,6 +197,38 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	}
 	committed = true
 	return absolute, nil
+}
+
+func ollamaModelfile(inspection model.Inspection, options Options) (string, error) {
+	result := fmt.Sprintf("FROM ./model.gguf\nPARAMETER num_ctx %d\n", inspection.Model.Architecture.ContextTokens)
+	if !options.OllamaTools {
+		return result, nil
+	}
+	if !hasPinnedToolContract(inspection) {
+		return "", fmt.Errorf("--ollama-tools requires a completed assistant-response run with a pinned tool conversation contract")
+	}
+	switch inspection.Model.Interaction.Template {
+	case model.InteractionUserAssistantV1:
+		return result + ollamaUserAssistantToolTemplate, nil
+	case model.InteractionChatMLV1:
+		return result + ollamaChatMLToolTemplate, nil
+	default:
+		return "", fmt.Errorf("--ollama-tools does not support interaction template %q", inspection.Model.Interaction.Template)
+	}
+}
+
+func hasPinnedToolContract(inspection model.Inspection) bool {
+	for index, bom := range inspection.RunBOMs {
+		if index >= len(inspection.Runs) || inspection.Runs[index].State != model.RunComplete || bom.Objective != "assistant-response-modeling" || !bom.Conversation.Tools || bom.Conversation.Template != inspection.Model.Interaction.Template {
+			continue
+		}
+		for _, role := range bom.Conversation.SupervisedRoles {
+			if role == "assistant" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func writeGGUF(ctx context.Context, source, destination string, record model.ModelRecord) error {

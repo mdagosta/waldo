@@ -7,6 +7,7 @@ package training
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -105,7 +106,7 @@ func TestConversationTransformPreservesContextAndToolsUntilTraining(t *testing.T
 		},
 		Tools: []byte(`[{"name":"lookup"}]`),
 	}
-	tokens, mask, err := (ConversationTransform{Template: ConversationTemplateChatMLV1, SupervisedRoles: []string{"assistant"}}).render(conversation, byteCodec{})
+	tokens, mask, err := (ConversationTransform{Template: ConversationTemplateChatMLV1, SupervisedRoles: []string{"assistant"}, Tools: true}).render(conversation, byteCodec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,6 +124,20 @@ func TestConversationTransformPreservesContextAndToolsUntilTraining(t *testing.T
 	}
 	if string(supervised) != "Done.<|im_end|>\n" {
 		t.Fatalf("supervised content = %q", supervised)
+	}
+}
+
+func TestConversationTransformRequiresPinnedToolContract(t *testing.T) {
+	conversation := record.Conversation{
+		Messages: []record.Message{{Role: "user", Content: "Use a tool"}, {Role: "assistant", Content: `{\"name\":\"lookup\"}`}},
+		Tools:    json.RawMessage(`[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]`),
+	}
+	_, _, err := (ConversationTransform{Template: ConversationTemplateChatMLV1, SupervisedRoles: []string{"assistant"}}).render(conversation, byteCodec{})
+	if err == nil || !strings.Contains(err.Error(), "tools: true") {
+		t.Fatalf("tool contract error = %v", err)
+	}
+	if err := (ConversationTransform{Template: ConversationTemplateChatMLV1, SupervisedRoles: []string{"tool"}, Tools: true}).Validate(); err == nil || !strings.Contains(err.Error(), "assistant") {
+		t.Fatalf("tool supervision error = %v", err)
 	}
 }
 

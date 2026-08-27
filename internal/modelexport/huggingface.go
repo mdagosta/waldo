@@ -27,6 +27,7 @@ import (
 type Options struct {
 	EUBOM        []byte
 	Finalize     func(string) error
+	OllamaTools  bool
 	Quantization *Quantization
 	Report       func(string)
 	result       *modelquant.Result

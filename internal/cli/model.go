@@ -1249,7 +1249,7 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 		}
 		output, err = modelexport.ExportGGUF(context.Execution, inspection, parsed.Destination, options)
 	case "ollama":
-		options := modelexport.Options{EUBOM: euBOM, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
+		options := modelexport.Options{EUBOM: euBOM, OllamaTools: parsed.OllamaTools, Quantization: quantization, Report: func(message string) { fmt.Fprintln(stderr, "quantization      "+message) }}
 		if signed {
 			options.Finalize = finalize
 		}
@@ -1285,19 +1285,23 @@ type modelExportOptions struct {
 	Quant           string
 	Calibration     string
 	AllowIncomplete bool
+	OllamaTools     bool
 }
 
 func cobraModelExportOptions(context Context, args []string) (modelExportOptions, error) {
 	result := modelExportOptions{
 		Name: args[0], Destination: args[1],
 		Format: stringOption(context, "format"), Quant: stringOption(context, "quant"),
-		Calibration: stringOption(context, "calibration"), AllowIncomplete: boolOption(context, "allow-incomplete"),
+		Calibration: stringOption(context, "calibration"), AllowIncomplete: boolOption(context, "allow-incomplete"), OllamaTools: boolOption(context, "ollama-tools"),
 	}
 	if result.Format != "waldo" && result.Format != "huggingface" && result.Format != "mlx" && result.Format != "gguf" && result.Format != "ollama" {
 		return modelExportOptions{}, fmt.Errorf("model export format %q is not implemented; use waldo, huggingface, mlx, gguf, or ollama", result.Format)
 	}
 	if result.Quant != "" && result.Format != "gguf" && result.Format != "ollama" {
 		return modelExportOptions{}, fmt.Errorf("--quant is supported only with --format gguf or ollama")
+	}
+	if result.OllamaTools && result.Format != "ollama" {
+		return modelExportOptions{}, fmt.Errorf("--ollama-tools is supported only with --format ollama")
 	}
 	if result.Quant != "" {
 		if _, err := modelquant.ResolveProfile(result.Quant); err != nil {

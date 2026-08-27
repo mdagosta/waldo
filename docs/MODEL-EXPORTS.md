@@ -10,6 +10,7 @@ waldo model export <name> <new-directory> \
   [--format waldo|huggingface|mlx|gguf|ollama] \
   [--quant 2|3|4|5|6|8] \
   [--calibration <index-path>] \
+  [--ollama-tools] \
   [--allow-incomplete] [--json]
 ```
 
@@ -32,7 +33,7 @@ not also copy Safetensors and choosing Hugging Face does not also create GGUF.
 | `huggingface` | Transformers and compatible consumers such as vLLM | Safetensors with standard Llama tensor names | Llama configuration, generation configuration, byte tokenizer, architecture binding, and README |
 | `mlx` | MLX and MLX-LM | Safetensors with standard Llama tensor names and MLX container metadata | MLX-LM architecture binding, configuration, byte tokenizer, and README |
 | `gguf` | llama.cpp-compatible consumers, including LM Studio | One GGUF v3 file | No second weight representation |
-| `ollama` | Ollama | The same GGUF v3 representation | A relative `Modelfile` containing the context length |
+| `ollama` | Ollama | The same GGUF v3 representation | A relative `Modelfile` containing the context length and, when explicitly requested and supported by training provenance, a tool template |
 
 `waldo` is the default because it is lossless, retains the pulled origin
 and every historical run, and preserves the most provenance. A derived runtime
@@ -418,10 +419,22 @@ moved.
 
 The same `--quant` and optional `--calibration` flags apply to Ollama exports.
 
-WALDO's current pretrained models are raw causal continuation models. The
-Ollama package therefore does not invent a system prompt or chat template.
-Instruction-style chat behavior requires a later, explicitly recorded
-fine-tuning stage and pinned chat-template contract.
+Ollama exports default to raw prompting: WALDO does not infer chat or tool
+behavior from a model name or selected corpus. For a model with a completed
+`assistant-response-modeling` run whose recorded conversation transform has
+`tools: true`, explicitly request its compatible tool template:
+
+```bash
+waldo model export tool-model ./tool-model-ollama \
+  --format ollama --ollama-tools
+```
+
+The generated template is selected from the model's pinned
+`interaction.template` (`user-assistant-v1` or `chatml-v1`). It preserves the
+complete runtime tool schema, assistant tool-call names and arguments, and
+tool-result messages. `--ollama-tools` fails closed for raw models, incomplete
+runs, unrecognized templates, and conversational runs that did not explicitly
+record tool training. The option is valid only with `--format ollama`.
 
 ## Machine-readable command output
 

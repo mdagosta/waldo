@@ -10,11 +10,64 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/modelquant"
+	"github.com/openwaldo/waldo/internal/training"
 )
+
+func TestOllamaExportDefaultsToRawPrompt(t *testing.T) {
+	modelfile, err := ollamaModelfile(model.Inspection{Model: model.ModelRecord{Architecture: model.Architecture{ContextTokens: 4096}}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modelfile != "FROM ./model.gguf\nPARAMETER num_ctx 4096\n" || strings.Contains(modelfile, "TEMPLATE") {
+		t.Fatalf("raw Modelfile = %q", modelfile)
+	}
+}
+
+func TestOllamaToolsRequiresPinnedConversationContract(t *testing.T) {
+	inspection := toolContractInspection(model.InteractionChatMLV1)
+	inspection.RunBOMs[0].Conversation.Tools = false
+	if _, err := ollamaModelfile(inspection, Options{OllamaTools: true}); err == nil || !strings.Contains(err.Error(), "pinned tool conversation contract") {
+		t.Fatalf("tool contract error = %v", err)
+	}
+}
+
+func TestOllamaToolTemplateIncludesSchemasCallsAndResults(t *testing.T) {
+	for _, prompt := range []string{model.InteractionUserAssistantV1, model.InteractionChatMLV1} {
+		modelfile, err := ollamaModelfile(toolContractInspection(prompt), Options{OllamaTools: true})
+		if err != nil {
+			t.Fatalf("%s: %v", prompt, err)
+		}
+		for _, required := range []string{"{{ json .Tools }}", ".ToolCalls", ".Function.Name", ".Function.Arguments", `eq .Role "tool"`, "{{ .Content }}"} {
+			if !strings.Contains(modelfile, required) {
+				t.Errorf("%s Modelfile does not preserve %q:\n%s", prompt, required, modelfile)
+			}
+		}
+	}
+}
+
+func TestOllamaToolTemplateUsesValidTripleQuotes(t *testing.T) {
+	modelfile, err := ollamaModelfile(toolContractInspection(model.InteractionChatMLV1), Options{OllamaTools: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(modelfile, `"""`) != 2 || strings.Contains(modelfile, `\"\"\"`) {
+		t.Fatalf("invalid TEMPLATE quoting:\n%s", modelfile)
+	}
+}
+
+func toolContractInspection(prompt string) model.Inspection {
+	conversation := training.ConversationTransform{Template: prompt, SupervisedRoles: []string{"assistant"}, Tools: true}
+	return model.Inspection{
+		Model:   model.ModelRecord{Architecture: model.Architecture{ContextTokens: 2048}, Interaction: model.Interaction{Template: prompt}},
+		Runs:    []model.RunRecord{{State: model.RunComplete}},
+		RunBOMs: []model.RunBOM{{Objective: "assistant-response-modeling", Conversation: conversation}},
+	}
+}
 
 func TestByteTokenizerVocabulary(t *testing.T) {
 	vocabulary := byteTokenizerVocabulary()

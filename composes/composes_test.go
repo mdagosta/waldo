@@ -23,7 +23,7 @@ func TestModelComposeGuideNamesEverySchemaField(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, value := range []any{
-		model.Compose{}, model.ComposeBase{}, model.Architecture{}, model.Tokenizer{}, model.Stage{}, model.CorpusSelection{}, corpus.RecordFilter{}, corpus.ValueFilter{}, corpus.DateFilter{}, training.Parameters{},
+		model.Compose{}, model.ComposeBase{}, model.Architecture{}, model.Tokenizer{}, model.Stage{}, model.CorpusSelection{}, corpus.RecordFilter{}, corpus.ValueFilter{}, corpus.DateFilter{}, training.ConversationTransform{}, training.Parameters{},
 	} {
 		typeOf := reflect.TypeOf(value)
 		for index := 0; index < typeOf.NumField(); index++ {
@@ -156,7 +156,7 @@ func TestToolUseComposeHasSizedBaseAndStructuredToolStage(t *testing.T) {
 	if len(tooling.Stages) != 3 || tooling.Stages[2].Name != "tool-use-sft" {
 		t.Fatalf("tooling curriculum = %+v", tooling.Stages)
 	}
-	if tooling.Interaction.Template != model.InteractionChatMLV1 || tooling.Stages[2].Objective != "assistant-response-modeling" || tooling.Stages[2].Conversation == nil || !reflect.DeepEqual(tooling.Stages[2].Conversation.SupervisedRoles, []string{"assistant"}) {
+	if tooling.Interaction.Template != model.InteractionChatMLV1 || tooling.Stages[2].Objective != "assistant-response-modeling" || tooling.Stages[2].Conversation == nil || !tooling.Stages[2].Conversation.Tools || !reflect.DeepEqual(tooling.Stages[2].Conversation.SupervisedRoles, []string{"assistant"}) {
 		t.Fatalf("tool interaction contract = %+v / %+v", tooling.Interaction, tooling.Stages[2])
 	}
 	wantTools := []string{"post-train/sft/hermes-function-calling", "post-train/sft/toolace", "post-train/sft/xlam-function-calling-60k", "post-train/sft/smoltalk2-tools", "post-train/sft/openthoughts-agent", "post-train/sft/interaction-contract-v1"}

@@ -196,6 +196,12 @@ waldo model export small ./small-ollama --format ollama
 ollama create small -f ./small-ollama/Modelfile
 ```
 
+Ollama exports remain raw by default. A completed assistant-response run that
+records `conversation.tools: true` may be exported with `--ollama-tools`; WALDO
+then emits the model's pinned `user-assistant-v1` or `chatml-v1` tool template.
+The template carries full tool schemas, assistant calls, and tool results.
+WALDO rejects this option when that durable training contract is absent.
+
 `model chat` opens the BOM-selected current origin or newest complete
 real-weight run, verifies its weights, configuration, and tokenizer, and uses
 the compatible runtime for an origin or the backend recorded by a run. MLX

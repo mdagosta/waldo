@@ -211,6 +211,7 @@ func newModelCommand(state *cobraState) *cobra.Command {
 			textFlag("format", "waldo", "export format: waldo, huggingface, mlx, gguf, or ollama"),
 			textFlag("quant", "", "GGUF quantization profile: 2, 3, 4, 5, 6, or 8"),
 			textFlag("calibration", "", "WALDO index path for quantization calibration"),
+			booleanFlag("ollama-tools", "emit a tool-capable Ollama chat template when training provenance supports it"),
 			booleanFlag("allow-incomplete", "allow a marked incomplete disclosure draft")),
 		leaf(state, "chat <name> [prompt]", "Generate with a trained local model", "With no prompt in a terminal, opens an interactive session.", cobra.RangeArgs(1, 2), runModelChat,
 			integerFlag("max-tokens", 256, "maximum generated tokens"),

@@ -24,6 +24,7 @@ const (
 type ConversationTransform struct {
 	Template        string   `json:"template" yaml:"template"`
 	SupervisedRoles []string `json:"supervised_roles" yaml:"supervised_roles"`
+	Tools           bool     `json:"tools,omitempty" yaml:"tools,omitempty"`
 }
 
 func (transform ConversationTransform) Validate() error {
@@ -39,6 +40,9 @@ func (transform ConversationTransform) Validate() error {
 			return fmt.Errorf("invalid or duplicate supervised conversation role %q", role)
 		}
 		seen[role] = true
+	}
+	if transform.Tools && !seen["assistant"] {
+		return fmt.Errorf("tool conversation requires assistant in supervised_roles")
 	}
 	return nil
 }
@@ -58,6 +62,9 @@ func (transform ConversationTransform) render(conversation record.Conversation, 
 	}
 	if err := conversation.Validate(); err != nil {
 		return nil, nil, err
+	}
+	if len(conversation.Tools) > 0 && !transform.Tools {
+		return nil, nil, fmt.Errorf("conversation contains tools but the training transform does not declare tools: true")
 	}
 	messages := append([]record.Message(nil), conversation.Messages...)
 	if len(conversation.Tools) > 0 {
