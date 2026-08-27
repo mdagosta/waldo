@@ -64,7 +64,7 @@ func (transform ConversationTransform) render(conversation record.Conversation, 
 		return nil, nil, err
 	}
 	if len(conversation.Tools) > 0 && !transform.Tools {
-		return nil, nil, fmt.Errorf("conversation contains tools but the training transform does not declare tools: true")
+		return nil, nil, fmt.Errorf("conversation contains tools but the model interaction does not enable tools")
 	}
 	messages := append([]record.Message(nil), conversation.Messages...)
 	if len(conversation.Tools) > 0 {

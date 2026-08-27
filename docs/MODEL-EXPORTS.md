@@ -10,7 +10,6 @@ waldo model export <name> <new-directory> \
   [--format waldo|huggingface|mlx|gguf|ollama] \
   [--quant 2|3|4|5|6|8] \
   [--calibration <index-path>] \
-  [--ollama-tools] \
   [--allow-incomplete] [--json]
 ```
 
@@ -30,10 +29,10 @@ not also copy Safetensors and choosing Hugging Face does not also create GGUF.
 | Format | Intended consumer | Weight representation | Additional runtime files |
 | --- | --- | --- | --- |
 | `waldo` | WALDO provenance, transfer, and archival | Original managed artifacts | Complete plan, model, run BOMs, observations, checkpoints, and artifacts |
-| `huggingface` | Transformers and compatible consumers such as vLLM | Safetensors with standard Llama tensor names | Llama configuration, generation configuration, byte tokenizer, architecture binding, and README |
-| `mlx` | MLX and MLX-LM | Safetensors with standard Llama tensor names and MLX container metadata | MLX-LM architecture binding, configuration, byte tokenizer, and README |
-| `gguf` | llama.cpp-compatible consumers, including LM Studio | One GGUF v3 file | No second weight representation |
-| `ollama` | Ollama | The same GGUF v3 representation | A relative `Modelfile` containing the context length and, when explicitly requested and supported by training provenance, a tool template |
+| `huggingface` | Transformers and compatible consumers such as vLLM | Safetensors with standard Llama tensor names | Llama configuration, generation configuration, byte tokenizer, architecture binding, interaction template when declared, and README |
+| `mlx` | MLX and MLX-LM | Safetensors with standard Llama tensor names and MLX container metadata | MLX-LM architecture binding, configuration, byte tokenizer, interaction template when declared, and README |
+| `gguf` | llama.cpp-compatible consumers, including LM Studio | One GGUF v3 file | The declared interaction is embedded as `tokenizer.chat_template` |
+| `ollama` | Ollama | The same GGUF v3 representation | A relative `Modelfile` containing the context length and the declared interaction template |
 
 `waldo` is the default because it is lossless, retains the pulled origin
 and every historical run, and preserves the most provenance. A derived runtime
@@ -419,22 +418,27 @@ moved.
 
 The same `--quant` and optional `--calibration` flags apply to Ollama exports.
 
-Ollama exports default to raw prompting: WALDO does not infer chat or tool
-behavior from a model name or selected corpus. For a model with a completed
-`assistant-response-modeling` run whose recorded conversation transform has
-`tools: true`, explicitly request its compatible tool template:
+WALDO derives interaction behavior from the immutable model-level compose
+contract, never from a corpus name or an export flag:
 
 ```bash
-waldo model export tool-model ./tool-model-ollama \
-  --format ollama --ollama-tools
+interaction:
+  template: user-assistant-v1
+  tools: true
 ```
 
-The generated template is selected from the model's pinned
-`interaction.template` (`user-assistant-v1` or `chatml-v1`). It preserves the
-complete runtime tool schema, assistant tool-call names and arguments, and
-tool-result messages. `--ollama-tools` fails closed for raw models, incomplete
-runs, unrecognized templates, and conversational runs that did not explicitly
-record tool training. The option is valid only with `--format ollama`.
+Raw models remain raw in every format. Conversational models receive their
+pinned `user-assistant-v1` or `chatml-v1` template without tool handling.
+Models declaring `interaction.tools: true` additionally preserve runtime tool
+schemas, assistant tool calls and arguments, and tool-result messages. Hugging
+Face and MLX receive `chat_template` tokenizer metadata and
+`chat_template.jinja`; GGUF receives `tokenizer.chat_template`; Ollama receives
+the equivalent `TEMPLATE` in its `Modelfile`. The release BOM records the same
+portable interaction declaration.
+
+Completed models created with the earlier schema-1 stage-level `tools: true`
+spelling remain exportable: WALDO derives the same capability from their
+signed training-run BOM. Incomplete legacy runs do not enable it.
 
 ## Machine-readable command output
 

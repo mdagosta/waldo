@@ -27,7 +27,6 @@ import (
 type Options struct {
 	EUBOM        []byte
 	Finalize     func(string) error
-	OllamaTools  bool
 	Quantization *Quantization
 	Report       func(string)
 	result       *modelquant.Result
@@ -59,6 +58,7 @@ type releaseBOM struct {
 	Format       string               `json:"format"`
 	ModelID      string               `json:"model_id"`
 	Name         string               `json:"name"`
+	Interaction  model.Interaction    `json:"interaction,omitzero"`
 	SourceType   string               `json:"source_type"`
 	SourceID     string               `json:"source_id"`
 	RunID        string               `json:"run_id,omitempty"`
@@ -94,6 +94,8 @@ func ExportMLX(ctx context.Context, inspection model.Inspection, destination str
 
 func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destination string, options Options, format string) (string, error) {
 	_ = ctx
+	record := inspection.Model
+	record.Interaction = inspection.EffectiveInteraction()
 	artifacts, err := inference.ResolveArtifacts(inspection)
 	if err != nil {
 		return "", err
@@ -134,16 +136,18 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 		"architecture.py":           []byte(architectureSource),
 		"README.md":                 []byte(readme),
 	}
-	tokenizerConfiguration, err := json.MarshalIndent(map[string]any{
-		"auto_map":  map[string]any{"AutoTokenizer": []any{"tokenization_openwaldo.OpenWALDOByteTokenizer", nil}},
-		"bos_token": "<bos>", "eos_token": "<eos>", "pad_token": "<pad>",
-		"model_max_length": inspection.Model.Architecture.ContextTokens,
-		"tokenizer_class":  "OpenWALDOByteTokenizer",
-	}, "", "  ")
+	tokenizerConfiguration, interactionTemplate, err := huggingFaceTokenizerConfiguration(record)
 	if err != nil {
 		return "", err
 	}
-	files["tokenizer_config.json"] = append(tokenizerConfiguration, '\n')
+	if interactionTemplate != "" {
+		files["chat_template.jinja"] = []byte(interactionTemplate + "\n")
+	}
+	tokenizerConfigurationJSON, err := json.MarshalIndent(tokenizerConfiguration, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	files["tokenizer_config.json"] = append(tokenizerConfigurationJSON, '\n')
 	for name, data := range files {
 		if len(data) == 0 {
 			return "", fmt.Errorf("model export file %s is empty", name)
@@ -156,17 +160,21 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err != nil {
 		return "", err
 	}
-	inventory, err := inventoryFiles(temporary, map[string]string{
+	roles := map[string]string{
 		"model.safetensors": "weights", "config.json": "configuration",
 		"generation_config.json": "generation-configuration",
 		"tokenizer_config.json":  "tokenizer", "special_tokens_map.json": "tokenizer",
 		"tokenization_openwaldo.py": "tokenizer-code", "architecture.py": "architecture-code",
 		"README.md": "documentation", "EU-BOM.json": "regulatory-disclosure",
-	})
+	}
+	if interactionTemplate != "" {
+		roles["chat_template.jinja"] = "interaction-template"
+	}
+	inventory, err := inventoryFiles(temporary, roles)
 	if err != nil {
 		return "", err
 	}
-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
 	if err := writeJSON(filepath.Join(temporary, "BOM.json"), bom); err != nil {
 		return "", err
 	}
@@ -180,6 +188,23 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	}
 	committed = true
 	return absolute, nil
+}
+
+func huggingFaceTokenizerConfiguration(record model.ModelRecord) (map[string]any, string, error) {
+	interactionTemplate, err := jinjaInteractionTemplate(record.Interaction)
+	if err != nil {
+		return nil, "", err
+	}
+	configuration := map[string]any{
+		"auto_map":  map[string]any{"AutoTokenizer": []any{"tokenization_openwaldo.OpenWALDOByteTokenizer", nil}},
+		"bos_token": "<bos>", "eos_token": "<eos>", "pad_token": "<pad>",
+		"model_max_length": record.Architecture.ContextTokens,
+		"tokenizer_class":  "OpenWALDOByteTokenizer",
+	}
+	if interactionTemplate != "" {
+		configuration["chat_template"] = interactionTemplate
+	}
+	return configuration, interactionTemplate, nil
 }
 
 func withinPath(parent, child string) bool {

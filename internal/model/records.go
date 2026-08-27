@@ -141,6 +141,27 @@ type RunBOM struct {
 	Initialization     *training.Initialization       `json:"initialization,omitempty"`
 }
 
+// EffectiveInteraction returns the immutable model interaction plus the
+// equivalent tool declaration recorded by older schema-1 training runs.
+func (inspection Inspection) EffectiveInteraction() Interaction {
+	interaction := inspection.Model.Interaction
+	if interaction.Tools {
+		return interaction
+	}
+	for index, bom := range inspection.RunBOMs {
+		if index >= len(inspection.Runs) || inspection.Runs[index].State != RunComplete || bom.Objective != "assistant-response-modeling" || !bom.Conversation.Tools || bom.Conversation.Template != interaction.Template {
+			continue
+		}
+		for _, role := range bom.Conversation.SupervisedRoles {
+			if role == "assistant" {
+				interaction.Tools = true
+				return interaction
+			}
+		}
+	}
+	return interaction
+}
+
 const MultiNodePlanSchema = 1
 
 const MultiNodePlanKind = "openwaldo-multinode-plan"

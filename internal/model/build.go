@@ -143,6 +143,8 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, err
 	}
 	stage := prepared.Stage
+	stage = stageWithInteraction(stage, inspection.Model.Interaction)
+	prepared.Stage = stage
 	prepared, err = PrepareStage(stage, prepared.BOM, prepared.Inputs)
 	if err != nil {
 		return Inspection{}, err
@@ -1282,6 +1284,7 @@ func recoverAbandonedComposeRun(builder Builder, inspection *Inspection) error {
 }
 
 func validateStagedComposeRun(inspection Inspection, index int, prepared PreparedStage) error {
+	prepared.Stage = stageWithInteraction(prepared.Stage, inspection.Model.Interaction)
 	if index >= len(inspection.RunBOMs) || inspection.Model.Runs[index].Stage != prepared.Stage.Name {
 		return fmt.Errorf("run %d does not match stage %s", index+1, prepared.Stage.Name)
 	}

@@ -122,6 +122,58 @@ func TestComposeConversationInteractionIsStrictAndChangesPlanIdentity(t *testing
 	}
 }
 
+func TestComposeDeclaresToolsOnceAtModelInteraction(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tools.yaml")
+	document := strings.Replace(composeYAML(""), "architecture:\n", "interaction:\n  template: user-assistant-v1\n  tools: true\narchitecture:\n", 1)
+	document = strings.Replace(document, "objective: causal-language-modeling\n", "objective: assistant-response-modeling\n    conversation:\n      template: user-assistant-v1\n      supervised_roles: [assistant]\n", 1)
+	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	compose, _, err := LoadCompose(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !compose.Interaction.Tools || compose.Stages[0].Conversation == nil || compose.Stages[0].Conversation.Tools {
+		t.Fatalf("tool contract = %+v / %+v", compose.Interaction, compose.Stages[0].Conversation)
+	}
+	plain := compose
+	plain.Interaction.Tools = false
+	toolPlan, err := composePlan("tools", compose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainPlan, err := composePlan("tools", plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolHash, _ := hashJSON(toolPlan)
+	plainHash, _ := hashJSON(plainPlan)
+	if toolHash == plainHash {
+		t.Fatal("interaction.tools did not change immutable model identity")
+	}
+
+	legacy := strings.Replace(document, "  tools: true\narchitecture:", "architecture:", 1)
+	legacy = strings.Replace(legacy, "supervised_roles: [assistant]", "supervised_roles: [assistant]\n      tools: true", 1)
+	if err := os.WriteFile(path, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	legacyCompose, _, err := LoadCompose(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !legacyCompose.Interaction.Tools || legacyCompose.Stages[0].Conversation.Tools {
+		t.Fatalf("legacy tool contract was not normalized: %+v / %+v", legacyCompose.Interaction, legacyCompose.Stages[0].Conversation)
+	}
+	legacyPlan, err := composePlan("tools", legacyCompose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyHash, _ := hashJSON(legacyPlan)
+	if legacyHash != toolHash {
+		t.Fatalf("legacy tool declaration changed model identity: %s != %s", legacyHash, toolHash)
+	}
+}
+
 func TestInteractionTrimsGeneratedNextTurn(t *testing.T) {
 	interaction := Interaction{Template: InteractionUserAssistantV1}
 	value := " I can help.\n\nUser: ignored\n\nAssistant: ignored"

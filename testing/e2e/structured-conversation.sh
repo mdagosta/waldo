@@ -127,6 +127,7 @@ kind: waldo-model-compose
 schema: 1
 interaction:
   template: user-assistant-v1
+  tools: true
 architecture:
   family: decoder-transformer
   context_tokens: 64
@@ -148,7 +149,6 @@ stages:
     conversation:
       template: user-assistant-v1
       supervised_roles: [assistant]
-      tools: true
     corpora:
       - post-train/sft/structured-conversation-e2e
     parameters:
@@ -168,6 +168,7 @@ run_bom=$(find "$models/structured-conversation-smoke/runs" -type f -name RUN-BO
 [ -n "$run_bom" ] || { echo "structured conversation run BOM not found" >&2; exit 1; }
 grep -Eq '"template"[[:space:]]*:[[:space:]]*"user-assistant-v1"' "$run_bom"
 grep -Eq '"supervised_roles"[[:space:]]*:' "$run_bom"
+grep -Eq '"tools"[[:space:]]*:[[:space:]]*true' "$run_bom"
 grep -Eq '"assistant"' "$run_bom"
 
 echo "E2E structured conversation passed: fetched, ingested, audited, exported, structurally validated, transformed, masked, and trained"

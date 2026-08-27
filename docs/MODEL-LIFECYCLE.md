@@ -196,11 +196,12 @@ waldo model export small ./small-ollama --format ollama
 ollama create small -f ./small-ollama/Modelfile
 ```
 
-Ollama exports remain raw by default. A completed assistant-response run that
-records `conversation.tools: true` may be exported with `--ollama-tools`; WALDO
-then emits the model's pinned `user-assistant-v1` or `chatml-v1` tool template.
-The template carries full tool schemas, assistant calls, and tool results.
-WALDO rejects this option when that durable training contract is absent.
+All derived exports preserve the model's immutable interaction contract
+automatically. Raw models remain raw; conversational models receive their
+pinned template; models declaring `interaction.tools: true` also receive tool
+schema, call, argument, and result handling. Hugging Face and MLX use tokenizer
+chat-template metadata, GGUF embeds `tokenizer.chat_template`, and Ollama emits
+the equivalent `Modelfile` template. No format-specific tool flag is required.
 
 `model chat` opens the BOM-selected current origin or newest complete
 real-weight run, verifies its weights, configuration, and tokenizer, and uses

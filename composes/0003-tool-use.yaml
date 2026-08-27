@@ -3,7 +3,8 @@
 kind: waldo-model-compose
 schema: 1
 interaction:
-  template: chatml-v1
+  template: user-assistant-v1
+  tools: true
 architecture:
   family: decoder-transformer
   context_tokens: 4096
@@ -61,7 +62,7 @@ stages:
     type: fine-tuning
     objective: assistant-response-modeling
     conversation: &assistant
-      template: chatml-v1
+      template: user-assistant-v1
       supervised_roles: [assistant]
     filter: *quality
     corpora:
@@ -98,9 +99,8 @@ stages:
     type: fine-tuning
     objective: assistant-response-modeling
     conversation:
-      template: chatml-v1
+      template: user-assistant-v1
       supervised_roles: [assistant]
-      tools: true
     filter: *quality
     corpora:
       - post-train/sft/hermes-function-calling

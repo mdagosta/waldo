@@ -73,6 +73,17 @@ const ollamaUserAssistantToolTemplate = `TEMPLATE """{{- if .System }}System: {{
 Assistant:"""
 `
 
+const ollamaUserAssistantTemplate = `TEMPLATE """{{- if .System }}System: {{ .System }}{{ end }}{{- range .Messages }}
+
+{{- if eq .Role "assistant" }}Assistant:{{ .Content }}
+{{- else if eq .Role "tool" }}Tool: {{ .Content }}
+{{- else if eq .Role "user" }}User: {{ .Content }}
+{{- else }}System: {{ .Content }}
+{{- end }}{{- end }}
+
+Assistant:"""
+`
+
 const ollamaChatMLToolTemplate = `TEMPLATE """{{- if or .System .Tools }}<|im_start|>system
 {{- if .System }}{{ .System }}{{ end }}{{- if .Tools }}{{ if .System }}
 
@@ -87,6 +98,14 @@ const ollamaChatMLToolTemplate = `TEMPLATE """{{- if or .System .Tools }}<|im_st
 """
 `
 
+const ollamaChatMLTemplate = `TEMPLATE """{{- if .System }}<|im_start|>system
+{{ .System }}<|im_end|>
+{{- end }}{{- range .Messages }}<|im_start|>{{ .Role }}
+{{ .Content }}<|im_end|>
+{{- end }}<|im_start|>assistant
+"""
+`
+
 func ExportGGUF(ctx context.Context, inspection model.Inspection, destination string, options Options) (string, error) {
 	return exportGGUFPackage(ctx, inspection, destination, options, false)
 }
@@ -96,6 +115,8 @@ func ExportOllama(ctx context.Context, inspection model.Inspection, destination 
 }
 
 func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destination string, options Options, ollama bool) (string, error) {
+	record := inspection.Model
+	record.Interaction = inspection.EffectiveInteraction()
 	artifacts, err := inference.ResolveArtifacts(inspection)
 	if err != nil {
 		return "", err
@@ -115,7 +136,7 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	defer func() { cleanup(committed) }()
 	weightsPath := filepath.Join(temporary, "model.gguf")
 	if options.Quantization == nil {
-		if err := writeGGUF(ctx, artifacts.Weights, weightsPath, inspection.Model); err != nil {
+		if err := writeGGUF(ctx, artifacts.Weights, weightsPath, record); err != nil {
 			return "", err
 		}
 	} else {
@@ -126,7 +147,7 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 		if options.Report != nil {
 			options.Report("writing high-precision GGUF")
 		}
-		if err := writeGGUF(ctx, artifacts.Weights, highPrecision, inspection.Model); err != nil {
+		if err := writeGGUF(ctx, artifacts.Weights, highPrecision, record); err != nil {
 			return "", err
 		}
 		calibrationText := ""
@@ -152,7 +173,7 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	roles := map[string]string{"model.gguf": "weights", "EU-BOM.json": "regulatory-disclosure"}
 	if ollama {
 		format = "ollama"
-		modelfile, err := ollamaModelfile(inspection, options)
+		modelfile, err := ollamaModelfile(inspection)
 		if err != nil {
 			return "", err
 		}
@@ -169,7 +190,7 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	if err != nil {
 		return "", err
 	}
-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
+	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
 	if options.Quantization != nil {
 		if options.result == nil {
 			return "", fmt.Errorf("quantization result is missing")
@@ -199,36 +220,29 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
 	return absolute, nil
 }
 
-func ollamaModelfile(inspection model.Inspection, options Options) (string, error) {
+func ollamaModelfile(inspection model.Inspection) (string, error) {
 	result := fmt.Sprintf("FROM ./model.gguf\nPARAMETER num_ctx %d\n", inspection.Model.Architecture.ContextTokens)
-	if !options.OllamaTools {
+	interaction := inspection.EffectiveInteraction()
+	if err := interaction.Validate(); err != nil {
+		return "", err
+	}
+	if !interaction.Conversational() {
 		return result, nil
 	}
-	if !hasPinnedToolContract(inspection) {
-		return "", fmt.Errorf("--ollama-tools requires a completed assistant-response run with a pinned tool conversation contract")
-	}
-	switch inspection.Model.Interaction.Template {
+	switch interaction.Template {
 	case model.InteractionUserAssistantV1:
-		return result + ollamaUserAssistantToolTemplate, nil
+		if interaction.Tools {
+			return result + ollamaUserAssistantToolTemplate, nil
+		}
+		return result + ollamaUserAssistantTemplate, nil
 	case model.InteractionChatMLV1:
-		return result + ollamaChatMLToolTemplate, nil
+		if interaction.Tools {
+			return result + ollamaChatMLToolTemplate, nil
+		}
+		return result + ollamaChatMLTemplate, nil
 	default:
-		return "", fmt.Errorf("--ollama-tools does not support interaction template %q", inspection.Model.Interaction.Template)
+		return "", fmt.Errorf("unsupported Ollama interaction template %q", interaction.Template)
 	}
-}
-
-func hasPinnedToolContract(inspection model.Inspection) bool {
-	for index, bom := range inspection.RunBOMs {
-		if index >= len(inspection.Runs) || inspection.Runs[index].State != model.RunComplete || bom.Objective != "assistant-response-modeling" || !bom.Conversation.Tools || bom.Conversation.Template != inspection.Model.Interaction.Template {
-			continue
-		}
-		for _, role := range bom.Conversation.SupervisedRoles {
-			if role == "assistant" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func writeGGUF(ctx context.Context, source, destination string, record model.ModelRecord) error {
@@ -582,7 +596,7 @@ func modelGGUFMetadata(record model.ModelRecord) ([]ggufMetadata, error) {
 		types[index] = 1
 	}
 	types[0], types[1], types[2] = 3, 3, 3
-	return []ggufMetadata{
+	metadata := []ggufMetadata{
 		{"general.architecture", ggufString, "llama"}, {"general.name", ggufString, record.Name},
 		{"general.alignment", ggufUint32, uint32(ggufAlignment)}, {"general.file_type", ggufUint32, fileType},
 		{"llama.context_length", ggufUint32, uint32(architecture.ContextTokens)}, {"llama.embedding_length", ggufUint32, uint32(architecture.HiddenSize)},
@@ -594,7 +608,15 @@ func modelGGUFMetadata(record model.ModelRecord) ([]ggufMetadata, error) {
 		{"tokenizer.ggml.tokens", ggufArray, tokens}, {"tokenizer.ggml.scores", ggufArray, scores}, {"tokenizer.ggml.token_type", ggufArray, types}, {"tokenizer.ggml.merges", ggufArray, []string{}},
 		{"tokenizer.ggml.bos_token_id", ggufUint32, uint32(1)}, {"tokenizer.ggml.eos_token_id", ggufUint32, uint32(2)}, {"tokenizer.ggml.padding_token_id", ggufUint32, uint32(0)},
 		{"tokenizer.ggml.add_bos_token", ggufBool, false}, {"tokenizer.ggml.add_eos_token", ggufBool, false},
-	}, nil
+	}
+	chatTemplate, err := jinjaInteractionTemplate(record.Interaction)
+	if err != nil {
+		return nil, fmt.Errorf("GGUF interaction: %w", err)
+	}
+	if chatTemplate != "" {
+		metadata = append(metadata, ggufMetadata{"tokenizer.chat_template", ggufString, chatTemplate})
+	}
+	return metadata, nil
 }
 
 func byteTokenizerVocabulary() []string {

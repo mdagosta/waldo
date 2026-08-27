@@ -133,7 +133,7 @@ func TestConversationTransformRequiresPinnedToolContract(t *testing.T) {
 		Tools:    json.RawMessage(`[{"type":"function","function":{"name":"lookup","parameters":{"type":"object"}}}]`),
 	}
 	_, _, err := (ConversationTransform{Template: ConversationTemplateChatMLV1, SupervisedRoles: []string{"assistant"}}).render(conversation, byteCodec{})
-	if err == nil || !strings.Contains(err.Error(), "tools: true") {
+	if err == nil || !strings.Contains(err.Error(), "interaction") {
 		t.Fatalf("tool contract error = %v", err)
 	}
 	if err := (ConversationTransform{Template: ConversationTemplateChatMLV1, SupervisedRoles: []string{"tool"}, Tools: true}).Validate(); err == nil || !strings.Contains(err.Error(), "assistant") {

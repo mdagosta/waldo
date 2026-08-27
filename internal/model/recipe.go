@@ -44,11 +44,15 @@ const InteractionChatMLV1 = "chatml-v1"
 // model. The zero value deliberately means raw causal continuation.
 type Interaction struct {
 	Template string `json:"template,omitempty" yaml:"template,omitempty"`
+	Tools    bool   `json:"tools,omitempty" yaml:"tools,omitempty"`
 }
 
-func (interaction Interaction) IsZero() bool { return interaction.Template == "" }
+func (interaction Interaction) IsZero() bool { return interaction.Template == "" && !interaction.Tools }
 
 func (interaction Interaction) Validate() error {
+	if interaction.Tools && !interaction.Conversational() {
+		return fmt.Errorf("interaction tools require a conversational template")
+	}
 	if interaction.Template == "" || interaction.Template == InteractionUserAssistantV1 || interaction.Template == InteractionChatMLV1 {
 		return nil
 	}
@@ -396,10 +400,24 @@ func LoadCompose(path string) (Compose, string, error) {
 		}
 		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
+	compose.normalizeLegacyInteraction()
 	if err := compose.Validate(); err != nil {
 		return Compose{}, "", fmt.Errorf("%s: %w", absolute, err)
 	}
 	return compose, absolute, nil
+}
+
+// normalizeLegacyInteraction preserves schema-1 composes written before tool
+// capability moved from an individual training stage to the model contract.
+func (compose *Compose) normalizeLegacyInteraction() {
+	for index := range compose.Stages {
+		conversation := compose.Stages[index].Conversation
+		if conversation == nil || !conversation.Tools {
+			continue
+		}
+		compose.Interaction.Tools = true
+		conversation.Tools = false
+	}
 }
 
 func IsComposeFile(path string) (bool, error) {
@@ -461,6 +479,7 @@ func (compose Compose) Validate() error {
 		return fmt.Errorf("at least one training stage is required")
 	}
 	seen := map[string]bool{}
+	hasToolTraining := false
 	for i, stage := range compose.Stages {
 		if !validName.MatchString(stage.Name) || seen[stage.Name] {
 			return fmt.Errorf("stage %d has invalid or duplicate name %q", i+1, stage.Name)
@@ -473,11 +492,19 @@ func (compose Compose) Validate() error {
 			return fmt.Errorf("stage %s has unsupported objective %q", stage.Name, stage.Objective)
 		}
 		if stage.Conversation != nil {
+			if stage.Conversation.Tools {
+				return fmt.Errorf("stage %s conversation tools must be declared once as interaction.tools", stage.Name)
+			}
 			if err := stage.Conversation.Validate(); err != nil {
 				return fmt.Errorf("stage %s conversation: %w", stage.Name, err)
 			}
 			if compose.Interaction.Template != stage.Conversation.Template {
 				return fmt.Errorf("stage %s conversation template %q does not match interaction template %q", stage.Name, stage.Conversation.Template, compose.Interaction.Template)
+			}
+			if stage.Objective == "assistant-response-modeling" {
+				for _, role := range stage.Conversation.SupervisedRoles {
+					hasToolTraining = hasToolTraining || role == "assistant"
+				}
 			}
 		} else if stage.Objective == "assistant-response-modeling" {
 			return fmt.Errorf("stage %s assistant-response-modeling requires conversation transformation", stage.Name)
@@ -526,7 +553,20 @@ func (compose Compose) Validate() error {
 			return fmt.Errorf("stage %s sequence_length exceeds architecture context_tokens", stage.Name)
 		}
 	}
+	if compose.Interaction.Tools && !hasToolTraining {
+		return fmt.Errorf("interaction tools require an assistant-response-modeling stage that supervises assistant responses")
+	}
 	return nil
+}
+
+func stageWithInteraction(stage Stage, interaction Interaction) Stage {
+	if stage.Conversation == nil {
+		return stage
+	}
+	conversation := *stage.Conversation
+	conversation.Tools = interaction.Tools
+	stage.Conversation = &conversation
+	return stage
 }
 
 func (architecture Architecture) Validate() error {

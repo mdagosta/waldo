@@ -58,6 +58,7 @@ schema: 1
 # model. Omit this block for raw causal continuation.
 interaction:
   template: user-assistant-v1
+  tools: true # optional; enables the model-level tool interaction contract
 
 architecture:
   family: decoder-transformer
@@ -148,6 +149,18 @@ stops generation before the model begins a new `User:` turn. The interaction
 contract is stored in the immutable model plan, model record, and model BOM.
 It changes model identity but not parameter count. Models without an
 interaction block retain raw causal-continuation behavior.
+
+`interaction.tools: true` declares tool use once for the model, independently
+of any corpus path. WALDO then accepts tool definitions in structured
+conversation records, records the effective capability in training BOMs, and
+automatically translates the same interaction contract into every supported
+release format. Tool-enabled interaction requires an assistant-response stage
+that supervises assistant messages. Omit `tools` for an ordinary conversational
+model; never repeat it under an individual stage.
+
+For schema-1 compatibility, WALDO still accepts the former
+`stages[].conversation.tools: true` spelling and normalizes it to the same
+model-level contract. New composes should use only `interaction.tools`.
 
 ### Base fields
 
@@ -283,7 +296,7 @@ backends receive identical token IDs.
 | `name` | yes | `^[a-z0-9][a-z0-9._-]{0,63}$` | Unique durable stage and run label. |
 | `type` | yes | `pre-training`, `fine-tuning`, `alignment`, or `other` | Records the stage's intended role in provenance. |
 | `objective` | yes | `causal-language-modeling` or `assistant-response-modeling` | Causal loss covers every next token; assistant-response loss supervises roles selected by a structured conversation transformation. |
-| `conversation` | for assistant-response modeling and conversation shards | object | Pins `template` (`user-assistant-v1` or `chatml-v1`) and a non-empty `supervised_roles` list. It must match `interaction.template`. Set `tools: true` only for stages intentionally training on tool definitions, assistant tool calls, and tool results; `assistant` must be supervised. |
+| `conversation` | for assistant-response modeling and conversation shards | object | Pins `template` (`user-assistant-v1` or `chatml-v1`) and a non-empty `supervised_roles` list. It must match `interaction.template`; tool capability is declared only by `interaction.tools`. |
 | `filter` | no | record filter | Applies one record-level condition to every selected corpus. |
 | `corpora` | yes | non-empty list of unique scalar paths or configured corpus objects | Selects canonical corpus records for the stage. |
 | `parameters` | yes | object | Declares the portable training budget and controls. |
