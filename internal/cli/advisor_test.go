@@ -8,16 +8,56 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	waldoai "github.com/openwaldo/waldo/internal/ai"
 	waldoindex "github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/training"
 )
+
+func TestAdvisorCheckpointMonitorProcessesCapturedSnapshotWithoutRereadingModel(t *testing.T) {
+	root, name := t.TempDir(), "changing"
+	modelPath := filepath.Join(root, name)
+	if err := os.MkdirAll(modelPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A transcript only requires MODEL.json to exist before it flushes. Keep it
+	// deliberately invalid: processing a captured snapshot must not inspect it.
+	if err := os.WriteFile(filepath.Join(modelPath, "MODEL.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	transcript := &advisorTranscript{root: root, name: name, session: "test"}
+	var output, warnings bytes.Buffer
+	monitor := &advisorCheckpointMonitor{
+		ctx: context.Background(), root: root, name: name, transcript: transcript,
+		output: &output, warnings: &warnings,
+	}
+	previousAsk := modelAdvisorAsk
+	modelAdvisorAsk = func(_ context.Context, _ waldoai.Selection, prompt string) (string, error) {
+		if !strings.Contains(prompt, `"step": 2`) {
+			t.Fatalf("checkpoint prompt does not contain captured step: %s", prompt)
+		}
+		return `{"reply":"The captured checkpoint is healthy."}`, nil
+	}
+	t.Cleanup(func() { modelAdvisorAsk = previousAsk })
+	monitor.process(advisorCheckpointSnapshot{
+		event:  model.Progress{Training: &training.Event{Kind: "checkpoint", Step: 2}},
+		report: model.Advice{},
+	})
+	chat, err := os.ReadFile(filepath.Join(modelPath, "advisor", "CHAT.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(chat, []byte(`"category":"checkpoint-monitor"`)) || warnings.Len() != 0 {
+		t.Fatalf("checkpoint chat = %s, warnings = %q", chat, warnings.String())
+	}
+}
 
 func TestAdvisorReplySupportsConversationAndValidatesComposeBoundary(t *testing.T) {
 	original := advisorTestCompose()

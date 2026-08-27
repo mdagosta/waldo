@@ -622,34 +622,63 @@ type advisorCheckpointMonitor struct {
 	transcript *advisorTranscript
 	output     io.Writer
 	warnings   io.Writer
-	events     chan model.Progress
+	events     chan advisorCheckpointSnapshot
 	done       chan struct{}
+}
+
+// advisorCheckpointSnapshot captures the durable model evidence while the
+// training progress callback still excludes later model-state writes. The AI
+// request remains asynchronous, but it never has to reread a changing set of
+// model files.
+type advisorCheckpointSnapshot struct {
+	event          model.Progress
+	report         model.Advice
+	buildHistory   []advisorBuildSummary
+	composeHistory []string
+	chatHistory    []advisorTurn
 }
 
 func newAdvisorCheckpointMonitor(ctx context.Context, root, name string, selection waldoai.Selection, index advisorIndexEvidence, transcript *advisorTranscript, output, warnings io.Writer) *advisorCheckpointMonitor {
 	monitor := &advisorCheckpointMonitor{
 		ctx: ctx, root: root, name: name, selection: selection, index: index,
 		transcript: transcript, output: output, warnings: warnings,
-		events: make(chan model.Progress, 1), done: make(chan struct{}),
+		events: make(chan advisorCheckpointSnapshot, 1), done: make(chan struct{}),
 	}
 	go monitor.run()
 	return monitor
 }
 
 func (monitor *advisorCheckpointMonitor) Observe(event model.Progress) {
-	_ = monitor.transcript.Flush()
 	if event.Training == nil || event.Training.Kind != "checkpoint" {
 		return
 	}
+	if err := monitor.transcript.Flush(); err != nil {
+		fmt.Fprintf(monitor.warnings, "warning: flush advisor transcript before checkpoint monitor: %v\n", err)
+		return
+	}
+	report, err := currentAdvisorEvidence(monitor.root, monitor.name)
+	if err != nil {
+		fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor: %v\n", err)
+		return
+	}
+	buildHistory, composeHistory, err := currentAdvisorBuildHistory(monitor.root, monitor.name)
+	if err != nil {
+		fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor: %v\n", err)
+		return
+	}
+	snapshot := advisorCheckpointSnapshot{
+		event: event, report: report, buildHistory: buildHistory,
+		composeHistory: composeHistory, chatHistory: monitor.transcript.History(),
+	}
 	select {
-	case monitor.events <- event:
+	case monitor.events <- snapshot:
 	default:
 		select {
 		case <-monitor.events:
 		default:
 		}
 		select {
-		case monitor.events <- event:
+		case monitor.events <- snapshot:
 		default:
 		}
 	}
@@ -662,41 +691,35 @@ func (monitor *advisorCheckpointMonitor) Close() {
 
 func (monitor *advisorCheckpointMonitor) run() {
 	defer close(monitor.done)
-	for event := range monitor.events {
-		report, err := currentAdvisorEvidence(monitor.root, monitor.name)
-		if err != nil {
+	for snapshot := range monitor.events {
+		monitor.process(snapshot)
+	}
+}
+
+func (monitor *advisorCheckpointMonitor) process(snapshot advisorCheckpointSnapshot) {
+	prompt := advisorMonitorPrompt(snapshot.report, snapshot.event, monitor.index, snapshot.buildHistory, snapshot.composeHistory, snapshot.chatHistory)
+	response, err := modelAdvisorAsk(monitor.ctx, monitor.selection, prompt)
+	if err != nil {
+		if monitor.ctx.Err() == nil {
 			fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor: %v\n", err)
-			continue
 		}
-		buildHistory, composeHistory, err := currentAdvisorBuildHistory(monitor.root, monitor.name)
-		if err != nil {
-			fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor: %v\n", err)
-			continue
-		}
-		prompt := advisorMonitorPrompt(report, event, monitor.index, buildHistory, composeHistory, monitor.transcript.History())
-		response, err := modelAdvisorAsk(monitor.ctx, monitor.selection, prompt)
-		if err != nil {
-			if monitor.ctx.Err() == nil {
-				fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor: %v\n", err)
-			}
-			continue
-		}
-		allowed := advisorAllowedCorpora(report.Compose, monitor.index.Corpora)
-		answer, err := parseAdvisorReply(response, report.Compose, allowed, false)
-		if err != nil {
-			fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor returned invalid advice: %v\n", err)
-			continue
-		}
-		if answer.Compose != nil || answer.Build || len(answer.Changes) != 0 {
-			fmt.Fprintln(monitor.warnings, "warning: advisor checkpoint monitor attempted an interactive action; ignoring it")
-			continue
-		}
-		if err := monitor.transcript.Record("assistant", "checkpoint-monitor", answer.Reply); err != nil {
-			fmt.Fprintf(monitor.warnings, "warning: persist advisor checkpoint monitor: %v\n", err)
-		}
-		if err := renderAdvisorMarkdown(monitor.output, fmt.Sprintf("Advisor monitor · step %d", event.Training.Step), answer.Reply); err != nil {
-			fmt.Fprintf(monitor.warnings, "warning: render advisor checkpoint monitor: %v\n", err)
-		}
+		return
+	}
+	allowed := advisorAllowedCorpora(snapshot.report.Compose, monitor.index.Corpora)
+	answer, err := parseAdvisorReply(response, snapshot.report.Compose, allowed, false)
+	if err != nil {
+		fmt.Fprintf(monitor.warnings, "warning: advisor checkpoint monitor returned invalid advice: %v\n", err)
+		return
+	}
+	if answer.Compose != nil || answer.Build || len(answer.Changes) != 0 {
+		fmt.Fprintln(monitor.warnings, "warning: advisor checkpoint monitor attempted an interactive action; ignoring it")
+		return
+	}
+	if err := monitor.transcript.Record("assistant", "checkpoint-monitor", answer.Reply); err != nil {
+		fmt.Fprintf(monitor.warnings, "warning: persist advisor checkpoint monitor: %v\n", err)
+	}
+	if err := renderAdvisorMarkdown(monitor.output, fmt.Sprintf("Advisor monitor · step %d", snapshot.event.Training.Step), answer.Reply); err != nil {
+		fmt.Fprintf(monitor.warnings, "warning: render advisor checkpoint monitor: %v\n", err)
 	}
 }
 
