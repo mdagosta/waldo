@@ -453,7 +453,7 @@ func TestRootHelpLocksCommandVocabulary(t *testing.T) {
 		t.Fatalf("Run() code = %d, stderr = %q", code, stderr.String())
 	}
 	help := stdout.String()
-	for _, want := range []string{"index", "lookaside", "model", "config"} {
+	for _, want := range []string{"status", "index", "lookaside", "model", "config"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("root help does not contain %q:\n%s", want, help)
 		}

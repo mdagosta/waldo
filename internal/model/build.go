@@ -53,12 +53,12 @@ type MultiNodeHandoff struct {
 	StageCount   int
 }
 
-// CheckBackend validates that this host can execute the requested portable
-// architecture and objectives before callers materialize any corpus objects.
-func (builder Builder) CheckBackend(ctx context.Context, architecture Architecture, objectives []string) error {
+// ResolveBackend selects and validates the same training harness used by a
+// build without creating model or run state.
+func (builder Builder) ResolveBackend(ctx context.Context, architecture Architecture, objectives []string) (training.Selection, error) {
 	architectureJSON, err := json.Marshal(architecture)
 	if err != nil {
-		return err
+		return training.Selection{}, err
 	}
 	resolver := builder.Resolver
 	if resolver == nil {
@@ -66,12 +66,19 @@ func (builder Builder) CheckBackend(ctx context.Context, architecture Architectu
 	}
 	selection, err := resolver.Resolve(ctx, training.ResolveRequest{Architecture: architectureJSON, Objectives: objectives})
 	if err != nil {
-		return fmt.Errorf("resolve training backend: %w", err)
+		return training.Selection{}, fmt.Errorf("resolve training backend: %w", err)
 	}
 	if err := validateSelection(selection, objectives); err != nil {
-		return err
+		return training.Selection{}, err
 	}
-	return nil
+	return selection, nil
+}
+
+// CheckBackend validates that this host can execute the requested portable
+// architecture and objectives before callers materialize any corpus objects.
+func (builder Builder) CheckBackend(ctx context.Context, architecture Architecture, objectives []string) error {
+	_, err := builder.ResolveBackend(ctx, architecture, objectives)
+	return err
 }
 
 func ValidateName(name string) error {

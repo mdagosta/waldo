@@ -461,6 +461,7 @@ the index Git identity when available.
 waldo model forecast model.yaml
 waldo model forecast /path/to/waldo-index/core/books
 waldo model forecast core/books science/papers
+waldo model forecast model.yaml --compare-hosts
 ```
 
 A compose supplies exact architecture and training budgets. Direct index paths
@@ -468,9 +469,21 @@ resolve a deduplicated selection, recommend the largest model rung supported by
 roughly 20 tokens per parameter, and forecast one pass. Forecast creates no
 model or run state. Human forecasts report the derived approximate parameter
 count in both compact and exact form; JSON exposes the same value as
-`approximate_parameters`.
+`approximate_parameters`. WALDO reports missing or empty compose files as input
+errors rather than treating their filenames as corpus paths. Logical corpus
+selections use the normal configured-index refresh before resolution.
 
-Only configurations that fit are shown, from slowest to fastest:
+By default the forecast resolves the same MLX, PyTorch, or TorchTitan harness
+that training would use, compares the workload with the current host's memory,
+and reports `Ready: yes` or explains why it is not ready. A matching catalog or
+observed-run profile also supplies an approximate duration. Backend discovery
+or local readiness failure does not discard the workload forecast. When the
+workload exceeds local memory, WALDO recommends remote compute with sufficient
+usable memory. A workload larger than every dated catalog configuration still
+returns its conservative resource forecast instead of failing.
+
+`--compare-hosts` additionally shows fitting catalog configurations from
+slowest to fastest:
 
 ```text
 PARAMETERS:  9.5M (9,543,210)
@@ -490,8 +503,10 @@ runs beneath `model.root` and measures their active attempt time. Evidence is
 aggregated only for the exact accelerator model and GPU count observed; that
 row uses measured throughput, while every unmatched row retains its dated
 catalog value and overhead. Human output states when local calibration is
-applied. JSON includes the formula, source per row, unrounded inputs, aggregate
-run count, measured seconds and FLOPs, and a hash of the contributing evidence.
+applied. JSON includes local readiness and omits comparison configurations
+unless `--compare-hosts` is given. The comparison includes the formula, source
+per row, unrounded inputs, aggregate run count, measured seconds and FLOPs, and
+a hash of the contributing evidence.
 
 ## Backend boundary
 

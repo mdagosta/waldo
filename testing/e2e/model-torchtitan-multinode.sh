@@ -79,6 +79,7 @@ destination="$index_root/core/e2e/torchtitan"
   --description Disposable-multi-node-TorchTitan-input \
   --license CC0-1.0 \
   --source https://example.invalid/torchtitan-mn-e2e \
+  --language en \
   --source-category public-dataset >/dev/null
 
 contribution=""

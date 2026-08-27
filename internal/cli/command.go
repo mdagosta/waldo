@@ -91,6 +91,7 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().BoolVar(&state.json, "json", false, "emit structured JSON output; progress remains on stderr")
 	root.AddCommand(
 		leaf(state, "advisor <model-name>", "Chat with an AI model advisor", "For an existing model, explains its configuration and live training state and can propose a follow-up compose. For a new name, gathers requirements, creates a validated compose, and starts training only after confirmation.", cobra.ExactArgs(1), runModelAdvisor, advisorFlags()...),
+		leaf(state, "status", "Inspect host and WALDO readiness", "Reports local resources, index configuration, lookaside configuration, and the training harness selected by the same resolver used for model training. It performs no network requests and changes no state.", cobra.NoArgs, runStatus),
 		newIndexCommand(state),
 		newShardCommand(state),
 		newLookasideCommand(state),
@@ -188,7 +189,8 @@ func newModelCommand(state *cobraState) *cobra.Command {
 			textFlag("provider", "", "EU GPAI provider profile override"),
 			booleanFlag("allow-incomplete", "emit a marked incomplete EU GPAI draft"),
 			booleanFlag("force", "replace an existing output file")),
-		leaf(state, "forecast [index-path...] | <compose.yaml>", "Estimate viable GPU configurations and runtime", "Forecasts one pass over selected index tokens or a declared model compose.", cobra.ArbitraryArgs, runModelForecast),
+		leaf(state, "forecast [index-path...] | <compose.yaml>", "Estimate training readiness and runtime", "Forecasts one pass over selected index tokens or a declared model compose on the current host. Use --compare-hosts to include the versioned hardware catalog.", cobra.ArbitraryArgs, runModelForecast,
+			booleanFlag("compare-hosts", "include the versioned training-hardware comparison")),
 		leaf(state, "train <name> [index-path...] | <name> <compose-file>", "Train a model from indexed corpora or a compose", "A compose creates an absent model or trains an existing model with the same architecture. With no input, WALDO trains an existing model on the entire resolved index. --nodes greater than 1 runs a multi-node TorchTitan job (requires the TorchTitan backend; one-pass index training is byte-tokenizer only, while compose-driven training supports every tokenizer); this invocation is the primary (rank 0), and every other node runs `model train-worker` pointed at the primary's --rendezvous host:port with the same --rendezvous-id. The nodes are coupled by --rendezvous; --rendezvous-id names the shared plan-handoff path under model.root that the secondaries consume, so it must match exactly on every node.", modelTrainArgs, runModelTrain,
 			integer64Flag("epochs", 1, "complete training passes (1..1000000)"),
 			integer64Flag("batch-size", 8, "sequences per optimizer step; the global batch across all nodes (1..1000000)"),

@@ -87,13 +87,22 @@ func ForecastIndexSelection(tokens int64) (Preset, ResourceForecast, error) {
 }
 
 func ForecastIndexSelectionWithCalibration(tokens int64, calibrations []ForecastCalibration) (Preset, ResourceForecast, error) {
-	selected, err := RecommendedPreset(tokens)
+	selected, plan, err := planIndexSelection(tokens)
 	if err != nil {
 		return Preset{}, ResourceForecast{}, err
 	}
+	report, err := forecastPlanWithCalibration(plan, calibrations)
+	return selected, report, err
+}
+
+func planIndexSelection(tokens int64) (Preset, Plan, error) {
+	selected, err := RecommendedPreset(tokens)
+	if err != nil {
+		return Preset{}, Plan{}, err
+	}
 	architecture, err := selected.Architecture.Forecast()
 	if err != nil {
-		return Preset{}, ResourceForecast{}, err
+		return Preset{}, Plan{}, err
 	}
 	batch := int64(8)
 	sequence := int64(selected.Architecture.ContextTokens)
@@ -108,6 +117,5 @@ func ForecastIndexSelectionWithCalibration(tokens int64, calibrations []Forecast
 			Parameters: training.Parameters{Steps: steps, BatchSize: batch, SequenceLength: sequence, LearningRate: 0.0003, Seed: 42},
 		}},
 	}
-	report, err := forecastPlanWithCalibration(plan, calibrations)
-	return selected, report, err
+	return selected, plan, nil
 }

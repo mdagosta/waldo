@@ -88,6 +88,7 @@ destination="$index_root/core/e2e/model-corpus"
   --license CC0-1.0 \
   --source https://example.invalid/model-e2e \
   --source-category public-dataset \
+  --language en \
   --input-profile "$input_profile"
 
 contribution=""
@@ -138,17 +139,29 @@ EOF
 
 forecast_output=$("$binary" model forecast "$compose")
 printf '%s\n' "$forecast_output"
-printf '%s\n' "$forecast_output" | grep -q 'GPUS.*MFR.*ACCELERATOR.*MEMORY/GPU.*APPROX. TIME'
-printf '%s\n' "$forecast_output" | grep -q 'Apple.*M4 Max 40-core GPU'
-printf '%s\n' "$forecast_output" | grep -q 'NVIDIA.*H100 SXM'
-if printf '%s\n' "$forecast_output" | grep -Eq 'BACKEND|FIT|~|unified'; then
+printf '%s\n' "$forecast_output" | grep -Eq '^HOST:[[:space:]]+[^/]+/[^[:space:]]+$'
+printf '%s\n' "$forecast_output" | grep -Eq '^BACKEND:[[:space:]]+fake@'
+printf '%s\n' "$forecast_output" | grep -Eq '^READY:[[:space:]]+no$'
+printf '%s\n' "$forecast_output" | grep -q '^REASON:'
+if printf '%s\n' "$forecast_output" | grep -Eq 'HOST COMPARISON|GPUS.*MFR|FIT|~|unified'; then
   echo "forecast contains an unwanted display field" >&2
   exit 1
 fi
+comparison_output=$("$binary" model forecast "$compose" --compare-hosts)
+printf '%s\n' "$comparison_output" | grep -q 'GPUS.*MFR.*ACCELERATOR.*MEMORY/GPU.*APPROX. TIME'
+printf '%s\n' "$comparison_output" | grep -q 'Apple.*M4 Max 40-core GPU'
+printf '%s\n' "$comparison_output" | grep -q 'NVIDIA.*H100 SXM'
 [ ! -e "$models/smoke" ] || { echo "forecast created model state" >&2; exit 1; }
 forecast_json=$("$binary" --json model forecast "$compose")
 printf '%s\n' "$forecast_json" | grep -Eq '"catalog"[[:space:]]*:[[:space:]]*"openwaldo-training-hardware-'
-printf '%s\n' "$forecast_json" | grep -Eq '"approximate_seconds"[[:space:]]*:'
+printf '%s\n' "$forecast_json" | grep -Eq '"ready"[[:space:]]*:[[:space:]]*false'
+printf '%s\n' "$forecast_json" | grep -Eq '"reason"[[:space:]]*:'
+if printf '%s\n' "$forecast_json" | grep -Eq '"configurations"[[:space:]]*:'; then
+  echo "default JSON forecast exposed host comparisons" >&2
+  exit 1
+fi
+comparison_json=$("$binary" --json model forecast "$compose" --compare-hosts)
+printf '%s\n' "$comparison_json" | grep -Eq '"approximate_seconds"[[:space:]]*:'
 
 build_output=$("$binary" model train smoke "$compose" --audit)
 printf '%s\n' "$build_output"

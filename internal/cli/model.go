@@ -28,6 +28,7 @@ import (
 	"github.com/openwaldo/waldo/internal/config"
 	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/disclosure"
+	"github.com/openwaldo/waldo/internal/host"
 	waldoindex "github.com/openwaldo/waldo/internal/index"
 	"github.com/openwaldo/waldo/internal/inference"
 	"github.com/openwaldo/waldo/internal/lookaside"
@@ -47,11 +48,35 @@ func runModelForecast(context Context, args []string, stdout, stderr io.Writer) 
 		if err != nil {
 			return err
 		}
+		if !isCompose {
+			isCompose, err = composeLookingForecastInput(args[0])
+			if err != nil {
+				return err
+			}
+		}
 		if isCompose {
 			return runModelComposeForecast(context, args[0], stdout, stderr)
 		}
 	}
 	return runModelIndexForecast(context, args, stdout, stderr)
+}
+
+func composeLookingForecastInput(path string) (bool, error) {
+	extension := strings.ToLower(filepath.Ext(path))
+	if extension != ".yaml" && extension != ".yml" && extension != ".json" {
+		return false, nil
+	}
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		// A single metadata filename is the documented compose form. Existing
+		// index manifests are still identified by their content and resolved
+		// through the normal index path.
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return !info.IsDir() && info.Size() == 0, nil
 }
 
 func runModelComposeForecast(context Context, path string, stdout, progress io.Writer) error {
@@ -75,14 +100,25 @@ func runModelComposeForecast(context Context, path string, stdout, progress io.W
 	if err != nil {
 		return err
 	}
+	forecastBuilder, err := configuredForecastBuilder(context)
+	if err != nil {
+		return err
+	}
+	hostForecast, err := forecastComposeHost(context, forecastBuilder, compose, report)
+	if err != nil {
+		return err
+	}
+	compareHosts := boolOption(context, "compare-hosts")
 	if context.JSON {
+		visible := visibleModelForecast(report, compareHosts)
 		return writeJSON(stdout, struct {
 			Compose  string                 `json:"compose"`
 			Forecast model.ResourceForecast `json:"forecast"`
-		}{Compose: composePath, Forecast: report})
+			Host     model.HostForecast     `json:"host"`
+		}{Compose: composePath, Forecast: visible, Host: hostForecast})
 	}
 	fmt.Fprintf(stdout, "COMPOSE:     %s\n", composePath)
-	writeModelForecast(stdout, report)
+	writeModelForecast(stdout, report, hostForecast, compareHosts)
 	return nil
 }
 
@@ -118,7 +154,17 @@ func runModelIndexForecast(context Context, paths []string, stdout, warnings io.
 	if _, err := cache.PurgeUsed(); err != nil {
 		return fmt.Errorf("purge successful forecast cache: %w", err)
 	}
+	builder, err := configuredForecastBuilder(context)
+	if err != nil {
+		return err
+	}
+	hostForecast, err := forecastIndexHost(context, builder, bom.Totals.Tokens, report)
+	if err != nil {
+		return err
+	}
+	compareHosts := boolOption(context, "compare-hosts")
 	if context.JSON {
+		visible := visibleModelForecast(report, compareHosts)
 		return writeJSON(stdout, struct {
 			Index      any                    `json:"index"`
 			Paths      []string               `json:"paths"`
@@ -127,15 +173,16 @@ func runModelIndexForecast(context Context, paths []string, stdout, warnings io.
 			Tokens     int64                  `json:"tokens"`
 			Budget     string                 `json:"budget"`
 			Forecast   model.ResourceForecast `json:"forecast"`
-		}{Index: bom.Index, Paths: bom.Paths, Preset: preset.Name, Parameters: parameters.ApproximateParameters, Tokens: bom.Totals.Tokens, Budget: "one-pass", Forecast: report})
+			Host       model.HostForecast     `json:"host"`
+		}{Index: bom.Index, Paths: bom.Paths, Preset: preset.Name, Parameters: parameters.ApproximateParameters, Tokens: bom.Totals.Tokens, Budget: "one-pass", Forecast: visible, Host: hostForecast})
 	}
 	fmt.Fprintf(stdout, "MODEL:       %s\n", preset.Name)
 	fmt.Fprintln(stdout, "BUDGET:      one pass")
-	writeModelForecast(stdout, report)
+	writeModelForecast(stdout, report, hostForecast, compareHosts)
 	return nil
 }
 
-func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
+func writeModelForecast(stdout io.Writer, report model.ResourceForecast, hostForecast model.HostForecast, compareHosts bool) {
 	fmt.Fprintf(stdout, "PARAMETERS:  %s\n", humanModelParameters(report.ApproximateParameters))
 	if len(report.EpochDerivedStages) == 0 {
 		fmt.Fprintf(stdout, "TOKENS:      %s\n", humanCount(report.PlannedTokens))
@@ -148,7 +195,21 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 		fmt.Fprintf(stdout, "EPOCHS:      %s resolve during training preflight\n", strings.Join(report.EpochDerivedStages, ", "))
 	}
 	fmt.Fprintln(stdout)
+	writeHostModelForecast(stdout, hostForecast)
+	if !compareHosts {
+		return
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "HOST COMPARISON")
+	fmt.Fprintln(stdout)
+	writeHostComparison(stdout, report)
+}
 
+func writeHostComparison(stdout io.Writer, report model.ResourceForecast) {
+	if len(report.Configurations) == 0 {
+		fmt.Fprintf(stdout, "NOTE:        %s\n", singleLine(report.CatalogNote))
+		return
+	}
 	type row struct {
 		manufacturer string
 		accelerator  string
@@ -192,6 +253,89 @@ func writeModelForecast(stdout io.Writer, report model.ResourceForecast) {
 	fmt.Fprintf(stdout, "%*s  %*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, "GPUS", nodesWidth, "NODES", manufacturerWidth, "MFR", acceleratorWidth, "ACCELERATOR", memoryWidth, "MEMORY/GPU", durationWidth, "APPROX. TIME")
 	for _, candidate := range rows {
 		fmt.Fprintf(stdout, "%*s  %*s  %-*s  %-*s  %*s  %*s\n", GPUsWidth, candidate.GPUs, nodesWidth, candidate.nodes, manufacturerWidth, candidate.manufacturer, acceleratorWidth, candidate.accelerator, memoryWidth, candidate.memory, durationWidth, candidate.duration)
+	}
+}
+
+func writeHostModelForecast(stdout io.Writer, forecast model.HostForecast) {
+	execution := forecast.Execution
+	fmt.Fprintf(stdout, "HOST:        %s/%s\n", execution.Host.OS, execution.Host.Architecture)
+	if execution.Backend.Name == "" {
+		fmt.Fprintln(stdout, "BACKEND:     unavailable")
+	} else {
+		fmt.Fprintf(stdout, "BACKEND:     %s@%s\n", execution.Backend.Name, execution.Backend.Revision)
+		fmt.Fprintf(stdout, "RUNTIME:     %s\n", singleLine(execution.Runtime))
+	}
+	if len(execution.Accelerators) == 0 {
+		fmt.Fprintln(stdout, "ACCELERATOR: CPU")
+	} else if len(execution.Accelerators) == 1 {
+		accelerator := execution.Accelerators[0]
+		fmt.Fprintf(stdout, "ACCELERATOR: %s\n", acceleratorDisplay(accelerator))
+	} else {
+		accelerator := execution.Accelerators[0]
+		fmt.Fprintf(stdout, "ACCELERATOR: %d x %s\n", len(execution.Accelerators), acceleratorDisplay(accelerator))
+	}
+	if forecast.RequiredMemory > 0 && forecast.AvailableMemory > 0 {
+		fmt.Fprintf(stdout, "MEMORY:      %s required / %s available\n", humanBytesUint(forecast.RequiredMemory), humanBytesUint(forecast.AvailableMemory))
+	}
+	fmt.Fprintf(stdout, "READY:       %s\n", readiness(forecast.Ready))
+	if !forecast.Ready {
+		fmt.Fprintf(stdout, "REASON:      %s\n", singleLine(forecast.Reason))
+		if forecast.Recommendation != "" {
+			fmt.Fprintf(stdout, "RECOMMEND:   %s\n", singleLine(forecast.Recommendation))
+		}
+		return
+	}
+	if forecast.ApproximateSeconds != nil {
+		fmt.Fprintf(stdout, "TIME:        %s\n", approximateDuration(*forecast.ApproximateSeconds))
+		fmt.Fprintf(stdout, "ESTIMATE:    %s\n", forecast.EstimateSource)
+	}
+}
+
+func visibleModelForecast(report model.ResourceForecast, compareHosts bool) model.ResourceForecast {
+	if !compareHosts {
+		report.Configurations = nil
+	}
+	return report
+}
+
+func configuredForecastBuilder(context Context) (model.Builder, error) {
+	quiet := context
+	quiet.JSON = false
+	return configuredModelBuilder(quiet, io.Discard)
+}
+
+func forecastComposeHost(context Context, builder model.Builder, compose model.Compose, report model.ResourceForecast) (model.HostForecast, error) {
+	facts, err := host.Inspect()
+	if err != nil {
+		return unavailableHostForecast(err), nil
+	}
+	selection, err := builder.ResolveComposeBackend(context.Execution, compose)
+	if err != nil {
+		return unavailableHostForecastFor(facts.OS, facts.Architecture, err), nil
+	}
+	return model.AssessComposeHost(compose, report, selection.Execution, facts.MemoryBytes)
+}
+
+func forecastIndexHost(context Context, builder model.Builder, tokens int64, report model.ResourceForecast) (model.HostForecast, error) {
+	facts, err := host.Inspect()
+	if err != nil {
+		return unavailableHostForecast(err), nil
+	}
+	selection, err := builder.ResolveIndexBackend(context.Execution, tokens)
+	if err != nil {
+		return unavailableHostForecastFor(facts.OS, facts.Architecture, err), nil
+	}
+	return model.AssessIndexHost(tokens, report, selection.Execution, facts.MemoryBytes)
+}
+
+func unavailableHostForecast(err error) model.HostForecast {
+	return model.HostForecast{Reason: err.Error()}
+}
+
+func unavailableHostForecastFor(hostOS, architecture string, err error) model.HostForecast {
+	return model.HostForecast{
+		Reason:    err.Error(),
+		Execution: training.Execution{Host: training.Host{OS: hostOS, Architecture: architecture}},
 	}
 }
 

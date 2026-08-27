@@ -8,6 +8,7 @@ for flags and detailed behavior.
 ```text
 waldo
 ├── advisor
+├── status
 ├── config
 │   ├── show
 │   ├── get
@@ -57,6 +58,18 @@ waldo
 
 There is no top-level `waldo bom` command. Corpus BOM operations are under
 `waldo index bom`; model BOM operations are under `waldo model bom`.
+
+## Local readiness
+
+```bash
+waldo status
+```
+
+`status` inspects local resources, the selected index, lookaside paths, and the
+training harness chosen by the same environment resolver used by `model
+train`. It performs no network requests and changes no state. Each unavailable
+workflow reports `Ready: no` and explains why. Global `--json` returns the
+same structured facts for automation.
 
 ## Index selection
 
@@ -174,7 +187,9 @@ waldo model chat canary
 waldo model export --help
 ```
 
-Run `forecast` before allocating substantial compute. Training and generation
+`forecast` reports readiness and runtime for the current host. Add
+`--compare-hosts` to include the versioned hardware comparison. Run `forecast`
+before allocating substantial compute. Training and generation
 fail when the selected host lacks a compatible runtime or artifacts.
 Models with a declared `interaction.template` automatically receive the
 matching prompt format and multi-turn history in `model chat`; models without
