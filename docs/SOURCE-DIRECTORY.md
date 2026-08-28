@@ -71,6 +71,13 @@ material or `und` when unknown. Programming languages are declared separately
 in `content.programming_languages`. These are corpus/source declarations, not
 inferred per-record statistics.
 
+The recursive raw tree and the logical records produced from it are separate
+concepts. A directory may contain one file or thousands of files. WALDO hashes
+every regular file as raw evidence, then the declared input adapter decides how
+the tree maps to records. A text source-code tree may produce one record per
+file; JSONL produces one record per line; a tree-aware adapter may combine a
+root file and its dependencies into one record.
+
 WALDO preserves the verified `input.format` declaration in the generated index
 manifest as `sources[].input_formats`. This records the upstream physical input
 format; canonical WALDO shards remain Parquet regardless of the source format.
@@ -177,11 +184,29 @@ formats and do not render corpus-specific conversation templates.
 Text must be NUL-free UTF-8. Archives that WALDO does not read directly must be
 safely unpacked by acquisition. Empty files are not trainable records. WALDO
 pins file identity before conversion and rejects files that change afterward.
-Every non-empty file must resolve to one of the supported adapters above.
-Structured JSON, JSONL, Parquet, and XML must carry the required logical input
-mapping. WALDO fails before conversion on unsupported, ambiguous, or unmapped
-formats; it does not silently convert raw markup to text or binary bytes to
-base64 training records.
+Every non-empty file must be accounted for by the selected adapter as a
+logical input, a dependency of a logical input, or an explicitly supported
+non-content resource. Structured JSON, JSONL, Parquet, and XML must carry the
+required logical input mapping. WALDO fails before conversion on unsupported,
+ambiguous, unclaimed, or unmapped files; it does not silently convert raw
+markup to text or binary bytes to base64 training records.
+
+### Tree-aware formats
+
+A tree-aware format applies to the entire recursive source boundary. Its
+adapter discovers logical roots and resolves dependency closures; the manifest
+does not normally enumerate a root file. For LaTeX, the normal declaration is:
+
+```json
+"input": {"format": "latex"}
+```
+
+The LaTeX adapter must recursively locate candidate document roots, resolve
+included files within the verified boundary, and produce one logical document
+per root. Included fragments must not also be emitted as independent records.
+If discovery is ambiguous, WALDO fails closed. An optional roots override may
+disambiguate unusual multi-root trees, but it is not required for normal
+ingestion.
 
 Before hashing, deduplication, measurement, and packing, WALDO applies its
 pinned privacy-redaction policy. Canonical shard and manifest statistics—not

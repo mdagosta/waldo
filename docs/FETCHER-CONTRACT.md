@@ -36,7 +36,11 @@ The definitive handoff format is [SOURCE-DIRECTORY.md](SOURCE-DIRECTORY.md).
 ## WALDO responsibilities
 
 - Recursively discover only the files inside declared manifest boundaries.
-- Verify raw-tree evidence and pin every input's size and SHA-256.
+- Verify raw-tree evidence and pin every raw file's size and SHA-256.
+- Keep the verified raw-file inventory distinct from the adapter's logical
+  document model. A source tree may contain thousands of files; whether one
+  file, one record, or a dependency closure becomes a canonical document is
+  defined by the selected WALDO adapter.
 - Detect general physical formats, including compressed JSONL and mbox, and
   reject disagreement with the source manifest's declared format.
 - Apply declarative logical mappings from the source manifest.
@@ -65,3 +69,35 @@ accepts it.
 
 Legacy WALDO ingest recipes and the legacy `waldo-source-directory/raw` layout
 remain readable for compatibility. They are not the format for new fetchers.
+
+## Raw trees and logical documents
+
+The manifest boundary describes a recursive raw tree, not a promise that the
+tree contains one file or that every file becomes an independent document.
+WALDO inventories and hashes every regular file under the boundary. The
+declared input format then selects a built-in adapter that defines how that
+verified tree becomes logical records.
+
+Examples:
+
+- For a source-code tree declared as `text`, each retained text file may become
+  an independent document.
+- For JSONL, each line is a logical record even though the raw artifact is one
+  file.
+- For a tree-aware format such as LaTeX, WALDO must recursively discover root
+  documents, resolve their included files within the same boundary, and emit
+  one logical document per root. Included fragments must not also become
+  independent documents.
+
+Tree-aware adapters own project discovery and dependency resolution. The
+normal manifest declares only the format:
+
+```json
+"input": {"format": "latex"}
+```
+
+An adapter may define an optional, strictly validated roots override for an
+otherwise ambiguous tree. Automatic recursive discovery remains the default.
+All referenced paths must remain inside the manifest boundary; symlinks,
+missing dependencies, ambiguous roots without an override, and dependency
+cycles that cannot be handled deterministically fail closed.
