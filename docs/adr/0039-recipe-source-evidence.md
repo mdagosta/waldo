@@ -1,6 +1,6 @@
 # 0039: Preserve source evidence in ingest recipes
 
-Status: accepted
+Status: superseded by [0064](0064-manifest-backed-ingestion.md)
 
 ## Decision
 

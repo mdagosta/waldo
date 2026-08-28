@@ -49,6 +49,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	}
 	requestedDestination := options.Request.Destination
 	if isRecipe {
+		emitObsoleteRecipeWarning(stderr, context.JSON)
 		if requestedDestination == "" {
 			return fmt.Errorf("ingest recipes require an explicit destination")
 		}
@@ -345,6 +346,15 @@ func emitIngestExclusionWarning(output io.Writer, assembly ingest.AssemblyResult
 	fmt.Fprintf(output, "\nWARNING: WALDO EXCLUDED %s RECORDS DURING INGESTION (%s).\n", humanInteger(assembly.RejectedDocs), detail)
 	fmt.Fprintln(output, "WARNING: EXCLUDED RECORDS ARE NOT PRESENT IN THE PUBLISHED SHARDS; REVIEW THE SOURCE POLICY AND COUNTS BEFORE COMMITTING.")
 	fmt.Fprintln(output)
+}
+
+func emitObsoleteRecipeWarning(output io.Writer, jsonOutput bool) {
+	message := "WALDO INGEST RECIPES ARE OBSOLETE; PRODUCE A MANIFEST-BACKED RAW DIRECTORY FOR NEW INGESTION WORKFLOWS"
+	if jsonOutput {
+		_ = json.NewEncoder(output).Encode(ingest.ProgressEvent{Phase: "input", Status: "warning", Message: message})
+		return
+	}
+	fmt.Fprintf(output, "WARNING: %s.\n", message)
 }
 
 func emitIngestFallbackWarning(output io.Writer, plan ingest.Plan, jsonOutput bool) {

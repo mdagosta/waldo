@@ -69,6 +69,7 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 		return err
 	}
 	if isRecipe {
+		emitObsoleteRecipeWarning(stderr, commandContext.JSON)
 		if len(options.MetadataOptions) > 0 {
 			return fmt.Errorf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
 		}

@@ -1,6 +1,6 @@
 # ADR 0014: Execute external fetchers only through explicit ingest recipe
 
-- Status: accepted
+- Status: superseded by ADR 0064
 - Date: 2026-08-04
 
 ## Context

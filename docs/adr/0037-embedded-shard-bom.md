@@ -49,13 +49,13 @@ writer path performed a complete post-write record audit before publication.
 Other unattested writers fall back to a deep scan. `index audit --deep`
 explicitly revalidates every record hash and token count.
 
-Recipe-driven ingestion excludes malformed records, empty mapped records, and
+Profile-driven ingestion excludes malformed records, empty mapped records, and
 record-level mapping failures when the adapter can still establish a safe
 record boundary. WALDO counts those omissions by reason and prints a prominent
 warning that they are absent from the published shards. Input corruption whose
 record boundaries cannot be established remains a hard error. WALDO cannot
 infer copyright ownership from prose; licensing exclusions require declared
-or mapped license evidence and an explicit recipe policy.
+or mapped license evidence and an explicit ingestion policy.
 
 ## Consequences
 

@@ -1,11 +1,11 @@
 # 0034: Keep ingest profiles corpus-neutral
 
-Status: amended by [0061](0061-stream-json-record-arrays.md)
+Status: amended by [0061](0061-stream-json-record-arrays.md) and [0064](0064-manifest-backed-ingestion.md)
 
 ## Decision
 
 Physical containers and logical mappings are separate facts. WALDO detects and
-pins primitive containers; a strict recipe optionally declares a reusable
+pins primitive containers; a strict ingestion manifest declares a reusable
 profile that maps each physical record to canonical text.
 
 Supported record containers have explicit cardinality:
@@ -22,13 +22,13 @@ identity, and conversion identity.
 
 Profiles never name or recognize a corpus. Source-specific marker expressions,
 XML vocabulary knowledge, field cleanup, date assembly, and URL construction
-belong in the reviewed recipe or fetcher. A fetcher may deposit a simpler
+belong in the reviewed ingestion manifest or acquisition tool. A fetcher may deposit a simpler
 primitive format such as record-map JSONL when the upstream shape requires
 source-specific transformation.
 
 Profiles fail closed on empty required fields and embedded NUL characters.
-Recipes may explicitly select `on_empty: skip` or `nul: space`; these policies
-are part of the plan identity. A recipe may also raise the default 64 MiB
+Ingestion profiles may explicitly select `on_empty: skip` or `nul: space`;
+these policies are part of the plan identity. A profile may also raise the default 64 MiB
 indivisible-record ceiling to at most 256 MiB, subject to the plan memory
 budget, without changing the canonical record schema.
 

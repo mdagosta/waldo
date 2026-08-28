@@ -154,12 +154,12 @@ Future sources need additive, generally useful provenance fields for:
 - for commercial/private data, the acquisition basis without publishing
   confidential agreement terms.
 
-Ingest recipes can declare these facts directly on each source. Existing
+Ingestion manifests declare these facts directly on each source. Existing
 `collected_from`/`collected_to` are the acquisition period;
 `content.from`/`content.to` are the distinct underlying content period, and
 `content.selection` preserves the declared subset rule. `content` and
-`acquisition` use the same durable structures in recipes, plans, manifests, and
-OpenWALDO BOMs.
+`acquisition` use the same durable structures in ingestion manifests, plans,
+index manifests, and OpenWALDO BOMs.
 
 The normalized effective/default source license remains `source.license`.
 `source.license_evidence.declaration` preserves upstream wording verbatim and
@@ -327,8 +327,9 @@ Schema 2 records also carry versioned, immutable row facts
 for detected email-shaped strings, token repetition, and structural boilerplate;
 the flags do not themselves establish a legal basis, personal-data status, or
 overall content quality. Detector identities and aggregate counts survive in
-manifests and OpenWALDO BOMs. OpenWALDO BOMs remain schema 1. Ingest recipes
-support schema 1 for a single source and schema 2 for grouped sources.
+manifests and OpenWALDO BOMs. OpenWALDO BOMs remain schema 1. Ingestion
+manifests support a single source at the root or explicitly bounded grouped
+sources beneath it.
 
 The remaining disclosure fixtures should cover:
 

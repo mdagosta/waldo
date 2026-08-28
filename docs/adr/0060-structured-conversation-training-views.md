@@ -38,7 +38,7 @@ boundaries from text prefixes is ambiguous.
 - One source corpus can be reused with different compatible model templates
   without reingestion.
 - Canonical identity covers roles, message ordering, content, and tools.
-- Ingestion recipes control only source interpretation; model composes control
+- Ingestion manifests and profiles control only source interpretation; model composes control
   model-visible rendering and supervision.
 - Previously flattened SFT corpora must be explicitly rebuilt to gain
   structured semantics.

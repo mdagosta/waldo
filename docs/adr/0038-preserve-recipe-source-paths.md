@@ -1,6 +1,6 @@
 # ADR 0038: Preserve recipe-relative paths for file records
 
-Status: accepted
+Status: superseded by [0064](0064-manifest-backed-ingestion.md)
 
 ## Context
 

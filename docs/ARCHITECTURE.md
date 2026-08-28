@@ -39,9 +39,11 @@ audit, export, and training input.
 `internal/ingest` owns input probing, profiles, conversion, deterministic
 deduplication and packing, publication, contribution overlays, and recovery.
 
-Source-specific fetchers remain external shell scripts. WALDO executes them
-only through an explicitly supplied ingest recipe and then takes ownership of
-conversion and publication.
+Acquisition remains outside WALDO. Fetchers produce a manifest-backed recursive
+raw directory and stop. WALDO never executes a fetcher or converter named by
+the manifest; it verifies the complete raw tree and applies a reviewed built-in
+adapter selected by the declarative input format. See
+[INGESTION.md](INGESTION.md).
 
 ### Lookaside
 
@@ -88,8 +90,8 @@ contract. Export conversion is split across `internal/modelexport`,
 
 Framework-specific Python workers receive a versioned request and stream. They
 do not parse the Git index or define a second model configuration format.
-External fetchers populate private acquisition space and stop before
-conversion. Git remains the review mechanism for index metadata.
+External fetchers populate an explicit manifest-backed raw directory and stop
+before conversion. Git remains the review mechanism for index metadata.
 
 ## Implementation rules
 

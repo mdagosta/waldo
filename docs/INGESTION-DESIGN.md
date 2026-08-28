@@ -138,10 +138,9 @@ retained. The current policy and aggregate counts are preserved in shard,
 manifest, and BOM evidence; this reduces exposure but is not a guarantee of
 anonymity or regulatory compliance.
 
-For recipe-driven whole-file text and Markdown inputs, `meta.source_path`
-preserves the validated acquisition-relative path. This keeps file-level
-attribution after temporary recipe output is purged without expanding the Git
-manifest into a per-file inventory.
+For manifest-backed whole-file text and Markdown inputs, `meta.source_path`
+preserves the validated raw-directory-relative path. This keeps file-level
+attribution without expanding the Git index manifest into a per-file inventory.
 
 Null means absent. Empty strings and zero values must not be overloaded as
 absence. `content_sha256` is binary in the physical schema to avoid storing a
@@ -323,9 +322,9 @@ but WALDO's domain contract must not be an Arrow API.
 
 The initial text-family adapter treats each file as one document, targets
 16 MiB typed batches, and defaults to rejecting a single record larger than
-64 MiB. A reviewed recipe may raise the indivisible-record ceiling to at most
-256 MiB, still bounded by half the plan memory budget. These limits are
-recorded in the immutable plan. Splitting large text streams remains a
+64 MiB. A reviewed ingestion profile may raise the indivisible-record ceiling
+to at most 256 MiB, still bounded by half the plan memory budget. These limits
+are recorded in the immutable plan. Splitting large text streams remains a
 separate, explicit transformation because line, paragraph, and byte-window
 boundaries produce materially different training records and content hashes.
 
@@ -389,7 +388,8 @@ re-encoding are necessary, but still happen in one bounded streaming pass.
 
 ### Deduplication and deterministic sharding
 
-There are two useful modes, and the CLI and recipe must name which one ran.
+There are two useful modes, and the immutable ingestion plan records which one
+ran.
 
 #### Streaming mode
 

@@ -135,8 +135,11 @@ Inspect the complete ingest interface before use:
 waldo index ingest --help
 ```
 
-Ingestion accepts supported local files or a reviewed ingest recipe. After all
-objects are audited and published, it retains a contribution overlay and
+The canonical ingestion input is a raw directory containing a root
+`manifest.json`; see the [ingestion contract](INGESTION.md). Direct supported
+files remain a local convenience. Obsolete ingest recipes are accepted only
+for compatibility and should not be used for new contributions. After all
+objects are audited and published, WALDO retains a contribution overlay and
 atomically applies those metadata changes to the selected index working tree
 for normal Git review. WALDO does not commit, push, or open a pull request.
 

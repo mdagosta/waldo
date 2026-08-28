@@ -14,9 +14,10 @@ The root README is a project overview. Maintained documentation lives here.
 
 ## Data contracts
 
+- [Ingestion contract](INGESTION.md)
+- [Ingestion manifest schema](INGESTION-MANIFEST.md)
 - [Ingestion and canonical Parquet](INGESTION-DESIGN.md)
-- [Source directory contract](SOURCE-DIRECTORY.md)
-- [Fetcher and ingest-recipe contract](FETCHER-CONTRACT.md)
+- [Fetcher acquisition contract](FETCHER-CONTRACT.md)
 - [Corpus OpenWALDO BOM](OPENWALDO-BOM.md)
 - [Index compatibility](COMPATIBILITY.md)
 

@@ -18,7 +18,7 @@ thresholds. `waldo/gopher-structural-duplication-v1` applies pinned duplicate
 line and paragraph thresholds. The latter two are deterministic,
 language-neutral adaptations of the published Gopher quality rules. Exact
 thresholds and normalization are part of the detector contract documented in
-the source-directory specification.
+the ingestion specification.
 
 Detector identities and flagged-record counts are preserved in Parquet footer
 metadata, the embedded shard BOM, each manifest shard, the manifest aggregate,

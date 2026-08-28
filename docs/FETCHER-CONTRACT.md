@@ -1,4 +1,8 @@
-# Fetcher contract
+# Fetcher acquisition contract
+
+This document defines acquisition behavior. The output exists for WALDO
+ingestion, whose canonical workflow is [INGESTION.md](INGESTION.md) and whose
+manifest schema is [INGESTION-MANIFEST.md](INGESTION-MANIFEST.md).
 
 Fetchers acquire raw upstream material and stop. They do not invoke WALDO,
 upload shards, mutate an index, schedule work, or train models.
@@ -10,7 +14,8 @@ fetcher corpora/example.ini /path/to/handoff
 waldo index ingest /path/to/handoff core/example
 ```
 
-The definitive handoff format is [SOURCE-DIRECTORY.md](SOURCE-DIRECTORY.md).
+The definitive handoff format is
+[INGESTION-MANIFEST.md](INGESTION-MANIFEST.md).
 
 ## Fetcher responsibilities
 
@@ -67,8 +72,9 @@ explicit acquisition snapshot; incremental/delta acquisition may reuse safely
 verified partial state, but must produce fresh raw-tree evidence before WALDO
 accepts it.
 
-Legacy WALDO ingest recipes and the legacy `waldo-source-directory/raw` layout
-remain readable for compatibility. They are not the format for new fetchers.
+Obsolete WALDO ingest recipes and the legacy `waldo-source-directory/raw`
+layout remain readable for compatibility. They are not authoring formats for
+new ingestion sources or fetchers.
 
 ## Raw trees and logical documents
 

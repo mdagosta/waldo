@@ -25,6 +25,16 @@ func TestIngestExclusionWarningIsProminent(t *testing.T) {
 	}
 }
 
+func TestObsoleteRecipeWarningPointsToManifestDirectory(t *testing.T) {
+	var output bytes.Buffer
+	emitObsoleteRecipeWarning(&output, false)
+	for _, want := range []string{"WARNING", "RECIPES ARE OBSOLETE", "MANIFEST-BACKED RAW DIRECTORY"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("warning %q does not contain %q", output.String(), want)
+		}
+	}
+}
+
 func TestIngestTextFallbackWarningSaysContentIsRetained(t *testing.T) {
 	plan := ingest.Plan{TextFallbacks: []ingest.TextFallback{{DetectedFormat: "html", Adapter: "text", Artifacts: 3, Bytes: 4096}}}
 	var output bytes.Buffer

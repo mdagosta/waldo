@@ -64,6 +64,7 @@ Use `waldo <command> --help` as the authoritative command reference.
 
 Start with the [documentation index](docs/README.md). In particular:
 
+- [Ingestion contract](docs/INGESTION.md)
 - [Command guide](docs/UX.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Contributing](docs/CONTRIBUTING.md)
