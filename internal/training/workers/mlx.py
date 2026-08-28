@@ -29,6 +29,12 @@ def emit(kind, **payload):
     print(json.dumps(frame, separators=(",", ":")), flush=True)
 
 
+# WALDO_GPU_THROTTLE=0.25 caps training to ~25% of wall-clock time; GPU alternates between full-speed and idle.
+try: GPU_THROTTLE = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
+except ValueError: GPU_THROTTLE = 1; emit("event", event={"kind": "log", "message": "specify WALDO_GPU_THROTTLE as decimal percentage, ie 0.25"})
+if not 0 < GPU_THROTTLE < 1: GPU_THROTTLE = 1
+
+
 def artifact(path, logical_path):
     digest = hashlib.sha256()
     size = 0
@@ -312,6 +318,7 @@ class Trainer:
             self.replay_steps -= 1
             self.batch = []
             return
+        step_started = time.perf_counter()
         tokens = mx.array([item[0] for item in self.batch], dtype=mx.int32)
         mask = mx.array([item[1] for item in self.batch], dtype=mx.float32)
         inputs = tokens[:, :-1]
@@ -323,6 +330,9 @@ class Trainer:
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
         self.optimizer.update(self.model, gradients)
         mx.eval(self.model.parameters(), self.optimizer.state, loss)
+        if GPU_THROTTLE < 1:
+            # mx.eval already drained the GPU, so this never pauses mid command-buffer.
+            time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
         loss_value = float(loss.item())
         valid_tokens = int(mask.sum().item())
         self.step_number = next_step
