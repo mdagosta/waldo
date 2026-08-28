@@ -60,21 +60,15 @@ func StreamProfiledFileBatches(ctx context.Context, plan Plan, consume func(Text
 			err = fmt.Errorf("unsupported whole-file profile %q", input.Profile.Type)
 		}
 		if err != nil {
-			if input.Profile.Type == ProfileBoundedText && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) && errors.Is(err, errEmptyProfiledText) {
+			if input.Profile.Type == ProfileBoundedText && input.Profile.OnEmpty == "skip" && errors.Is(err, errEmptyProfiledText) {
 				if err := consume(rejectionBatch(RejectionEmpty)); err != nil {
 					return err
 				}
 				continue
 			}
 			var syntaxError *xml.SyntaxError
-			if input.Profile.Type == ProfileXMLRecord && (input.Profile.XML.OnMalformed == "skip" || plan.RecipeEvidence != nil) && errors.As(err, &syntaxError) {
+			if input.Profile.Type == ProfileXMLRecord && input.Profile.XML.OnMalformed == "skip" && errors.As(err, &syntaxError) {
 				if err := consume(rejectionBatch(RejectionMalformed)); err != nil {
-					return err
-				}
-				continue
-			}
-			if plan.RecipeEvidence != nil {
-				if err := consume(rejectionBatch(RejectionMapping)); err != nil {
 					return err
 				}
 				continue

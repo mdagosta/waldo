@@ -251,7 +251,7 @@ func readTextRow(ctx context.Context, plan Plan, input PlanInput, maximum int64)
 		return shard.TextRow{}, 0, err
 	}
 	if before.Size() > maximum {
-		return shard.TextRow{}, 0, fmt.Errorf("record is %d bytes; maximum is %d bytes (choose an explicit splitter recipe)", before.Size(), maximum)
+		return shard.TextRow{}, 0, fmt.Errorf("record is %d bytes; maximum is %d bytes (choose an explicit input profile)", before.Size(), maximum)
 	}
 
 	var content strings.Builder
@@ -263,7 +263,7 @@ func readTextRow(ctx context.Context, plan Plan, input PlanInput, maximum int64)
 		return shard.TextRow{}, 0, err
 	}
 	if written > maximum {
-		return shard.TextRow{}, 0, fmt.Errorf("record exceeds %d bytes (choose an explicit splitter recipe)", maximum)
+		return shard.TextRow{}, 0, fmt.Errorf("record exceeds %d bytes (choose an explicit input profile)", maximum)
 	}
 	after, err := file.Stat()
 	if err != nil {

@@ -56,7 +56,7 @@ func TestStreamTextBatchesPreservesFilesAndBoundsBatches(t *testing.T) {
 		t.Fatalf("source name = %v", batches[0].Rows[0].SourceName)
 	}
 	if batches[0].Rows[0].Meta == nil {
-		t.Fatal("recipe-relative source path metadata is absent")
+		t.Fatal("manifest-relative source path metadata is absent")
 	}
 	var metadata map[string]string
 	if err := json.Unmarshal([]byte(*batches[0].Rows[0].Meta), &metadata); err != nil || metadata["source_path"] != "a.md" {

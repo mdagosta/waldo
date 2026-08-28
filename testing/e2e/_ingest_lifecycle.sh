@@ -7,14 +7,14 @@
 set -eu
 
 usage() {
-  echo "usage: $0 local|s3://bucket/waldo-e2e[/prefix] direct|recipe" >&2
+  echo "usage: $0 local|s3://bucket/waldo-e2e[/prefix] direct" >&2
   exit 2
 }
 
 [ "$#" -eq 2 ] || usage
 transport=$1
 mode=$2
-case "$mode" in direct|recipe) ;; *) usage ;; esac
+case "$mode" in direct) ;; *) usage ;; esac
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
@@ -78,47 +78,6 @@ printf '%s\n' 'alpha beta gamma delta epsilon zeta eta theta alpha beta gamma de
 printf '%s\n' 'Repeated navigation footer line.' 'Repeated navigation footer line.' 'Repeated navigation footer line.' 'Repeated navigation footer line.' 'Repeated navigation footer line.' 'Repeated navigation footer line.' 'Repeated navigation footer line.' 'Repeated navigation footer line.' > "$fixture/05-boilerplate.txt"
 
 ingest_input=$fixture
-if [ "$mode" = "recipe" ]; then
-  recipe_root="$work/waldo-fetchers"
-  path_bin="$work/path-bin"
-  mkdir -p "$recipe_root" "$path_bin"
-  fetcher="$recipe_root/fetch-fixture.sh"
-  recipe="$recipe_root/tiny.yaml"
-  recipe_canonical=$(CDPATH='' cd -- "$recipe_root" && pwd)/tiny.yaml
-  path_check="$path_bin/waldo-e2e-check-recipe"
-  printf '%s\n' '#!/bin/sh' 'set -eu' "cp \"\$1\"/* \"\$WALDO_FETCH_DIR\"/" > "$fetcher"
-  chmod 755 "$fetcher"
-  printf '%s\n' \
-    '#!/bin/sh' \
-    'set -eu' \
-    "[ \"\$WALDO_INGEST_RECIPE\" = \"\$1\" ] || { echo \"recipe env mismatch: \$WALDO_INGEST_RECIPE != \$1\" >&2; exit 1; }" \
-    "fetch_real=\$(CDPATH='' cd -- \"\$WALDO_FETCH_DIR\" && pwd -P)" \
-    "[ \"\$(pwd -P)\" = \"\$fetch_real\" ] || { echo \"recipe cwd mismatch: \$(pwd -P) != \$fetch_real\" >&2; exit 1; }" > "$path_check"
-  chmod 755 "$path_check"
-  PATH="$path_bin:$PATH"
-  export PATH
-  printf '%s\n' \
-    'kind: waldo-ingest-recipe' \
-    'schema: 1' \
-    'title: Tiny-E2E-Corpus' \
-    'description: Disposable-ingestion-smoke-test' \
-    'license: CC0-1.0' \
-    'source:' \
-    '  name: tiny' \
-    '  url: https://example.invalid/waldo-e2e' \
-    '  category: public-dataset' \
-    '  content: {languages: [en]}' \
-    'steps:' \
-    '  - name: fetch-fixture' \
-    '    exec: ./fetch-fixture.sh' \
-    '    args:' \
-    "      - $fixture" \
-    '  - name: check-recipe-environment' \
-    '    exec: waldo-e2e-check-recipe' \
-    '    args:' \
-    "      - $recipe_canonical" > "$recipe"
-  ingest_input=$recipe
-fi
 
 echo "initializing empty index"
 "$binary" index init "$index_root"
@@ -137,73 +96,15 @@ fi
 destination="$index_root/core/e2e/tiny"
 common_arguments="--title Tiny-E2E-Corpus --description Disposable-ingestion-smoke-test --license CC0-1.0 --source https://example.invalid/waldo-e2e --source-category public-dataset --language en"
 
-if [ "$mode" = "recipe" ]; then
-  retired="$recipe_root/retired.yaml"
-  retired_marker="$work/retired-identity-executed"
-  retired_fetcher="$recipe_root/retired-fetcher.sh"
-  printf '%s\n' '#!/bin/sh' 'set -eu' "touch \"\$1\"" > "$retired_fetcher"
-  chmod 755 "$retired_fetcher"
-  printf '%s\n' \
-    'kind: waldo-ingest-compose' \
-    'schema: 1' \
-    'title: Retired identity' \
-    'license: CC0-1.0' \
-    'source: {url: https://example.invalid/retired, category: public-dataset}' \
-    'steps:' \
-    '  - name: must-not-run' \
-    '    exec: ./retired-fetcher.sh' \
-    '    args:' \
-    "      - $retired_marker" > "$retired"
-  # shellcheck disable=SC2086
-  if "$binary" index ingest "$retired" "$index_root/core/e2e/retired" $common_arguments --dry-run >/dev/null 2>&1; then
-    echo "retired waldo-ingest-compose identity was accepted" >&2
-    exit 1
-  fi
-  if [ -e "$retired_marker" ]; then
-    echo "retired ingest identity executed a command" >&2
-    exit 1
-  fi
-fi
-
 echo "preflighting ingestion"
 # The arguments are fixed test data rather than user input; intentional word
 # splitting keeps this POSIX script dependency-free.
-if [ "$mode" = "recipe" ]; then
-  preflight=$("$binary" index ingest "$ingest_input" "$destination" --dry-run)
-  printf '%s\n' "$preflight"
-  printf '%s\n' "$preflight" | grep -q 'ingest recipe ' || {
-    echo "recipe preflight did not identify the ingest recipe" >&2
-    exit 1
-  }
-  printf '%s\n' "$preflight" | grep -q 'check-recipe-environment' || {
-    echo "recipe preflight did not resolve the PATH command" >&2
-    exit 1
-  }
-  json_preflight=$("$binary" --json index ingest "$ingest_input" "$destination" --dry-run)
-  printf '%s\n' "$json_preflight" | grep -Eq '"kind"[[:space:]]*:[[:space:]]*"waldo-ingest-recipe-preflight"' || {
-    echo "JSON preflight has the wrong recipe identity" >&2
-    exit 1
-  }
-  printf '%s\n' "$json_preflight" | grep -Eq '"recipe"[[:space:]]*:' || {
-    echo "JSON preflight does not expose its recipe" >&2
-    exit 1
-  }
-  if printf '%s\n' "$json_preflight" | grep -Eq '"compose"[[:space:]]*:'; then
-    echo "JSON preflight still exposes retired compose terminology" >&2
-    exit 1
-  fi
-else
-  # shellcheck disable=SC2086
-  "$binary" index ingest "$ingest_input" "$destination" $common_arguments --dry-run
-fi
+# shellcheck disable=SC2086
+"$binary" index ingest "$ingest_input" "$destination" $common_arguments --dry-run
 
 echo "running ingestion"
-if [ "$mode" = "recipe" ]; then
-  "$binary" index ingest "$ingest_input" "$destination"
-else
-  # shellcheck disable=SC2086
-  "$binary" index ingest "$ingest_input" "$destination" $common_arguments
-fi
+# shellcheck disable=SC2086
+"$binary" index ingest "$ingest_input" "$destination" $common_arguments
 
 if [ "$transport" = "local" ]; then
   published_count=$(find "$work/lookaside" -type f -print | wc -l | tr -d ' ')
@@ -318,10 +219,6 @@ fi
 
 if find "$staging" -path '*/objects/*' -type f -print | grep . >/dev/null 2>&1; then
   echo "successful ingestion left staged object files behind" >&2
-  exit 1
-fi
-if find "$staging/recipes" -mindepth 1 -print 2>/dev/null | grep . >/dev/null 2>&1; then
-  echo "successful recipe-driven ingestion left prepared source files behind" >&2
   exit 1
 fi
 if find "$scratch" -type f -print 2>/dev/null | grep . >/dev/null 2>&1; then

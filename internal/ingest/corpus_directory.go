@@ -34,7 +34,7 @@ type CorpusDirectory struct {
 type DirectorySource struct {
 	ID        string            `json:"id"`
 	License   string            `json:"license"`
-	Source    RecipeSource      `json:"source"`
+	Source    SourceMetadata    `json:"source"`
 	Input     InputProfile      `json:"input,omitempty"`
 	Artifacts []json.RawMessage `json:"artifacts,omitempty"`
 }
@@ -116,7 +116,7 @@ func (corpus *CorpusDirectory) load() error {
 	seen := map[string]bool{}
 	declared := map[string]bool{"manifest.json": true}
 	for position, name := range corpus.Sources {
-		if !recipeStepName.MatchString(name) || seen[name] {
+		if !sourceIDPattern.MatchString(name) || seen[name] {
 			return fmt.Errorf("source directory %d has invalid or duplicate name %q", position+1, name)
 		}
 		seen[name] = true

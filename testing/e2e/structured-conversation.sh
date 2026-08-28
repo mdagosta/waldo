@@ -30,17 +30,16 @@ cache="$work/cache"
 scratch="$work/scratch"
 staging="$work/staging"
 models="$work/models"
-recipe_root="$work/fetchers"
 fixture="$work/hermes-shaped.jsonl"
-recipe="$recipe_root/structured-conversation.yaml"
-fetcher="$recipe_root/copy-fixture.sh"
+source_root="$work/source"
+raw_root="$source_root/raw"
 export_root="$work/export"
 compose="$work/model.yaml"
 export WALDO_CONFIG="$work/config.json"
 
 echo "testing: structured conversation ingestion and training lifecycle"
 (cd "$repo_root" && GOCACHE="$work/go-cache" go build -o "$binary" ./cmd/waldo)
-mkdir -p "$recipe_root"
+mkdir -p "$raw_root"
 
 cat > "$fixture" <<'EOF'
 {"id":"one","tools":"[{\"name\":\"lookup\",\"description\":\"Look up a value\"}]","conversations":[{"from":"human","value":"Find account 42."},{"from":"gpt","value":"I will use the lookup tool."},{"from":"tool","value":"Account 42 is active."},{"from":"gpt","value":"The account is active."}]}
@@ -49,41 +48,31 @@ cat > "$fixture" <<'EOF'
 {"id":"four","conversations":[{"from":"human","value":"Give a concise test response with enough bytes for capacity validation."},{"from":"gpt","value":"This response supplies deterministic assistant targets for the smoke training run."}]}
 EOF
 
-cat > "$fetcher" <<'EOF'
-#!/bin/sh
-set -eu
-[ "$#" -eq 1 ] || { echo "usage: copy-fixture SOURCE" >&2; exit 2; }
-cp "$1" conversations.jsonl
-EOF
-chmod 755 "$fetcher"
+cp "$fixture" "$raw_root/conversations.jsonl"
+file_bytes=$(wc -c < "$raw_root/conversations.jsonl" | tr -d ' ')
+if command -v sha256sum >/dev/null 2>&1; then
+  file_sha=$(sha256sum "$raw_root/conversations.jsonl" | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" conversations.jsonl | sha256sum | awk '{print $1}')
+else
+  file_sha=$(shasum -a 256 "$raw_root/conversations.jsonl" | awk '{print $1}')
+  tree_sha=$(printf '%s\t%s\t%s\n' "$file_sha" "$file_bytes" conversations.jsonl | shasum -a 256 | awk '{print $1}')
+fi
 
-cat > "$recipe" <<EOF
-kind: waldo-ingest-recipe
-schema: 1
-title: Structured Conversation E2E
-description: Disposable Hermes-shaped structured-conversation fixture.
-license: Apache-2.0
-source:
-  name: structured-conversation-e2e
-  version: fixture-1
-  url: https://example.invalid/structured-conversation-e2e
-  category: public-dataset
-input:
-  type: chat-messages
-  fields:
-    id: id
-  messages:
-    role: conversations[].from
-    content: conversations[].value
-    tools: tools
-    role_aliases:
-      human: user
-      gpt: assistant
-steps:
-  - name: copy-fixture
-    exec: ./copy-fixture.sh
-    args:
-      - $fixture
+cat > "$source_root/manifest.json" <<EOF
+{
+  "kind":"waldo-source-directory",
+  "schema":1,
+  "retrieved_at":"2026-08-27T00:00:00Z",
+  "corpus":{"id":"structured-conversation-e2e","title":"Structured Conversation E2E","description":"Disposable Hermes-shaped structured-conversation fixture."},
+  "sources":[{
+    "id":"structured-conversation-e2e","path":"","license":"Apache-2.0",
+    "source":{"name":"structured-conversation-e2e","version":"fixture-1","url":"https://example.invalid/structured-conversation-e2e","category":"public-dataset","license_evidence":{"declaration":"Apache-2.0"}},
+    "input":{"format":"jsonl","type":"chat-messages","fields":{"id":"id"},"messages":{"role":"conversations[].from","content":"conversations[].value","tools":"tools","role_aliases":{"human":"user","gpt":"assistant"}}},
+    "artifacts":[]
+  }],
+  "fetcher":{"name":"structured-conversation-e2e"},
+  "raw":{"path":"raw","file_count":1,"byte_count":$file_bytes,"tree_sha256":"$tree_sha"}
+}
 EOF
 
 "$binary" index init "$index_root"
@@ -97,8 +86,8 @@ EOF
 "$binary" config set model.backend fake
 
 destination="$index_root/post-train/sft/structured-conversation-e2e"
-"$binary" index ingest "$recipe" "$destination" --dry-run
-"$binary" index ingest "$recipe" "$destination"
+"$binary" index ingest "$source_root" "$destination" --dry-run
+"$binary" index ingest "$source_root" "$destination"
 
 contribution=""
 for candidate in "$staging"/*/contribution; do

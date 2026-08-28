@@ -107,12 +107,6 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 		position++
 		object, ok := value.(map[string]any)
 		if !ok {
-			if plan.RecipeEvidence != nil {
-				if err := reject(RejectionMapping); err != nil {
-					return err
-				}
-				return nil
-			}
 			return fmt.Errorf("JSON record %d must be an object", position)
 		}
 		fallback := fmt.Sprintf("sha256:%s#record=%d", input.Artifact.SHA256, position)
@@ -127,14 +121,8 @@ func streamJSONObject(ctx context.Context, plan Plan, input PlanInput, emit func
 				}
 				return nil
 			}
-			if errors.Is(err, errEmptyMappedRecord) && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) {
+			if errors.Is(err, errEmptyMappedRecord) && input.Profile.OnEmpty == "skip" {
 				if err := reject(RejectionEmpty); err != nil {
-					return err
-				}
-				return nil
-			}
-			if plan.RecipeEvidence != nil {
-				if err := reject(RejectionMapping); err != nil {
 					return err
 				}
 				return nil
@@ -238,25 +226,11 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 		decoder.UseNumber()
 		var raw any
 		if err := decoder.Decode(&raw); err != nil {
-			if plan.RecipeEvidence != nil {
-				if err := reject(RejectionMalformed); err != nil {
-					_ = reader.Close()
-					return err
-				}
-				continue
-			}
 			_ = reader.Close()
 			return fmt.Errorf("line %d: %w", line, err)
 		}
 		object, ok := raw.(map[string]any)
 		if !ok {
-			if plan.RecipeEvidence != nil {
-				if err := reject(RejectionMapping); err != nil {
-					_ = reader.Close()
-					return err
-				}
-				continue
-			}
 			_ = reader.Close()
 			return fmt.Errorf("line %d must be one JSON object", line)
 		}
@@ -273,15 +247,8 @@ func streamMappedJSONL(ctx context.Context, plan Plan, input PlanInput, emit fun
 				}
 				continue
 			}
-			if errors.Is(err, errEmptyMappedRecord) && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) {
+			if errors.Is(err, errEmptyMappedRecord) && input.Profile.OnEmpty == "skip" {
 				if err := reject(RejectionEmpty); err != nil {
-					_ = reader.Close()
-					return err
-				}
-				continue
-			}
-			if plan.RecipeEvidence != nil {
-				if err := reject(RejectionMapping); err != nil {
 					_ = reader.Close()
 					return err
 				}
@@ -354,14 +321,8 @@ func streamMappedParquet(ctx context.Context, plan Plan, input PlanInput, emit f
 					}
 					continue
 				}
-				if errors.Is(err, errEmptyMappedRecord) && (input.Profile.OnEmpty == "skip" || plan.RecipeEvidence != nil) {
+				if errors.Is(err, errEmptyMappedRecord) && input.Profile.OnEmpty == "skip" {
 					if err := reject(RejectionEmpty); err != nil {
-						return err
-					}
-					continue
-				}
-				if plan.RecipeEvidence != nil {
-					if err := reject(RejectionMapping); err != nil {
 						return err
 					}
 					continue

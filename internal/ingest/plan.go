@@ -20,21 +20,20 @@ import (
 )
 
 type Plan struct {
-	Kind           string                      `json:"kind"`
-	Schema         int                         `json:"schema"`
-	Destination    string                      `json:"destination"`
-	Title          string                      `json:"title"`
-	Description    string                      `json:"description"`
-	License        string                      `json:"license"`
-	Source         PlanSource                  `json:"source"`
-	Sources        []PlanSource                `json:"sources,omitempty"`
-	Mode           string                      `json:"mode"`
-	MemoryBytes    int64                       `json:"memory_bytes"`
-	Writer         WriterPlan                  `json:"writer"`
-	Inputs         []PlanInput                 `json:"inputs"`
-	TextFallbacks  []TextFallback              `json:"text_fallbacks,omitempty"`
-	RecipeEvidence *index.IngestRecipeEvidence `json:"ingest_recipe,omitempty"`
-	Update         *UpdatePlan                 `json:"update,omitempty"`
+	Kind          string         `json:"kind"`
+	Schema        int            `json:"schema"`
+	Destination   string         `json:"destination"`
+	Title         string         `json:"title"`
+	Description   string         `json:"description"`
+	License       string         `json:"license"`
+	Source        PlanSource     `json:"source"`
+	Sources       []PlanSource   `json:"sources,omitempty"`
+	Mode          string         `json:"mode"`
+	MemoryBytes   int64          `json:"memory_bytes"`
+	Writer        WriterPlan     `json:"writer"`
+	Inputs        []PlanInput    `json:"inputs"`
+	TextFallbacks []TextFallback `json:"text_fallbacks,omitempty"`
+	Update        *UpdatePlan    `json:"update,omitempty"`
 }
 
 type TextFallback struct {
@@ -104,7 +103,6 @@ type PlanRequest struct {
 	Profile            InputProfile
 	InputRoot          string
 	Sources            []PlanSourceRequest
-	RecipeEvidence     *index.IngestRecipeEvidence
 	Update             *UpdatePlan
 }
 
@@ -145,7 +143,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		seen := map[string]bool{}
 		for position := range request.Sources {
 			source := &request.Sources[position]
-			if !recipeStepName.MatchString(source.ID) || seen[source.ID] {
+			if !sourceIDPattern.MatchString(source.ID) || seen[source.ID] {
 				return Plan{}, fmt.Errorf("source %d has invalid or duplicate id %q", position+1, source.ID)
 			}
 			seen[source.ID] = true
@@ -183,8 +181,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		Kind: "waldo-ingest-plan", Schema: 1,
 		Destination: request.Destination, Title: request.Title, Description: request.Description, License: record.NormalizeLicense(request.License),
 		Source: request.Source, Mode: mode, MemoryBytes: memory,
-		RecipeEvidence: request.RecipeEvidence,
-		Update:         request.Update,
+		Update: request.Update,
 		Writer: WriterPlan{
 			Format: "parquet", RecordKind: record.KindPretrain, RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
 			AdapterRecipe:    "canonical-adapters-2",
@@ -211,10 +208,9 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		}
 	}
 	for _, artifact := range probe.Artifacts {
-		// Acquisition recipes may select empty tracked files. They carry no
-		// trainable content, so omit them before adapter selection. Direct input
-		// remains strict and reports the unsupported empty artifact.
-		if artifact.Format == "empty" && request.RecipeEvidence != nil {
+		// Manifest-backed source trees may contain empty tracked files. They
+		// carry no trainable content, so omit them before adapter selection.
+		if artifact.Format == "empty" && len(request.Sources) > 0 {
 			continue
 		}
 		profile, textColumn, inputRoot, sourceID := request.Profile, request.TextColumn, request.InputRoot, ""
@@ -255,7 +251,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			}
 			relative, err := filepath.Rel(root, artifact.Path)
 			if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-				return Plan{}, fmt.Errorf("input %s is outside recipe output %s", artifact.Path, root)
+				return Plan{}, fmt.Errorf("input %s is outside source root %s", artifact.Path, root)
 			}
 			input.SourcePath = filepath.ToSlash(relative)
 		}

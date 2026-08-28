@@ -143,7 +143,7 @@ func readProjectedText(ctx context.Context, input *os.File, planned PlanInput, p
 			}
 			textBytes := row[0].ByteArray()
 			if int64(len(textBytes)) > maximum {
-				return fmt.Errorf("row %d is %d bytes; maximum is %d bytes (choose an explicit splitter recipe)", rowNumber, len(textBytes), maximum)
+				return fmt.Errorf("row %d is %d bytes; maximum is %d bytes (choose an explicit input profile)", rowNumber, len(textBytes), maximum)
 			}
 			text := string(textBytes)
 			if text == "" {

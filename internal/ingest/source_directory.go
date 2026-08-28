@@ -13,11 +13,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/index"
 )
+
+var sourceIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 const (
 	SourceDirectoryKind   = "waldo-source-directory"
@@ -49,9 +52,31 @@ type SourceDirectorySource struct {
 	ID        string            `json:"id"`
 	Path      string            `json:"path"`
 	License   string            `json:"license"`
-	Source    RecipeSource      `json:"source"`
+	Source    SourceMetadata    `json:"source"`
 	Input     InputProfile      `json:"input"`
 	Artifacts []json.RawMessage `json:"artifacts"`
+}
+
+// SourceMetadata is the portable acquisition evidence supplied by a
+// manifest-backed source directory.
+type SourceMetadata struct {
+	Name            string                 `json:"name,omitempty"`
+	Version         string                 `json:"version,omitempty"`
+	URL             string                 `json:"url"`
+	Category        string                 `json:"category"`
+	CollectedFrom   string                 `json:"collected_from,omitempty"`
+	CollectedTo     string                 `json:"collected_to,omitempty"`
+	LicenseEvidence *index.LicenseEvidence `json:"license_evidence,omitempty"`
+	Content         *index.Content         `json:"content,omitempty"`
+	Acquisition     *index.Acquisition     `json:"acquisition,omitempty"`
+}
+
+func (source SourceMetadata) AsPlanSource(id, name string) PlanSource {
+	return PlanSource{
+		ID: id, Name: name, Version: source.Version, URL: source.URL, Category: source.Category,
+		CollectedFrom: source.CollectedFrom, CollectedTo: source.CollectedTo,
+		LicenseEvidence: source.LicenseEvidence, Content: source.Content, Acquisition: source.Acquisition,
+	}
 }
 
 type SourceDirectoryRaw struct {
@@ -144,7 +169,7 @@ func (manifest SourceDirectoryManifest) Validate() error {
 	seen := map[string]bool{}
 	seenPaths := map[string]bool{}
 	for position, source := range manifest.Sources {
-		if !recipeStepName.MatchString(source.ID) || seen[source.ID] {
+		if !sourceIDPattern.MatchString(source.ID) || seen[source.ID] {
 			return fmt.Errorf("source %d has invalid or duplicate id %q", position+1, source.ID)
 		}
 		seen[source.ID] = true

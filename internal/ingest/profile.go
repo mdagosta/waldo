@@ -91,7 +91,7 @@ type XMLMapping struct {
 }
 
 // LoadInputProfile reads one strict standalone YAML or JSON profile for direct
-// local ingestion. Recipes embed the same InputProfile shape under `input`.
+// local ingestion. Source-directory manifests use the same InputProfile shape.
 func LoadInputProfile(path string) (InputProfile, error) {
 	info, err := os.Lstat(path)
 	if err != nil {

@@ -289,18 +289,3 @@ func TestBuildManifestSizeDoesNotScaleWithInputArtifactCount(t *testing.T) {
 		t.Fatal("manifest contains per-input evidence")
 	}
 }
-
-func TestCompactCollectorPinsCleanAndDirtyRecipes(t *testing.T) {
-	clean := &index.IngestRecipeEvidence{
-		Path: "recipes/common-pile/foodista.yaml", Repository: "git@github.com:openwaldo/waldo-fetchers.git",
-		Commit: "abc123", SHA256: fmt.Sprintf("%064x", 1),
-	}
-	if got, want := compactCollector(clean), "git@github.com:openwaldo/waldo-fetchers@abc123:recipes/common-pile/foodista.yaml"; got != want {
-		t.Fatalf("clean collector = %q, want %q", got, want)
-	}
-	dirty := *clean
-	dirty.Dirty = true
-	if got, want := compactCollector(&dirty), "git@github.com:openwaldo/waldo-fetchers@abc123+dirty:recipes/common-pile/foodista.yaml#sha256="+dirty.SHA256; got != want {
-		t.Fatalf("dirty collector = %q, want %q", got, want)
-	}
-}

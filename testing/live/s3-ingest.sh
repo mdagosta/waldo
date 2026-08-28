@@ -18,4 +18,4 @@ set -eu
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 export WALDO_E2E_ALLOW_S3=1
 export WALDO_E2E_S3_PUBLIC=1
-exec "$script_dir/../e2e/ingest-recipe.sh" "$1"
+exec "$script_dir/../e2e/ingest-direct.sh" "$1"

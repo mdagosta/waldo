@@ -128,7 +128,7 @@ func testDirectorySource(id, license string) *DirectorySource {
 	return &DirectorySource{
 		ID: id, License: license,
 		Input: InputProfile{Format: "text"},
-		Source: RecipeSource{
+		Source: SourceMetadata{
 			Name: id, URL: "https://example.test/" + id, Category: "public-dataset",
 			LicenseEvidence: &index.LicenseEvidence{Declaration: license},
 		},

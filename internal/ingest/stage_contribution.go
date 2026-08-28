@@ -383,8 +383,7 @@ func CheckContributionDestination(indexRoot string, plan Plan) error {
 	return CheckContributionDestinationPath(indexRoot, plan.Destination)
 }
 
-// CheckContributionDestinationPath allows recipe-driven ingestion to reject an
-// occupied destination before it executes potentially expensive fetchers.
+// CheckContributionDestinationPath rejects an occupied index destination.
 func CheckContributionDestinationPath(indexRoot, destinationPath string) error {
 	root, err := filepath.Abs(indexRoot)
 	if err != nil {

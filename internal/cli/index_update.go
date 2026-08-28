@@ -56,10 +56,6 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 	logicalDestination := strings.TrimSuffix(corpusTarget.Path, filepath.Ext(corpusTarget.Path))
 	options.Request.Destination = logicalDestination
 	options.Request.Update = &ingest.UpdatePlan{Manifest: corpusTarget.Path, ManifestSHA256: manifestHash, Mode: mode}
-	loadedRecipe, isRecipe, err := ingest.LoadRecipe(options.Inputs[0])
-	if err != nil {
-		return err
-	}
 	loadedCorpus, isCorpusDirectory, err := ingest.LoadCorpusDirectory(options.Inputs[0])
 	if err != nil {
 		return err
@@ -68,21 +64,7 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 	if err != nil {
 		return err
 	}
-	if isRecipe {
-		emitObsoleteRecipeWarning(stderr, commandContext.JSON)
-		if len(options.MetadataOptions) > 0 {
-			return fmt.Errorf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
-		}
-		options.Request.Title = loadedRecipe.Recipe.Title
-		options.Request.Description = loadedRecipe.Recipe.Description
-		if loadedRecipe.Recipe.Schema == ingest.RecipeSchema {
-			options.Request.License = loadedRecipe.Recipe.License
-			options.Request.Source = loadedRecipe.Recipe.Source.AsPlanSource("", loadedRecipe.Recipe.Source.Name)
-			options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
-			options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
-			options.Request.Profile = loadedRecipe.Recipe.Input
-		}
-	} else if isCorpusDirectory {
+	if isCorpusDirectory {
 		if len(options.MetadataOptions) > 0 {
 			return fmt.Errorf("corpus directory manifest owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
 		}
@@ -97,7 +79,7 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" || options.Request.Source.Content == nil || len(options.Request.Source.Content.Languages) == 0 {
 		return fmt.Errorf("direct index ingest --update requires --title, --license, --source, --source-category, and --language (repeat for each human language; use und if unknown)")
 	}
-	if !isRecipe && options.InputProfile != "" {
+	if options.InputProfile != "" {
 		options.Request.Profile, err = ingest.LoadInputProfile(options.InputProfile)
 		if err != nil {
 			return fmt.Errorf("load input profile: %w", err)
@@ -105,18 +87,6 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 	}
 	if options.Request.Source.Name == "" {
 		options.Request.Source.Name = corpusTarget.Manifest.Name
-	}
-	if isRecipe && options.DryRun {
-		if commandContext.JSON {
-			return writeJSON(stdout, struct {
-				Mode           string              `json:"mode"`
-				Manifest       string              `json:"manifest"`
-				ManifestSHA256 string              `json:"manifest_sha256"`
-				Recipe         ingest.LoadedRecipe `json:"recipe"`
-			}{mode, corpusTarget.Path, manifestHash, loadedRecipe})
-		}
-		fmt.Fprintf(stdout, "index ingest --update preflight\n  mode      %s\n  manifest  %s (%s)\n", mode, corpusTarget.Path, manifestHash[:12])
-		return writeRecipePreflight(commandContext, stdout, loadedRecipe, logicalDestination)
 	}
 	var configuration config.Config
 	if !options.DryRun {
@@ -133,51 +103,17 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 		workers = configuration.Lookaside.Publish.Workers
 	}
 	execution := ingest.WithProgress(commandContext.Execution, ingestProgressReporter(stderr, commandContext.JSON))
-	var probe ingest.Probe
-	var prepared *ingest.PreparedRecipe
-	if isRecipe {
-		stagingBase, err := config.EffectiveStagingBase(configuration)
-		if err != nil {
+	probe, err := ingest.ProbePathsWithWorkers(execution, options.Inputs, workers)
+	if err != nil {
+		return err
+	}
+	if isCorpusDirectory {
+		if err := loadedCorpus.VerifyProbe(probe); err != nil {
 			return err
 		}
-		scratchRoot, err := config.EffectiveScratchRoot(configuration)
-		if err != nil {
+	} else if isSourceDirectory {
+		if err := loadedSource.VerifyProbe(probe); err != nil {
 			return err
-		}
-		if err := ingest.ValidateWorkLocations(target.Root, stagingBase, scratchRoot); err != nil {
-			return err
-		}
-		recipeOutput := io.Writer(stderr)
-		if commandContext.JSON {
-			recipeOutput = &recipeJSONLogWriter{output: stderr}
-		}
-		state := recipeUpdateState(mode, corpusTarget.Path, manifestHash, corpusTarget.Manifest)
-		result, err := ingest.PrepareRecipeUpdateWithWorkers(execution, loadedRecipe, logicalDestination, stagingBase, state, workers, ingestRecipeRunner, recipeOutput, recipeOutput)
-		if err != nil {
-			return err
-		}
-		prepared = &result
-		probe = result.Probe
-		recipeEvidence := result.Loaded.Evidence
-		options.Request.RecipeEvidence = &recipeEvidence
-		if len(result.Loaded.Recipe.Sources) == 0 {
-			options.Request.InputRoot = result.Inputs
-		} else {
-			options.Request.Sources = result.SourceRequests()
-		}
-	} else {
-		probe, err = ingest.ProbePathsWithWorkers(execution, options.Inputs, workers)
-		if err != nil {
-			return err
-		}
-		if isCorpusDirectory {
-			if err := loadedCorpus.VerifyProbe(probe); err != nil {
-				return err
-			}
-		} else if isSourceDirectory {
-			if err := loadedSource.VerifyProbe(probe); err != nil {
-				return err
-			}
 		}
 	}
 	plan, err := ingest.NewPlan(probe, options.Request)
@@ -226,11 +162,6 @@ func runIndexIngestUpdate(commandContext Context, args []string, stdout, stderr 
 	contribution, err := ingest.StageUpdateContribution(target.Root, staging, plan, updated)
 	if err != nil {
 		return err
-	}
-	if prepared != nil {
-		if err := ingest.PurgePreparedRecipe(*prepared); err != nil {
-			return err
-		}
 	}
 	contribution, err = ingest.ApplyContribution(target.Root, contribution)
 	if err != nil {
@@ -281,19 +212,4 @@ func resolveSingleUpdateCorpus(target waldoindex.Target) (waldoindex.Corpus, err
 		return waldoindex.Corpus{}, fmt.Errorf("index ingest --update target must resolve exactly one manifest; found %d: %s", len(corpora), strings.Join(paths, ", "))
 	}
 	return corpora[0], nil
-}
-
-func recipeUpdateState(mode, manifest, digest string, existing waldoindex.Manifest) ingest.RecipeUpdateState {
-	state := ingest.RecipeUpdateState{Kind: "waldo-ingest-update-state", Schema: 1, Mode: mode, Manifest: manifest, ManifestSHA256: digest, Sources: existing.Sources}
-	if existing.Rollup != nil {
-		state.Shards, state.Docs, state.Tokens, state.Bytes = int(existing.Rollup.Count), existing.Rollup.Docs, existing.Rollup.Tokens, existing.Rollup.Bytes
-		return state
-	}
-	state.Shards = len(existing.Shards)
-	for _, object := range existing.Shards {
-		state.Docs += object.Docs
-		state.Tokens += object.Tokens
-		state.Bytes += object.Bytes
-	}
-	return state
 }

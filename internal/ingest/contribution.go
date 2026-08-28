@@ -39,8 +39,8 @@ func BuildManifest(plan Plan, assembly AssemblyResult, objectBase string) (index
 		RecordKind:  plan.Writer.RecordKind, RecordSchema: plan.Writer.RecordSchema,
 		ConvertedBy: index.Conversion{
 			Tool: "waldo index ingest", Version: "0.1.0-dev",
-			Collector: compactCollector(plan.RecipeEvidence), Profile: conversionProfile(plan),
-			Recipe: plan.Writer.Recipe, Tokenizer: tokenizer.Default,
+			Profile: conversionProfile(plan),
+			Recipe:  plan.Writer.Recipe, Tokenizer: tokenizer.Default,
 		},
 	}
 	manifest.Assessment = newContentAssessment(0, 0, 0)
@@ -171,28 +171,6 @@ func newContentAssessment(email, repetitive, boilerplate int64) *index.ContentAs
 		RepetitiveContent:  &index.DetectionMeasure{Detector: shard.RepetitionDetector, Records: repetitive},
 		BoilerplateContent: &index.DetectionMeasure{Detector: shard.BoilerplateDetector, Records: boilerplate},
 	}
-}
-
-func compactCollector(recipe *index.IngestRecipeEvidence) string {
-	if recipe == nil {
-		return ""
-	}
-	repository := strings.TrimSuffix(strings.TrimSpace(recipe.Repository), ".git")
-	if repository == "" {
-		repository = "local"
-	}
-	commit := strings.TrimSpace(recipe.Commit)
-	if commit == "" {
-		commit = "uncommitted"
-	}
-	if recipe.Dirty {
-		commit += "+dirty"
-	}
-	collector := repository + "@" + commit + ":" + filepath.ToSlash(recipe.Path)
-	if recipe.Dirty || recipe.Commit == "" {
-		collector += "#sha256=" + recipe.SHA256
-	}
-	return collector
 }
 
 func sourceAcquisitionIdentity(plan Plan, sourceID string) (string, error) {

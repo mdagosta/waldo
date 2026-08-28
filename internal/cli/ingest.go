@@ -13,7 +13,6 @@ import (
 	"path"
 	"sort"
 	"strings"
-	"sync"
 
 	"github.com/openwaldo/waldo/internal/config"
 	waldoindex "github.com/openwaldo/waldo/internal/index"
@@ -25,17 +24,11 @@ var newIngestPublisher = func(ctx context.Context, publish config.Publish) (look
 	return lookaside.NewPublisher(ctx, publish)
 }
 
-var ingestRecipeRunner ingest.CommandRunner = ingest.ExecCommandRunner{}
-
 func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) error {
 	if boolOption(context, "update") {
 		return runIndexIngestUpdate(context, args, stdout, stderr)
 	}
 	options, err := cobraIndexIngestOptions(context, args)
-	if err != nil {
-		return err
-	}
-	loadedRecipe, isRecipe, err := ingest.LoadRecipe(options.Inputs[0])
 	if err != nil {
 		return err
 	}
@@ -48,24 +41,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		return err
 	}
 	requestedDestination := options.Request.Destination
-	if isRecipe {
-		emitObsoleteRecipeWarning(stderr, context.JSON)
-		if requestedDestination == "" {
-			return fmt.Errorf("ingest recipes require an explicit destination")
-		}
-		if len(options.MetadataOptions) > 0 {
-			return fmt.Errorf("recipe input owns corpus metadata; remove %s", strings.Join(options.MetadataOptions, ", "))
-		}
-		options.Request.Title = loadedRecipe.Recipe.Title
-		options.Request.Description = loadedRecipe.Recipe.Description
-		if loadedRecipe.Recipe.Schema == ingest.RecipeSchema {
-			options.Request.License = loadedRecipe.Recipe.License
-			options.Request.Source = loadedRecipe.Recipe.Source.AsPlanSource("", loadedRecipe.Recipe.Source.Name)
-			options.Request.TextColumn = loadedRecipe.Recipe.TextColumn
-			options.Request.RecordMaximumBytes = loadedRecipe.Recipe.RecordMaximumBytes
-			options.Request.Profile = loadedRecipe.Recipe.Input
-		}
-	} else if isCorpusDirectory {
+	if isCorpusDirectory {
 		if requestedDestination == "" {
 			return fmt.Errorf("corpus directory ingestion requires an explicit destination")
 		}
@@ -88,7 +64,7 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	} else if options.Request.Title == "" || options.Request.License == "" || options.Request.Source.URL == "" || options.Request.Source.Category == "" || options.Request.Source.Content == nil || len(options.Request.Source.Content.Languages) == 0 {
 		return fmt.Errorf("direct index ingest requires --title, --license, --source, --source-category, and --language (repeat for each human language; use und if unknown)")
 	}
-	if !isRecipe && options.InputProfile != "" {
+	if options.InputProfile != "" {
 		options.Request.Profile, err = ingest.LoadInputProfile(options.InputProfile)
 		if err != nil {
 			return fmt.Errorf("load input profile: %w", err)
@@ -124,62 +100,23 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 	if options.Request.Source.Name == "" {
 		options.Request.Source.Name = path.Base(strings.TrimSuffix(target.Rel, "/"))
 	}
-	if isRecipe && options.DryRun {
-		return writeRecipePreflight(context, stdout, loadedRecipe, target.Rel)
-	}
 	if !options.DryRun {
 		if configuration.Lookaside.Publish == nil {
 			return fmt.Errorf("index ingest needs a writable lookaside; run `waldo config set lookaside <s3-or-file-URL>`")
 		}
 	}
 	execution := ingest.WithProgress(context.Execution, ingestProgressReporter(stderr, context.JSON))
-	var probe ingest.Probe
-	var prepared *ingest.PreparedRecipe
-	if isRecipe {
-		if err := ingest.CheckContributionDestinationPath(target.Root, target.Rel); err != nil {
+	probe, err := ingest.ProbePathsWithWorkers(execution, options.Inputs, workers)
+	if err != nil {
+		return err
+	}
+	if isCorpusDirectory {
+		if err := loadedCorpus.VerifyProbe(probe); err != nil {
 			return err
 		}
-		stagingBase, err := config.EffectiveStagingBase(configuration)
-		if err != nil {
+	} else if isSourceDirectory {
+		if err := loadedSource.VerifyProbe(probe); err != nil {
 			return err
-		}
-		scratchRoot, err := config.EffectiveScratchRoot(configuration)
-		if err != nil {
-			return err
-		}
-		if err := ingest.ValidateWorkLocations(target.Root, stagingBase, scratchRoot); err != nil {
-			return err
-		}
-		recipeOutput := io.Writer(stderr)
-		if context.JSON {
-			recipeOutput = &recipeJSONLogWriter{output: stderr}
-		}
-		result, err := ingest.PrepareRecipeWithWorkers(execution, loadedRecipe, target.Rel, stagingBase, workers, ingestRecipeRunner, recipeOutput, recipeOutput)
-		if err != nil {
-			return err
-		}
-		prepared = &result
-		probe = result.Probe
-		recipeEvidence := result.Loaded.Evidence
-		options.Request.RecipeEvidence = &recipeEvidence
-		if len(result.Loaded.Recipe.Sources) == 0 {
-			options.Request.InputRoot = result.Inputs
-		} else {
-			options.Request.Sources = result.SourceRequests()
-		}
-	} else {
-		probe, err = ingest.ProbePathsWithWorkers(execution, options.Inputs, workers)
-		if err != nil {
-			return err
-		}
-		if isCorpusDirectory {
-			if err := loadedCorpus.VerifyProbe(probe); err != nil {
-				return err
-			}
-		} else if isSourceDirectory {
-			if err := loadedSource.VerifyProbe(probe); err != nil {
-				return err
-			}
 		}
 	}
 	plan, err := ingest.NewPlan(probe, options.Request)
@@ -229,11 +166,6 @@ func runIndexIngest(context Context, args []string, stdout, stderr io.Writer) er
 		contribution, err := ingest.StageContribution(target.Root, staging, plan, manifest)
 		if err != nil {
 			return err
-		}
-		if prepared != nil {
-			if err := ingest.PurgePreparedRecipe(*prepared); err != nil {
-				return err
-			}
 		}
 		contribution, err = ingest.ApplyContribution(target.Root, contribution)
 		if err != nil {
@@ -348,15 +280,6 @@ func emitIngestExclusionWarning(output io.Writer, assembly ingest.AssemblyResult
 	fmt.Fprintln(output)
 }
 
-func emitObsoleteRecipeWarning(output io.Writer, jsonOutput bool) {
-	message := "WALDO INGEST RECIPES ARE OBSOLETE; PRODUCE A MANIFEST-BACKED RAW DIRECTORY FOR NEW INGESTION WORKFLOWS"
-	if jsonOutput {
-		_ = json.NewEncoder(output).Encode(ingest.ProgressEvent{Phase: "input", Status: "warning", Message: message})
-		return
-	}
-	fmt.Fprintf(output, "WARNING: %s.\n", message)
-}
-
 func emitIngestFallbackWarning(output io.Writer, plan ingest.Plan, jsonOutput bool) {
 	for _, fallback := range plan.TextFallbacks {
 		representation := "RAW TEXT"
@@ -395,53 +318,6 @@ func emitIngestForceFormatWarning(output io.Writer, plan ingest.Plan, jsonOutput
 		}
 		fmt.Fprintf(output, "WARNING: %s.\n", message)
 	}
-}
-
-type recipeJSONLogWriter struct {
-	mu     sync.Mutex
-	output io.Writer
-}
-
-func (writer *recipeJSONLogWriter) Write(data []byte) (int, error) {
-	writer.mu.Lock()
-	defer writer.mu.Unlock()
-	message := strings.TrimRight(string(data), "\r\n")
-	if message == "" {
-		return len(data), nil
-	}
-	err := json.NewEncoder(writer.output).Encode(ingest.ProgressEvent{Phase: "fetch", Status: "output", Message: message})
-	if err != nil {
-		return 0, err
-	}
-	return len(data), nil
-}
-
-func writeRecipePreflight(context Context, stdout io.Writer, loaded ingest.LoadedRecipe, destination string) error {
-	if context.JSON {
-		return writeJSON(stdout, struct {
-			Kind        string              `json:"kind"`
-			Destination string              `json:"destination"`
-			Recipe      ingest.LoadedRecipe `json:"recipe"`
-		}{Kind: "waldo-ingest-recipe-preflight", Destination: destination, Recipe: loaded})
-	}
-	fmt.Fprintf(stdout, "ingest recipe %s\n", loaded.Path)
-	fmt.Fprintf(stdout, "  sha256      %s\n", loaded.SHA256)
-	fmt.Fprintf(stdout, "  destination %s\n", destination)
-	fmt.Fprintf(stdout, "  title       %s\n", loaded.Recipe.Title)
-	if len(loaded.Recipe.Sources) == 0 {
-		fmt.Fprintf(stdout, "  license     %s\n", loaded.Recipe.License)
-		fmt.Fprintf(stdout, "  source      %s (%s)\n", loaded.Recipe.Source.URL, loaded.Recipe.Source.Category)
-	} else {
-		fmt.Fprintf(stdout, "  sources     %d\n", len(loaded.Recipe.Sources))
-		for _, source := range loaded.Recipe.Sources {
-			fmt.Fprintf(stdout, "    %-16s %s  %s\n", source.ID, source.License, source.Source.URL)
-		}
-	}
-	for position, executable := range loaded.Executables {
-		fmt.Fprintf(stdout, "  step %d      %s -> %s (%s)\n", position+1, executable.Name, executable.Path, executable.SHA256[:12])
-	}
-	fmt.Fprintln(stdout, "dry run complete; no commands were executed and no files were written")
-	return nil
 }
 
 func shellQuote(value string) string {
