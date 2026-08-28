@@ -1,6 +1,6 @@
 # ADR 0041: Record chartable training telemetry as CSV
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-09
 
 ## Context

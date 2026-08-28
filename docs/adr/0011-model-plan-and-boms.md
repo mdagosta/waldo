@@ -1,6 +1,6 @@
 # ADR 0011: Separate immutable model plans, run BOMs, and observed state
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-04
 
 ## Context

@@ -1,32 +1,18 @@
-# 0057: Preserve scored dialogue metadata and explicit quality gates
+# ADR 0057: Preserve scored conversation metadata
 
-## Status
-
-Accepted.
-
-ADR 0060 replaces the flattened dialogue payload with structured messages;
-this decision's scored metadata and filtering contract remains unchanged.
+Status: accepted
 
 ## Decision
 
-The general `dialogue-pair` input profile accepts named `fields.meta` mappings
-and stores those values alongside its existing flattened-dialogue metadata.
-This retains response ratings and other source annotations in canonical rows
-without putting corpus-specific behavior in WALDO.
+Conversation ingestion profiles preserve declared named metadata mappings,
+including ratings and other source annotations, alongside structured messages.
+WALDO does not flatten conversations or apply a model prompt template during
+ingestion.
 
-`input.main_content` accepts a conjunction of exact scalar field matches. A row
-is main content only when every declared value matches. A missing field fails
-ingestion; a differing value classifies the row as auxiliary. Single-condition
-profiles retain their existing behavior.
+`input.main_content` accepts a conjunction of exact scalar field matches. A
+missing field fails ingestion; a differing value marks the row as auxiliary.
+This permits a compose using `main_content: true` to select a reviewed subset
+while preserving the original score metadata.
 
-This permits a reviewed scored-response corpus to retain every rating while a
-compose using `main_content: true` selects a conservative SFT subset. It does
-not create a preference-training objective: ratings and preference pairs must
-remain available for a future objective that consumes them directly.
-
-## Consequences
-
-Dialogue metadata and the complete condition map participate in the existing
-input-profile and acquisition identities. Fetchers continue to acquire raw
-artifacts only. Complexity or verbosity ratings must not be treated as quality
-unless a recipe explicitly and reviewably makes that choice.
+Ratings remain metadata. WALDO does not currently expose a preference-training
+objective that interprets them directly.

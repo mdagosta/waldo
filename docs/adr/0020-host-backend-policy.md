@@ -1,6 +1,6 @@
 # ADR 0020: Select training backends from host policy
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-05
 
 ## Context

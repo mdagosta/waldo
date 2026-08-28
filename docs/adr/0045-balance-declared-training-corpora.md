@@ -1,6 +1,6 @@
 # ADR 0045: Balance declared training corpora
 
-Status: Accepted
+Status: accepted
 
 ## Context
 

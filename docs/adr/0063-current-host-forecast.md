@@ -1,8 +1,6 @@
 # 0063: Forecast the current host by default
 
-## Status
-
-Accepted
+Status: accepted
 
 ## Decision
 

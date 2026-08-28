@@ -1,8 +1,6 @@
 # ADR 0059: Separate token-budget and epoch-driven training
 
-## Status
-
-Accepted.
+Status: accepted
 
 ## Context
 

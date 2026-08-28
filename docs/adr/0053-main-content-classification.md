@@ -1,36 +1,16 @@
-# 0053: Classify main content with a default-true row fact
+# ADR 0053: Classify main content with a default-true row fact
 
-## Status
-
-Accepted.
+Status: accepted
 
 ## Decision
 
-The current canonical record schema 2 adds the required `main_content` boolean.
-All retained rows default to `true`. A structured input profile may instead
-declare one or more exact scalar conditions:
+Canonical text rows contain the required `main_content` boolean. Retained rows
+default to `true`. A structured input profile may declare one or more exact
+scalar field conditions; every condition must match for the row to be primary.
+A missing mapped field fails ingestion.
 
-```yaml
-input:
-  main_content:
-    metadata.namespace: 0
-```
+Composes select primary rows with `main_content: true`. Older rows that predate
+the field read as `true` for compatibility.
 
-Every declared value must match to produce `true`; any other value produces
-`false`. A missing declared field fails ingestion so upstream schema drift
-cannot silently change classification. The recipe mapping is general and
-participates in plan and acquisition identity; WALDO contains no Wikimedia- or
-corpus-specific logic. The conjunction extension is recorded in ADR 0057.
-
-Composes select primary rows directly:
-
-```yaml
-filter:
-  main_content: true
-```
-
-Schema-1 rows and the initial schema-2 physical layout predate the column and
-read as `true`. This preserves existing corpus behavior; a corpus that needs
-real primary/auxiliary separation must be rebuilt with an explicit mapping.
-The physical writer identity is
-`parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v8-main-content`.
+Current text output uses writer recipe
+`parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction`.

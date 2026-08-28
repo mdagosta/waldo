@@ -1,6 +1,6 @@
 # ADR 0029: Resume interrupted runs from complete checkpoint bundles
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-05
 
 ## Context

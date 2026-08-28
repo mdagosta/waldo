@@ -1,44 +1,39 @@
 # Architectural decision records
 
-ADRs preserve design history. They are not user guides or the authority for
-current commands. Check each ADR's status and follow the maintained contracts
-listed in [`docs/README.md`](../README.md) when an older decision was amended
-or superseded. Missing numbers identify withdrawn decisions and are not missing
-documentation.
+These ADRs describe active architectural constraints. Current commands and
+complete programmatic requirements remain in the maintained contracts listed
+in [`docs/README.md`](../README.md).
+
+Superseded and historical ADRs are removed. Missing numbers are intentional.
 
 - [0001: One binary with bounded domains](0001-single-binary.md)
 - [0002: OpenWALDO BOMs are the model boundary](0002-openwaldo-bom-boundary.md)
-- [0003: Preserve the public index format](0003-index-compatibility.md)
 - [0004: Persist the training run state machine](0004-training-run-state.md)
-- [0005: Keep fetchers external, bounded, and local-first](0005-external-fetchers.md)
 - [0006: Use an index-centered CLI](0006-index-centered-cli.md)
-- [0007: Verify objects before admission and export](0007-verified-lookaside.md)
+- [0007: Verify lookaside objects before use](0007-verified-lookaside.md)
 - [0008: Expand submanifest trees before materialization](0008-verified-submanifests.md)
 - [0009: Stabilize the corpus export BOM](0009-stable-corpus-bom.md)
-- [0010: Canonical text uses record schema 1 Parquet](0010-canonical-text-parquet.md)
 - [0011: Separate immutable model plans, run BOMs, and observed state](0011-model-plan-and-boms.md)
-- [0012: Store interactive S3 credentials in the OS keychain (superseded)](0012-s3-credentials-in-os-keychain.md)
 - [0013: Remove lookaside objects only by explicit name](0013-explicit-lookaside-removal.md)
-- [0015: Keep ingest manifests compact and token counts referential](0015-compact-ingest-manifests.md)
+- [0015: Keep corpus manifests compact](0015-compact-ingest-manifests.md)
 - [0016: Forecast against a versioned accelerator catalog](0016-versioned-hardware-forecast.md)
-- [0017: Resolve training backends outside portable model composes](0017-portable-training-backend-contract.md)
-- [0018: Resolve training profiles and stream a versioned worker protocol](0018-training-profile-and-worker-protocol.md)
-- [0019: Fail closed into a real MLX backend on Apple Silicon](0019-real-mlx-backend.md)
+- [0017: Resolve training backends outside model composes](0017-portable-training-backend-contract.md)
+- [0018: Resolve training profiles and use one worker protocol](0018-training-profile-and-worker-protocol.md)
+- [0019: Fail closed into MLX on Apple Silicon](0019-real-mlx-backend.md)
 - [0020: Select training backends from host policy](0020-host-backend-policy.md)
 - [0021: Keep inference ephemeral and artifact-bound](0021-ephemeral-inference.md)
 - [0022: Export separate signed model release formats](0022-model-release-exports.md)
-- [0023: Reset unreleased schemas to version 1](0023-reset-unreleased-schemas.md)
 - [0024: Execute Linux training through the shared PyTorch worker contract](0024-pytorch-training-adapter.md)
-- [0025: Use TorchTitan for single-node distributed training](0025-torchtitan-distributed-adapter.md)
+- [0025: Use TorchTitan for distributed training](0025-torchtitan-distributed-adapter.md)
 - [0026: Normalize pinned open weights behind an origin BOM](0026-pinned-model-origin.md)
-- [0027: Quantize with upstream tools and bounded index calibration](0027-bounded-index-calibration.md)
+- [0027: Use bounded corpus calibration for quantization](0027-bounded-index-calibration.md)
 - [0028: Make index metadata YAML-primary with JSON compatibility](0028-yaml-primary-index-metadata.md)
 - [0029: Resume interrupted runs from complete checkpoint bundles](0029-resumable-training-checkpoints.md)
-- [0030: Pin a bounded deterministic held-out evaluation set](0030-deterministic-heldout-evaluation.md)
+- [0030: Pin a bounded deterministic held-out set](0030-deterministic-heldout-evaluation.md)
 - [0031: Resume durable model-compose transactions](0031-durable-model-compose-transactions.md)
 - [0032: Calibrate exact forecast topologies from observed runs](0032-observed-run-forecast-calibration.md)
-- [0033: Separate corpus append from authoritative recipe rebuilds](0033-corpus-update-modes.md)
-- [0034: Keep ingest profiles corpus-neutral](0034-declarative-ingest-profiles.md)
+- [0033: Corpus updates are authoritative rebuilds](0033-corpus-update-modes.md)
+- [0034: Keep ingestion profiles corpus-neutral](0034-declarative-ingest-profiles.md)
 - [0035: Store interactive S3 credentials under the WALDO home](0035-local-s3-credentials.md)
 - [0036: Use a managed default index checkout](0036-managed-index-checkout.md)
 - [0037: Embed ingest attestations in canonical shards](0037-embedded-shard-bom.md)
@@ -54,13 +49,12 @@ documentation.
 - [0049: Configure and filter corpora at their compose selection](0049-configured-compose-corpora.md)
 - [0050: Name training profiles by behavior](0050-name-training-profiles-by-behavior.md)
 - [0051: Resolve direct compose model origins through the shared importer](0051-direct-compose-model-origins.md)
-- [0052: Preserve general content assessments as immutable row facts](0052-row-level-content-assessment.md)
+- [0052: Preserve content assessments as immutable row facts](0052-row-level-content-assessment.md)
 - [0053: Classify main content with a default-true row fact](0053-main-content-classification.md)
 - [0054: Retain unassessed rows when applying assessment filters](0054-unassessed-filter-compatibility.md)
 - [0055: Apply automatic privacy redaction before canonical identity](0055-automatic-privacy-redaction.md)
 - [0056: Persist a versioned model interaction contract](0056-versioned-model-interaction-contract.md)
-- [0057: Preserve scored dialogue metadata and explicit quality gates](0057-preserve-scored-dialogue-metadata.md)
-- [0058: Mask non-assistant dialogue targets during SFT](0058-assistant-response-training.md)
+- [0057: Preserve scored conversation metadata](0057-preserve-scored-dialogue-metadata.md)
 - [0059: Separate token-budget and epoch-driven training](0059-token-and-epoch-training-budgets.md)
 - [0060: Preserve conversations and render them in training views](0060-structured-conversation-training-views.md)
 - [0061: Stream record arrays in the JSON container](0061-stream-json-record-arrays.md)

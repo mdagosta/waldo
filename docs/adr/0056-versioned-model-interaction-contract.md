@@ -1,23 +1,18 @@
-# 0056: Persist a versioned model interaction contract
+# ADR 0056: Persist a versioned model interaction contract
 
-## Status
-
-Accepted.
+Status: accepted
 
 ## Decision
 
-A model compose may declare `interaction.template: user-assistant-v1`. WALDO
-persists this declaration in the immutable model plan, model record, and model
-BOM. The chat command uses it to render alternating `User:` and `Assistant:`
-turns, retain bounded history, and stop before a generated next-user turn.
+A schema-1 compose may declare `interaction.template` as
+`user-assistant-v1` or `chatml-v1`. The declaration is part of the immutable
+model plan, model record, and model BOM. The zero value remains raw causal
+continuation.
 
-The zero value remains raw causal continuation. WALDO does not infer an
-interaction format from corpus paths, stage names, or model names, and schema
-1 does not accept arbitrary template expressions.
+Conversation training must use the same template as model interaction.
+`interaction.tools: true` requires assistant-response training that supervises
+assistant messages. Tool definitions, calls, arguments, and results are
+rendered deterministically by the selected template.
 
-## Consequences
-
-The interaction declaration changes model identity without changing its
-architecture or parameter count. Existing models remain valid and retain raw
-continuation behavior. A conversational model must be built with the declared
-contract for automatic chat formatting.
+Chat uses the stored interaction contract and bounded history. WALDO never
+infers a template or tool capability from corpus names or model names.

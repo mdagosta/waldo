@@ -1,52 +1,21 @@
-# ADR 0017: Resolve training backends outside portable model composes
+# ADR 0017: Resolve training backends outside model composes
 
-## Context
-
-The first real trainer will use MLX, but model composition must not inherit MLX
-types or require a framework choice. The same lifecycle must later support
-PyTorch, TensorFlow, and distributed engines such as TorchTitan without
-duplicating plans, run state, provenance, or CLI workflows.
+Status: accepted
 
 ## Decision
 
-Schema-1 model composes describe the model, verified corpus stages, and portable
-training parameters. They do not contain a backend field.
+Model composes describe portable architecture, corpus, objective, and training
+facts. They do not contain a backend field.
 
-Before any model state is written, the model domain asks a training resolver to
-select an adapter for the current environment. The resolver returns:
+Before model or run state is created, the training resolver selects MLX,
+PyTorch, or TorchTitan from machine-local policy. The fake backend is available
+only when explicitly configured for tests. WALDO currently has no TensorFlow
+backend.
 
-- a backend implementing the narrow execution interface; and
-- immutable execution facts including adapter identity, framework, runtime,
-  host operating system and architecture, accelerators, node count, and world
-  size.
+The resolver returns the adapter and immutable execution facts, including the
+backend revision, framework, runtime, host, accelerators, node count, and world
+size. Those facts enter the model plan and run BOM.
 
-Those resolved facts enter the immutable model plan and every run OpenWALDO
-BOM. A resolver result is rejected if its execution identity differs from the
-adapter descriptor, required host facts are absent, or the adapter does not
-declare support for every planned objective.
-
-The backend-neutral request contains the architecture's canonical JSON and
-hash, stage and objective, verified corpus BOM, resolved training profile,
-deterministic canonical-record stream, private artifact directory, and a
-progress-event sink.
-The adapter returns observations and content-addressed artifact descriptions.
-It never writes model plans, run state, or OpenWALDO BOMs.
-
-MLX, PyTorch, and TensorFlow are peer adapters. TorchTitan is a distributed
-adapter in the PyTorch ecosystem, not a separate model lifecycle. Framework
-specific configuration is resolved inside an adapter from the portable plan;
-it is not added to the shared compose merely because the first implementation
-needs it.
-
-## Consequences
-
-- One model compose can run on multiple supported environments.
-- Framework selection and machine facts remain auditable without polluting the
-  portable model compose.
-- Adding TensorFlow or another backend does not change lifecycle persistence or
-  command organization or compose schema.
-- Backend capability mismatches fail during preflight, before a model directory
-  or paid training run exists.
-- Automatic resolution never selects the deterministic fake backend. It is
-  available only through explicit machine configuration for development and
-  lifecycle tests.
+Adapters receive a backend-neutral request and return observations and
+content-addressed artifacts. They do not write lifecycle records or interpret
+the index.

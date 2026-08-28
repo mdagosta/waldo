@@ -1,19 +1,8 @@
 # ADR 0035: Store interactive S3 credentials under the WALDO home
 
-Status: Accepted
-
-Date: 2026-08-05
-
-Supersedes: ADR 0012
+Status: accepted
 
 ## Context
-
-The native-keyring decision in ADR 0012 made `waldo lookaside login`
-dependent on macOS Keychain, Windows Credential Manager, or a running Linux
-Secret Service. Minimal and headless Linux ingestion workers commonly have no
-Secret Service. Login could validate the supplied credentials successfully
-but fail to persist them, leaving the next non-interactive WALDO process to
-fall through to instance metadata and fail.
 
 WALDO already uses `~/.waldo` for durable user-owned models and its verified
 object cache. Operators also expect an interactive WALDO login to work the

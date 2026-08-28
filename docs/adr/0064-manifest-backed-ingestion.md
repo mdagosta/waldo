@@ -1,10 +1,7 @@
 # 0064: Make manifest-backed raw directories the ingestion boundary
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-27
-- Amends: [0005](0005-external-fetchers.md),
-  [0033](0033-corpus-update-modes.md), and
-  [0034](0034-declarative-ingest-profiles.md)
 
 ## Context
 

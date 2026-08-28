@@ -1,8 +1,6 @@
 # 0054: Retain unassessed rows when applying assessment filters
 
-## Status
-
-Accepted.
+Status: accepted
 
 ## Decision
 

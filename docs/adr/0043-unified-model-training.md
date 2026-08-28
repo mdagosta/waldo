@@ -1,6 +1,6 @@
 # ADR 0043: Unify model training entry points
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-09
 
 ## Context

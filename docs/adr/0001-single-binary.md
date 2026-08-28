@@ -1,6 +1,6 @@
 # ADR 0001: One binary with bounded domains
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-04
 
 ## Context

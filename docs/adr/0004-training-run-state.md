@@ -1,6 +1,6 @@
 # ADR 0004: Persist the training run state machine
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-04
 
 ## Context

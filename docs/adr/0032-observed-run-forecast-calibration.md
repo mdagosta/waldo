@@ -1,6 +1,6 @@
 # ADR 0032: Calibrate exact forecast topologies from observed runs
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-05
 
 ## Context

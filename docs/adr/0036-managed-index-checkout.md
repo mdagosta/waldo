@@ -1,8 +1,6 @@
 # ADR 0036: Managed default index checkout
 
-## Status
-
-Accepted.
+Status: accepted
 
 ## Context
 

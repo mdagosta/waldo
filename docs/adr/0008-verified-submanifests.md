@@ -1,6 +1,6 @@
 # ADR 0008: Expand submanifest trees before materialization
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-04
 
 ## Context

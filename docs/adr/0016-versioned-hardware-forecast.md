@@ -1,51 +1,18 @@
 # ADR 0016: Forecast against a versioned accelerator catalog
 
-## Context
-
-A model builder needs to know which exact accelerator configurations can run a
-compose and approximately how long the complete workload will take before
-allocating hardware. Generic workstation and server labels do not answer that
-question. The result also must not imply precision that the estimator does not
-have.
+Status: accepted
 
 ## Decision
 
-`waldo model forecast <compose>` performs the normal read-only compose and corpus
-preflight. `waldo model forecast <index-path...>` resolves and deduplicates one
-or more selections from the same checkout, recommends a model rung at roughly
-20 tokens per parameter, and plans one pass over the selected tokens. Both
-forms compare the workload with a versioned catalog of exact Apple, NVIDIA, and
-AMD accelerators and create no model or run state.
+`waldo model forecast` always builds a portable workload forecast. By default
+it evaluates that workload against the current host and the backend selected by
+the training resolver.
 
-The memory model includes sharded parameters, gradients, FP32 master weights,
-Adam moments, the built-in workers' full physical batch activations, BF16 and
-FP32 vocabulary-logit workspace, a fixed runtime reserve, and ten percent
-device headroom. It does not assume activation checkpointing or divide the
-physical batch across FSDP ranks. Configurations that do not fit are omitted.
+Passing `--compare-hosts` also compares the workload with the versioned Apple,
+NVIDIA, and AMD accelerator catalog. The catalog records exact topology,
+memory, effective throughput, scaling, and identity. Results use the declared
+memory model and the formula recorded in structured output.
 
-Runtime uses the transparent approximation:
-
-```text
-6 * approximate parameters * planned tokens / effective throughput
-```
-
-The catalog records conservative effective throughput rather than advertising
-peak arithmetic. Multi-GPU entries include an explicit topology scaling
-factor, and the result includes eight percent for checkpointing, evaluation,
-and final artifact work. Catalog identity, effective throughput, required
-memory, raw seconds, and formula remain available in JSON output.
-
-Human output contains only manufacturer, accelerator, GPU count, memory per
-GPU, and one approximate time. It is sorted from slowest to fastest. Durations
-below 100 hours remain in hours; longer durations are rounded to days.
-
-## Consequences
-
-- A forecast is reproducible for a model compose and catalog revision.
-- Unsupported or non-fitting configurations do not clutter the normal table.
-- Estimates are useful planning numbers, not benchmark guarantees.
-- Hardware measurements can revise the catalog without changing recipes or
-  model identity; the catalog revision makes that change visible to automation.
-
-ADR 0032 later permits verified completed local runs to calibrate an exact
-accelerator topology while retaining this catalog for every unmatched row.
+Observed complete real runs may replace catalog throughput only for an exact
+matching accelerator family and GPU count. Forecasting is read-only and does
+not create model or run state.

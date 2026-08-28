@@ -1,50 +1,20 @@
-# 0052: Preserve general content assessments as immutable row facts
+# ADR 0052: Preserve content assessments as immutable row facts
 
-## Status
-
-Accepted; email handling superseded by [ADR 0055](0055-automatic-privacy-redaction.md), and schema-1 filtering behavior amended by [ADR 0054](0054-unassessed-filter-compatibility.md).
+Status: accepted
 
 ## Decision
 
-The v7 physical form of canonical Parquet record schema 2 added the required booleans
-`email_addresses`, `repetitive_content`, and `boilerplate_content`. During every
-ingestion WALDO evaluates the final retained text with three pinned detectors
-and wrote the results without redacting or otherwise changing the text. Current
-ingestion follows ADR 0055 and redacts before assessment.
+Current canonical text rows record `repetitive_content` and
+`boilerplate_content` booleans produced by the pinned Gopher-derived detectors.
+Assessment runs after mandatory privacy redaction and before Parquet encoding.
 
-`waldo/email-address-v1` identifies common email-shaped strings.
-`waldo/gopher-ngram-repetition-v1` applies pinned repeated-token n-gram
-thresholds. `waldo/gopher-structural-duplication-v1` applies pinned duplicate
-line and paragraph thresholds. The latter two are deterministic,
-language-neutral adaptations of the published Gopher quality rules. Exact
-thresholds and normalization are part of the detector contract documented in
-the ingestion specification.
+Detector identities and flagged-record counts are preserved in shard footers,
+embedded shard BOMs, manifests, aggregate metadata, and resolved corpus BOMs.
+These flags are observations, not legal or safety conclusions.
 
-Detector identities and flagged-record counts are preserved in Parquet footer
-metadata, the embedded shard BOM, each manifest shard, the manifest aggregate,
-and OpenWALDO BOMs. These flags are observations, not determinations that text
-is personal data, unlawful, unsafe, or unsuitable for every training purpose.
-The physical writer identity is
-`parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v7-content-assessment`.
+Compose filters may exclude matching assessment facts. Conditions inside the
+exclusion block are ORed. Schema-1 rows lack these facts and follow ADR 0054's
+explicit compatibility behavior.
 
-Model composes may exclude any matching row with:
-
-```yaml
-filter:
-  exclude:
-    repetitive_content: true
-    boilerplate_content: true
-    licenses: [CC-BY-NC-*]
-```
-
-Conditions are ORed. The established license-filter syntax remains readable
-but cannot be mixed with the unified license exclusion in one filter.
-
-## Compatibility
-
-This expands the unreleased schema-2 contract in place rather than introducing
-schema 3. No production schema-2 objects existed when the decision was made.
-Existing schema-1 shards remain valid, readable, and unmodified. New ingestion
-emits the expanded schema 2. Absence continues to mean unassessed, not false.
-The mixed-version filtering behavior is defined by ADR 0054; an index may
-contain both schema versions.
+Current text output uses writer recipe
+`parquet-go/0.30.1/zstd-6/page-1m/rg-64m/v9-privacy-redaction`.

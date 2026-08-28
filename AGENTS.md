@@ -10,8 +10,8 @@ contract for each area.
 - User workflows belong in the separate `openwaldo/docs` quickstarts.
 - Current CLI behavior comes from `waldo <command> --help`.
 - Programmatic contracts and developer requirements live under `docs/`.
-- ADRs explain past decisions. They are not current instructions when a
-  maintained contract says otherwise.
+- ADRs record active architectural constraints. Maintained contracts provide
+  the complete implementation requirements.
 
 For cross-domain changes, read `docs/VISION.md`, `docs/ARCHITECTURE.md`, and
 `docs/COMPATIBILITY.md` first. Record new durable decisions under `docs/adr/`.

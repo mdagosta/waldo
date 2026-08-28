@@ -1,6 +1,6 @@
 # ADR 0046: Portable subword tokenization
 
-Status: Accepted
+Status: accepted
 
 ## Context
 

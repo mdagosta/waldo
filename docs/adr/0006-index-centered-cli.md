@@ -1,43 +1,21 @@
 # ADR 0006: Use an index-centered CLI
 
-- Status: accepted; path-default details superseded by ADR 0036
-- Date: 2026-08-04
-
-## Context
-
-Index and corpus are useful separate implementation concepts: the index owns
-metadata meaning while corpus workflows resolve, ingest, and materialize data.
-As adjacent CLI groups, however, they make users decide which one owns the same
-indexed corpus. Operations such as list, ingest, update, and export can
-plausibly appear under either name.
+Status: accepted
 
 ## Decision
 
-Expose corpus workflows beneath `waldo index`. `index list` recursively lists
-the corpora beneath a path; `index show` provides one detailed view; `index
-ingest`, `update`, and `export` own corpus mutation and materialization.
+Expose corpus workflows beneath `waldo index`. The public commands are `init`,
+`pull`, `list`, `show`, `summary`, `bom`, `verify`, `audit`, `ingest`, and
+`export`.
 
-Index locations are positional, not a global option. An existing checkout,
-subtree, corpus directory, or manifest anchors checkout discovery by walking
-upward like Git, and recursive commands begin at that positional target. When
-the path is omitted, discovery starts at the current directory. A prospective
-ingestion destination may be absolute even though the durable plan records
-only its checkout-relative path.
+Corpus creation and replacement both use `waldo index ingest`. Passing
+`--update` performs an authoritative rebuild of an existing corpus. Corpus
+replacement is a flag on ingestion, not a separate command.
 
-ADR 0036 later replaces current-directory default discovery with a managed
-default checkout and configured-relative resolution. The index-centered
-command organization remains unchanged.
+Unadorned logical paths resolve beneath the configured contributor checkout,
+or the managed read-only checkout when `index` is unset. Explicit filesystem
+paths use the named local checkout. Authoring commands never mutate the
+managed checkout.
 
-Retain corpus as an internal domain and as terminology for the data itself. CLI
-organization follows the user's mental model, not the package graph.
-
-## Consequences
-
-- Users have one place to discover all indexed-data operations.
-- Commands do not require users to separately name both a checkout root and a
-  target inside it.
-- Export fits because it exports a selection resolved from the index, not an
-  arbitrary directory of files.
-- The `index` command group is broader, so its verbs and help text must clearly
-  separate read-only inspection from mutation and transfer.
-- Internal OpenWALDO BOM and ingestion code remains independently testable.
+The corpus remains a separate internal domain. CLI organization follows the
+user workflow rather than the package graph.

@@ -1,8 +1,6 @@
 # 0051: Resolve direct compose model origins through the shared importer
 
-## Status
-
-Accepted.
+Status: accepted
 
 ## Decision
 

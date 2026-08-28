@@ -1,6 +1,6 @@
 # ADR 0028: Make index metadata YAML-primary with JSON compatibility
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-05
 
 ## Context

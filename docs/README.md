@@ -33,11 +33,11 @@ Read these in order:
 - [Model exports](MODEL-EXPORTS.md): release formats and quantization.
 - [EU GPAI disclosure](EU-GPAI-DISCLOSURE.md): regulatory JSON projection.
 
-## Project direction and history
+## Project direction and decisions
 
 - [Vision](VISION.md): product purpose and non-goals.
 - [Roadmap](ROADMAP.md): implemented and pending work.
-- [ADRs](adr/README.md): historical architectural decisions and their status.
+- [ADRs](adr/README.md): active architectural decisions.
 
-ADRs explain why decisions were made. Maintained contracts above describe the
-current required behavior.
+ADRs record durable design constraints. Maintained contracts above provide the
+complete implementation requirements.

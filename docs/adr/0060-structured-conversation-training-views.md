@@ -1,9 +1,6 @@
 # 0060: Preserve conversations and render them in training views
 
-## Status
-
-Accepted. Supersedes ADR 0058's decision to render conversations during
-ingestion. Its optional worker loss-mask protocol remains valid.
+Status: accepted
 
 ## Decision
 

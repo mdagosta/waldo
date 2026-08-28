@@ -1,43 +1,17 @@
-# ADR 0007: Verify objects before admission and export
+# ADR 0007: Verify lookaside objects before use
 
-- Status: accepted; cache retention amended by ADR 0062
-- Date: 2026-08-04
-
-## Context
-
-A manifest's object hash is useful only if every consumer checks the bytes it
-actually receives. A cache can also corrupt after download, and hard-linking an
-editable export to a cache entry would let user activity mutate supposedly
-verified shared state.
+Status: accepted
 
 ## Decision
 
-Stream every fetched object through SHA-256 and optional exact-size validation,
-then atomically install it into a hash-derived retained cache path. Re-hash an
-existing object before materialization. Partial downloads use a separate
-disposable scratch directory and never appear at a cache path until complete.
-Bound the retained cache by least-recently-used file time and provide an
-independent scrub. [ADR 0062](0062-purge-successful-lookaside-cache.md) later
-standardized purge-on-success for every cache location while retaining objects
-after failed or interrupted operations.
+Stream every downloaded object through SHA-256 and exact-size validation when
+a size is declared. Install verified objects atomically at hash-derived cache
+paths. Partial downloads remain in disposable scratch storage.
 
-Native export copies and re-verifies bytes into an atomic destination file; it
-does not hard-link exports to the cache. Existing export files are resumed only
-when their size and hash match. An `EXPORT.json` containing a different
-OpenWALDO BOM blocks reuse of that directory.
+Successful commands purge the verified cache objects they consumed after
+their output or durable state commits. Failed and interrupted commands retain
+verified objects for retry, subject to `lookaside.cache.max-size`.
 
-Canonical JSONL export streams rows from verified native Parquet objects,
-validates schema-1 records and their text hashes, and atomically publishes the
-converted file. Its export entry records the lookaside-object hash separately
-from the converted file hash. An existing converted file is retained only when
-a fresh conversion produces the same bytes.
-
-## Consequences
-
-- A successful materialization has one clear verified-byte guarantee.
-- Cache hits spend sequential I/O to defend against local corruption.
-- Failed and interrupted audits and exports reuse verified objects when resumed.
-- Exports use additional disk rather than sharing cache inodes.
-- Interrupted downloads and copies never appear at their final paths.
-- Mirror and transport implementations can change without changing object
-  identity or corpus meaning.
+Native export copies and re-verifies canonical objects. JSONL export streams
+verified Parquet rows and records both source-object and converted-file hashes.
+An existing export is reused only when its persisted BOM and file hashes match.

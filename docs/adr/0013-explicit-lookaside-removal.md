@@ -1,6 +1,6 @@
 # ADR 0013: Remove lookaside objects only by explicit name
 
-Status: Accepted
+Status: accepted
 
 Date: 2026-08-04
 

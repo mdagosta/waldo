@@ -1,6 +1,6 @@
 # ADR 0009: Stabilize the corpus export BOM
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-04
 
 ## Context

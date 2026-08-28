@@ -1,42 +1,18 @@
 # ADR 0021: Keep inference ephemeral and artifact-bound
 
-- Status: accepted
-- Date: 2026-08-05
-
-## Context
-
-A model may contain simulated history, failed runs, and multiple generations
-of real weights. Machine training preferences do not determine which framework
-can read an existing artifact. Interactive output can also contain arbitrary
-byte tokens, and recording every local prompt as lifecycle state would
-conflate immutable training provenance with ephemeral use.
+Status: accepted
 
 ## Decision
 
-Inference selects only the model BOM's `current_run_id`, requires a complete
-non-simulated run, and verifies weight, configuration, and tokenizer bytes
-against their BOM sizes and SHA-256 hashes before launching a worker. The
-recorded artifact backend—not `model.backend`—selects the inference adapter.
-Missing runtimes fail closed with installation diagnostics.
+Inference selects only the model BOM's current complete, non-simulated weights.
+It verifies configuration, tokenizer, and weight sizes and hashes before
+starting the adapter recorded by the artifact.
 
-Inference uses embedded MLX and PyTorch definitions matching their training
-workers. The selected worker remains alive for the command lifetime and loads
-weights once; MLX uses an incremental key/value cache, while the initial
-PyTorch adapter recomputes the bounded context window. The shared schema-1 line
-protocol streams base64 byte tokens and a typed completion record. WALDO
-escapes terminal controls and invalid UTF-8 in human output. One-shot JSON is
-emitted only after completion.
+The schema-1 inference protocol sends prompt bytes for the built-in byte
+tokenizer and token IDs for supported subword tokenizers. Workers return token
+bytes or IDs and a typed completion record. The command escapes unsafe terminal
+output and emits structured output only after completion.
 
 Interactive history is bounded by the architecture context and is not written
-to the model directory. A model without an explicit chat template is described
-as raw causal continuation; WALDO does not invent an instruction format.
-
-## Consequences
-
-- Simulated artifacts remain auditable without becoming inference input.
-- Relocated exports and managed models use the same verified inference path.
-- Changing a preferred training backend cannot reinterpret existing weights.
-- Prompts and responses remain private process state unless a future explicit
-  export or evaluation command records them.
-- Future framework adapters implement the same session contract without
-  changing model lifecycle persistence.
+to model lifecycle state. Models without an interaction template remain raw
+causal continuation models.

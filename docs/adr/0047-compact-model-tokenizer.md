@@ -1,6 +1,6 @@
 # ADR 0047: Right-size tokenizer vocabularies for compact models
 
-Status: Accepted
+Status: accepted
 
 ## Context
 

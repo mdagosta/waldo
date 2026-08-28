@@ -1,6 +1,6 @@
 # ADR 0022: Export separate signed model release formats
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-05
 
 ## Context

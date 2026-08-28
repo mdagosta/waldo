@@ -1,6 +1,6 @@
 # ADR 0002: OpenWALDO BOMs are the model boundary
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-04
 
 ## Context

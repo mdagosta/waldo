@@ -1,8 +1,6 @@
 # 0055: Apply automatic privacy redaction before canonical identity
 
-## Status
-
-Accepted.
+Status: accepted
 
 ## Decision
 

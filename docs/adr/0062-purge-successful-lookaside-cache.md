@@ -1,6 +1,6 @@
 # ADR 0062: Purge verified cache objects after successful use
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-21
 
 ## Context
@@ -22,9 +22,7 @@ still always disposable. A failed or interrupted command does not invoke
 success cleanup, leaving its verified objects available for retry.
 
 `lookaside.cache.max-size` remains an LRU bound for objects retained by
-incomplete work. It does not describe post-success retention. This decision
-supersedes ADR 0007 only where that ADR required successful configured caches
-to retain consumed objects.
+incomplete work. It does not describe post-success retention.
 
 ## Consequences
 

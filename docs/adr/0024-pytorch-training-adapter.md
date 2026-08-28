@@ -1,6 +1,6 @@
 # ADR 0024: Execute Linux training through the shared PyTorch worker contract
 
-- Status: accepted
+Status: accepted
 - Date: 2026-08-05
 
 ## Context
