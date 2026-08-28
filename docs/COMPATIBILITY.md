@@ -7,7 +7,7 @@ Compatibility is intentional, tested, and limited to the surfaces below.
 
 ### Existing index checkouts
 
-The binary and the unreleased `waldo-index` use one clean baseline:
+The binary and `waldo-index` use one compatibility baseline:
 
 - Directory navigation kind `index`, schema 1 or the public index's legacy
   schema 2, read from `index.yaml`, `index.yml`, or `index.json`
@@ -39,9 +39,8 @@ directory.
 ### Existing object identities
 
 The rebuild must not produce different bytes under an existing recipe identity.
-Before writing new index contributions, canonical metadata and shard encoding
-will be locked by fixtures derived from the authoritative specification and
-existing public objects.
+Canonical metadata and shard encoding are locked by fixtures derived from the
+authoritative specification and existing public objects.
 
 If the new packer intentionally changes bytes, it must use a new recorded
 recipe identifier. It must never claim to reproduce an old recipe.
@@ -65,20 +64,6 @@ strengthen, weaken, or discard them.
 Compatibility adapters may be added after the new primary workflows are
 complete. They must translate into the new domain model rather than reintroduce
 parallel execution paths.
-
-## Initial acceptance fixture
-
-The real public index currently provides the first read-compatibility target:
-
-- 20 corpora
-- 1,087 shards
-- 75.1 million documents
-- approximately 124.0 billion tokens
-- approximately 157.7 GB of compressed objects
-
-Exact integer totals and the license partition will be captured from the
-checkout in automated compatibility fixtures during Phase 1. Rounded values in
-this document are descriptive, not test constants.
 
 ## Evolution
 

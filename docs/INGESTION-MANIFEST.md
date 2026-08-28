@@ -181,7 +181,6 @@ probes the bytes to verify that declaration:
 | JSONL, plain/gzip/zstd | one object per nonblank line |
 | Parquet | one row |
 | XML | one file |
-| LaTeX project tree | one discovered root document and its dependency closure |
 
 JSON/JSONL/Parquet mappings use `record-map`, `dialogue-pair`,
 `chat-messages`, or `ranked-conversation-tree`. Whole-file text may use
@@ -198,22 +197,13 @@ required logical input mapping. WALDO fails before conversion on unsupported,
 ambiguous, unclaimed, or unmapped files; it does not silently convert raw
 markup to text or binary bytes to base64 training records.
 
-### Tree-aware formats
+### Future tree-aware formats
 
-A tree-aware format applies to the entire recursive source boundary. Its
-adapter discovers logical roots and resolves dependency closures; the manifest
-does not normally enumerate a root file. For LaTeX, the normal declaration is:
-
-```json
-"input": {"format": "latex"}
-```
-
-The LaTeX adapter must recursively locate candidate document roots, resolve
-included files within the verified boundary, and produce one logical document
-per root. Included fragments must not also be emitted as independent records.
-If discovery is ambiguous, WALDO fails closed. An optional roots override may
-disambiguate unusual multi-root trees, but it is not required for normal
-ingestion.
+LaTeX and other dependency-aware document trees are not currently supported.
+A future built-in adapter may apply to a complete source boundary, discover
+logical roots, and resolve dependencies without an external converter. Its
+schema and implementation must be accepted together before a manifest may
+declare that format.
 
 Before hashing, deduplication, measurement, and packing, WALDO applies its
 pinned privacy-redaction policy. Canonical shard and manifest statistics—not

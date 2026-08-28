@@ -90,20 +90,9 @@ Examples:
   an independent document.
 - For JSONL, each line is a logical record even though the raw artifact is one
   file.
-- For a tree-aware format such as LaTeX, WALDO must recursively discover root
-  documents, resolve their included files within the same boundary, and emit
-  one logical document per root. Included fragments must not also become
-  independent documents.
+- A future tree-aware format may combine a root document with dependencies
+  inside the same boundary.
 
-Tree-aware adapters own project discovery and dependency resolution. The
-normal manifest declares only the format:
-
-```json
-"input": {"format": "latex"}
-```
-
-An adapter may define an optional, strictly validated roots override for an
-otherwise ambiguous tree. Automatic recursive discovery remains the default.
-All referenced paths must remain inside the manifest boundary; symlinks,
-missing dependencies, ambiguous roots without an override, and dependency
-cycles that cannot be handled deterministically fail closed.
+LaTeX and other dependency-aware document trees are not currently supported.
+They require a reviewed built-in WALDO adapter; a fetcher must not render them
+through an external conversion pipeline.

@@ -373,9 +373,7 @@ ordered, hash-verified Parquet shards to fill a 100,000-byte-token sample. It
 does not scan a large corpus in full, update weights, use gradients, or create
 a training run. The release embeds the source corpus BOM pin, selected shards,
 sample parameters, and exact tool hashes directly in `BOM.json`; it does not
-invent a third public BOM file. See
-[training and calibration](TRAINING-AND-CALIBRATION.md) for the
-semantic boundary.
+invent a third public BOM file.
 
 Quantization needs a temporary high-precision GGUF alongside the derived file
 in the atomic staging directory. WALDO removes that intermediate and the

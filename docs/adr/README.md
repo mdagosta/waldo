@@ -1,8 +1,10 @@
 # Architectural decision records
 
-ADRs record decisions that constrain future implementation. They describe why
-a choice was made and what would justify revisiting it; they are not progress
-logs.
+ADRs preserve design history. They are not user guides or the authority for
+current commands. Check each ADR's status and follow the maintained contracts
+listed in [`docs/README.md`](../README.md) when an older decision was amended
+or superseded. Missing numbers identify withdrawn decisions and are not missing
+documentation.
 
 - [0001: One binary with bounded domains](0001-single-binary.md)
 - [0002: OpenWALDO BOMs are the model boundary](0002-openwaldo-bom-boundary.md)

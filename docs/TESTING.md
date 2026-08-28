@@ -8,6 +8,7 @@ Focused Go tests live beside their packages. Process-level tests live under
 ```bash
 ./testing/unit.sh
 ./testing/vet.sh
+./testing/docs.sh
 ```
 
 Run the complete local suite with:
@@ -31,6 +32,7 @@ Individual end-to-end tests are available under `testing/e2e/`:
 ./testing/e2e/model-mlx.sh
 ./testing/e2e/model-pytorch.sh
 ./testing/e2e/model-torchtitan.sh
+./testing/e2e/model-torchtitan-multinode.sh
 ```
 
 ## Live tests

@@ -24,7 +24,6 @@ waldo
 │   ├── audit
 │   ├── bom
 │   ├── ingest
-│   ├── update
 │   └── export
 ├── shard
 │   ├── summary
@@ -38,7 +37,7 @@ waldo
 │   ├── list
 │   ├── status
 │   ├── verify
-│   ├── mirror
+│   ├── mirror (not available)
 │   └── rm
 ├── model
 │   ├── advisor
@@ -159,9 +158,10 @@ checks the persisted BOM and hashes each exported file.
 waldo lookaside status
 waldo lookaside list
 waldo lookaside verify
-waldo lookaside mirror --help
 waldo lookaside rm --help
 ```
+
+`waldo lookaside mirror` is reserved but not implemented.
 
 For S3 publication, configure the destination and store bucket-scoped
 credentials outside corpus metadata:

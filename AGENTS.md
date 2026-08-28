@@ -1,61 +1,55 @@
-# Working rules for WALDO
+# WALDO agent guide
 
 These rules apply to the entire repository.
 
-## Begin with the contracts
+## Find the right document
 
-Read `docs/VISION.md`, `docs/UX.md`, `docs/ARCHITECTURE.md`, and
-`docs/COMPATIBILITY.md` before making architectural or cross-domain changes.
-Record durable architectural decisions under `docs/adr/`.
+Start at [`docs/README.md`](docs/README.md). It identifies the authoritative
+contract for each area.
 
-The old WALDO repository is a behavioral and compatibility reference. Do not
-copy its package structure or move code from it without a specific written
-reason.
+- User workflows belong in the separate `openwaldo/docs` quickstarts.
+- Current CLI behavior comes from `waldo <command> --help`.
+- Programmatic contracts and developer requirements live under `docs/`.
+- ADRs explain past decisions. They are not current instructions when a
+  maintained contract says otherwise.
 
-## Product vocabulary
+For cross-domain changes, read `docs/VISION.md`, `docs/ARCHITECTURE.md`, and
+`docs/COMPATIBILITY.md` first. Record new durable decisions under `docs/adr/`.
 
-- Use **lookaside**, never `store`, for the user-facing command group and the
-  backend domain that holds content-addressed objects.
-- An **OpenWALDO BOM** is the immutable, resolved handoff from the data side;
-  materialization then verifies every object named by it.
-- A model **compose** is consumed by `waldo model train <name> <file>`. Model composition
-  terminology belongs to the model lifecycle; source acquisition uses an
-  **ingestion recipe**.
-- Fetchers are external shell scripts that live in another repository. WALDO
-  may execute them only when the user explicitly supplies a strict
-  `waldo-ingest-recipe`; scripts populate WALDO-owned temporary input space
-  and never own conversion, publication, or index mutation.
+## Ingestion boundary
 
-## Dependency direction
+The canonical ingestion input is a manifest-backed raw directory. Its root
+`manifest.json` owns corpus facts, source facts, input mapping, and raw-tree
+evidence. Acquisition tools create that directory and stop. WALDO never runs a
+fetcher or converter named by a manifest.
 
-- `index`, `record`, `license`, `lookaside`, and `corpus` must not import
-  `model` or `training`.
-- `model` and `training` consume OpenWALDO BOMs and provenance contracts;
-  they must not independently traverse index trees, resolve manifest
-  inheritance, normalize licenses, or fetch unverified shards.
-- CLI packages may wire domains together but contain no domain logic.
-- Interfaces belong near the consumer that needs them. Avoid general-purpose
-  service containers and shared utility packages.
-- A fact has one authoritative type and one owner. Do not create parallel
-  manifest, shard, license, or OpenWALDO BOM representations for convenience.
+Read these in order before changing ingestion:
 
-## Development discipline
+1. `docs/INGESTION.md`
+2. `docs/INGESTION-MANIFEST.md`
+3. `docs/INGESTION-DESIGN.md`
 
-- Work in small vertical slices with an observable command and tests.
-- Preserve the existing index format only where `docs/COMPATIBILITY.md` says
-  it is a contract. Internal APIs are not compatibility surfaces.
-- Write a run record before launching an external trainer and persist every
-  terminal state.
-- Prefer explicit data flow and ordinary Go over reflection or framework
-  machinery.
-- Error messages should state what failed, identify the relevant object or
-  path, and give the next useful action when one exists.
-- Never advertise an unimplemented command as working. Planned command
-  scaffolds must say they are unavailable.
+Do not introduce new ingest recipes or external conversion pipelines. New
+formats require a reviewed built-in adapter and an explicit documented status.
 
-Before handing off a change, run:
+## Architecture rules
 
-```bash
+- Use **lookaside**, never `store`, for the content-addressed object domain.
+- An **OpenWALDO BOM** is the immutable handoff from corpus selection to model
+  workflows.
+- A model **compose** belongs only to model training and lifecycle management.
+- Data packages must not import model or training packages.
+- Model and training code consumes resolved corpus BOMs; it does not traverse
+  or reinterpret the index independently.
+- One fact has one authoritative type and owner.
+- Planned behavior must be labeled as planned and must not be presented as a
+  working command or format.
+
+## Before handoff
+
+Run:
+
+```
 gofmt -w .
 ./testing/all.sh
 ```

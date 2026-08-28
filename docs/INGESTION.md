@@ -44,24 +44,16 @@ The selected adapter defines the mapping:
   text file.
 - A JSONL file produces one record per line.
 - A Parquet file produces one record per selected row.
-- A tree-aware format may combine multiple dependent files into one logical
-  document.
+- A future tree-aware format may combine multiple dependent files into one
+  logical document.
 
 Every raw file must be accounted for by the adapter as a logical input, a
 dependency, or an explicitly supported non-content resource. Unsupported,
 ambiguous, or unclaimed files fail closed.
 
-For LaTeX, the normal declaration is intentionally minimal:
-
-```json
-"input": {"format": "latex"}
-```
-
-The built-in LaTeX adapter recursively discovers document roots, resolves
-included files inside the verified boundary, and emits one logical document
-per root. Included fragments do not also become independent records. An
-optional roots override may disambiguate an unusual tree, but automatic
-discovery is the normal behavior.
+The current built-in adapters support text, Markdown, mbox, JSON, JSONL,
+Parquet, and XML. LaTeX and other dependency-aware document trees require a
+future built-in adapter and are not accepted today.
 
 ## Manifest authority
 

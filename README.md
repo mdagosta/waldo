@@ -27,22 +27,20 @@ compliance. It records attributable facts and verifies artifact identity.
 
 WALDO requires Go 1.25 or newer.
 
-```bash
+```
 git clone https://github.com/openwaldo/waldo.git
 cd waldo
-go install ./cmd/waldo
+go build -o ./waldo ./cmd/waldo
+sudo install -m 0755 ./waldo /usr/local/bin/waldo
 waldo --help
 ```
-
-`go install` writes the executable to `GOBIN`, or to `GOPATH/bin` when
-`GOBIN` is unset. That directory must be on `PATH`.
 
 ## First steps
 
 With no configured index, read-only index commands use a managed checkout at
 `~/.waldo/index`:
 
-```bash
+```
 waldo status
 waldo index list
 waldo index summary
@@ -51,7 +49,7 @@ waldo index verify --offline
 
 Contributing data requires a separate writable index checkout:
 
-```bash
+```
 git clone https://github.com/openwaldo/waldo-index.git
 waldo config set index /path/to/waldo-index
 waldo config set lookaside file:///tmp/waldo-lookaside
@@ -69,14 +67,13 @@ Start with the [documentation index](docs/README.md). In particular:
 - [Architecture](docs/ARCHITECTURE.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [Testing](docs/TESTING.md)
-- [Open-source release plan](docs/RELEASING.md)
 
 Early feedback, testing, documentation improvements, and focused code
 contributions are welcome. See [Contributing](docs/CONTRIBUTING.md).
 
 ## Development
 
-```bash
+```
 ./testing/unit.sh
 ./testing/vet.sh
 ```

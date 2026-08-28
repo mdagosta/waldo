@@ -605,4 +605,5 @@ fits every machine. Run `waldo model forecast` before allocating substantial
 compute.
 
 See the measured examples in [`composes/`](../composes/), the broader
-[model lifecycle](MODEL-LIFECYCLE.md), and [training and calibration](TRAINING-AND-CALIBRATION.md).
+[model lifecycle](MODEL-LIFECYCLE.md), and the
+[model export guide](MODEL-EXPORTS.md).

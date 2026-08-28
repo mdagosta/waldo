@@ -1,42 +1,33 @@
 # Roadmap
 
-This roadmap records current status, not completed implementation history.
-Git history and ADRs preserve the details of earlier design phases.
+This page separates shipped behavior from pending work. Git history and ADRs
+contain completed implementation history.
 
 ## Implemented
 
-- Git-backed index inspection, verification, audit, ingestion, update, and
-  export with YAML-primary metadata and legacy JSON reads.
-- Canonical Parquet records, local and S3 lookaside storage, verified caching,
-  object inventory, mirroring, and explicit removal.
-- Corpus, run, origin, model, export, and EU disclosure BOMs.
-- Model initialization, open-weight pulls, forecasting, training, resume,
-  inspection, generation where supported, and export.
-- MLX, PyTorch, and single-node TorchTitan training adapters, subject to local
-  runtime and hardware availability.
-- Native WALDO, Hugging Face, MLX, GGUF, and Ollama export formats, with
-  optional Sigstore signing when configured.
+- Managed and explicit Git index workflows.
+- Corpus inspection, verification, audit, ingestion, update, and export.
+- Manifest-backed ingestion with built-in text, Markdown, mbox, JSON, JSONL,
+  Parquet, and XML adapters.
+- Canonical text and structured-conversation Parquet records.
+- Local and S3 lookaside publication, verification, and explicit removal.
+- Corpus, run, origin, model, release, and EU disclosure BOMs.
+- Model composes, structured conversation training, assistant-response
+  modeling, and interaction templates.
+- MLX, PyTorch, single-node TorchTitan, and multi-node TorchTitan training.
+- Native WALDO, Hugging Face, MLX, GGUF, and Ollama model exports.
+- Optional Sigstore signing.
 
-## Opening development to the public
+## Pending
 
-The immediate release work is:
+- Built-in tree-aware document adapters, including LaTeX.
+- Multimodal ingestion.
+- Broader model architecture and tokenizer compatibility.
+- Preference-training objectives.
+- PyTorch generation.
+- Hugging Face publication.
+- Editable EU template rendering.
+- Implemented lookaside mirroring.
 
-1. Keep CI and portable end-to-end tests green.
-2. Audit source and Git history for secrets, private material, and
-   redistributability concerns.
-3. Add lightweight issue, pull-request, and security-reporting paths.
-4. Discuss ownership, licensing, and contribution-policy questions with the
-   project owner before changing legal or governance files.
-5. Publish the source as early development and iterate in public.
-
-## Deferred beyond the first release
-
-- Multimodal ingestion and corpus-removal contribution workflows.
-- Broader Hugging Face tokenizer and architecture compatibility.
-- Supervised fine-tuning, preference training, and pinned chat templates.
-- PyTorch generation, TensorFlow training, and multi-node orchestration.
-- Hugging Face publication and exact editable EU template rendering.
-- Sparse mixture-of-experts and router research features.
-
-Deferred work should move to public issues after launch instead of expanding
-this file into a speculative design backlog.
+Track active implementation work in issues rather than expanding this page
+into a design backlog.

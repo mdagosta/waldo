@@ -1,36 +1,43 @@
-# WALDO documentation
+# WALDO developer documentation
 
-The root README is a project overview. Maintained documentation lives here.
+This directory contains the programmatic contracts, architecture, and
+developer requirements that change with the WALDO source.
+
+User quickstarts live in the separate
+[`openwaldo/docs`](https://github.com/openwaldo/docs) repository. CLI help is
+the authority for available commands and flags.
 
 ## Start here
 
-- [Vision](VISION.md): purpose, users, guarantees, and non-goals.
-- [Command guide](UX.md): the current CLI and common workflows.
 - [Architecture](ARCHITECTURE.md): package boundaries and data flow.
-- [Contributing](CONTRIBUTING.md): development and contribution process.
-- [Testing](TESTING.md): local, end-to-end, and live test suites.
-- [Roadmap](ROADMAP.md): current release status and remaining work.
-- [Open-source release plan](RELEASING.md): gates for the first public release.
+- [Command reference](UX.md): current command organization and behavior.
+- [Compatibility](COMPATIBILITY.md): supported persistent and public formats.
+- [Testing](TESTING.md): required local and end-to-end checks.
+- [Contributing](CONTRIBUTING.md): development and DCO requirements.
 
-## Data contracts
+## Data and ingestion contracts
 
-- [Ingestion contract](INGESTION.md)
-- [Ingestion manifest schema](INGESTION-MANIFEST.md)
-- [Ingestion and canonical Parquet](INGESTION-DESIGN.md)
-- [Fetcher acquisition contract](FETCHER-CONTRACT.md)
-- [Corpus OpenWALDO BOM](OPENWALDO-BOM.md)
-- [Index compatibility](COMPATIBILITY.md)
+Read these in order:
+
+1. [Ingestion](INGESTION.md): trust boundary and supported workflow.
+2. [Ingestion manifest](INGESTION-MANIFEST.md): exact handoff schema.
+3. [Ingestion architecture](INGESTION-DESIGN.md): implementation ownership and
+   data flow.
+4. [Fetcher contract](FETCHER-CONTRACT.md): acquisition responsibilities.
+5. [OpenWALDO corpus BOM](OPENWALDO-BOM.md): resolved corpus provenance.
 
 ## Model contracts
 
-- [Model compose guide](MODEL-COMPOSE.md)
-- [Model lifecycle](MODEL-LIFECYCLE.md)
-- [Training and calibration](TRAINING-AND-CALIBRATION.md)
-- [Model exports](MODEL-EXPORTS.md)
-- [EU GPAI disclosure mapping](EU-GPAI-DISCLOSURE.md)
+- [Model compose](MODEL-COMPOSE.md): portable training-plan schema.
+- [Model lifecycle](MODEL-LIFECYCLE.md): managed models, runs, and backends.
+- [Model exports](MODEL-EXPORTS.md): release formats and quantization.
+- [EU GPAI disclosure](EU-GPAI-DISCLOSURE.md): regulatory JSON projection.
 
-## Design history
+## Project direction and history
 
-[Architectural decision records](adr/README.md) explain durable decisions and
-their rationale. They are historical context, not a substitute for current
-command help or user documentation.
+- [Vision](VISION.md): product purpose and non-goals.
+- [Roadmap](ROADMAP.md): implemented and pending work.
+- [ADRs](adr/README.md): historical architectural decisions and their status.
+
+ADRs explain why decisions were made. Maintained contracts above describe the
+current required behavior.
