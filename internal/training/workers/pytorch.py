@@ -32,6 +32,12 @@ def emit(kind, **payload):
     print(json.dumps(frame, separators=(",", ":")), flush=True)
 
 
+# WALDO_GPU_THROTTLE=0.25 caps training to ~25% of wall-clock time; GPU alternates between full-speed and idle.
+try: GPU_THROTTLE = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
+except ValueError: GPU_THROTTLE = 1; emit("event", event={"kind": "log", "message": "specify WALDO_GPU_THROTTLE as decimal percentage, ie 0.25"})
+if not 0 < GPU_THROTTLE < 1: GPU_THROTTLE = 1
+
+
 def artifact(path, logical_path):
     digest = hashlib.sha256()
     size = 0
@@ -453,6 +459,7 @@ class Trainer:
             self.replay_steps -= 1
             self.batch = []
             return
+        step_started = time.perf_counter()
         tokens = torch.tensor([item[0] for item in self.batch], dtype=torch.long, device=self.device)
         mask = torch.tensor([item[1] for item in self.batch], dtype=torch.float32, device=self.device)
         inputs = tokens[:, :-1]
@@ -468,6 +475,9 @@ class Trainer:
         loss.backward()
         self.optimizer.step()
         self.synchronize()
+        if GPU_THROTTLE < 1 and not self.distributed:
+            # Drained by synchronize(); skipped when distributed as idle ranks trip the NCCL watchdog.
+            time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
         loss_value = float(loss.detach().cpu().item())
         valid_tokens = int(mask.sum().detach().cpu().item())
         self.step_number = next_step
