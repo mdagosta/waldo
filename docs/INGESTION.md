@@ -78,17 +78,6 @@ WALDO verifies declarations against the bytes. The manifest cannot instruct
 WALDO to execute a program, load an adapter from the raw directory, bypass
 format detection, or accept mismatched evidence.
 
-## Obsolete ingest recipes
-
-`waldo-ingest-recipe` files are obsolete. WALDO may continue reading them for
-compatibility with existing local workflows, but they are not a supported
-authoring path for new corpora, fetchers, documentation, or contributions.
-
-Do not add new recipe schemas, recipe-driven fetchers, or external converter
-execution to the ingestion path. New acquisition integrations produce a
-manifest-backed raw directory. New interpretations are reviewed, built-in
-WALDO adapters selected by the manifest's declarative `input` object.
-
 Direct ingestion of ordinary files with command-line metadata remains a
 convenience for local use. Reproducible and reviewable corpus contributions
 should use the manifest-backed directory contract.

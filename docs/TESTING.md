@@ -26,7 +26,6 @@ Individual end-to-end tests are available under `testing/e2e/`:
 
 ```bash
 ./testing/e2e/ingest-direct.sh
-./testing/e2e/ingest-recipe.sh  # obsolete recipe compatibility
 ./testing/e2e/structured-conversation.sh
 ./testing/e2e/model-fake.sh
 ./testing/e2e/model-mlx.sh

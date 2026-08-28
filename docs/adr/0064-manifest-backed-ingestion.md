@@ -2,24 +2,16 @@
 
 - Status: accepted
 - Date: 2026-08-27
-- Supersedes: [0005](0005-external-fetchers.md),
-  [0014](0014-explicit-ingest-recipe.md),
-  [0038](0038-preserve-recipe-source-paths.md), and
-  [0039](0039-recipe-source-evidence.md)
-- Amends: [0033](0033-corpus-update-modes.md) and
+- Amends: [0005](0005-external-fetchers.md),
+  [0033](0033-corpus-update-modes.md), and
   [0034](0034-declarative-ingest-profiles.md)
 
 ## Context
 
-Ingest recipes combine acquisition authorization, external command execution,
-metadata, and input interpretation in one WALDO input. That makes the normal
-ingestion boundary harder to explain and duplicates the separate fetcher
-system. It also encourages format adapters to appear as external converters
-instead of reviewed WALDO behavior.
-
-The existing `waldo-corpus-directory` manifest already provides the cleaner
-boundary: acquisition stops after producing a verified recursive raw tree, and
-WALDO begins with declarative metadata and input semantics.
+Acquisition and ingestion need a single, explicit trust boundary. The
+`waldo-corpus-directory` manifest provides that boundary: acquisition stops
+after producing a verified recursive raw tree, and WALDO begins with
+declarative metadata and input semantics.
 
 ## Decision
 
@@ -38,10 +30,6 @@ Acquisition never runs inside WALDO. Fetchers and other tools write the raw
 directory and manifest, then stop. A manifest cannot name an executable,
 external converter, or runtime adapter.
 
-`waldo-ingest-recipe` schemas are obsolete. Existing readers may remain for
-compatibility, but new corpora, fetchers, features, and documentation must not
-depend on them. No new recipe schema or recipe execution feature will be added.
-
 Direct file ingestion remains a local convenience. Reviewable and
 reproducible corpus contributions use the manifest-backed directory.
 
@@ -52,5 +40,3 @@ reproducible corpus contributions use the manifest-backed directory.
 - New formats require reviewed built-in WALDO adapters.
 - Fetcher output is inspectable and reusable before an index destination is
   chosen.
-- Recipe execution code remains compatibility debt and may be removed in a
-  later compatibility-breaking release.

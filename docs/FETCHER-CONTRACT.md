@@ -72,9 +72,9 @@ explicit acquisition snapshot; incremental/delta acquisition may reuse safely
 verified partial state, but must produce fresh raw-tree evidence before WALDO
 accepts it.
 
-Obsolete WALDO ingest recipes and the legacy `waldo-source-directory/raw`
-layout remain readable for compatibility. They are not authoring formats for
-new ingestion sources or fetchers.
+The legacy `waldo-source-directory/raw` layout remains readable for
+compatibility. It is not the authoring format for new ingestion sources or
+fetchers.
 
 ## Raw trees and logical documents
 

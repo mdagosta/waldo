@@ -7,7 +7,7 @@
 
 WALDO and its public index have not been released. Directory indexes had
 reached schema 2 during development even though corpus manifests, canonical
-Parquet records, BOMs, ingest recipes, and model formats still began at schema
+Parquet records, BOMs, ingestion manifests, and model formats still began at schema
 1. Preserving a pre-release version history would create needless user-facing
 complexity.
 

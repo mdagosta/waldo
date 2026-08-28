@@ -1,6 +1,6 @@
 # ADR 0005: Keep fetchers external, bounded, and local-first
 
-- Status: superseded by ADR 0064
+- Status: amended by ADR 0064
 - Date: 2026-08-04
 
 ## Context
@@ -11,11 +11,10 @@ from the deterministic WALDO core.
 
 ## Decision
 
-Ship source-specific fetchers from a separate repository as reviewed shell
-scripts, not as WALDO commands or Go packages. Their responsibility is
-acquisition into an explicit local directory with evidence of what was
-downloaded. A fetch stops there; the user may later invoke WALDO ingestion as a
-separate action.
+Ship acquisition tooling from a separate repository, not as WALDO commands or
+Go packages. Its responsibility is acquisition into an explicit local
+manifest-backed directory with evidence of what was downloaded. Acquisition
+stops there; the user may later invoke WALDO ingestion as a separate action.
 
 Use `lookaside` for WALDO's object-storage domain and command vocabulary; a
 fetcher does not become part of the lookaside merely because its acquired bytes
