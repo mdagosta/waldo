@@ -98,7 +98,7 @@ stages:
         repetitive_content: true
         boilerplate_content: true
 {sources_block}    corpora:
-      - path: {corpus}
+      - path: "{corpus}"
         weight: 1
     parameters:
       # epochs: 1, not a guessed tokens: budget -- WALDO scans the real
@@ -137,21 +137,19 @@ def export_dir(domain):
 
 
 def format_duration(seconds):
-    """Nd Nh / Nh Nm / Nm Ns for a training-length run, matching waldo's own
-    ETA display; millisecond precision under a minute, where whole seconds
-    would hide almost everything (most waldito commands finish in well
-    under one)."""
-    if seconds < 60:
-        return f"{seconds:.2f}s"
-    whole = round(seconds)
-    days, whole = divmod(whole, 86400)
-    hours, whole = divmod(whole, 3600)
-    minutes, whole = divmod(whole, 60)
+    """Clone of waldo's own compactDuration (internal/cli/model.go), so a
+    waldito duration reads exactly like a waldo one."""
+    seconds = int(seconds)
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
     if days:
         return f"{days}d {hours}h"
     if hours:
         return f"{hours}h {minutes}m"
-    return f"{minutes}m {whole}s"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
 
 
 def prompt(cwd):
@@ -191,9 +189,12 @@ def run_waldo(*args):
 
 
 def waldo_json(*args):
+    # check=True so a failing waldo raises instead of returning nothing, which
+    # would otherwise read as "no models yet". stderr is left inherited, so
+    # waldo's own error reaches the terminal.
     argv = [str(WALDO_BIN), "--json", *args]
     show_command(argv)
-    result = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True)
+    result = subprocess.run(argv, cwd=REPO_ROOT, stdout=subprocess.PIPE, text=True, check=True)
     return json.loads(result.stdout) if result.stdout.strip() else []
 
 
@@ -209,7 +210,10 @@ def cmd_new(args):
     context_tokens, hidden_size, intermediate_size, layers, attention_heads, key_value_heads, batch_size = SIZES[args.size]
     sources_block = ""
     if args.repos:
-        repo_lines = "\n".join(f"          - {repo.strip()}" for repo in args.repos.split(",") if repo.strip())
+        # Quoted, like the corpus path below: an unquoted value containing
+        # " #" would truncate as a YAML comment, and a leading *, &, [ or {
+        # is alias/anchor/flow syntax rather than text.
+        repo_lines = "\n".join(f'          - "{repo.strip()}"' for repo in args.repos.split(",") if repo.strip())
         sources_block = SOURCES_BLOCK_TEMPLATE.format(repo_lines=repo_lines)
     compose = COMPOSE_TEMPLATE.format(
         domain=args.domain, context_tokens=context_tokens, hidden_size=hidden_size,
@@ -230,6 +234,15 @@ def cmd_train(args):
     if not compose.exists():
         print(f"{compose} does not exist; run `waldito new {args.domain}` first", file=sys.stderr)
         sys.exit(1)
+    # Mitigates the macOS Metal watchdog killing training with
+    # kIOGPUCommandBufferCallbackErrorImpactingInteractivity: long MLX GPU
+    # steps block WindowServer compositing, so the watchdog terminates the
+    # run after a few minutes whenever the display is active
+    # (ml-explore/mlx#3267, closed wontfix -- an Apple-side limit, not an MLX
+    # bug). The variable is an undocumented Apple driver knob, reported to
+    # help but not the workaround that issue itself gives (lid closed under
+    # `caffeinate -s`); harmless on non-MLX backends. If training still dies
+    # with that error, close the lid.
     env = {**os.environ, "AGX_RELAX_CDM_CTXSTORE_TIMEOUT": "1"}
     run([str(WALDO_BIN), "model", "train", name, str(compose)], env=env)
 
@@ -242,11 +255,21 @@ def cmd_export(args):
     run(["ollama", "create", name, "-f", "Modelfile"], cwd=out)
 
 
-def cmd_clean(args):
+def cmd_delete(args):
     """Removes waldito-<domain> and any stale staged compose transaction for
     it, so a later `new`/`train` starts genuinely fresh instead of hitting
     "unfinished compose with different inputs"."""
     name = model_name(args.domain)
+    # `waldo model rm` deletes the model directory outright with no prompt of
+    # its own, taking every GPU-hour already trained into it. Same [y/N] and
+    # same accepted answers as waldo's own confirmations (internal/cli/advisor.go).
+    try:
+        answer = input(f"waldito: delete {name} and all of its training? [y/N] ").strip().lower()
+    except EOFError:
+        answer = ""  # no terminal to confirm on (piped stdin) is not a yes
+    if answer not in ("y", "yes"):
+        print("cancelled")
+        return
     argv = [str(WALDO_BIN), "model", "rm", name]
     show_command(argv)
     result = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True)
@@ -311,9 +334,9 @@ def main():
     export.add_argument("domain")
     export.set_defaults(func=cmd_export)
 
-    clean = sub.add_parser("clean", help="remove waldito-<domain> and any stale compose transaction")
-    clean.add_argument("domain")
-    clean.set_defaults(func=cmd_clean)
+    delete = sub.add_parser("delete", help="delete waldito-<domain>, its training, and any stale compose transaction")
+    delete.add_argument("domain")
+    delete.set_defaults(func=cmd_delete)
 
     status = sub.add_parser("status", help="list waldito models and their state")
     status.add_argument("domain", nargs="?")
@@ -333,6 +356,11 @@ def main():
         # transaction, resume hint) on its way out; nothing to add here.
         print()
         sys.exit(130)
+    except FileNotFoundError as error:
+        # go and ollama are both external; a missing one raises here rather
+        # than exiting non-zero, and a traceback would tell a novice nothing.
+        print(f"{error.filename} is not installed or not on PATH", file=sys.stderr)
+        sys.exit(1)
     except subprocess.CalledProcessError as error:
         sys.exit(error.returncode)
     finally:
