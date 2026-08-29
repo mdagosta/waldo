@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r7"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r8"
 
 
 def emit(kind, **payload):
@@ -30,9 +30,16 @@ def emit(kind, **payload):
 
 
 # WALDO_GPU_THROTTLE=0.25 caps training to ~25% of wall-clock time; GPU alternates between full-speed and idle.
-try: GPU_THROTTLE = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
-except ValueError: GPU_THROTTLE = 1; emit("event", event={"kind": "log", "message": "specify WALDO_GPU_THROTTLE as decimal percentage, ie 0.25"})
-if not 0 < GPU_THROTTLE < 1: GPU_THROTTLE = 1
+def read_gpu_throttle():
+    try:
+        value = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
+    except ValueError:
+        value = math.nan
+    if not 0.01 <= value <= 1:
+        emit("event", event={"kind": "log", "message": "WALDO_GPU_THROTTLE must be a decimal between 0.01 and 1.0; throttling disabled"})
+        return 1
+    return value
+GPU_THROTTLE = read_gpu_throttle()
 
 
 def artifact(path, logical_path):
