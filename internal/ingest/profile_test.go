@@ -81,6 +81,20 @@ func TestInputProfileValidation(t *testing.T) {
 	}
 }
 
+func TestInputProfileRejectsCaseInsensitiveDuplicateRoleAliases(t *testing.T) {
+	profile := InputProfile{
+		Type: ProfileChatMessages,
+		Messages: ChatMessagesMapping{
+			Role:        "turns[].speaker",
+			Content:     "turns[].utterance",
+			RoleAliases: map[string]string{"SYSTEM": "assistant", "system": "assistant"},
+		},
+	}
+	if err := profile.Validate(); err == nil {
+		t.Fatal("case-insensitive duplicate role aliases were accepted")
+	}
+}
+
 func TestNewPlanPinsRequestedRecordMaximum(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "input.txt")
 	if err := os.WriteFile(path, []byte("text"), 0o644); err != nil {

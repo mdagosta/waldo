@@ -451,7 +451,7 @@ func TestChatMessagesPreservesRolesAndToolResults(t *testing.T) {
 		Fields: ProfileFields{ID: "id"},
 		Messages: ChatMessagesMapping{
 			Role: "messages[].role", Content: "messages[].content", Tools: "tools",
-			RoleAliases: map[string]string{"human": "user", "model": "assistant"},
+			RoleAliases: map[string]string{"HUMAN": "user", "MODEL": "assistant"},
 		},
 	}
 	plan := mappedFixturePlan(t, path, profile)

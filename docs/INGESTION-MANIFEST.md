@@ -187,6 +187,26 @@ JSON/JSONL/Parquet mappings use `record-map`, `dialogue-pair`,
 `bounded-text`; XML uses `xml-record`. Acquisition tools retain general raw
 upstream formats and do not render corpus-specific conversation templates.
 
+`chat-messages` accepts a `messages.role_aliases` object when upstream speaker
+labels differ from WALDO's canonical `system`, `user`, `assistant`, and `tool`
+roles. Alias matching is case-insensitive. For example, a task-dialogue corpus
+where `SYSTEM` denotes the responding assistant declares:
+
+```json
+{
+  "format": "json",
+  "type": "chat-messages",
+  "messages": {
+    "role": "turns[].speaker",
+    "content": "turns[].utterance",
+    "role_aliases": {
+      "USER": "user",
+      "SYSTEM": "assistant"
+    }
+  }
+}
+```
+
 Text must be NUL-free UTF-8. Archives that WALDO does not read directly must be
 safely unpacked by acquisition. Empty files are not trainable records. WALDO
 pins file identity before conversion and rejects files that change afterward.

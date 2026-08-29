@@ -225,10 +225,16 @@ func (profile InputProfile) Validate() error {
 		if len(profile.Fields.Text) > 0 || len(profile.Fields.TextFallback) > 0 || profile.Fields.Context != "" || profile.Fields.Response != "" || profile.Fields.Tools != "" || profile.Tree != (ConversationTree{}) || profile.Bounds != (TextBounds{}) || !profile.XML.empty() {
 			return fmt.Errorf("chat-messages accepts identity, source, and meta fields plus messages only")
 		}
+		seenAliases := map[string]bool{}
 		for source, target := range profile.Messages.RoleAliases {
 			if strings.TrimSpace(source) == "" || !validChatRole(target) {
 				return fmt.Errorf("chat-messages role_aliases must map non-empty names to system, user, assistant, or tool")
 			}
+			canonicalSource := strings.ToLower(strings.TrimSpace(source))
+			if seenAliases[canonicalSource] {
+				return fmt.Errorf("chat-messages role_aliases contains duplicate case-insensitive source %q", canonicalSource)
+			}
+			seenAliases[canonicalSource] = true
 		}
 		for name, path := range profile.Fields.Meta {
 			if strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {

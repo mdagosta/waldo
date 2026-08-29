@@ -371,10 +371,7 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		}
 		hasUser, hasAssistant := false, false
 		for index, role := range roles {
-			role = strings.ToLower(strings.TrimSpace(role))
-			if alias, ok := input.Profile.Messages.RoleAliases[role]; ok {
-				role = strings.ToLower(strings.TrimSpace(alias))
-			}
+			role = canonicalChatRole(role, input.Profile.Messages.RoleAliases)
 			if !validChatRole(role) || strings.TrimSpace(contents[index]) == "" {
 				return shard.TextRow{}, fmt.Errorf("%w: chat message %d has an unsupported role or empty content", errEmptyMappedRecord, index+1)
 			}
@@ -483,6 +480,19 @@ func mapCanonicalRecord(record recordAccessor, plan Plan, input PlanInput, fallb
 		return shard.TextRow{}, fmt.Errorf("profile %q cannot be mapped from scalar fields", input.Profile.Type)
 	}
 	return canonicalMappedRow(record, plan, input, fallbackSource, text, meta)
+}
+
+func canonicalChatRole(role string, aliases map[string]string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if alias, ok := aliases[role]; ok {
+		return strings.ToLower(strings.TrimSpace(alias))
+	}
+	for source, alias := range aliases {
+		if strings.EqualFold(strings.TrimSpace(source), role) {
+			return strings.ToLower(strings.TrimSpace(alias))
+		}
+	}
+	return role
 }
 
 func mappedRecordMeta(record recordAccessor, fields map[string]string) (*string, error) {
