@@ -84,6 +84,40 @@ class ReadGPUThrottleTest(unittest.TestCase):
         self.assertEqual(value, 0.01)
         self.assertEqual(emitted, "")
 
+    def test_max(self):
+        self.set_env("1.0")
+        value, emitted = self.read_gpu_throttle()
+        self.assertEqual(value, 1.0)
+        self.assertEqual(emitted, "")
+
+    def test_zero(self):
+        self.set_env("0")
+        value, emitted = self.read_gpu_throttle()
+        self.assertEqual(value, 1)
+        self.assertIn("WALDO_GPU_THROTTLE must be a decimal", emitted)
+
+    def test_negative(self):
+        self.set_env("-0.5")
+        value, emitted = self.read_gpu_throttle()
+        self.assertEqual(value, 1)
+        self.assertIn("WALDO_GPU_THROTTLE must be a decimal", emitted)
+
+    def test_nan(self):
+        # float("nan") parses without raising, so this exercises the range
+        # check, not the except ValueError branch -- any comparison with NaN
+        # is False, so it falls through the same as an out-of-range number.
+        self.set_env("nan")
+        value, emitted = self.read_gpu_throttle()
+        self.assertEqual(value, 1)
+        self.assertIn("WALDO_GPU_THROTTLE must be a decimal", emitted)
+
+    def test_inf(self):
+        # Also parses without raising; rejected by the upper bound.
+        self.set_env("inf")
+        value, emitted = self.read_gpu_throttle()
+        self.assertEqual(value, 1)
+        self.assertIn("WALDO_GPU_THROTTLE must be a decimal", emitted)
+
     def test_malformed(self):
         self.set_env("not-a-number")
         value, emitted = self.read_gpu_throttle()

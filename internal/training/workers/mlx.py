@@ -29,7 +29,8 @@ def emit(kind, **payload):
     print(json.dumps(frame, separators=(",", ":")), flush=True)
 
 
-# WALDO_GPU_THROTTLE=0.25 caps training to ~25% of wall-clock time; GPU alternates between full-speed and idle.
+# WALDO_GPU_THROTTLE=0.25 caps training to ~25% of wall-clock time; GPU alternates between
+# full-speed and idle. Applies only to the MLX worker.
 def read_gpu_throttle():
     try:
         value = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
