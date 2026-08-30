@@ -22,6 +22,7 @@ import collections
 import getpass
 import json
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -186,7 +187,9 @@ def prompt(cwd):
 
 def show_command(argv, cwd=REPO_ROOT):
     # Prefix colored like a shell prompt; the command stays default, since it's the real output.
-    print(f"{COMMAND_COLOR}{prompt(cwd)}{RESET_COLOR} {' '.join(argv)}")
+    # shlex.quote: this runs via subprocess, no shell involved, so argv needs no quoting to
+    # execute -- but a copy-pasted "<template>" hits bash's redirection operator unquoted.
+    print(f"{COMMAND_COLOR}{prompt(cwd)}{RESET_COLOR} {shlex.join(argv)}")
 
 
 def run(argv, cwd=REPO_ROOT, env=None):
@@ -288,9 +291,11 @@ def cmd_train(args):
     # reported to help; harmless elsewhere. Still dying with that error? Close the lid.
     env = {**os.environ, "AGX_RELAX_CDM_CTXSTORE_TIMEOUT": "1"}
     run([str(WALDO_BIN), "model", "train", name, str(compose)], env=env)
-    # model chat reads weights directly, no export needed. Compare the held-out
-    # loss above to ln(259)=5.56, the random-guess baseline for this vocabulary.
-    print(f"\ntry it:  {WALDO_BIN} model chat {name} '<template>' --max-tokens 80")
+    # Runs straight through rather than just printing the suggestion, so there's
+    # nothing to copy-paste. Compare the held-out loss above to ln(259)=5.56,
+    # the random-guess baseline for this vocabulary.
+    print()
+    run(["bin/waldo", "model", "chat", name, "<template>", "--max-tokens", "800"])
 
 
 def cmd_export(args):
