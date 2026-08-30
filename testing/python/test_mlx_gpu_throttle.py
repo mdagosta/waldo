@@ -72,6 +72,22 @@ class ReadGPUThrottleTest(unittest.TestCase):
         self.assertEqual(value, 1)
         self.assertEqual(emitted, "")
 
+    def test_empty(self):
+        # An env var can't be null, only unset (test_unset) or empty. "" is
+        # falsy, so `or 1` catches it before the try/except even runs --
+        # a different code path than unset, same as no code path exists for
+        # None here at all.
+        self.set_env("")
+        value, emitted = self.read_gpu_throttle()
+        self.assertEqual(value, 1)
+        self.assertEqual(emitted, "")
+
+    def test_text(self):
+        self.set_env("non-numeric text")
+        value, emitted = self.read_gpu_throttle()
+        self.assertEqual(value, 1)
+        self.assertIn("WALDO_GPU_THROTTLE must be a decimal", emitted)
+
     def test_valid(self):
         self.set_env("0.25")
         value, emitted = self.read_gpu_throttle()
