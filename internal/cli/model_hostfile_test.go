@@ -66,6 +66,69 @@ func TestLoadTrainingHostfileRejectsTopologyOptions(t *testing.T) {
 	}
 }
 
+func TestLoadFuzzballTrainingHostlist(t *testing.T) {
+	wrapper := filepath.Join(t.TempDir(), "ssh-wrapper")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousHostname := currentTrainingHostname
+	currentTrainingHostname = func() (string, error) { return "train-0", nil }
+	t.Cleanup(func() { currentTrainingHostname = previousHostname })
+	t.Setenv("MULTINODE_HOSTLIST_NOSLOTS", "train-1, train-0,train-2")
+	t.Setenv("MULTINODE_NODE_IP", "10.42.0.10")
+	t.Setenv("MULTINODE_SSH_WRAPPER", wrapper)
+	t.Setenv("MULTINODE_RSH_WRAPPER", "")
+	hostfile, err := loadFuzzballTrainingHostlist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hostfile.Source != "fuzzball" || strings.Join(hostfile.Hosts, ",") != "train-0,train-1,train-2" || hostfile.RendezvousHost != "10.42.0.10" || hostfile.Wrapper != wrapper {
+		t.Fatalf("Fuzzball topology = %+v", hostfile)
+	}
+}
+
+func TestLoadFuzzballTrainingHostlistRejectsInvalidEnvironment(t *testing.T) {
+	wrapper := filepath.Join(t.TempDir(), "ssh-wrapper")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	previousHostname := currentTrainingHostname
+	currentTrainingHostname = func() (string, error) { return "train-0", nil }
+	t.Cleanup(func() { currentTrainingHostname = previousHostname })
+	for _, test := range []struct {
+		hosts, nodeIP, sshWrapper, rshWrapper, want string
+	}{
+		{"train-0", "", wrapper, "", "at least two hosts"},
+		{"train-0:2,train-1:2", "", wrapper, "", "without slots"},
+		{"train-0,train-0", "", wrapper, "", "repeats host"},
+		{"train-0,train-1", "head", wrapper, "", "must be an IP address"},
+		{"other-0,other-1", "", wrapper, "", "does not contain local rank-0 host"},
+		{"train-0,train-1", "", "", "", "MULTINODE_SSH_WRAPPER is required"},
+		{"train-0,train-1", "", wrapper, "/different/wrapper", "different launchers"},
+	} {
+		t.Setenv("MULTINODE_HOSTLIST_NOSLOTS", test.hosts)
+		t.Setenv("MULTINODE_NODE_IP", test.nodeIP)
+		t.Setenv("MULTINODE_SSH_WRAPPER", test.sshWrapper)
+		t.Setenv("MULTINODE_RSH_WRAPPER", test.rshWrapper)
+		if _, err := loadFuzzballTrainingHostlist(); err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("hosts %q error = %v, want %q", test.hosts, err, test.want)
+		}
+	}
+}
+
+func TestLoadFuzzballSSHWrapperAcceptsRshAlias(t *testing.T) {
+	wrapper := filepath.Join(t.TempDir(), "rsh-wrapper")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("MULTINODE_SSH_WRAPPER", "")
+	t.Setenv("MULTINODE_RSH_WRAPPER", wrapper)
+	got, err := loadFuzzballSSHWrapper()
+	if err != nil || got != wrapper {
+		t.Fatalf("wrapper = %q, err = %v", got, err)
+	}
+}
+
 func TestCompareTorchTitanHosts(t *testing.T) {
 	primary := training.TorchTitanHost{
 		PythonVersion: "3.12", TorchVersion: "2.8", TorchTitanVersion: "0.2",
@@ -362,11 +425,28 @@ func TestHostfileSSHUsesGracefulBoundedCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	session := hostfileSession{ctx: ctx}
-	command := session.sshCommand("worker", "true")
+	command := session.remoteCommand("worker", "true")
 	if command.Cancel == nil {
 		t.Fatal("SSH command has no graceful cancellation function")
 	}
 	if command.WaitDelay != hostfileWorkerExitGrace {
 		t.Fatalf("SSH wait delay = %v, want %v", command.WaitDelay, hostfileWorkerExitGrace)
+	}
+}
+
+func TestHostfileRemoteCommandUsesFuzzballWrapperContract(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	wrapper := filepath.Join(t.TempDir(), "ssh-wrapper")
+	session := hostfileSession{ctx: ctx, hostfile: trainingHostfile{Wrapper: wrapper}}
+	command := session.remoteCommand("worker-1", "printf '%s' ready")
+	if command.Path != wrapper {
+		t.Fatalf("launcher = %q, want %q", command.Path, wrapper)
+	}
+	if got := strings.Join(command.Args[1:], "|"); got != "worker-1|printf '%s' ready" {
+		t.Fatalf("wrapper arguments = %q", got)
+	}
+	if command.Cancel == nil || command.WaitDelay != hostfileWorkerExitGrace {
+		t.Fatal("Fuzzball wrapper lacks bounded graceful cancellation")
 	}
 }

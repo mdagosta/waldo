@@ -626,7 +626,7 @@ func runModelBOM(context Context, args []string, stdout, stderr io.Writer) error
 
 func runModelTrain(context Context, args []string, stdout, stderr io.Writer) error {
 	hostfilePath := strings.TrimSpace(stringOption(context, "hostfile"))
-	if hostfilePath != "" {
+	if hostfilePath != "" || strings.TrimSpace(os.Getenv("MULTINODE_HOSTLIST_NOSLOTS")) != "" {
 		return runModelTrainHostfile(context, args, hostfilePath, stdout, stderr)
 	}
 	if context.Command != nil && context.Command.Flags().Changed("rendezvous-port") {

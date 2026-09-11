@@ -25,6 +25,34 @@ resolvable by every training host as the rank-0 rendezvous address.
 `--hostfile` selects TorchTitan. It accepts `model.backend=auto` or
 `model.backend=torchtitan` and rejects explicit MLX, PyTorch, or fake backends.
 
+## Fuzzball generic multi-node jobs
+
+Inside a Fuzzball job using `multinode.implementation: generic`, WALDO needs no
+generated hostfile and no additional launcher flags. When `--hostfile` is
+absent, it automatically reads:
+
+- `MULTINODE_HOSTLIST_NOSLOTS` as the allocated node list; WALDO identifies
+  the current hostname as local rank 0 and does not depend on list order;
+- `MULTINODE_SSH_WRAPPER` as the remote-command launcher, invoked exactly as
+  `WRAPPER HOST COMMAND`; and
+- `MULTINODE_NODE_IP`, when set, as rank 0's rendezvous address.
+
+`MULTINODE_RSH_WRAPPER` is accepted as Fuzzball's documented alias for
+`MULTINODE_SSH_WRAPPER`. If both wrapper variables are set, they must identify
+the same absolute executable. An explicit `--hostfile` takes precedence over
+the environment-provided host list, but WALDO still uses the Fuzzball wrapper
+when it is present so remote execution remains inside the allocated job.
+
+A Fuzzball job can therefore run the normal command:
+
+```console
+waldo model train my-model /path/to/compose.yaml
+```
+
+WALDO reports that it discovered the Fuzzball topology before host preflight.
+Do not pass `MULTINODE_HOSTLIST`, whose entries contain slot counts; WALDO
+discovers the visible GPU count and topology independently on every node.
+
 ## What WALDO installs
 
 Secondary hosts do not need WALDO installed. Rank 0 copies the exact running
@@ -112,7 +140,8 @@ symlink and `PATH` change. Run `hash -r` or start a new login shell when that
 happens. The explicit `/usr/bin/python3.11 -m pip` form always bypasses that
 shell lookup.
 
-Verify locally and through non-interactive SSH before starting WALDO:
+Outside a managed launcher, verify locally and through non-interactive SSH
+before starting WALDO:
 
 ```console
 source /opt/waldo-python/bin/activate
@@ -129,7 +158,8 @@ Rank 0 must be able to run `ssh HOST true` without a password prompt.
 Every host needs:
 
 - Linux with compatible GPU drivers, PyTorch, TorchTitan, and NCCL;
-- passwordless, non-interactive SSH from rank 0;
+- a working rank-0 remote-command path: passwordless, non-interactive SSH, or
+  Fuzzball's `MULTINODE_SSH_WRAPPER`;
 - the same number and class of visible GPUs; and
 - unrestricted node-to-node traffic on the selected training interface.
 
@@ -223,7 +253,7 @@ firewall.
 
 ## Start a run
 
-Run one command on the first host:
+Run one command on the first host. Outside Fuzzball, provide a hostfile:
 
 ```console
 waldo model train my-model /path/to/compose.yaml --hostfile /path/to/hosts
@@ -237,11 +267,11 @@ waldo model train my-model /path/to/compose.yaml \
 ```
 
 WALDO performs all host and runtime checks before corpus materialization. It
-checks SSH access, homogeneous runtime and GPU topology, the configured NCCL
-interface and RDMA HCA, the effective locked-memory limit, rank 0's rendezvous
-port, and remote reachability of that port. It then launches and supervises
-every secondary, relays their output with host labels, and publishes each
-compose stage directly over the launcher channel.
+checks remote-launch access, homogeneous runtime and GPU topology, the
+configured NCCL interface and RDMA HCA, the effective locked-memory limit,
+rank 0's rendezvous port, and remote reachability of that port. It then
+launches and supervises every secondary, relays their output with host labels,
+and publishes each compose stage directly over the launcher channel.
 
 Before rank 0 starts each stage's TorchTitan process, every secondary must
 acknowledge the exact run and stage plan. This stage-boundary handshake catches

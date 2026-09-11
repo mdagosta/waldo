@@ -569,9 +569,10 @@ through NCCL. TorchTitan constructs a global device mesh and PyTorch FSDP2 shard
 model parameters across every rank. All ranks participate when gathering
 checkpoints, optimizer state, runtime random state, and terminal weights; only
 global rank zero writes and reports the portable full artifacts. Multi-node
-rendezvous and rank-0 hostfile launching are supported. Scheduler integration,
-elastic restart, and tensor/pipeline parallelism remain later orchestration
-work. See [Multi-host training](MULTI-NODE-TRAINING.md) for the current cluster contract
+rendezvous, rank-0 hostfile launching, and Fuzzball generic multi-node
+environment discovery are supported. Broader scheduler integration, elastic
+restart, and tensor/pipeline parallelism remain later orchestration work. See
+[Multi-host training](MULTI-NODE-TRAINING.md) for the current cluster contract
 and operator procedure.
 
 NeMo/Megatron and native sparse-MoE execution are planned, not current

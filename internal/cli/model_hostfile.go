@@ -50,11 +50,25 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 	if backend != training.BackendAuto && backend != training.BackendTorchTitan {
 		return fmt.Errorf("--hostfile requires TorchTitan, but model.backend=%s; set model.backend=auto or torchtitan", backend)
 	}
-	hostfile, err := loadTrainingHostfile(path)
+	var hostfile trainingHostfile
+	if path != "" {
+		hostfile, err = loadTrainingHostfile(path)
+	} else {
+		hostfile, err = loadFuzzballTrainingHostlist()
+	}
 	if err != nil {
 		return err
 	}
-	rendezvousHost := hostfile.Hosts[0]
+	if hostfile.Wrapper == "" {
+		hostfile.Wrapper, err = loadFuzzballSSHWrapper()
+		if err != nil {
+			return err
+		}
+	}
+	rendezvousHost := hostfile.RendezvousHost
+	if rendezvousHost == "" {
+		rendezvousHost = hostfile.Hosts[0]
+	}
 	if separator := strings.LastIndex(rendezvousHost, "@"); separator >= 0 {
 		rendezvousHost = rendezvousHost[separator+1:]
 	}
@@ -63,6 +77,9 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 		Rendezvous:   net.JoinHostPort(rendezvousHost, fmt.Sprintf("%d", port)),
 		RendezvousID: fmt.Sprintf("hostfile-%d-%d", time.Now().UTC().Unix(), os.Getpid()),
 		Interface:    configuration.Model.NCCLInterface, HCA: configuration.Model.NCCLHCA,
+	}
+	if hostfile.Source == "fuzzball" {
+		fmt.Fprintf(stderr, "multi-host topology  discovered %d Fuzzball nodes; remote launch uses %s\n", len(hostfile.Hosts), hostfile.Wrapper)
 	}
 	session, err := startHostfileSession(commandContext.Execution, hostfile, cluster, stderr)
 	if err != nil {
@@ -80,11 +97,15 @@ func runModelTrainHostfile(commandContext Context, args []string, path string, s
 }
 
 type trainingHostfile struct {
-	Path  string
-	Hosts []string
+	Path           string
+	Hosts          []string
+	Source         string
+	Wrapper        string
+	RendezvousHost string
 }
 
 var inspectHostfileTorchTitan = training.InspectTorchTitanHost
+var currentTrainingHostname = os.Hostname
 var listenHostfileRendezvous = func(address string) (io.Closer, error) {
 	return listenTrainingRendezvous(address)
 }
@@ -103,7 +124,7 @@ func loadTrainingHostfile(path string) (trainingHostfile, error) {
 		return trainingHostfile{}, fmt.Errorf("open hostfile: %w", err)
 	}
 	defer file.Close()
-	result := trainingHostfile{Path: path}
+	result := trainingHostfile{Path: path, Source: "hostfile"}
 	seen := map[string]bool{}
 	scanner := bufio.NewScanner(file)
 	for line := 1; scanner.Scan(); line++ {
@@ -132,6 +153,93 @@ func loadTrainingHostfile(path string) (trainingHostfile, error) {
 		return trainingHostfile{}, fmt.Errorf("hostfile %s must list at least two hosts, with the local rank-0 host first", path)
 	}
 	return result, nil
+}
+
+func loadFuzzballTrainingHostlist() (trainingHostfile, error) {
+	raw := strings.TrimSpace(os.Getenv("MULTINODE_HOSTLIST_NOSLOTS"))
+	if raw == "" {
+		return trainingHostfile{}, fmt.Errorf("MULTINODE_HOSTLIST_NOSLOTS is empty")
+	}
+	result := trainingHostfile{Path: "MULTINODE_HOSTLIST_NOSLOTS", Source: "fuzzball"}
+	seen := map[string]bool{}
+	for index, item := range strings.Split(raw, ",") {
+		host := strings.TrimSpace(item)
+		if host == "" {
+			return trainingHostfile{}, fmt.Errorf("MULTINODE_HOSTLIST_NOSLOTS entry %d is empty", index+1)
+		}
+		if strings.Contains(host, ":") {
+			return trainingHostfile{}, fmt.Errorf("MULTINODE_HOSTLIST_NOSLOTS entry %d %q contains a slot count or port; use host names without slots", index+1, host)
+		}
+		if strings.HasPrefix(host, "-") || strings.ContainsAny(host, `/\\`) {
+			return trainingHostfile{}, fmt.Errorf("MULTINODE_HOSTLIST_NOSLOTS entry %d has invalid host %q", index+1, host)
+		}
+		if seen[host] {
+			return trainingHostfile{}, fmt.Errorf("MULTINODE_HOSTLIST_NOSLOTS repeats host %q", host)
+		}
+		seen[host] = true
+		result.Hosts = append(result.Hosts, host)
+	}
+	if len(result.Hosts) < 2 {
+		return trainingHostfile{}, fmt.Errorf("MULTINODE_HOSTLIST_NOSLOTS must list at least two hosts")
+	}
+	localHost, err := currentTrainingHostname()
+	if err != nil {
+		return trainingHostfile{}, fmt.Errorf("determine local Fuzzball host: %w", err)
+	}
+	localIndex := -1
+	for index, host := range result.Hosts {
+		if host == localHost {
+			localIndex = index
+			break
+		}
+	}
+	if localIndex < 0 {
+		return trainingHostfile{}, fmt.Errorf("MULTINODE_HOSTLIST_NOSLOTS does not contain local rank-0 host %q", localHost)
+	}
+	if localIndex > 0 {
+		ordered := []string{localHost}
+		ordered = append(ordered, result.Hosts[:localIndex]...)
+		ordered = append(ordered, result.Hosts[localIndex+1:]...)
+		result.Hosts = ordered
+	}
+	result.RendezvousHost = strings.TrimSpace(os.Getenv("MULTINODE_NODE_IP"))
+	if result.RendezvousHost != "" && net.ParseIP(result.RendezvousHost) == nil {
+		return trainingHostfile{}, fmt.Errorf("MULTINODE_NODE_IP must be an IP address, got %q", result.RendezvousHost)
+	}
+	result.Wrapper, err = loadFuzzballSSHWrapper()
+	if err != nil {
+		return trainingHostfile{}, err
+	}
+	if result.Wrapper == "" {
+		return trainingHostfile{}, fmt.Errorf("MULTINODE_SSH_WRAPPER is required when MULTINODE_HOSTLIST_NOSLOTS selects Fuzzball multi-node training")
+	}
+	return result, nil
+}
+
+func loadFuzzballSSHWrapper() (string, error) {
+	sshWrapper := strings.TrimSpace(os.Getenv("MULTINODE_SSH_WRAPPER"))
+	rshWrapper := strings.TrimSpace(os.Getenv("MULTINODE_RSH_WRAPPER"))
+	if sshWrapper != "" && rshWrapper != "" && sshWrapper != rshWrapper {
+		return "", fmt.Errorf("MULTINODE_SSH_WRAPPER and MULTINODE_RSH_WRAPPER name different launchers")
+	}
+	wrapper := sshWrapper
+	if wrapper == "" {
+		wrapper = rshWrapper
+	}
+	if wrapper == "" {
+		return "", nil
+	}
+	if !filepath.IsAbs(wrapper) {
+		return "", fmt.Errorf("Fuzzball SSH wrapper must be an absolute path, got %q", wrapper)
+	}
+	info, err := os.Stat(wrapper)
+	if err != nil {
+		return "", fmt.Errorf("inspect Fuzzball SSH wrapper %s: %w", wrapper, err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return "", fmt.Errorf("Fuzzball SSH wrapper %s is not an executable file", wrapper)
+	}
+	return wrapper, nil
 }
 
 type hostfileWorker struct {
@@ -296,9 +404,14 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-func (session *hostfileSession) sshCommand(arguments ...string) *exec.Cmd {
+func (session *hostfileSession) remoteCommand(arguments ...string) *exec.Cmd {
+	launcher := "ssh"
 	base := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "--"}
-	command := exec.CommandContext(session.ctx, "ssh", append(base, arguments...)...)
+	if session.hostfile.Wrapper != "" {
+		launcher = session.hostfile.Wrapper
+		base = nil
+	}
+	command := exec.CommandContext(session.ctx, launcher, append(base, arguments...)...)
 	command.Cancel = func() error {
 		if command.Process == nil {
 			return os.ErrProcessDone
@@ -322,7 +435,7 @@ func (session *hostfileSession) stageBinary(host string) error {
 	temporary := session.remoteBinary + ".tmp"
 	remote := fmt.Sprintf("umask 077; mkdir -p %s; cat > %s; chmod 700 %s; test \"$(sha256sum %s | cut -d' ' -f1)\" = %s; mv -f %s %s",
 		shellQuote(session.remoteRoot), shellQuote(temporary), shellQuote(temporary), shellQuote(temporary), shellQuote(session.binarySHA256), shellQuote(temporary), shellQuote(session.remoteBinary))
-	command := session.sshCommand(host, remote)
+	command := session.remoteCommand(host, remote)
 	command.Stdin = file
 	var output strings.Builder
 	command.Stdout, command.Stderr = &output, &output
@@ -334,7 +447,7 @@ func (session *hostfileSession) stageBinary(host string) error {
 
 func (session *hostfileSession) probeHost(host string, rank int) (training.TorchTitanHost, error) {
 	arguments := session.workerArguments(rank, true)
-	command := session.sshCommand(host, session.remoteInvocation(arguments))
+	command := session.remoteCommand(host, session.remoteInvocation(arguments))
 	var stdout, stderr strings.Builder
 	command.Stdout, command.Stderr = &stdout, &stderr
 	if err := command.Run(); err != nil {
@@ -394,7 +507,7 @@ func (session *hostfileSession) workerArguments(rank int, check bool) []string {
 }
 
 func (session *hostfileSession) startWorker(host string, rank int) (*hostfileWorker, error) {
-	command := session.sshCommand(host, session.remoteInvocation(session.workerArguments(rank, false)))
+	command := session.remoteCommand(host, session.remoteInvocation(session.workerArguments(rank, false)))
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := command.StdinPipe()
 	if err != nil {

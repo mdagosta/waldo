@@ -66,3 +66,4 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
 - [0067: Select topology-aware TorchTitan parallelism](0067-topology-aware-parallelism.md)
 - [0068: Pin and reuse deterministic stage preflight](0068-pinned-stage-preflight.md)
 - [0069: Make unset-language inclusion explicit](0069-explicit-unset-language-filtering.md)
+- [0070: Discover Fuzzball multi-node launches](0070-fuzzball-multinode-discovery.md)
