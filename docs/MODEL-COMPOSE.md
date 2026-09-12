@@ -433,7 +433,10 @@ held-out selection and training shuffle. The versioned effective policy is
 pinned in the corpus OpenWALDO BOM, so a resume or distributed node cannot
 silently train on a different subset. The BOM's manifest totals remain the
 indexed reference totals; run and evaluation evidence describe actual training
-consumption.
+consumption. If the combined filters eliminate every row from one selected
+corpus, preflight warns that the corpus will contribute zero training tokens.
+The corpus remains in the selection BOM for auditability, while observed
+consumption lists only corpora that supplied positive token targets.
 
 For `causal-pretrain-weighted`, prefer inline `weight` fields. Existing
 `parameters.corpus_weights` maps remain valid for compatibility, but a stage

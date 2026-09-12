@@ -333,7 +333,12 @@ disable it during evaluation and inference.
 Scalar corpus paths and the older `parameters.corpus_weights` map remain
 accepted. A configured corpus entry can also carry license, language, source,
 and date filters; stage-wide and corpus-local filters are combined and pinned
-in the corpus BOM before held-out selection and training.
+in the corpus BOM before held-out selection and training. Stage preflight
+records training-eligible row counts by corpus and warns when filtering and
+held-out selection leave a selected corpus with no training rows. Such a corpus
+remains selected in the BOM but is omitted from the positive
+observed-consumption list; WALDO still requires that the listed per-corpus
+token targets sum exactly to total consumption.
 
 Run it with:
 

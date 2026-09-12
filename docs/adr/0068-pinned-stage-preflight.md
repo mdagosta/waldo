@@ -13,7 +13,10 @@ operations even though their inputs are immutable.
 
 Each new run stores `PREFLIGHT.json` beside its run records. The artifact
 contains the exact sorted held-out selection, its evaluation summary, resolved
-parameters, and whether an explicit epoch capacity check succeeded.
+parameters, post-filter and post-held-out training record counts by corpus, and
+whether an explicit epoch capacity check succeeded. The per-corpus counts let
+WALDO warn before training when filtering and held-out selection leave an
+entire corpus with no training rows.
 `RUN-BOM.json` pins its size and SHA-256.
 
 WALDO computes a preflight identity from the immutable architecture, corpus
@@ -24,7 +27,9 @@ Reconstruction reads only the selected held-out rows. Any mismatch fails
 closed or causes a fresh scan when no matching artifact exists.
 
 Legacy runs without this optional artifact remain valid and receive the former
-full-scan behavior.
+full-scan behavior. Preflight artifacts written before eligible counts were
+added remain valid and reusable; WALDO simply cannot issue the zero-row warning
+from those older artifacts without rescanning.
 
 ## Consequences
 

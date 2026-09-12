@@ -20,13 +20,17 @@ available inputs, but its observation did not prove what training consumed.
 
 Every materialized input carries its selected logical corpus identity into the
 trainer. After sequence packing, the trainer attributes each consumed next-token
-target to that identity. A successful balanced-profile observation must account
-for every declared corpus and exactly equal the run's total consumed token
-targets.
+target to that identity. A successful balanced-profile observation must
+attribute every consumed token target to a declared corpus and exactly equal
+the run's total consumed token targets. The observation is sparse: a declared
+corpus from which record filters admit no rows has zero consumption and is
+omitted rather than represented by an invalid non-positive entry.
 
 ## Consequences
 
-- A finite balanced-profile run cannot silently omit a declared corpus.
+- Preflight warns when filters leave a declared corpus with no eligible rows.
+- A finite balanced-profile run cannot silently omit a corpus that has eligible
+  records while balancing remains possible.
 - Run observations provide auditable per-corpus consumption rather than inferring
   use from selected shard sizes.
 - Equal tokenizer-target exposure is the balanced policy while every selected

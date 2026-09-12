@@ -42,6 +42,7 @@ type Record struct {
 type RecordPartition struct {
 	Evaluation        EvaluationSet
 	selected          map[string]bool
+	eligibleRecords   map[string]int64
 	evaluationRecords []Record
 	inputs            []Input
 	parameters        ResolvedParameters
@@ -63,6 +64,7 @@ type StagePreflight struct {
 	IdentitySHA256   string             `json:"identity_sha256"`
 	Evaluation       EvaluationSet      `json:"evaluation"`
 	SelectedRecords  []string           `json:"selected_records"`
+	EligibleRecords  map[string]int64   `json:"eligible_records,omitempty"`
 	Parameters       ResolvedParameters `json:"parameters"`
 	CapacityVerified bool               `json:"capacity_verified,omitempty"`
 }
@@ -83,6 +85,11 @@ func (snapshot StagePreflight) Validate() error {
 			return fmt.Errorf("stage preflight selected record IDs are not unique and sorted")
 		}
 	}
+	for corpus, records := range snapshot.EligibleRecords {
+		if strings.TrimSpace(corpus) == "" || records < 0 {
+			return fmt.Errorf("stage preflight eligible record count is invalid")
+		}
+	}
 	return nil
 }
 
@@ -96,9 +103,43 @@ func (partition RecordPartition) Preflight(identity string, parameters ResolvedP
 	sort.Strings(selected)
 	return StagePreflight{
 		Kind: StagePreflightKind, Schema: StagePreflightSchema, IdentitySHA256: identity,
-		Evaluation: partition.Evaluation, SelectedRecords: selected, Parameters: parameters,
+		Evaluation: partition.Evaluation, SelectedRecords: selected, EligibleRecords: cloneRecordCounts(partition.eligibleRecords), Parameters: parameters,
 		CapacityVerified: capacityVerified,
 	}
+}
+
+// ZeroEligibleCorpora returns selected corpora for which the stage filters and
+// held-out partition leave no training records. A nil result means the pinned
+// preflight predates this evidence and cannot determine that without a scan.
+func (partition RecordPartition) ZeroEligibleCorpora() []string {
+	if partition.eligibleRecords == nil {
+		return nil
+	}
+	var corpora []string
+	for corpus, records := range partition.eligibleRecords {
+		if records == 0 {
+			corpora = append(corpora, corpus)
+		}
+	}
+	sort.Strings(corpora)
+	return corpora
+}
+
+// EligibleRecords returns the post-filter, post-held-out training record count
+// for each selected corpus, when that evidence is available.
+func (partition RecordPartition) EligibleRecords() map[string]int64 {
+	return cloneRecordCounts(partition.eligibleRecords)
+}
+
+func cloneRecordCounts(values map[string]int64) map[string]int64 {
+	if values == nil {
+		return nil
+	}
+	cloned := make(map[string]int64, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // NewRecordPartitionFromPreflight reconstructs a partition by reading only
@@ -165,7 +206,7 @@ func NewRecordPartitionFromPreflight(ctx context.Context, inputs []Input, parame
 		return RecordPartition{}, fmt.Errorf("stage preflight held-out evidence does not match the selected records")
 	}
 	return RecordPartition{
-		Evaluation: evaluation, selected: selectedMap, evaluationRecords: records,
+		Evaluation: evaluation, selected: selectedMap, eligibleRecords: cloneRecordCounts(snapshot.EligibleRecords), evaluationRecords: records,
 		inputs: ordered, parameters: parameters, codec: codec, objective: objective, conversation: conversation,
 	}, nil
 }
@@ -233,13 +274,23 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 		return RecordPartition{}, fmt.Errorf("record partition requires a tokenizer")
 	}
 	ordered := orderedInputs(inputs)
-	partition := RecordPartition{selected: make(map[string]bool), inputs: ordered, parameters: parameters, codec: codec, objective: objective, conversation: conversation}
+	partition := RecordPartition{selected: make(map[string]bool), eligibleRecords: make(map[string]int64), inputs: ordered, parameters: parameters, codec: codec, objective: objective, conversation: conversation}
+	for _, input := range ordered {
+		if input.Corpus != "" {
+			partition.eligibleRecords[input.Corpus] += 0
+		}
+	}
 	policy := parameters.Evaluation
 	if policy == nil {
 		policy = &EvaluationPolicy{Selection: "none-v1"}
 	}
 	evaluationDisabled := policy.Fraction == 0 || policy.MaxRecords == 0 || policy.MaxBytes == 0
 	if evaluationDisabled && !inputsHaveRecordFilters(ordered) {
+		for _, input := range ordered {
+			if input.Corpus != "" {
+				partition.eligibleRecords[input.Corpus] += input.Records
+			}
+		}
 		partition.Evaluation = EvaluationSet{Selection: policy.Selection, Seed: parameters.Seed, SHA256: emptyEvaluationDigest()}
 		return partition, nil
 	}
@@ -266,6 +317,9 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 				return err
 			}
 			records++
+			if input.Corpus != "" {
+				partition.eligibleRecords[input.Corpus]++
+			}
 			if evaluationDisabled {
 				return nil
 			}
@@ -395,6 +449,9 @@ func NewRecordPartitionContextWithTransform(ctx context.Context, inputs []Input,
 	hasher := sha256.New()
 	for _, candidate := range selected {
 		partition.selected[candidate.key] = true
+		if _, ok := partition.eligibleRecords[candidate.corpus]; ok {
+			partition.eligibleRecords[candidate.corpus]--
+		}
 		_, _ = fmt.Fprintln(hasher, candidate.key)
 	}
 	partition.Evaluation = EvaluationSet{

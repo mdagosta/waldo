@@ -264,6 +264,9 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		}
 		preflight = partition.Preflight(preflightIdentity, resolvedParameters, capacityVerified)
 	}
+	for _, corpus := range partition.ZeroEligibleCorpora() {
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("warning: %s has no records after stage filters and will contribute zero training tokens", corpus)})
+	}
 	records, err := partition.TrainingRecords()
 	if err != nil {
 		return Inspection{}, fmt.Errorf("stage %s training record stream: %w", stage.Name, err)
@@ -304,7 +307,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	}
 
 	if candidate, ok := resumableRun(inspection, stage, resolvedParameters, partition.Evaluation, bomHash, selection.Execution); ok {
-		return builder.resumeTraining(ctx, name, inspection, candidate, stage, prepared, records, evaluationRecords, architectureJSON, selection)
+		return builder.resumeTraining(ctx, name, inspection, candidate, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection)
 	}
 
 	runID, err := builder.identifier()()
@@ -353,7 +356,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, err
 	}
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunPlanned, Message: "persisted run OpenWALDO BOM"})
-	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, architectureJSON, selection, nil)
+	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection, nil)
 }
 
 func byteCount(value int64) string {
@@ -474,19 +477,24 @@ func resumableRunState(run RunRecord, parameters training.ResolvedParameters) bo
 	if run.State == RunInterrupted {
 		return true
 	}
-	// Releases before the duplicate-evaluation fix could successfully verify a
-	// final artifact and then mark the run failed while persisting the repeated
-	// evaluation at its resume step. Permit only that exact, checkpoint-backed
-	// bookkeeping failure to resume; ordinary failed runs remain terminal.
-	if run.State != RunFailed || !strings.HasPrefix(run.Error, "persist training progress: evaluation step ") || !strings.HasSuffix(run.Error, " does not advance durable progress") || run.Progress == nil || len(run.Progress.Checkpoints) == 0 {
+	// Earlier releases could successfully verify a final artifact and then mark
+	// the run failed during final bookkeeping. Permit only recognized,
+	// checkpoint-backed finalization failures to resume; ordinary failed runs
+	// remain terminal.
+	if run.State != RunFailed || run.Progress == nil || len(run.Progress.Checkpoints) == 0 {
+		return false
+	}
+	recoverableError := strings.HasPrefix(run.Error, "persist training progress: evaluation step ") && strings.HasSuffix(run.Error, " does not advance durable progress")
+	recoverableError = recoverableError || strings.HasPrefix(run.Error, "invalid backend observation: corpus consumption accounts for ")
+	if !recoverableError {
 		return false
 	}
 	checkpoint := run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1]
 	return checkpoint.Step == parameters.Steps && checkpoint.Tokens == parameters.PlannedTokenCapacity
 }
 
-// HasRecoverableFinalizationFailure identifies the narrowly scoped failure
-// produced by WALDO releases that rejected a repeated final-step evaluation.
+// HasRecoverableFinalizationFailure identifies narrowly scoped,
+// checkpoint-backed final bookkeeping failures from earlier WALDO releases.
 func HasRecoverableFinalizationFailure(inspection Inspection) bool {
 	if len(inspection.Runs) == 0 || len(inspection.RunBOMs) != len(inspection.Runs) {
 		return false
@@ -495,7 +503,7 @@ func HasRecoverableFinalizationFailure(inspection Inspection) bool {
 	return resumableRunState(inspection.Runs[last], inspection.RunBOMs[last].Parameters)
 }
 
-func (builder Builder) resumeTraining(ctx context.Context, name string, inspection Inspection, index int, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, architectureJSON json.RawMessage, selection training.Selection) (Inspection, error) {
+func (builder Builder) resumeTraining(ctx context.Context, name string, inspection Inspection, index int, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, eligibleRecords map[string]int64, architectureJSON json.RawMessage, selection training.Selection) (Inspection, error) {
 	pin := inspection.Model.Runs[index]
 	run := inspection.Runs[index]
 	runBOM := inspection.RunBOMs[index]
@@ -531,10 +539,10 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 	}
 	record := inspection.Model
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunInterrupted, Message: fmt.Sprintf("resuming existing run from step %d", resumeStep(resume))})
-	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, architectureJSON, selection, resume)
+	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, eligibleRecords, architectureJSON, selection, resume)
 }
 
-func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPath string, record *ModelRecord, pin RunPin, run RunRecord, runBOM RunBOM, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, architectureJSON json.RawMessage, selection training.Selection, resume *training.ResumePoint) (Inspection, error) {
+func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPath string, record *ModelRecord, pin RunPin, run RunRecord, runBOM RunBOM, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, eligibleRecords map[string]int64, architectureJSON json.RawMessage, selection training.Selection, resume *training.ResumePoint) (Inspection, error) {
 	tokenizerSpec := training.TokenizerSpec{Name: record.Architecture.Tokenizer.Name, Revision: record.Architecture.Tokenizer.Revision, VocabularySize: int(record.Architecture.VocabularySize), PadID: 0, BOSID: 1, EOSID: 2}
 	if selection.Execution.Backend.Name == training.BackendPyTorch || selection.Execution.Backend.Name == training.BackendTorchTitan || selection.Execution.Backend.Name == training.BackendMLX {
 		var err error
@@ -629,18 +637,8 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 			}
 		}
 		if backendErr == nil && (runBOM.Parameters.Data.Order == "corpus-balanced-shuffle-v1" || runBOM.Parameters.Data.Order == "corpus-weighted-shuffle-v1") {
-			var consumed int64
-			seen := map[string]bool{}
-			for _, item := range observation.Consumption {
-				if item.Corpus == "" || item.TokenTargets <= 0 || seen[item.Corpus] {
-					backendErr = fmt.Errorf("invalid backend observation: invalid corpus consumption evidence")
-					break
-				}
-				seen[item.Corpus] = true
-				consumed += item.TokenTargets
-			}
-			if backendErr == nil && (len(seen) != len(runBOM.CorpusBOM.Paths) || consumed != observation.ConsumedTokens) {
-				backendErr = fmt.Errorf("invalid backend observation: corpus consumption accounts for %d corpora and %d of %d token targets", len(seen), consumed, observation.ConsumedTokens)
+			if err := validateCorpusConsumption(runBOM.CorpusBOM.Paths, eligibleRecords, observation); err != nil {
+				backendErr = fmt.Errorf("invalid backend observation: %w", err)
 			}
 		}
 	}
@@ -677,6 +675,31 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	}
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunComplete, Message: "persisted training observations and artifact hashes"})
 	return Inspect(builder.Root, name)
+}
+
+func validateCorpusConsumption(paths []string, eligibleRecords map[string]int64, observation training.Observation) error {
+	expected := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		expected[path] = true
+	}
+	var consumed int64
+	seen := make(map[string]bool, len(observation.Consumption))
+	for _, item := range observation.Consumption {
+		if item.Corpus == "" || item.TokenTargets <= 0 || seen[item.Corpus] || !expected[item.Corpus] {
+			return fmt.Errorf("invalid corpus consumption evidence")
+		}
+		seen[item.Corpus] = true
+		consumed += item.TokenTargets
+	}
+	if consumed != observation.ConsumedTokens {
+		return fmt.Errorf("corpus consumption accounts for %d corpora and %d of %d token targets", len(seen), consumed, observation.ConsumedTokens)
+	}
+	for corpus, records := range eligibleRecords {
+		if records > 0 && !seen[corpus] {
+			return fmt.Errorf("corpus consumption omits eligible corpus %s", corpus)
+		}
+	}
+	return nil
 }
 
 func resumeStep(resume *training.ResumePoint) int64 {

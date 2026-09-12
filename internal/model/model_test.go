@@ -612,6 +612,47 @@ func TestOnlyFinalCheckpointBookkeepingFailureIsResumable(t *testing.T) {
 	if resumableRunState(run, parameters) {
 		t.Fatal("ordinary failed run became resumable")
 	}
+	run.Error = "invalid backend observation: corpus consumption accounts for 11 corpora and 400015360 of 400015360 token targets"
+	if !resumableRunState(run, parameters) {
+		t.Fatal("final-checkpoint sparse corpus accounting failure is not resumable")
+	}
+	run.Progress.Checkpoints[0].Step--
+	if resumableRunState(run, parameters) {
+		t.Fatal("partial-checkpoint corpus accounting failure became resumable")
+	}
+}
+
+func TestValidateCorpusConsumptionAllowsSelectedCorpusWithZeroUsage(t *testing.T) {
+	observation := training.Observation{
+		ConsumedTokens: 30,
+		Consumption: []training.CorpusConsumption{
+			{Corpus: "corpus-a", TokenTargets: 10},
+			{Corpus: "corpus-b", TokenTargets: 20},
+		},
+	}
+	eligible := map[string]int64{"corpus-a": 10, "corpus-b": 20, "corpus-filtered-out": 0}
+	if err := validateCorpusConsumption([]string{"corpus-a", "corpus-b", "corpus-filtered-out"}, eligible, observation); err != nil {
+		t.Fatalf("sparse consumption rejected: %v", err)
+	}
+	observation.Consumption = append(observation.Consumption, training.CorpusConsumption{Corpus: "unknown", TokenTargets: 1})
+	observation.ConsumedTokens++
+	if err := validateCorpusConsumption([]string{"corpus-a", "corpus-b", "corpus-filtered-out"}, eligible, observation); err == nil {
+		t.Fatal("unknown corpus consumption was accepted")
+	}
+	observation = training.Observation{ConsumedTokens: 10, Consumption: []training.CorpusConsumption{{Corpus: "corpus-a", TokenTargets: 10}}}
+	if err := validateCorpusConsumption([]string{"corpus-a", "corpus-b"}, map[string]int64{"corpus-a": 1, "corpus-b": 1}, observation); err == nil || !strings.Contains(err.Error(), "omits eligible corpus corpus-b") {
+		t.Fatalf("missing eligible corpus error = %v", err)
+	}
+}
+
+func TestValidateCorpusConsumptionRequiresExactTokenTotal(t *testing.T) {
+	observation := training.Observation{
+		ConsumedTokens: 31,
+		Consumption:    []training.CorpusConsumption{{Corpus: "corpus-a", TokenTargets: 30}},
+	}
+	if err := validateCorpusConsumption([]string{"corpus-a"}, nil, observation); err == nil || !strings.Contains(err.Error(), "30 of 31") {
+		t.Fatalf("token mismatch error = %v", err)
+	}
 }
 
 func TestNumberedProfileRemainsResumeCompatible(t *testing.T) {

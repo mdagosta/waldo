@@ -590,6 +590,42 @@ func TestStagePreflightReconstructsTheSamePartition(t *testing.T) {
 	}
 }
 
+func TestStagePreflightRecordsCorporaEliminatedByFilters(t *testing.T) {
+	filtered := writeTrainingRows(t, []shard.Row{{
+		SHA256: record.TextHash("filtered"), Kind: record.KindPretrain, Text: "filtered", Source: "fixture", License: "CC0-1.0", Lang: "fr", Tokens: 1,
+	}})
+	filtered.Corpus = "filtered-corpus"
+	filtered.RecordFilter = &corpus.RecordFilterPolicy{Schema: corpus.RecordFilterSchema, Global: &corpus.RecordFilter{Languages: &corpus.ValueFilter{Include: []string{"en"}}}}
+	retained := writeTrainingShard(t, []string{"retained one", "retained two"})
+	retained.Corpus = "retained-corpus"
+	parameters, err := ResolveParameters(Parameters{Steps: 1, BatchSize: 1, SequenceLength: 8, LearningRate: 0.001, Seed: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	partition, err := NewRecordPartition([]Input{filtered, retained}, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := partition.ZeroEligibleCorpora(); !reflect.DeepEqual(got, []string{"filtered-corpus"}) {
+		t.Fatalf("zero eligible corpora = %v", got)
+	}
+	snapshot := partition.Preflight(strings.Repeat("a", 64), parameters, false)
+	if snapshot.EligibleRecords["filtered-corpus"] != 0 || snapshot.EligibleRecords["retained-corpus"] != 1 {
+		t.Fatalf("eligible records = %v", snapshot.EligibleRecords)
+	}
+	restored, err := NewRecordPartitionFromPreflight(context.Background(), []Input{filtered, retained}, parameters, byteCodec{}, "causal-language-modeling", ConversationTransform{}, snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := restored.ZeroEligibleCorpora(); !reflect.DeepEqual(got, []string{"filtered-corpus"}) {
+		t.Fatalf("restored zero eligible corpora = %v", got)
+	}
+	snapshot.EligibleRecords["retained-corpus"] = -1
+	if err := snapshot.Validate(); err == nil {
+		t.Fatal("negative eligible record count was accepted")
+	}
+}
+
 func collectRecordSource(t *testing.T, source RecordSource, err error) []string {
 	t.Helper()
 	if err != nil {
