@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -141,16 +142,41 @@ func TestPublishMultiNodePlanRejectsLeftoverPlan(t *testing.T) {
 	}
 }
 
-func TestPublishMultiNodePlanRejectsResume(t *testing.T) {
+func TestPublishMultiNodePlanRequiresResumeStaging(t *testing.T) {
 	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{RendezvousID: "run-42", Nodes: 4, StageOrdinal: 1, StageCount: 1}}
 	stage := Stage{Name: "train-0001"}
 	resume := &training.ResumePoint{Step: 5}
 	err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, RunBOM{}, PreparedStage{}, nil, stage, resume)
-	if err == nil || !strings.Contains(err.Error(), "cannot resume") {
+	if err == nil || !strings.Contains(err.Error(), "requires a launcher") {
 		t.Fatalf("resume guard error = %v", err)
 	}
 	if _, statErr := os.Stat(MultiNodePlanPath(builder.Root, "run-42")); !os.IsNotExist(statErr) {
 		t.Fatalf("plan must not be written when a multi-node run is asked to resume; stat err = %v", statErr)
+	}
+}
+
+func TestPublishMultiNodePlanCarriesPreparedResume(t *testing.T) {
+	var published MultiNodePlan
+	builder := Builder{Root: t.TempDir(), MultiNode: MultiNodeHandoff{
+		RendezvousID: "run-42", Nodes: 2, StageOrdinal: 1, StageCount: 1,
+		PrepareResume: func(runID string, resume *training.ResumePoint) error {
+			if runID != "run0001" || resume.Step != 5 {
+				t.Fatalf("prepare resume = %q, %+v", runID, resume)
+			}
+			resume.Paths = []string{"/staged/state.json"}
+			return nil
+		},
+		Publish: func(plan MultiNodePlan) error {
+			published = plan
+			return nil
+		},
+	}}
+	resume := &training.ResumePoint{Step: 5, Tokens: 40, Checkpoint: training.Checkpoint{Step: 5, Tokens: 40, Artifacts: []training.Artifact{{Path: "artifacts/checkpoints/step-00000005/state.json", SHA256: strings.Repeat("a", 64), Bytes: 1}}}, Paths: []string{"/original/state.json"}}
+	if err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, RunBOM{}, PreparedStage{}, nil, Stage{Name: "train-0001"}, resume); err != nil {
+		t.Fatal(err)
+	}
+	if published.Resume == nil || published.Resume.Step != 5 || !reflect.DeepEqual(published.ResumePaths, []string{"/staged/state.json"}) {
+		t.Fatalf("published resume = %+v, paths %v", published.Resume, published.ResumePaths)
 	}
 }
 

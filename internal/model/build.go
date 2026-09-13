@@ -52,12 +52,13 @@ type Builder struct {
 }
 
 type MultiNodeHandoff struct {
-	RendezvousID string
-	Nodes        int
-	StageOrdinal int
-	StageCount   int
-	Publish      func(MultiNodePlan) error
-	Cleanup      func()
+	RendezvousID  string
+	Nodes         int
+	StageOrdinal  int
+	StageCount    int
+	PrepareResume func(string, *training.ResumePoint) error
+	Publish       func(MultiNodePlan) error
+	Cleanup       func()
 }
 
 // ResolveBackend selects and validates the same training harness used by a
@@ -724,8 +725,13 @@ func initializationForAttempt(initialization *training.Initialization, resume *t
 }
 
 func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared PreparedStage, architectureJSON json.RawMessage, stage Stage, resume *training.ResumePoint) error {
+	if resume != nil && (builder.MultiNode.PrepareResume == nil || builder.MultiNode.Publish == nil) {
+		return fmt.Errorf("stage %s: multi-node checkpoint resume requires a launcher capable of staging checkpoint artifacts", stage.Name)
+	}
 	if resume != nil {
-		return fmt.Errorf("stage %s: multi-node training cannot resume an interrupted run; restart it fresh", stage.Name)
+		if err := builder.MultiNode.PrepareResume(pin.ID, resume); err != nil {
+			return fmt.Errorf("stage %s: prepare multi-node checkpoint resume: %w", stage.Name, err)
+		}
 	}
 	if builder.MultiNode.StageOrdinal < 1 || builder.MultiNode.StageCount < builder.MultiNode.StageOrdinal {
 		return fmt.Errorf("stage %s: multi-node stage accounting %d/%d is invalid", stage.Name, builder.MultiNode.StageOrdinal, builder.MultiNode.StageCount)
@@ -741,6 +747,10 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 		Parameters: runBOM.Parameters, CorpusBOM: prepared.BOM,
 		Parallelism:   runBOM.Execution.Parallelism,
 		EvaluationSet: runBOM.EvaluationSet, Initialization: runBOM.Initialization,
+	}
+	if resume != nil {
+		plan.Resume = cloneResumePoint(resume)
+		plan.ResumePaths = append([]string(nil), resume.Paths...)
 	}
 	if stage.Conversation != nil {
 		plan.Conversation = *stage.Conversation

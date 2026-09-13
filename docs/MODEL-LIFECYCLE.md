@@ -458,6 +458,10 @@ stage is cleared; interrupted work is retained.
   prevented WALDO from persisting the terminal state and transaction. WALDO
   first verifies that no process owns the compose lock, then loads the latest
   archived compose and enters the normal verified-checkpoint resume path.
+- Hostfile runs use that same resume contract. WALDO copies the verified
+  checkpoint into `lookaside.scratch` at an identical absolute path on every
+  host, restores model, optimizer, RNG, and corpus-consumption state on all
+  ranks, and removes the temporary copies when the launcher session ends.
 - Advisor sessions append schema-1 JSONL records to `advisor/CHAT.jsonl`.
   Advisor-started builds enqueue provider analysis at checkpoint boundaries;
   provider latency does not block training. Completed assessments are persisted

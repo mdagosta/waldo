@@ -294,7 +294,7 @@ esac
 	t.Cleanup(func() { listenHostfileRendezvous = previousListener })
 	cluster := training.Cluster{Nodes: 2, Rendezvous: "127.0.0.1:0", RendezvousID: "session-test"}
 	var output bytes.Buffer
-	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, cluster, &output)
+	session, err := startHostfileSession(context.Background(), trainingHostfile{Hosts: []string{"train-0", "train-1"}}, cluster, t.TempDir(), &output)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -418,6 +418,45 @@ func TestHostfileRemoteInvocationSelectsRankZeroPythonDirectory(t *testing.T) {
 	invocation := session.remoteInvocation([]string{"/tmp/waldo", "model", "train-worker"})
 	if !strings.HasPrefix(invocation, "PATH='/opt/waldo-python/bin:/usr/local/bin:/usr/bin:/bin' ") {
 		t.Fatalf("remote invocation = %q", invocation)
+	}
+}
+
+func TestHostfileResumeStagesVerifiedCheckpointUnderConfiguredScratch(t *testing.T) {
+	sourceDirectory := t.TempDir()
+	source := filepath.Join(sourceDirectory, "runtime.pt")
+	data := []byte("synthetic checkpoint")
+	if err := os.WriteFile(source, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := fileSHA256(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scratch := t.TempDir()
+	session := hostfileSession{
+		ctx:        context.Background(),
+		resumeRoot: filepath.Join(scratch, "multinode", "binary", "session", "resume"),
+		output:     io.Discard,
+	}
+	resume := &training.ResumePoint{
+		Step: 42,
+		Checkpoint: training.Checkpoint{Artifacts: []training.Artifact{{
+			Path: "artifacts/checkpoints/step-00000042/runtime.pt", SHA256: digest, Bytes: int64(len(data)),
+		}}},
+		Paths: []string{source},
+	}
+	if err := session.prepareResume("run-42", resume); err != nil {
+		t.Fatal(err)
+	}
+	if len(resume.Paths) != 1 || !strings.HasPrefix(resume.Paths[0], session.resumeRoot+string(os.PathSeparator)) {
+		t.Fatalf("staged paths = %v, want beneath %s", resume.Paths, session.resumeRoot)
+	}
+	if err := model.VerifyArtifactFile(resume.Paths[0], resume.Checkpoint.Artifacts[0]); err != nil {
+		t.Fatal(err)
+	}
+	session.cleanupResumeStaging()
+	if _, err := os.Stat(session.resumeRoot); !os.IsNotExist(err) {
+		t.Fatalf("resume staging remains after cleanup: %v", err)
 	}
 }
 

@@ -981,14 +981,39 @@ func secondaryStreamRequest(plan model.MultiNodePlan, scratch string) (training.
 	if err != nil {
 		return training.Request{}, fmt.Errorf("resolve launcher plan tokenizer: %w", err)
 	}
+	resume, err := secondaryResume(plan)
+	if err != nil {
+		return training.Request{}, err
+	}
 	return training.Request{
 		RunID: plan.RunID, Stage: plan.Stage, Objective: plan.Objective,
 		Conversation: plan.Conversation, ArchitectureSHA256: plan.ArchitectureSHA256,
 		Architecture: plan.Architecture, Parameters: plan.Parameters,
 		Parallelism:   plan.Parallelism,
 		EvaluationSet: *plan.EvaluationSet, Tokenizer: tokenizer,
+		Resume:            resume,
 		ArtifactDirectory: scratch, ArtifactPrefix: "artifacts",
 	}, nil
+}
+
+func secondaryResume(plan model.MultiNodePlan) (*training.ResumePoint, error) {
+	if plan.Resume == nil {
+		if len(plan.ResumePaths) != 0 {
+			return nil, fmt.Errorf("launcher plan carries checkpoint paths without a resume point")
+		}
+		return nil, nil
+	}
+	if len(plan.ResumePaths) != len(plan.Resume.Checkpoint.Artifacts) || len(plan.ResumePaths) == 0 {
+		return nil, fmt.Errorf("launcher plan resume point has %d artifacts but %d staged paths", len(plan.Resume.Checkpoint.Artifacts), len(plan.ResumePaths))
+	}
+	resume := *plan.Resume
+	resume.Paths = append([]string(nil), plan.ResumePaths...)
+	for index, artifact := range resume.Checkpoint.Artifacts {
+		if err := model.VerifyArtifactFile(resume.Paths[index], artifact); err != nil {
+			return nil, fmt.Errorf("verify staged checkpoint: %w", err)
+		}
+	}
+	return &resume, nil
 }
 
 func awaitMultiNodePlan(ctx stdcontext.Context, modelRoot, rendezvousID string, wait time.Duration, skipRunID string, progress io.Writer) (model.MultiNodePlan, error) {

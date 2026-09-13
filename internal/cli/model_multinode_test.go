@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -235,6 +236,26 @@ func TestSecondaryTrainingRequestFromPlan(t *testing.T) {
 		}
 		if request.Tokenizer.Name != "tiktoken/cl100k_base" || request.Tokenizer.VocabularySize != 100259 {
 			t.Fatalf("tokenizer = %+v", request.Tokenizer)
+		}
+	})
+
+	t.Run("resume artifacts are verified and passed to the worker", func(t *testing.T) {
+		plan := multiNodePlanForTest(t, bom, byteArchitecture)
+		data := []byte("checkpoint state")
+		digest := sha256.Sum256(data)
+		path := filepath.Join(t.TempDir(), "state.json")
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		artifact := training.Artifact{Path: "artifacts/checkpoints/step-00000001/state.json", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}
+		plan.Resume = &training.ResumePoint{Step: 1, Tokens: 8, Checkpoint: training.Checkpoint{Step: 1, Tokens: 8, Artifacts: []training.Artifact{artifact}}}
+		plan.ResumePaths = []string{path}
+		request, err := secondaryStreamRequest(plan, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if request.Resume == nil || request.Resume.Step != 1 || !reflect.DeepEqual(request.Resume.Paths, []string{path}) {
+			t.Fatalf("secondary resume = %+v", request.Resume)
 		}
 	})
 

@@ -282,9 +282,23 @@ that did not acknowledge.
 ## Failure behavior
 
 This implementation is deliberately non-elastic. A secondary failure cancels
-rank 0; a rank-0 failure terminates the SSH workers. Multi-host checkpoint
-resume is not yet supported. Remove an incomplete model explicitly or choose a
-new model name, then restart with a fresh command.
+rank 0; a rank-0 failure terminates the remote workers. Repeating the exact
+`model train ... --hostfile ...` command resumes an interrupted run from its
+newest verified checkpoint. Before launching GPUs, rank 0 verifies the
+checkpoint and stages its model, optimizer, RNG, and consumption state at the
+same path on every host. The resumed workers validate the saved world size and
+parallelism before restoring it. WALDO removes this temporary staging copy when
+the launcher session ends; the durable checkpoint remains under `model.root`.
+
+Checkpoint staging uses `lookaside.scratch`. Configure it on a filesystem with
+enough free space for one checkpoint, especially when `/tmp` is small:
+
+```console
+waldo config set lookaside.scratch /home/me/.cache/waldo/scratch
+```
+
+The configured path must be writable at the same absolute location on every
+host. WALDO transfers and verifies the files; shared storage is not required.
 
 Rank 0 owns the model record, run BOM, telemetry, checkpoints, and terminal
 Safetensors. Secondary hosts never author durable lifecycle records.
@@ -299,8 +313,9 @@ steps and checkpoint/evaluation intervals of one. Verify:
 3. rank 0 writes both checkpoints and terminal Safetensors;
 4. every secondary exits successfully; and
 5. the selected parallelism and local/inter-host communication paths are clear;
-   and
-6. no secondary downloads a corpus object.
+6. no secondary downloads a corpus object; and
+7. interrupting after a checkpoint and repeating the command resumes that
+   checkpoint without repeating committed optimizer steps.
 
 The repository's opt-in multi-node hardware test exercises rendezvous and FSDP2
 on two GPUs in one Linux host. A real hostfile smoke test additionally validates

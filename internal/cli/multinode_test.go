@@ -8,6 +8,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -52,7 +53,8 @@ func TestAwaitMultiNodePlanReadsPublishedPlan(t *testing.T) {
 func TestAwaitMultiNodePlanRejectsUnsupportedSchema(t *testing.T) {
 	root := t.TempDir()
 	seedPlan(t, root, "run-42", model.MultiNodePlan{Kind: model.MultiNodePlanKind, Schema: 999})
-	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard); err == nil || !strings.Contains(err.Error(), "has schema 999; this build supports 1") {
+	want := fmt.Sprintf("has schema 999; this build supports %d", model.MultiNodePlanSchema)
+	if _, err := awaitMultiNodePlan(context.Background(), root, "run-42", time.Minute, "", io.Discard); err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("schema guard error = %v", err)
 	}
 }

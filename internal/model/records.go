@@ -173,7 +173,7 @@ func (inspection Inspection) EffectiveInteraction() Interaction {
 	return interaction
 }
 
-const MultiNodePlanSchema = 1
+const MultiNodePlanSchema = 2
 
 const MultiNodePlanKind = "openwaldo-multinode-plan"
 
@@ -195,6 +195,8 @@ type MultiNodePlan struct {
 	EvaluationSet      *training.EvaluationSet        `json:"evaluation_set,omitempty"`
 	Initialization     *training.Initialization       `json:"initialization,omitempty"`
 	InitializationPath string                         `json:"initialization_path,omitempty"`
+	Resume             *training.ResumePoint          `json:"resume,omitempty"`
+	ResumePaths        []string                       `json:"resume_paths,omitempty"`
 }
 
 func MultiNodePlanPath(root, rendezvousID string) string {
