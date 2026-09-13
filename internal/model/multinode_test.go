@@ -172,11 +172,15 @@ func TestPublishMultiNodePlanCarriesPreparedResume(t *testing.T) {
 		},
 	}}
 	resume := &training.ResumePoint{Step: 5, Tokens: 40, Checkpoint: training.Checkpoint{Step: 5, Tokens: 40, Artifacts: []training.Artifact{{Path: "artifacts/checkpoints/step-00000005/state.json", SHA256: strings.Repeat("a", 64), Bytes: 1}}}, Paths: []string{"/original/state.json"}}
-	if err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, RunBOM{}, PreparedStage{}, nil, Stage{Name: "train-0001"}, resume); err != nil {
+	runBOM := RunBOM{Initialization: &training.Initialization{}}
+	if err := builder.publishMultiNodePlan(RunPin{ID: "run0001"}, runBOM, PreparedStage{}, nil, Stage{Name: "train-0001"}, resume); err != nil {
 		t.Fatal(err)
 	}
 	if published.Resume == nil || published.Resume.Step != 5 || !reflect.DeepEqual(published.ResumePaths, []string{"/staged/state.json"}) {
 		t.Fatalf("published resume = %+v, paths %v", published.Resume, published.ResumePaths)
+	}
+	if published.Initialization != nil || published.InitializationPath != "" {
+		t.Fatalf("resumed plan retained superseded initialization: %+v, %q", published.Initialization, published.InitializationPath)
 	}
 }
 

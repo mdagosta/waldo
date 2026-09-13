@@ -745,8 +745,9 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 		Nodes: builder.MultiNode.Nodes, Objective: stage.Objective,
 		ArchitectureSHA256: runBOM.ArchitectureSHA256, Architecture: architectureJSON,
 		Parameters: runBOM.Parameters, CorpusBOM: prepared.BOM,
-		Parallelism:   runBOM.Execution.Parallelism,
-		EvaluationSet: runBOM.EvaluationSet, Initialization: runBOM.Initialization,
+		Parallelism:    runBOM.Execution.Parallelism,
+		EvaluationSet:  runBOM.EvaluationSet,
+		Initialization: initializationForAttempt(runBOM.Initialization, resume),
 	}
 	if resume != nil {
 		plan.Resume = cloneResumePoint(resume)
@@ -755,13 +756,13 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 	if stage.Conversation != nil {
 		plan.Conversation = *stage.Conversation
 	}
-	if runBOM.Initialization != nil {
-		if runBOM.Initialization.Path == "" {
+	if plan.Initialization != nil {
+		if plan.Initialization.Path == "" {
 			return fmt.Errorf("stage %s: initialization weights have no managed path on the primary host", stage.Name)
 		}
-		relative, err := filepath.Rel(builder.Root, runBOM.Initialization.Path)
+		relative, err := filepath.Rel(builder.Root, plan.Initialization.Path)
 		if err != nil || !filepath.IsLocal(relative) {
-			return fmt.Errorf("stage %s: initialization weights at %s are outside the primary model root %s; multi-host initialization must use a managed model artifact", stage.Name, runBOM.Initialization.Path, builder.Root)
+			return fmt.Errorf("stage %s: initialization weights at %s are outside the primary model root %s; multi-host initialization must use a managed model artifact", stage.Name, plan.Initialization.Path, builder.Root)
 		}
 		plan.InitializationPath = filepath.ToSlash(relative)
 	}
