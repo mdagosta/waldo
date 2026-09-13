@@ -15,6 +15,13 @@ last. If the relative order of completed stages is corrected, use a new model;
 replaying an existing model cannot retroactively change its training order.
 See [Stage ordering is part of the model design](../docs/MODEL-COMPOSE.md#stage-ordering-is-part-of-the-model-design).
 
+For domain knowledge, lead with explanatory reference material and question/
+answer text. Source code and expert discussions are valuable supporting data,
+but a mixture dominated by patches, issue traffic, or mailing-list replies can
+teach domain vocabulary without reliably teaching basic facts. Keep enough
+general instruction data after domain training to make the knowledge usable,
+then finish with the narrowest validated behavior stage.
+
 ## Canary / smoke test (`0000-canary.yaml`)
 
 | Field | Plan |
@@ -108,31 +115,37 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | Ready after conversation1 is trained and evaluated |
-| Builds from | Continues the same managed `conversation` model; completed conversation1 corpus paths are skipped |
-| Model type | Same approximately 337M-parameter dense model with English software midtraining and expanded conversation SFT |
-| Recommended hardware | 1x NVIDIA H200 141 GB |
-| Approximate runtime | 2-4 hours for 400M technical tokens plus 100M conversation tokens |
+| Status | Revised after the first conversation2 run exposed a weak technical curriculum |
+| Builds from | Random initialization with the complete, known-good conversation1 recipe embedded first |
+| Model type | Approximately 337M-parameter dense model with technical knowledge midtraining and expanded conversation SFT |
+| Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
+| Approximate runtime | Approximately 3 days for a fresh run at the observed 4-GPU throughput, or about 16 hours for its 3.4B newly declared tokens when extending a compatible checkpoint |
 
 Success criteria:
 
 - Improves instruction following and multi-turn coherence over `conversation`.
+- Correctly answers basic factual questions about operating systems, Linux, programming, and systems administration.
 - Improves familiarity with software development, systems, debugging, review, and technical documentation.
 - Preserves the baseline's directness, correction handling, and no-tool behavior.
 - Passes the baseline conversation and foundation regression tests.
 
 Corpus requirements:
 
-- Development mailing lists spanning Linux, Git, Python, Apache, GCC, glibc,
-  GNU, QEMU, Alpine, and other open-source communities. Known non-English rows
-  are excluded; legacy rows without language metadata are retained.
-- Technical issue, pull-request, review, and repository-documentation text.
-- Smol-SmolTalk for compact-model instruction breadth.
-- UltraChat 200k for additional multi-turn dialogue.
+- Cosmopedia v2 educational material and Stack Exchange technical Q&A form the
+  majority of the technical mixture.
+- Linux/GNU and cloud-native source, repository documentation, and a bounded
+  amount of Linux, Git, and Python development discussion provide concrete
+  systems vocabulary. Known non-English rows are excluded; legacy rows without
+  language metadata are retained.
+- Tulu 3, Smol-SmolTalk, and UltraChat provide broader assistant supervision.
+- The validated Interaction Contract and HelpSteer2 stage remains last so
+  narrow behavior tuning is not overwritten by broader training.
 
 WALDO requirements:
 
-- Append-only continuation with completed-path skipping (supported).
+- A fresh model is required to realize the corrected stage order. Continuing an
+  older conversation1 checkpoint remains supported, but already completed
+  corpus paths are intentionally skipped and therefore are not replayed.
 - Fixed side-by-side conversation evaluations.
 - Promote only when it beats the previous rung without material regression.
 
@@ -408,9 +421,12 @@ WALDO requirements:
 ## Next steps
 
 - Freeze the language, conversation, and tool evaluation sets.
-- Run `0002-conversation1` as the managed model named `conversation`.
-- Apply `0002-conversation2` to that same model and compare its new run with the previous checkpoint.
-- Define each later conversation compose cumulatively and continue the same model.
+- Run `0002-conversation1` as the known-good baseline.
+- Train the cumulative `0002-conversation2` recipe under a new model name, then
+  compare it with conversation1. A new model is required because the corrected
+  technical and final-alignment stage order cannot be retroactively applied.
+- Define later conversation composes cumulatively; continue an existing model
+  only when the added stages do not need to precede any completed stage.
 - Run `0003` after the desired `conversation` checkpoint is current.
 - Build the capable dense foundation, assistant, reasoning, and agent rungs.
 - Fill the textbook, mathematics, technical, and tool-corpus gaps.
