@@ -115,7 +115,39 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | Revised after the first conversation2 run exposed insufficient capacity and a weak technical curriculum |
+| Status | Compatible extension of conversation1 with a stronger technical curriculum |
+| Builds from | The same approximately 337M-parameter architecture and tokenizer as conversation1 |
+| Model type | Dense conversation model with technical knowledge midtraining and expanded conversation SFT |
+| Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
+| Approximate runtime | Approximately 3 days for a fresh run, or about 16 hours for its 3.4B newly declared tokens when extending a compatible checkpoint |
+
+Success criteria:
+
+- Improves instruction following and multi-turn coherence over conversation1.
+- Correctly answers basic factual questions about operating systems, Linux,
+  programming, and systems administration.
+- Preserves the baseline's directness, correction handling, and no-tool behavior.
+
+Corpus requirements:
+
+- Cosmopedia v2 and Stack Exchange lead the technical knowledge mixture.
+- Linux/GNU and cloud-native source, repository documentation, and a bounded
+  amount of Linux, Git, and Python development discussion provide concrete
+  systems vocabulary.
+- Tulu 3, Smol-SmolTalk, and UltraChat provide broader assistant supervision.
+- The validated Interaction Contract and HelpSteer2 stage remains last.
+
+WALDO requirements:
+
+- Architecture-compatible continuation and completed-path skipping.
+- Fixed side-by-side conversation evaluations.
+- Promote only when it beats conversation1 without material regression.
+
+## Conversation level 3 (`0003-conversation.yaml`)
+
+| Field | Plan |
+| --- | --- |
+| Status | Larger successor created after conversation2 exposed a model-capacity ceiling |
 | Builds from | Random initialization with the complete, known-good conversation1 recipe embedded first |
 | Model type | Approximately 681M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
 | Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
@@ -123,7 +155,7 @@ WALDO requirements:
 
 Success criteria:
 
-- Improves instruction following and multi-turn coherence over `conversation`.
+- Improves instruction following and multi-turn coherence over conversation2.
 - Correctly answers basic factual questions about operating systems, Linux, programming, and systems administration.
 - Improves familiarity with software development, systems, debugging, review, and technical documentation.
 - Preserves the baseline's directness, correction handling, and no-tool behavior.
@@ -143,18 +175,18 @@ Corpus requirements:
 
 WALDO requirements:
 
-- A fresh model is required because conversation2 has twice the parameter
-  capacity and context length of conversation1 as well as a corrected stage
-  order.
+- A fresh model is required because conversation3 has roughly twice the
+  parameter capacity and context length of conversation1/conversation2 as well
+  as a corrected stage order.
 - Fixed side-by-side conversation evaluations.
 - Promote only when it beats the previous rung without material regression.
 
-## Tool-use model (`0003-tool-use.yaml`)
+## Tool-use model (`holding/tool-use.yaml`)
 
 | Field | Plan |
 | --- | --- |
-| Status | Compose updated; run after the desired conversation level is promoted |
-| Builds from | Current verified checkpoint of the managed `conversation` model |
+| Status | On hold until the next conversation model is trained, evaluated, and promoted |
+| Builds from | Placeholder `conversation` model; update the base and architecture before use |
 | Model type | Dense conversation model plus tool-use SFT; approximately 337M parameters after revision |
 | Recommended hardware | 1x NVIDIA H200 141 GB |
 | Approximate runtime | 1-2 hours for the 20M-token tool-only stage |
@@ -422,12 +454,13 @@ WALDO requirements:
 
 - Freeze the language, conversation, and tool evaluation sets.
 - Run `0002-conversation1` as the known-good baseline.
-- Train the cumulative `0002-conversation2` recipe under a new model name, then
-  compare it with conversation1. A new model is required because its larger
-  architecture and corrected stage order are incompatible with the old weights.
-- Define later conversation composes cumulatively; continue an existing model
-  only when the added stages do not need to precede any completed stage.
-- Run `0003` after the desired `conversation` checkpoint is current.
+- Use `0002-conversation2` for an architecture-compatible continuation or a
+  fresh side-by-side comparison with conversation1.
+- Train `0003-conversation` under a new model name and compare it with both
+  337M-parameter conversation models. Its larger architecture cannot reuse
+  their weights.
+- Keep tool-use training on hold until a conversation checkpoint is promoted,
+  then update and revalidate `holding/tool-use.yaml` against that parent.
 - Build the capable dense foundation, assistant, reasoning, and agent rungs.
 - Fill the textbook, mathematics, technical, and tool-corpus gaps.
 - Implement and validate the small sparse-MoE proof.

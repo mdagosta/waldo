@@ -1,4 +1,4 @@
-# Tool-capable conversation model: specialize the completed conversation model
+# Holding compose for a future tool-capable model: specialize a promoted conversation model
 # on reviewed structured tool interactions without relearning its foundation.
 kind: waldo-model-compose
 schema: 1
