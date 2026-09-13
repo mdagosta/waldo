@@ -115,11 +115,11 @@ WALDO requirements:
 
 | Field | Plan |
 | --- | --- |
-| Status | Revised after the first conversation2 run exposed a weak technical curriculum |
+| Status | Revised after the first conversation2 run exposed insufficient capacity and a weak technical curriculum |
 | Builds from | Random initialization with the complete, known-good conversation1 recipe embedded first |
-| Model type | Approximately 337M-parameter dense model with technical knowledge midtraining and expanded conversation SFT |
+| Model type | Approximately 681M-parameter dense model, 4,096-token context, technical knowledge midtraining, and expanded conversation SFT |
 | Recommended hardware | 4x NVIDIA H200 GPUs; one or two nodes |
-| Approximate runtime | Approximately 3 days for a fresh run at the observed 4-GPU throughput, or about 16 hours for its 3.4B newly declared tokens when extending a compatible checkpoint |
+| Approximate runtime | Approximately 7-10 days for the roughly 22B-token curriculum; replace this estimate with measured evidence after the first run |
 
 Success criteria:
 
@@ -131,21 +131,21 @@ Success criteria:
 
 Corpus requirements:
 
-- Cosmopedia v2 educational material and Stack Exchange technical Q&A form the
-  majority of the technical mixture.
+- Cosmopedia v2 educational material, Stack Exchange technical Q&A, PLOS, and
+  Wikimedia form the majority of the 18B-token foundation mixture.
 - Linux/GNU and cloud-native source, repository documentation, and a bounded
   amount of Linux, Git, and Python development discussion provide concrete
-  systems vocabulary. Known non-English rows are excluded; legacy rows without
-  language metadata are retained.
+  systems vocabulary in a separate 3B-token stage. Known non-English rows are
+  excluded; legacy rows without language metadata are retained.
 - Tulu 3, Smol-SmolTalk, and UltraChat provide broader assistant supervision.
 - The validated Interaction Contract and HelpSteer2 stage remains last so
   narrow behavior tuning is not overwritten by broader training.
 
 WALDO requirements:
 
-- A fresh model is required to realize the corrected stage order. Continuing an
-  older conversation1 checkpoint remains supported, but already completed
-  corpus paths are intentionally skipped and therefore are not replayed.
+- A fresh model is required because conversation2 has twice the parameter
+  capacity and context length of conversation1 as well as a corrected stage
+  order.
 - Fixed side-by-side conversation evaluations.
 - Promote only when it beats the previous rung without material regression.
 
@@ -423,8 +423,8 @@ WALDO requirements:
 - Freeze the language, conversation, and tool evaluation sets.
 - Run `0002-conversation1` as the known-good baseline.
 - Train the cumulative `0002-conversation2` recipe under a new model name, then
-  compare it with conversation1. A new model is required because the corrected
-  technical and final-alignment stage order cannot be retroactively applied.
+  compare it with conversation1. A new model is required because its larger
+  architecture and corrected stage order are incompatible with the old weights.
 - Define later conversation composes cumulatively; continue an existing model
   only when the added stages do not need to precede any completed stage.
 - Run `0003` after the desired `conversation` checkpoint is current.

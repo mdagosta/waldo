@@ -236,11 +236,14 @@ func TestConversationTwoExtendsConversationOneWithTechnicalKnowledge(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if variant.Base != nil || variant.Architecture != baseline.Architecture || variant.Interaction != baseline.Interaction {
+	if variant.Base != nil || variant.Interaction != baseline.Interaction {
 		t.Fatalf("conversation2 model contract = %+v", variant)
 	}
-	if len(variant.Stages) != len(baseline.Stages)+2 || !reflect.DeepEqual(variant.Stages[0], baseline.Stages[0]) || !reflect.DeepEqual(variant.Stages[2], baseline.Stages[1]) || !reflect.DeepEqual(variant.Stages[4], baseline.Stages[2]) {
-		t.Fatalf("conversation2 does not preserve the proven conversation1 stages")
+	if variant.Architecture.ContextTokens != 4096 || variant.Architecture.HiddenSize != 1536 || variant.Architecture.IntermediateSize != 4096 || variant.Architecture.Layers != 24 || variant.Architecture.AttentionHeads != 24 || variant.Architecture.KeyValueHeads != 8 {
+		t.Fatalf("conversation2 architecture = %+v", variant.Architecture)
+	}
+	if len(variant.Stages) != len(baseline.Stages)+2 {
+		t.Fatalf("conversation2 stages = %+v", variant.Stages)
 	}
 	if got := []string{variant.Stages[0].Name, variant.Stages[1].Name, variant.Stages[2].Name, variant.Stages[3].Name, variant.Stages[4].Name}; !reflect.DeepEqual(got, []string{"pretrain", "technical-knowledge-midtrain", "conversational-midtrain", "expanded-conversation-sft", "post-train"}) {
 		t.Fatalf("conversation2 stage order = %v", got)
@@ -250,8 +253,7 @@ func TestConversationTwoExtendsConversationOneWithTechnicalKnowledge(t *testing.
 		t.Fatalf("conversation2 technical stage = %+v", technical)
 	}
 	wantTechnical := []string{
-		"core/synthetic/cosmopedia-v2", "core/common-pile/stackexchange", "code/copyleft/linux-core",
-		"code/permissive/linux-core", "community/linux-kernel-mailing-list", "code/stack-v2-html",
+		"code/copyleft/linux-core", "code/permissive/linux-core", "community/linux-kernel-mailing-list", "code/stack-v2-html",
 		"code/cloud-native-core", "community/git-mailing-list", "community/python-mailing-lists",
 	}
 	if got := corpusPaths(technical.Corpora); !reflect.DeepEqual(got, wantTechnical) {
@@ -259,6 +261,27 @@ func TestConversationTwoExtendsConversationOneWithTechnicalKnowledge(t *testing.
 	}
 	if technical.Parameters.Tokens != 3000000000 || technical.Parameters.LearningRate != 0.00002 || technical.Filter == nil || technical.Filter.Languages == nil || !reflect.DeepEqual(technical.Filter.Languages.Include, []string{"en"}) || !technical.Filter.Languages.IncludeUnset {
 		t.Fatalf("conversation2 technical budget/filter = %+v / %+v", technical.Parameters, technical.Filter)
+	}
+	wantFoundation := []string{"core/books/gutenberg", "core/common-pile/wikimedia", "government/regulations", "science/plos", "core/synthetic/cosmopedia-v2", "core/common-pile/stackexchange"}
+	if got := corpusPaths(variant.Stages[0].Corpora); !reflect.DeepEqual(got, wantFoundation) || variant.Stages[0].Parameters.Tokens != 18000000000 {
+		t.Fatalf("conversation2 foundation = %v / %+v", got, variant.Stages[0].Parameters)
+	}
+	wantFoundationWeights := []uint64{1, 3, 1, 3, 5, 5}
+	foundationWeights := make([]uint64, len(variant.Stages[0].Corpora))
+	for index, corpus := range variant.Stages[0].Corpora {
+		if corpus.Weight == nil {
+			t.Fatalf("conversation2 foundation corpus %s has no weight", corpus.Path)
+		}
+		foundationWeights[index] = *corpus.Weight
+	}
+	if !reflect.DeepEqual(foundationWeights, wantFoundationWeights) {
+		t.Fatalf("conversation2 foundation weights = %v, want %v", foundationWeights, wantFoundationWeights)
+	}
+	if got := corpusPaths(variant.Stages[2].Corpora); !reflect.DeepEqual(got, corpusPaths(baseline.Stages[1].Corpora)) {
+		t.Fatalf("conversation2 does not preserve conversation1 dialogue corpora: %v", got)
+	}
+	if got := corpusPaths(variant.Stages[4].Corpora); !reflect.DeepEqual(got, corpusPaths(baseline.Stages[2].Corpora)) {
+		t.Fatalf("conversation2 does not preserve conversation1 behavior corpora: %v", got)
 	}
 	stage := variant.Stages[3]
 	if stage.Name != "expanded-conversation-sft" || stage.Objective != "assistant-response-modeling" {
@@ -272,7 +295,7 @@ func TestConversationTwoExtendsConversationOneWithTechnicalKnowledge(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if forecast.ApproximateParameters != 336637440 || forecast.PlannedTokens != 15399993344 {
+	if forecast.ApproximateParameters != 681252864 || forecast.PlannedTokens != 21400092672 {
 		t.Fatalf("conversation2 forecast = %d parameters/%d tokens", forecast.ApproximateParameters, forecast.PlannedTokens)
 	}
 }
