@@ -438,7 +438,7 @@ def cmd_train(args):
     # nothing to copy-paste. Compare the held-out loss above to ln(259)=5.56,
     # the random-guess baseline for this vocabulary.
     print()
-    run([WALDO_BIN, "model", "chat", name, "<template>", "--max-tokens", "800"])
+    run([WALDO_BIN, "model", "chat", name, "write a short hello world program", "--max-tokens", "1024"])
 
 
 def cmd_export(args):
