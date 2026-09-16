@@ -1,62 +1,69 @@
 #!/usr/bin/env python3
-"""waldito -- generate and drive tiny, Ollama-exportable openwaldo topic models.
+"""
+waldito -- build custom, exportable, topic-specific openwaldo models
 
-Each topic gets a fixed name, waldito-<topic>, and a generated compose,
-waldito-<topic>.yaml. Sizes are WALDO's own preset ladder (internal/model/
-presets.go: 10m/35m/90m) plus a smaller 1m rung for fast pipeline runs.
+Waldo is the tooling, the corpora index, the bill of materials, and systems to manage it all.
+Waldito, as the diminutive of waldo, aims to create the simplest possible waldo that can possibly work.
 
-Byte tokenizer, not subword: it's the only vocabulary GGUF export reaches
-Ollama with today (internal/modelexport/gguf.go). ADR 0046 calls byte-level
-inferior to subword -- a workaround for an export gap, not a recommendation.
+The topic should be named after the content you will train it on. Topic names are unique.
+Helps to build a compose yaml that specifies the model and its training data.
 
-    waldito catalog                            # every corpus in the index (fiction, caselaw, ...)
-    waldito catalog code/*                     # ...narrowed to corpora matching a glob
+export takes an optional format after the topic, default ollama: also
+waldo/huggingface/mlx/gguf. GGUF (Ollama's own format) is byte-tokenizer
+only for now -- ADR 0046.
+
+Usage:
+    waldito catalog                             # every corpus in the index (fiction, caselaw, ...)
+    waldito catalog code/*                      # ...narrowed to corpora matching a glob
     waldito catalog code/* --code               # languages and repo counts merged across that glob
-    waldito catalog --code                     # ...merged across every code-tagged corpus, any namespace
-    waldito catalog --code --lang typescript    # the repos themselves
-    waldito catalog --code --lang python,typescript   # ...tagged with either language
-    waldito catalog code/permissive --code --lang typescript   # ...just within that one corpus
-    waldito new vue --corpus code/permissive --lang vue                 # one corpus, one language
-    waldito new web --corpus code/* --lang typescript,vue               # every code/* corpus, several languages
-    waldito train vue
-    waldito export vue
-    waldito status
+    waldito catalog --code --lang python,typescript              # specify specific programming_languages
+    waldito catalog code/permissive --code --lang typescript     # ...just within that one corpus
+    waldito list                                # every waldito topic and its state
+    waldito create webdev --corpus code/* --lang typescript,python  # every code/* corpus, several languages
+    waldito create vue --corpus code/permissive --lang vue          # one corpus, one language
+    waldito train webdev                        # actual training run of the model
+    waldito export webdev                       # format defaults to ollama
+    waldito export webdev gguf                  # ...or waldo/huggingface/mlx/gguf
+    waldito reset webdev                        # remove the trained model, keep its yaml
+    waldito delete webdev                       # remove the yaml, model, and any exports too
 """
 import argparse
 import collections
+import datetime
 import fnmatch
 import getpass
 import json
 import os
+import pathlib
 import shlex
 import shutil
 import socket
 import subprocess
 import sys
-from datetime import datetime, timezone
-from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent
-# Matches the README's own `go build -o ./waldo ./cmd/waldo` -- the one build
-# step every contributor already has, not a separate bin/waldo convention.
-# Relative, not REPO_ROOT / "waldo": every subprocess call below runs with
-# cwd=REPO_ROOT, and the prompt already shows that directory, so the
-# absolute form would just repeat it on every echoed command line.
-WALDO_BIN = "waldo"
+REPO_ROOT = pathlib.Path(__file__).resolve().parent
+WALDO_BIN = "./waldo"      # "./" so subprocess (no shell) resolves it against cwd, not PATH.
+WALDO_HOME = pathlib.Path.home() / ".waldo"    # Beside ~/.waldo/models and ~/.waldo/index
+WALDITO_DIR = WALDO_HOME / "waldito"
+EXPORT_HOME = WALDO_HOME / "export"   # Its own top-level tree, not nested under WALDITO_DIR
 
-# Beside ~/.waldo/models and ~/.waldo/index, not the repo tree -- never needs a .gitignore entry.
-WALDITO_DIR = Path.home() / ".waldo" / "waldito"
-
-def rgb_color(hex_color):
+def rgb_color(hex_color, bold=False):
     """24-bit ANSI foreground escape for a #RRGGBB hex string -- exact
     brightness control, unlike the fixed 8/16-color SGR codes."""
     red, green, blue = (int(hex_color[index:index + 2], 16) for index in (0, 2, 4))
-    return f"\033[38;2;{red};{green};{blue}m"
+    prefix = "1;" if bold else ""
+    return f"\033[{prefix}38;2;{red};{green};{blue}m"
 
 
 COMMAND_COLOR = "\033[2;32m"  # dim green, distinct from waldo's own output but not as loud as bold cyan
 FRAME_COLOR = rgb_color("998F30")  # muted mustard yellow, classic log-warning hue without the glare
+ERROR_COLOR = rgb_color("E5484D", bold=True)  # bold red -- an error is never something to miss
 RESET_COLOR = "\033[0m"
+
+
+def error(message):
+    """Colored stderr -- use instead of a bare print(..., file=sys.stderr)."""
+    print(f"{ERROR_COLOR}{message}{RESET_COLOR}", file=sys.stderr)
 
 # name -> (context_tokens, hidden_size, intermediate_size, layers, attention_heads,
 #          key_value_heads, batch_size). 10m/35m/90m match internal/model/presets.go;
@@ -82,7 +89,7 @@ TRAINING_DEFAULTS = {
 
 COMPOSE_TEMPLATE = """\
 # Waldito: tiny, locally-runnable openwaldo topic model. Generated by
-# `./waldito new {topic}` -- see docs/MODEL-COMPOSE.md for the schema.
+# `./waldito create {topic}` -- see docs/MODEL-COMPOSE.md for the schema.
 # Byte tokenizer: the only vocabulary GGUF export reaches Ollama with today
 # (internal/modelexport/gguf.go); ADR 0046 calls it inferior to subword.
 kind: waldo-model-compose
@@ -143,11 +150,15 @@ def model_name(topic):
 
 
 def compose_path(topic):
-    return WALDITO_DIR / f"waldito-{topic}.yaml"
+    return WALDITO_DIR / f"{topic}.yaml"
 
 
-def export_dir(topic):
-    return WALDITO_DIR / "export" / f"{model_name(topic)}-ollama"
+def export_root(topic):
+    return EXPORT_HOME / topic
+
+
+def export_dir(topic, fmt):
+    return export_root(topic) / fmt
 
 
 def format_duration(seconds):
@@ -204,8 +215,8 @@ def prompt(cwd):
     """user@host:~/path style prefix, matching a real shell prompt."""
     user = os.environ.get("USER") or getpass.getuser()
     host = socket.gethostname().split(".")[0]
-    home = str(Path.home())
-    here = str(Path(cwd).resolve())
+    home = str(pathlib.Path.home())
+    here = str(pathlib.Path(cwd).resolve())
     if here == home:
         path = "~"
     elif here.startswith(home + os.sep):
@@ -230,7 +241,7 @@ def ask(flag, hint):
         # A non-terminal stdin echoes nothing back, typed or not; force the
         # error onto its own line rather than running into the prompt text.
         print()
-        print(f"{flag} is required; no terminal to prompt on, or nothing entered", file=sys.stderr)
+        error(f"{flag} is required; no terminal to prompt on, or nothing entered")
         sys.exit(1)
     return answer
 
@@ -261,12 +272,15 @@ def waldo_json(*args):
     return json.loads(result.stdout) if result.stdout.strip() else []
 
 
-def cmd_new(args):
+def cmd_create(args):
     path = compose_path(args.topic)
     if path.exists() and not args.force:
         # Printed here, not via sys.exit(str): that only prints once SystemExit
         # reaches main()'s finally block, which would print "finished" first.
-        print(f"{path} already exists; pass --force to overwrite", file=sys.stderr)
+        error(f"{path} already exists; pass --force to overwrite")
+        sys.exit(1)
+    if args.lang and args.repos:
+        error("use --lang or --repos, not both")
         sys.exit(1)
     if args.corpus is None:
         args.corpus = ask("--corpus", "An index corpus path or glob -- e.g. code/permissive, or code/* "
@@ -275,7 +289,7 @@ def cmd_new(args):
         sizes = "\n".join(f"  {name} (hidden_size={values[1]}, context_tokens={values[0]})" for name, values in SIZES.items())
         args.size = ask("--size", f"Model size:\n{sizes}")
     if args.size not in SIZES:
-        print(f"--size must be one of {', '.join(SIZES)}", file=sys.stderr)
+        error(f"--size must be one of {', '.join(SIZES)}")
         sys.exit(1)
     if args.epochs is None:
         args.epochs = ask("--epochs", "Passes over the same tokens -- e.g. 1 (train once), "
@@ -283,10 +297,10 @@ def cmd_new(args):
     try:
         args.epochs = int(args.epochs)
     except ValueError:
-        print("--epochs must be an integer", file=sys.stderr)
+        error("--epochs must be an integer")
         sys.exit(1)
     if args.epochs < 1:
-        print("--epochs must be 1 or more", file=sys.stderr)
+        error("--epochs must be 1 or more")
         sys.exit(1)
     context_tokens, hidden_size, intermediate_size, layers, attention_heads, key_value_heads, batch_size = SIZES[args.size]
     # A glob, same as `waldito catalog --corpus`: code/* pulls in every code/*
@@ -294,11 +308,11 @@ def cmd_new(args):
     corpora = waldo_json("index", "list")["corpora"]
     matches = matching_corpora(corpora, args.corpus)
     if not matches:
-        print(f"no corpora match {args.corpus!r}; `waldito catalog` lists what is there", file=sys.stderr)
+        error(f"no corpora match {args.corpus!r}; `waldito catalog` lists what is there")
         sys.exit(1)
     matches = sorted(matches, key=lambda corpus: corpus["path"])
-    # --repos stays alongside --lang: index language tags don't always match the
-    # name (vuejs/vue is tagged TypeScript), so --lang alone can't reach every repo.
+    # Named exactly, or by language -- never both; args.lang and args.repos
+    # were already checked mutually exclusive above.
     repos = [repo.strip() for repo in args.repos.split(",") if repo.strip()]
     if args.lang:
         languages, _, _ = catalog(matches)
@@ -306,11 +320,11 @@ def cmd_new(args):
         wanted = [name.strip().lower() for name in args.lang.split(",") if name.strip()]
         missing = [name for name in wanted if name not in languages]
         if missing:
-            print(f"no {', '.join(missing)} repos in {args.corpus}; "
-                  f"`waldito catalog {args.corpus} --code` lists what is there", file=sys.stderr)
+            error(f"no {', '.join(missing)} repos in {args.corpus}; "
+                  f"`waldito catalog {args.corpus} --code` lists what is there")
             sys.exit(1)
         # Deduplicated: a repo declaring both typescript and vue is one repo.
-        repos = sorted(set(repos) | {repo for name in wanted for repo in languages[name]})
+        repos = sorted({repo for name in wanted for repo in languages[name]})
         print(f"{len(repos)} repo{'' if len(repos) == 1 else 's'} from {', '.join(wanted)}")
     sources_block = ""
     if repos:
@@ -357,14 +371,14 @@ def cmd_catalog(args):
     if args.corpus:
         matches = matching_corpora(corpora, args.corpus)
         if not matches:
-            print(f"no corpora match {args.corpus!r}; `waldito catalog` lists what is there", file=sys.stderr)
+            error(f"no corpora match {args.corpus!r}; `waldito catalog` lists what is there")
             sys.exit(1)
     elif args.code:
         matches = code_corpora(corpora)
     else:
         matches = corpora
     if not matches:
-        print("no matching corpora in the index", file=sys.stderr)
+        error("no matching corpora in the index")
         sys.exit(1)
     if not args.code:
         print_corpus_table(matches)
@@ -383,7 +397,7 @@ def cmd_catalog(args):
         wanted = [name.strip().lower() for name in args.lang.split(",") if name.strip()]
         missing = [name for name in wanted if name not in languages]
         if missing:
-            print(f"no {', '.join(missing)} repos in {label}", file=sys.stderr)
+            error(f"no {', '.join(missing)} repos in {label}")
             sys.exit(1)
         # Grouped by language and sorted, same as the LANGUAGE/REPOS summary --
         # a repo tagged with more than one of `wanted` reappears in each of
@@ -412,7 +426,7 @@ def cmd_train(args):
         print(f"WALDO_GPU_THROTTLE={throttle} (GPU will idle between steps to hold roughly that duty cycle)")
     name, compose = model_name(args.topic), compose_path(args.topic)
     if not compose.exists():
-        print(f"{compose} does not exist; run `waldito new {args.topic}` first", file=sys.stderr)
+        error(f"{compose} does not exist; run `waldito create {args.topic}` first")
         sys.exit(1)
     # Mitigates the macOS Metal watchdog killing MLX training with
     # kIOGPUCommandBufferCallbackErrorImpactingInteractivity when the display is
@@ -428,33 +442,35 @@ def cmd_train(args):
 
 
 def cmd_export(args):
-    name, out = model_name(args.topic), export_dir(args.topic)
+    name, out = model_name(args.topic), export_dir(args.topic, args.format)
     # Always an incomplete EU GPAI draft -- a local waldito model is never placed on the EU market.
-    run_waldo("model", "export", name, str(out), "--format", "ollama", "--allow-incomplete")
-    run(["ollama", "create", name, "-f", "Modelfile"], cwd=out)
+    run_waldo("model", "export", name, str(out), "--format", args.format, "--allow-incomplete")
+    if args.format == "ollama":
+        run(["ollama", "create", name, "-f", "Modelfile"], cwd=out)
 
 
-def cmd_delete(args):
-    """Removes waldito-<topic> and any stale staged compose transaction, so the
-    next new/train starts fresh instead of hitting "unfinished compose"."""
-    name = model_name(args.topic)
-    # waldo model rm has no confirmation of its own and takes every GPU-hour
-    # trained with it. Same [y/N] wording as waldo's own confirmations (advisor.go).
-    try:
-        answer = input(f"waldito: delete {name} and all of its training? [y/N] ").strip().lower()
-    except EOFError:
-        answer = ""  # no terminal to confirm on (piped stdin) is not a yes
-    if answer not in ("y", "yes"):
-        print("cancelled")
-        return
-    argv = [WALDO_BIN, "model", "rm", name]
-    show_command(argv)
-    result = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True)
-    # Idempotent like rm -f: nothing to remove isn't worth showing, since waldo's
-    # "no such model" otherwise surfaces as a raw MODEL.json-not-found error.
-    if result.returncode == 0 and result.stdout.strip():
-        print(result.stdout.strip())
-    staging = Path.home() / ".waldo" / "models" / ".waldo-compose"
+def remove_model(name):
+    """`waldo model rm` plus any stale staged compose transaction for `name`,
+    so the next create/train starts fresh instead of hitting "unfinished
+    compose". Shared by cmd_reset and cmd_delete."""
+    # A yaml-only topic (never trained, or already reset) has no model dir --
+    # checked first so that's a plain notice, not waldo's raw
+    # MODEL.json-not-found error surfacing as if something went wrong.
+    trained = any(entry.get("name") == name for entry in waldo_json("model", "list"))
+    if not trained:
+        print(f"no trained model for {name} -- nothing to remove")
+    else:
+        argv = [WALDO_BIN, "model", "rm", name]
+        show_command(argv)
+        result = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True)
+        if result.returncode == 0:
+            if result.stdout.strip():
+                print(result.stdout.strip())
+        else:
+            # Surfaced, not swallowed: still possible between the check above
+            # and here (a race, a permissions issue, ...).
+            error(result.stderr.strip() or f"{name} was not removed")
+    staging = pathlib.Path.home() / ".waldo" / "models" / ".waldo-compose"
     if not staging.is_dir():
         return
     for transaction_dir in staging.iterdir():
@@ -468,25 +484,77 @@ def cmd_delete(args):
             print(f"removed stale compose transaction {transaction_dir.name}")
 
 
-def cmd_status(args):
-    models = waldo_json("model", "list")
-    if args.topic:
-        models = [entry for entry in models if entry.get("name") == model_name(args.topic)]
-    else:
-        models = [entry for entry in models if entry.get("name", "").startswith("waldito-")]
-    if not models:
-        print("no waldito models yet -- try `waldito new <topic> ...`")
+def confirm(prompt_text):
+    # No confirmation of its own downstream, and this takes every GPU-hour
+    # trained. Same [y/N] wording as waldo's own confirmations (advisor.go).
+    try:
+        answer = input(f"waldito: {prompt_text} [y/N] ").strip().lower()
+    except EOFError:
+        answer = ""  # no terminal to confirm on (piped stdin) is not a yes
+    if answer not in ("y", "yes"):
+        print("cancelled")
+        return False
+    return True
+
+
+def cmd_reset(args):
+    """Removes waldito-<topic>'s trained model only -- the yaml (and any
+    exports) stay, so `waldito train` can reuse it."""
+    name = model_name(args.topic)
+    if confirm(f"reset {name} -- remove its trained model and all of its training?"):
+        remove_model(name)
+
+
+def cmd_delete(args):
+    """Removes waldito-<topic> entirely: yaml, trained model, and every
+    export directory -- the "docker rm" of a topic, not just its model."""
+    name, path = model_name(args.topic), compose_path(args.topic)
+    if not confirm(f"delete {name} -- its yaml, trained model, and exports -- entirely?"):
         return
-    for entry in models:
-        # No state key at all means architecture created, nothing trained yet.
-        state = entry.get("state", "no runs yet")
-        print(f"{entry['name']:<28} {state:<12} {entry.get('approximate_parameters', '?')}")
+    remove_model(name)
+    if path.exists():
+        path.unlink()
+        print(f"removed {path}")
+    exports = export_root(args.topic)
+    if exports.exists():
+        shutil.rmtree(exports)
+        print(f"removed {exports}")
+    try:
+        result = subprocess.run(["ollama", "rm", name], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"removed ollama model {name}")
+    except FileNotFoundError:
+        pass  # no local ollama install -- nothing to clean up there
 
 
-def main():
-    # Without this, print() fully buffers when stdout isn't a TTY, so our
-    # messages can appear out of order against subprocess output.
-    sys.stdout.reconfigure(line_buffering=True)
+def cmd_list(args):
+    models = {entry["name"]: entry for entry in waldo_json("model", "list")
+              if entry.get("name", "").startswith("waldito-")}
+    # A topic is its yaml, its trained model, or both -- `reset` deletes the
+    # model but keeps the yaml, and that topic should keep showing up here
+    # (as empty) rather than vanish just because it isn't in `waldo model
+    # list` right now.
+    topics = {path.stem for path in WALDITO_DIR.glob("*.yaml")}
+    topics |= {name.removeprefix("waldito-") for name in models}
+    if args.topic:
+        topics &= {args.topic}
+    if not topics:
+        print("no waldito models yet -- try `waldito create <topic> ...`")
+        return
+    for topic in sorted(topics):
+        entry = models.get(model_name(topic))
+        if entry is None:
+            state, size = "empty", 0
+        else:
+            # No state key at all means architecture created, nothing trained yet.
+            state, size = entry.get("state", "no runs yet"), entry.get("approximate_parameters", "?")
+        print(f"{topic:<28} {state:<12} {size}")
+
+
+EXPORT_FORMATS = ["waldo", "huggingface", "mlx", "gguf", "ollama"]
+
+
+def build_parser():
     parser = argparse.ArgumentParser(prog="waldito", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -496,57 +564,69 @@ def main():
     catalog_parser.add_argument("--lang", help="with --code, list only repos tagged with any of these comma-separated languages")
     catalog_parser.set_defaults(func=cmd_catalog)
 
-    new = sub.add_parser("new", help="generate waldito-<topic>.yaml")
-    new.add_argument("topic")
-    new.add_argument("--corpus", help="an index corpus path or glob (e.g. code/*); omit to be prompted -- `waldito catalog` shows what's there")
-    new.add_argument("--lang", default="", help="comma-separated catalog languages; takes every repo of each")
-    new.add_argument("--repos", default="", help="comma-separated source repos, named exactly; combines with --lang")
-    new.add_argument("--size", choices=list(SIZES), help="omit to be prompted")
-    new.add_argument("--epochs", type=int, help="passes over the same tokens; each extra pass buys less than the last; omit to be prompted")
-    new.add_argument("--force", action="store_true")
-    new.set_defaults(func=cmd_new)
+    list_parser = sub.add_parser("list", help="list waldito topics and their state")
+    list_parser.add_argument("topic", nargs="?")
+    list_parser.set_defaults(func=cmd_list)
+
+    create = sub.add_parser("create", help="generate <topic>.yaml")
+    create.add_argument("topic")
+    create.add_argument("--corpus", help="an index corpus path or glob (e.g. code/*); omit to be prompted -- `waldito catalog` shows what's there")
+    create.add_argument("--lang", default="", help="comma-separated catalog languages; takes every repo of each -- mutually exclusive with --repos")
+    create.add_argument("--repos", default="", help="comma-separated source repos, named exactly -- mutually exclusive with --lang")
+    create.add_argument("--size", choices=list(SIZES), help="omit to be prompted")
+    create.add_argument("--epochs", type=int, help="passes over the same tokens; each extra pass buys less than the last; omit to be prompted")
+    create.add_argument("--force", action="store_true")
+    create.set_defaults(func=cmd_create)
 
     train = sub.add_parser("train", help="train waldito-<topic>")
     train.add_argument("topic")
     train.set_defaults(func=cmd_train)
 
-    export = sub.add_parser("export", help="export waldito-<topic> to Ollama")
+    export = sub.add_parser("export", help="export waldito-<topic>")
     export.add_argument("topic")
+    export.add_argument("format", nargs="?", default="ollama", choices=EXPORT_FORMATS,
+                         help="export format, default ollama (also runs `ollama create`); or waldo/huggingface/mlx/gguf")
     export.set_defaults(func=cmd_export)
 
-    delete = sub.add_parser("delete", help="delete waldito-<topic>, its training, and any stale compose transaction")
+    reset = sub.add_parser("reset", help="remove waldito-<topic>'s trained model only (keeps its yaml)")
+    reset.add_argument("topic")
+    reset.set_defaults(func=cmd_reset)
+
+    delete = sub.add_parser("delete", help="delete waldito-<topic> entirely -- yaml, trained model, and exports")
     delete.add_argument("topic")
     delete.set_defaults(func=cmd_delete)
 
-    status = sub.add_parser("status", help="list waldito models and their state")
-    status.add_argument("topic", nargs="?")
-    status.set_defaults(func=cmd_status)
+    return parser
 
-    args = parser.parse_args()
+
+def main():
+    # Without this, print() fully buffers when stdout isn't a TTY, so our
+    # messages can appear out of order against subprocess output.
+    sys.stdout.reconfigure(line_buffering=True)
+    args = build_parser().parse_args()
     # "starting"/"finished" are both 8 chars, so the colons and timestamps line up.
-    started = datetime.now(timezone.utc)
+    started = datetime.datetime.now(datetime.timezone.utc)
     print(f"{FRAME_COLOR}waldito starting: {started:%Y-%m-%d %H:%M:%S} UTC{RESET_COLOR}")
     try:
-        # Building bin/waldo is a separate step (`go build -o bin/waldo
-        # ./cmd/waldo`), not waldito's job -- it just expects the result.
+        # Missing binary means a fresh checkout -- build it once rather than error.
         if not (REPO_ROOT / WALDO_BIN).exists():
-            print(f"{WALDO_BIN} does not exist; run `go build -o {WALDO_BIN} ./cmd/waldo` first", file=sys.stderr)
-            sys.exit(1)
+            print(f"{WALDO_BIN} not found -- building it once (go build -o {WALDO_BIN} ./cmd/waldo)")
+            run(["go", "build", "-o", WALDO_BIN, "./cmd/waldo"])
         args.func(args)
     except KeyboardInterrupt:
         # waldo already reports the clean interruption (retained transaction, resume hint).
         print()
         sys.exit(130)
-    except FileNotFoundError as error:
+    except FileNotFoundError as exc:
         # go/ollama are external; missing one raises here instead of a traceback.
-        print(f"{error.filename} is not installed or not on PATH", file=sys.stderr)
+        error(f"{exc.filename} is not installed or not on PATH")
         sys.exit(1)
-    except subprocess.CalledProcessError as error:
-        sys.exit(error.returncode)
+    except subprocess.CalledProcessError as exc:
+        sys.exit(exc.returncode)
     finally:
         # Runs regardless of how main() exits. Duration reuses the same two
         # timestamps being printed, so it can't disagree with them.
-        finished = datetime.now(timezone.utc)
+        finished = datetime.datetime.now(datetime.timezone.utc)
         elapsed = format_duration((finished - started).total_seconds())
         print(f"{FRAME_COLOR}waldito finished: {finished:%Y-%m-%d %H:%M:%S} UTC ({elapsed}){RESET_COLOR}")
 
