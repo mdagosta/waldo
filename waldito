@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """
-waldito -- build custom, exportable, topic-specific openwaldo models
+waldito -- small machines making small contributions to openwaldo models
 
 Waldo is the tooling, the corpora index, the bill of materials, and systems to manage it all.
 Waldito, as the diminutive of waldo, aims to create the simplest possible waldo that can possibly work.
 
-The topic should be named after the content you will train it on. Topic names are unique.
-Helps to build a compose yaml that specifies the model and its training data.
+Compose files are written by hand or with AI from what catalog shows -- see docs/MODEL-COMPOSE.md.
 
-export takes an optional format after the topic, default ollama: also
-waldo/huggingface/mlx/gguf. GGUF (Ollama's own format) is byte-tokenizer
-only for now -- ADR 0046.
+Repeated runs: `waldo config set lookaside.cache.keep true` skips re-downloading shards (LRU-bounded by
+lookaside.cache.max-size); `waldo lookaside cache status` to inspect, `waldo lookaside cache clean` when done.
 
 Usage:
     waldito catalog                             # every corpus in the index (fiction, caselaw, ...)
@@ -18,34 +16,40 @@ Usage:
     waldito catalog code/* --code               # languages and repo counts merged across that glob
     waldito catalog --code --lang python,typescript              # specify specific programming_languages
     waldito catalog code/permissive --code --lang typescript     # ...just within that one corpus
-    waldito list                                # every waldito topic and its state
-    waldito create webdev --corpus code/* --lang typescript,python  # every code/* corpus, several languages
-    waldito create vue --corpus code/permissive --lang vue          # one corpus, one language
-    waldito train webdev                        # actual training run of the model
-    waldito export webdev                       # format defaults to ollama
-    waldito export webdev gguf                  # ...or waldo/huggingface/mlx/gguf
-    waldito reset webdev                        # remove the trained model, keep its yaml
-    waldito delete webdev                       # remove the yaml, model, and any exports too
+    waldito merge merged/ a-hf/ b-hf/           # average huggingface exports that share a parent
+    waldito hub ~/hub                           # serve ~/hub/<org>/<repo>/ to `waldo model pull` via HF_ENDPOINT
+    waldito ingest ../fetchers/corpora/x.ini post-train/sft/x   # committed local data -> local test index
+    waldito check my-model evaluation.jsonl     # exact-match score of `model chat` against prompt/response rows
+    waldito build waldito-python-basics         # plans/<name>.yaml: distributed build with replicas, merges, checks
+    waldito train python-basics-v2              # ~/.waldo/waldito/python-basics-v2.yaml: generate, ingest --dev, train, check
 """
 import argparse
 import collections
 import datetime
 import fnmatch
 import getpass
+import hashlib
+import http.server
 import json
 import os
 import pathlib
+import re
 import shlex
 import shutil
 import socket
+import string
 import subprocess
 import sys
+import urllib.parse
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent
 WALDO_BIN = "./waldo"      # "./" so subprocess (no shell) resolves it against cwd, not PATH.
-WALDO_HOME = pathlib.Path.home() / ".waldo"    # Beside ~/.waldo/models and ~/.waldo/index
-WALDITO_DIR = WALDO_HOME / "waldito"
-EXPORT_HOME = WALDO_HOME / "export"   # Its own top-level tree, not nested under WALDITO_DIR
+WALDITO_HOME = pathlib.Path.home() / ".waldo" / "waldito"
+FETCHERS_ROOT = REPO_ROOT.parent / "fetchers"
+# Local-only test publication: a git-free index copy (so compose preflight never tries to
+# refresh it) plus a file:// lookaside, selected with WALDO_CONFIG so the real config is untouched.
+LOCAL_CONFIG = WALDITO_HOME / "config.json"
+LOCAL_INDEX = WALDITO_HOME / "index-local"
 
 def rgb_color(hex_color, bold=False):
     """24-bit ANSI foreground escape for a #RRGGBB hex string -- exact
@@ -64,101 +68,9 @@ RESET_COLOR = "\033[0m"
 def error(message):
     """Colored stderr -- use instead of a bare print(..., file=sys.stderr)."""
     print(f"{ERROR_COLOR}{message}{RESET_COLOR}", file=sys.stderr)
-
-# name -> (context_tokens, hidden_size, intermediate_size, layers, attention_heads,
-#          key_value_heads, batch_size). 10m/35m/90m match internal/model/presets.go;
-#          1m is an extra fast-pipeline rung (WALDO enforces no minimum size).
-SIZES = {
-    "1m": (512, 128, 384, 4, 4, 2, 32),
-    "10m": (512, 384, 1024, 6, 6, 2, 32),
-    "35m": (1024, 512, 1408, 12, 8, 2, 16),
-    "90m": (2048, 768, 2048, 12, 12, 4, 8),
-}
-
-# The byte tokenizer's fixed vocabulary: 256 byte values plus pad/bos/eos.
-VOCABULARY_SIZE = 259
-
-# Whole tuning surface not on the command line; hand-edit the generated .yaml for more.
-# warmup_steps/checkpoint_every/evaluate_every are omitted, not defaulted: a fixed guess
-# can fail before the real step count is known, so WALDO derives them at preflight
-# instead (internal/training/profile.go).
-TRAINING_DEFAULTS = {
-    "seed": 7,
-    "learning_rate": 0.0003,
-}
-
-COMPOSE_TEMPLATE = """\
-# Waldito: tiny, locally-runnable openwaldo topic model. Generated by
-# `./waldito create {topic}` -- see docs/MODEL-COMPOSE.md for the schema.
-# Byte tokenizer: the only vocabulary GGUF export reaches Ollama with today
-# (internal/modelexport/gguf.go); ADR 0046 calls it inferior to subword.
-kind: waldo-model-compose
-schema: 1
-interaction:
-  template: user-assistant-v1
-architecture:
-  family: decoder-transformer
-  context_tokens: {context_tokens}
-  vocabulary_size: {vocabulary_size}
-  hidden_size: {hidden_size}
-  intermediate_size: {intermediate_size}
-  layers: {layers}
-  attention_heads: {attention_heads}
-  key_value_heads: {key_value_heads}
-  tie_embeddings: true
-  parameter_dtype: bfloat16
-  tokenizer:
-    name: byte
-    revision: builtin-byte-schema-1
-stages:
-  - name: pretrain
-    type: pre-training
-    objective: causal-language-modeling
-    filter:
-      main_content: true
-      exclude:
-        repetitive_content: true
-        boilerplate_content: true
-{sources_block}    corpora:
-{corpora_block}
-    parameters:
-      # epochs, not tokens: budget -- WALDO derives exact steps from the real corpus
-      # at preflight (ADR 0059). Above 1, epochs re-read the same tokens; useful
-      # when the corpus is too small to fill the model once, with fast diminishing returns.
-      profile: causal-pretrain-weighted
-      epochs: {epochs}
-      batch_size: {batch_size}
-      sequence_length: {context_tokens}
-      learning_rate: {learning_rate}
-      seed: {seed}
-      weight_decay: 0.1
-      shuffle_buffer_records: 65536
-      shuffle_buffer_bytes: 2147483648
-      evaluation_max_records: 1024
-      evaluation_max_bytes: 33554432
-"""
-
-SOURCES_BLOCK_TEMPLATE = """\
-      sources:
-        include:
-{repo_lines}
-"""
-
-
-def model_name(topic):
-    return f"waldito-{topic}"
-
-
-def compose_path(topic):
-    return WALDITO_DIR / f"{topic}.yaml"
-
-
-def export_root(topic):
-    return EXPORT_HOME / topic
-
-
-def export_dir(topic, fmt):
-    return export_root(topic) / fmt
+    if BUILD_LOG:
+        BUILD_LOG.write(f"ERROR: {message}\n")
+        BUILD_LOG.flush()
 
 
 def format_duration(seconds):
@@ -226,41 +138,40 @@ def prompt(cwd):
     return f"{user}@{host}:{path}>"
 
 
-def ask(flag, hint):
-    """Prompts once for a flag the user left off the command line, printing
-    `hint` (examples, not a default) first. Exits with a clear error rather
-    than silently picking a value if there's no terminal to answer on (piped
-    stdin, CI, ...) or the answer is blank -- every waldito flag is a real
-    choice, not something to guess at."""
-    print(hint)
-    try:
-        answer = input(f"{flag}: ").strip()
-    except EOFError:
-        answer = ""
-    if not answer:
-        # A non-terminal stdin echoes nothing back, typed or not; force the
-        # error onto its own line rather than running into the prompt text.
-        print()
-        error(f"{flag} is required; no terminal to prompt on, or nothing entered")
-        sys.exit(1)
-    return answer
+BUILD_LOG = None  # set by `waldito build`: everything shown is also appended here
+
+
+def say(text=""):
+    print(text, flush=True)
+    if BUILD_LOG:
+        BUILD_LOG.write(text + "\n")
+        BUILD_LOG.flush()
 
 
 def show_command(argv, cwd=REPO_ROOT):
     # Prefix colored like a shell prompt; the command stays default, since it's the real output.
     # shlex.quote: this runs via subprocess, no shell involved, so argv needs no quoting to
     # execute -- but a copy-pasted "<template>" hits bash's redirection operator unquoted.
-    print(f"{COMMAND_COLOR}{prompt(cwd)}{RESET_COLOR} {shlex.join(argv)}")
+    print(f"{COMMAND_COLOR}{prompt(cwd)}{RESET_COLOR} {shlex.join(argv)}", flush=True)
+    if BUILD_LOG:
+        BUILD_LOG.write(f"{prompt(cwd)} {shlex.join(argv)}\n")
 
 
 def run(argv, cwd=REPO_ROOT, env=None):
     """Prints the command, streams output live, raises on non-zero exit."""
     show_command(argv, cwd)
-    subprocess.run(argv, cwd=cwd, env=env, check=True)
-
-
-def run_waldo(*args):
-    run([WALDO_BIN, *args])
+    if not BUILD_LOG:
+        subprocess.run(argv, cwd=cwd, env=env, check=True)
+        return
+    # Chunks rather than lines, so progress bars redrawn with \r still show live.
+    process = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    for chunk in iter(lambda: process.stdout.read1(4096), b""):
+        sys.stdout.buffer.write(chunk)
+        sys.stdout.flush()
+        BUILD_LOG.write(chunk.decode("utf-8", "replace"))
+        BUILD_LOG.flush()
+    if process.wait():
+        raise subprocess.CalledProcessError(process.returncode, argv)
 
 
 def waldo_json(*args):
@@ -270,82 +181,6 @@ def waldo_json(*args):
     show_command(argv)
     result = subprocess.run(argv, cwd=REPO_ROOT, stdout=subprocess.PIPE, text=True, check=True)
     return json.loads(result.stdout) if result.stdout.strip() else []
-
-
-def cmd_create(args):
-    path = compose_path(args.topic)
-    if path.exists() and not args.force:
-        # Printed here, not via sys.exit(str): that only prints once SystemExit
-        # reaches main()'s finally block, which would print "finished" first.
-        error(f"{path} already exists; pass --force to overwrite")
-        sys.exit(1)
-    if args.lang and args.repos:
-        error("use --lang or --repos, not both")
-        sys.exit(1)
-    if args.corpus is None:
-        args.corpus = ask("--corpus", "An index corpus path or glob -- e.g. code/permissive, or code/* "
-                                       "for every corpus in that namespace. `waldito catalog` lists what's there.")
-    if args.size is None:
-        sizes = "\n".join(f"  {name} (hidden_size={values[1]}, context_tokens={values[0]})" for name, values in SIZES.items())
-        args.size = ask("--size", f"Model size:\n{sizes}")
-    if args.size not in SIZES:
-        error(f"--size must be one of {', '.join(SIZES)}")
-        sys.exit(1)
-    if args.epochs is None:
-        args.epochs = ask("--epochs", "Passes over the same tokens -- e.g. 1 (train once), "
-                                       "or more to revisit already-seen tokens for a small corpus.")
-    try:
-        args.epochs = int(args.epochs)
-    except ValueError:
-        error("--epochs must be an integer")
-        sys.exit(1)
-    if args.epochs < 1:
-        error("--epochs must be 1 or more")
-        sys.exit(1)
-    context_tokens, hidden_size, intermediate_size, layers, attention_heads, key_value_heads, batch_size = SIZES[args.size]
-    # A glob, same as `waldito catalog --corpus`: code/* pulls in every code/*
-    # corpus as its own weighted entry below, not just one literal path.
-    corpora = waldo_json("index", "list")["corpora"]
-    matches = matching_corpora(corpora, args.corpus)
-    if not matches:
-        error(f"no corpora match {args.corpus!r}; `waldito catalog` lists what is there")
-        sys.exit(1)
-    matches = sorted(matches, key=lambda corpus: corpus["path"])
-    # Named exactly, or by language -- never both; args.lang and args.repos
-    # were already checked mutually exclusive above.
-    repos = [repo.strip() for repo in args.repos.split(",") if repo.strip()]
-    if args.lang:
-        languages, _, _ = catalog(matches)
-        # Comma-separated, because one language is rarely the whole topic.
-        wanted = [name.strip().lower() for name in args.lang.split(",") if name.strip()]
-        missing = [name for name in wanted if name not in languages]
-        if missing:
-            error(f"no {', '.join(missing)} repos in {args.corpus}; "
-                  f"`waldito catalog {args.corpus} --code` lists what is there")
-            sys.exit(1)
-        # Deduplicated: a repo declaring both typescript and vue is one repo.
-        repos = sorted({repo for name in wanted for repo in languages[name]})
-        print(f"{len(repos)} repo{'' if len(repos) == 1 else 's'} from {', '.join(wanted)}")
-    sources_block = ""
-    if repos:
-        # Quoted: an unquoted " #" would truncate as a YAML comment, and a
-        # leading *, &, [ or { is alias/anchor/flow syntax rather than text.
-        repo_lines = "\n".join(f'          - "{repo}"' for repo in repos)
-        sources_block = SOURCES_BLOCK_TEMPLATE.format(repo_lines=repo_lines)
-    # Equal weight across every matched corpus -- a starting point, not a
-    # recommendation; hand-edit weight for an intentional mixture.
-    corpora_block = "\n".join(
-        f'      - path: "{corpus["path"]}"\n        weight: 1' for corpus in matches
-    )
-    compose = COMPOSE_TEMPLATE.format(
-        topic=args.topic, context_tokens=context_tokens, hidden_size=hidden_size,
-        intermediate_size=intermediate_size, layers=layers, attention_heads=attention_heads,
-        key_value_heads=key_value_heads, sources_block=sources_block, corpora_block=corpora_block,
-        batch_size=batch_size, vocabulary_size=VOCABULARY_SIZE, epochs=args.epochs, **TRAINING_DEFAULTS,
-    )
-    WALDITO_DIR.mkdir(parents=True, exist_ok=True)
-    path.write_text(compose)
-    print(f"wrote {path}")
 
 
 def print_corpus_table(corpora):
@@ -420,138 +255,603 @@ def cmd_catalog(args):
         print(f"{language:<16}{len(repos):>6}")
 
 
-def cmd_train(args):
-    throttle = os.environ.get("WALDO_GPU_THROTTLE")
-    if throttle:
-        print(f"WALDO_GPU_THROTTLE={throttle} (GPU will idle between steps to hold roughly that duty cycle)")
-    name, compose = model_name(args.topic), compose_path(args.topic)
-    if not compose.exists():
-        error(f"{compose} does not exist; run `waldito create {args.topic}` first")
+# Everything a `waldo model export --format huggingface` package needs except weights and
+# per-model provenance; these must be identical across merge inputs.
+MERGE_SHARED_FILES = ("config.json", "generation_config.json", "tokenizer_config.json", "special_tokens_map.json",
+                      "tokenization_openwaldo.py", "chat_template.jinja", "architecture.py")
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def cmd_merge(args):
+    """Element-wise mean of huggingface exports, i.e. one DiLoCo outer step with outer
+    learning rate 1. With --base, task arithmetic instead: base + the sum of each input's
+    change from base, which keeps every skill at full strength. Inputs must share a parent."""
+    import mlx.core as mx  # Imported here so catalog doesn't require MLX.
+    output = pathlib.Path(args.output)
+    inputs = [pathlib.Path(path) for path in args.inputs]
+    base = pathlib.Path(args.base) if args.base else None
+    if len(inputs) < 2:
+        error("merge needs at least two inputs")
         sys.exit(1)
-    # Mitigates the macOS Metal watchdog killing MLX training with
-    # kIOGPUCommandBufferCallbackErrorImpactingInteractivity when the display is
-    # active (ml-explore/mlx#3267, wontfix -- an Apple-side limit). Undocumented,
-    # reported to help; harmless elsewhere. Still dying with that error? Close the lid.
-    env = {**os.environ, "AGX_RELAX_CDM_CTXSTORE_TIMEOUT": "1"}
-    run([WALDO_BIN, "model", "train", name, str(compose)], env=env)
-    # Runs straight through rather than just printing the suggestion, so there's
-    # nothing to copy-paste. Compare the held-out loss above to ln(259)=5.56,
-    # the random-guess baseline for this vocabulary.
-    print()
-    run([WALDO_BIN, "model", "chat", name, "write a short hello world program", "--max-tokens", "1024"])
-
-
-def cmd_export(args):
-    name, out = model_name(args.topic), export_dir(args.topic, args.format)
-    # Always an incomplete EU GPAI draft -- a local waldito model is never placed on the EU market.
-    run_waldo("model", "export", name, str(out), "--format", args.format, "--allow-incomplete")
-    if args.format == "ollama":
-        run(["ollama", "create", name, "-f", "Modelfile"], cwd=out)
-
-
-def remove_model(name):
-    """`waldo model rm` plus any stale staged compose transaction for `name`,
-    so the next create/train starts fresh instead of hitting "unfinished
-    compose". Shared by cmd_reset and cmd_delete."""
-    # A yaml-only topic (never trained, or already reset) has no model dir --
-    # checked first so that's a plain notice, not waldo's raw
-    # MODEL.json-not-found error surfacing as if something went wrong.
-    trained = any(entry.get("name") == name for entry in waldo_json("model", "list"))
-    if not trained:
-        print(f"no trained model for {name} -- nothing to remove")
-    else:
-        argv = [WALDO_BIN, "model", "rm", name]
-        show_command(argv)
-        result = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True)
-        if result.returncode == 0:
-            if result.stdout.strip():
-                print(result.stdout.strip())
+    if output.exists():
+        error(f"{output} already exists")
+        sys.exit(1)
+    first = inputs[0]
+    shared = [name for name in MERGE_SHARED_FILES if (first / name).exists()]
+    checked = inputs[1:] + ([base] if base else [])
+    for other in checked:
+        # The base contributes only weights, so its packaging (chat template etc.) may differ.
+        for name in (["config.json"] if other == base else shared):
+            if not (other / name).exists() or (other / name).read_bytes() != (first / name).read_bytes():
+                error(f"{other / name} differs from {first / name}; inputs must share one architecture")
+                sys.exit(1)
+    weights = [mx.load(str(path / "model.safetensors")) for path in inputs]
+    base_weights = mx.load(str(base / "model.safetensors")) if base else None
+    for path, tensors in zip(checked, weights[1:] + ([base_weights] if base else [])):
+        for key, tensor in weights[0].items():
+            if key not in tensors or tensors[key].shape != tensor.shape or tensors[key].dtype != tensor.dtype:
+                error(f"{path}: tensor {key} missing or mismatched")
+                sys.exit(1)
+        if len(tensors) != len(weights[0]):
+            error(f"{path}: tensor set differs from {first}")
+            sys.exit(1)
+    # Accumulate in float32 so bfloat16 inputs don't lose precision before the final cast.
+    diloco = args.outer_lr is not None
+    if diloco and not base:
+        error("--outer-lr needs --base: the round's starting (global) weights")
+        sys.exit(1)
+    previous = mx.load(args.momentum_state) if diloco and args.momentum_state else {}
+    merged, momentum = {}, {}
+    for key, tensor in weights[0].items():
+        total = sum(tensors[key].astype(mx.float32) for tensors in weights)
+        if diloco:
+            # DiLoCo outer step: Nesterov SGD on the pseudo-gradient base - mean(inputs).
+            origin = base_weights[key].astype(mx.float32)
+            delta = origin - total / len(weights)
+            velocity = args.momentum * previous.get(key, mx.zeros_like(delta)) + delta
+            momentum[key] = velocity
+            merged[key] = (origin - args.outer_lr * (delta + args.momentum * velocity)).astype(tensor.dtype)
+        elif base:
+            origin = base_weights[key].astype(mx.float32)
+            merged[key] = (origin + total - len(weights) * origin).astype(tensor.dtype)
         else:
-            # Surfaced, not swallowed: still possible between the check above
-            # and here (a race, a permissions issue, ...).
-            error(result.stderr.strip() or f"{name} was not removed")
-    staging = pathlib.Path.home() / ".waldo" / "models" / ".waldo-compose"
-    if not staging.is_dir():
+            merged[key] = (total / len(weights)).astype(tensor.dtype)
+    mx.eval(merged, momentum)
+    output.mkdir(parents=True)
+    for name in shared:
+        shutil.copyfile(first / name, output / name)
+    mx.save_safetensors(str(output / "model.safetensors"), merged, metadata={"format": "pt"})
+    if diloco:
+        # Not a pulled artifact; the next round passes it back with --momentum-state.
+        mx.save_safetensors(str(output / "outer-momentum.safetensors"), momentum)
+    # Named BOM.json because `waldo model pull` downloads and hash-pins that file in the
+    # pulled model's ORIGIN-BOM, which carries this merge record into the new lineage.
+    record = {
+        "kind": "waldito-merge-record",
+        "schema": 1,
+        "method": "diloco-nesterov" if diloco else "task-arithmetic" if base else "mean",
+        "base_model_sha256": sha256_file(base / "model.safetensors") if base else None,
+        "outer_lr": args.outer_lr,
+        "momentum": args.momentum if diloco else None,
+        "momentum_state_sha256": sha256_file(args.momentum_state) if diloco and args.momentum_state else None,
+        "inputs": [{
+            "path": str(path.resolve()),
+            "model_sha256": sha256_file(path / "model.safetensors"),
+            "bom_sha256": sha256_file(path / "BOM.json") if (path / "BOM.json").exists() else None,
+        } for path in inputs],
+        "output_model_sha256": sha256_file(output / "model.safetensors"),
+    }
+    (output / "BOM.json").write_text(json.dumps(record, indent=2) + "\n")
+    print(f"merged {len(inputs)} models into {output} ({record['output_model_sha256'][:12]})")
+
+
+def hub_revision(directory):
+    """Content-derived 40-hex revision, so a changed repo can't be pulled under an old pin."""
+    digest = hashlib.sha1()
+    for path in sorted(directory.iterdir()):
+        if path.is_file():
+            digest.update(f"{path.name}\0{sha256_file(path)}\n".encode())
+    return digest.hexdigest()
+
+
+class HubHandler(http.server.BaseHTTPRequestHandler):
+    """The two Hugging Face routes `waldo model pull` uses, over flat local repo directories."""
+    root = None
+
+    def repository(self, org, repo):
+        directory = (self.root / org / repo).resolve()
+        if directory.parent.parent != self.root or not directory.is_dir():
+            return None
+        return directory
+
+    def do_GET(self):
+        parts = [urllib.parse.unquote(part) for part in urllib.parse.urlsplit(self.path).path.strip("/").split("/")]
+        # Decoded after splitting, so reject any part that decodes to a separator too.
+        if any(part in ("", ".", "..") or "/" in part or "\\" in part for part in parts):
+            return self.send_error(404)
+        if len(parts) == 6 and parts[:2] == ["api", "models"] and parts[4] == "revision":
+            directory = self.repository(parts[2], parts[3])
+            if directory is None:
+                return self.send_error(404)
+            files = sorted(path for path in directory.iterdir() if path.is_file())
+            body = json.dumps({
+                "id": f"{parts[2]}/{parts[3]}",
+                "sha": hub_revision(directory),
+                "siblings": [{"rfilename": path.name, "size": path.stat().st_size} for path in files],
+            }).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+        elif len(parts) == 5 and parts[2] == "resolve":
+            directory = self.repository(parts[0], parts[1])
+            if directory is None or parts[3] != hub_revision(directory) or not (directory / parts[4]).is_file():
+                return self.send_error(404)
+            body = (directory / parts[4]).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+        else:
+            return self.send_error(404)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def cmd_hub(args):
+    HubHandler.root = pathlib.Path(args.root).expanduser().resolve()
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), HubHandler)
+    print(f"serving {HubHandler.root}/<org>/<repo>/ -- in another shell:")
+    print(f"  HF_ENDPOINT=http://127.0.0.1:{args.port} waldo model pull <name> huggingface://<org>/<repo>")
+    server.serve_forever()
+
+
+def fetch_source(ini_text):
+    """The [fetch] url of a fetcher INI (whose repeated keys configparser rejects)."""
+    section = None
+    for line in ini_text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1]
+        elif section == "fetch" and stripped.startswith("url") and "=" in stripped:
+            return stripped.split("=", 1)[1].strip()
+    return None
+
+
+def ensure_local_publication():
+    if LOCAL_CONFIG.exists() and LOCAL_INDEX.exists():
         return
-    for transaction_dir in staging.iterdir():
-        compose_json = transaction_dir / "COMPOSE.json"
-        try:
-            staged = json.loads(compose_json.read_text())
-        except (OSError, json.JSONDecodeError):
+    managed = pathlib.Path.home() / ".waldo" / "index"
+    if not LOCAL_INDEX.exists():
+        shutil.copytree(managed, LOCAL_INDEX, ignore=shutil.ignore_patterns(".git"))
+    env = {**os.environ, "WALDO_CONFIG": str(LOCAL_CONFIG)}
+    for key, value in (("index", LOCAL_INDEX), ("lookaside", f"file://{WALDITO_HOME / 'lookaside'}"),
+                       ("lookaside.cache", WALDITO_HOME / "cache"), ("lookaside.scratch", WALDITO_HOME / "scratch"),
+                       ("ingest.staging", WALDITO_HOME / "ingest")):
+        run([WALDO_BIN, "config", "set", key, str(value)], env=env)
+
+
+def dev_snapshot(source):
+    """Working tree of `source` committed into a scratch repo, so the fetcher gets a real
+    revision without touching the source repo's history. Its commits are throwaway."""
+    snapshot = WALDITO_HOME / "dev-snapshots" / pathlib.Path(source).name
+    shutil.rmtree(snapshot, ignore_errors=True)
+    shutil.copytree(source, snapshot, ignore=shutil.ignore_patterns(".git"))
+    identity = {"GIT_AUTHOR_NAME": "waldito dev", "GIT_AUTHOR_EMAIL": "dev@waldito.invalid",
+                "GIT_COMMITTER_NAME": "waldito dev", "GIT_COMMITTER_EMAIL": "dev@waldito.invalid"}
+    env = {**os.environ, **identity}
+    for argv in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-q", "-m", f"waldito dev snapshot of {source}"]):
+        subprocess.run(argv, cwd=snapshot, env=env, check=True)
+    return str(snapshot)
+
+
+def cmd_ingest(args):
+    """Fetch a local, committed checkout at its HEAD and ingest it into the local test index."""
+    ini = pathlib.Path(args.ini).resolve()
+    text = ini.read_text()
+    source = fetch_source(text)
+    if not source or not pathlib.Path(source).is_dir():
+        error(f"{ini}: [fetch] url must be a local checkout path for `waldito ingest`, got {source!r}")
+        sys.exit(1)
+    fetch_from = source
+    if args.dev:
+        fetch_from = dev_snapshot(source)
+    elif subprocess.run(["git", "-C", source, "status", "--porcelain"], stdout=subprocess.PIPE, text=True, check=True).stdout.strip():
+        error(f"{source} has uncommitted changes; commit them, or use --dev to ingest the working tree")
+        sys.exit(1)
+    revision = subprocess.run(["git", "-C", fetch_from, "rev-parse", "HEAD"], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+    # Every pin in the INI (version, ref, revision, provenance URLs) follows the fetched HEAD.
+    pinned = re.sub(r"\bREVISION\b|\b[0-9a-f]{40}\b", revision, text)
+    pinned = re.sub(r"(?m)^(\[fetch\][^\[]*?^url\s*=\s*).*$", lambda match: match.group(1) + fetch_from, pinned)
+    handoff = WALDITO_HOME / "handoffs" / ini.stem
+    handoff.parent.mkdir(parents=True, exist_ok=True)
+    pinned_ini = handoff.with_suffix(".ini")
+    pinned_ini.write_text(pinned)
+    shutil.rmtree(handoff, ignore_errors=True)
+    say(f"{ini.name} pinned to {fetch_from} @ {revision[:12]}")
+    run(["go", "run", "./cmd/fetcher", str(pinned_ini), str(handoff)], cwd=FETCHERS_ROOT)
+    ensure_local_publication()
+    # Dev iterations rebuild the same destination, so they update it once it exists.
+    update = args.update or (args.dev and (LOCAL_INDEX / args.destination).exists())
+    ingest = [WALDO_BIN, "index", "ingest", str(handoff), args.destination] + (["--update"] if update else [])
+    run(ingest, env={**os.environ, "WALDO_CONFIG": str(LOCAL_CONFIG)})
+    say(f"compose corpus path: {LOCAL_INDEX / args.destination}")
+    # Content hash, unlike the dev snapshot's commit, stays the same while the data does.
+    return subprocess.run(["git", "-C", fetch_from, "rev-parse", "HEAD^{tree}"], stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+
+
+def cmd_check(args):
+    scores = collections.defaultdict(lambda: [0, 0])
+    with open(args.records, encoding="utf-8") as stream:
+        rows = [json.loads(line) for line in stream if line.strip()]
+    say(f"checking {args.model} against {len(rows)} records in {args.records}")
+    for row in rows:
+        argv = [WALDO_BIN, "--json", "model", "chat", args.model, row["prompt"], "--temperature", "0", "--max-tokens", str(args.max_tokens)]
+        result = subprocess.run(argv, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=True)
+        got = json.loads(result.stdout)["result"]["text"].strip()
+        category = row.get("category", "all")
+        scores[category][1] += 1
+        if got == row["response"].strip():
+            scores[category][0] += 1
+        elif args.misses:
+            say(f"MISS {row['prompt']!r}\n  want {row['response'].strip()!r}\n  got  {got[:120]!r}")
+    say(f"\n{'CATEGORY':<16}{'EXACT':>10}")
+    for category, (correct, total) in scores.items():
+        say(f"{category:<16}{correct:>5}/{total:<4}")
+    correct, total = (sum(score[0] for score in scores.values()), sum(score[1] for score in scores.values()))
+    say(f"{'TOTAL':<16}{correct:>5}/{total:<4}")
+
+
+EXPERIMENT_KEYS = ("generate", "fetcher", "destination", "compose", "eval")
+
+
+def load_experiment(reference):
+    """Flat `key: value` YAML naming one experiment's pieces; relative paths are
+    beside the file. A bare name means ~/.waldo/waldito/<name>.yaml."""
+    path = pathlib.Path(reference).expanduser()
+    if not path.exists() and not reference.endswith((".yaml", ".yml")):
+        path = WALDITO_HOME / f"{reference}.yaml"
+    if not path.exists():
+        error(f"no experiment file {path}")
+        sys.exit(1)
+    experiment = {}
+    for number, line in enumerate(path.read_text().splitlines(), 1):
+        line = line.split(" #", 1)[0].strip()
+        if not line or line.startswith("#"):
             continue
-        if staged.get("name") == name:
-            shutil.rmtree(transaction_dir)
-            print(f"removed stale compose transaction {transaction_dir.name}")
+        key, separator, value = line.partition(":")
+        if not separator or key.strip() not in EXPERIMENT_KEYS:
+            error(f"{path}:{number}: expected one of {', '.join(EXPERIMENT_KEYS)} as `key: value`")
+            sys.exit(1)
+        experiment[key.strip()] = value.strip().strip("\"'")
+    for key in ("fetcher", "compose", "eval"):
+        if key in experiment:
+            experiment[key] = str((path.parent / pathlib.Path(experiment[key]).expanduser()).resolve())
+    missing = [key for key in ("fetcher", "destination", "compose") if key not in experiment]
+    if missing:
+        error(f"{path}: missing {', '.join(missing)}")
+        sys.exit(1)
+    return path.stem, experiment
 
 
-def confirm(prompt_text):
-    # No confirmation of its own downstream, and this takes every GPU-hour
-    # trained. Same [y/N] wording as waldo's own confirmations (advisor.go).
-    try:
-        answer = input(f"waldito: {prompt_text} [y/N] ").strip().lower()
-    except EOFError:
-        answer = ""  # no terminal to confirm on (piped stdin) is not a yes
-    if answer not in ("y", "yes"):
-        print("cancelled")
-        return False
-    return True
+def cmd_train(args):
+    """One development iteration from an experiment file: regenerate, dev-ingest, train, check."""
+    label, experiment = load_experiment(args.experiment)
+    if "generate" in experiment:
+        source = fetch_source(pathlib.Path(experiment["fetcher"]).read_text())
+        run(shlex.split(experiment["generate"]), cwd=source)
+    content = cmd_ingest(argparse.Namespace(ini=experiment["fetcher"], destination=experiment["destination"], update=False, dev=True))
+    # Named per data content, so each data change trains a new model instead of colliding.
+    name = args.name or f"{label}-{content[:7]}"
+    env = {**os.environ, "AGX_RELAX_CDM_CTXSTORE_TIMEOUT": os.environ.get("AGX_RELAX_CDM_CTXSTORE_TIMEOUT", "1")}
+    run([WALDO_BIN, "model", "train", name, experiment["compose"]], env=env)
+    if "eval" in experiment:
+        cmd_check(argparse.Namespace(model=name, records=experiment["eval"], misses=args.misses, max_tokens=200))
 
 
-def cmd_reset(args):
-    """Removes waldito-<topic>'s trained model only -- the yaml (and any
-    exports) stay, so `waldito train` can reuse it."""
-    name = model_name(args.topic)
-    if confirm(f"reset {name} -- remove its trained model and all of its training?"):
-        remove_model(name)
+def parse_scalar(text):
+    text = text.strip()
+    if text.startswith("[") and text.endswith("]"):
+        return [parse_scalar(item) for item in text[1:-1].split(",") if item.strip()]
+    if text.startswith("{") and text.endswith("}"):
+        pairs = (item.split(":", 1) for item in text[1:-1].split(",") if item.strip())
+        return {key.strip(): parse_scalar(value) for key, value in pairs}
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        return text[1:-1]
+    for kind in (int, float):
+        try:
+            return kind(text)
+        except ValueError:
+            pass
+    return {"true": True, "false": False, "null": None}.get(text, text)
 
 
-def cmd_delete(args):
-    """Removes waldito-<topic> entirely: yaml, trained model, and every
-    export directory -- the "docker rm" of a topic, not just its model."""
-    name, path = model_name(args.topic), compose_path(args.topic)
-    if not confirm(f"delete {name} -- its yaml, trained model, and exports -- entirely?"):
-        return
-    remove_model(name)
-    if path.exists():
-        path.unlink()
-        print(f"removed {path}")
-    exports = export_root(args.topic)
-    if exports.exists():
-        shutil.rmtree(exports)
-        print(f"removed {exports}")
-    try:
-        result = subprocess.run(["ollama", "rm", name], capture_output=True, text=True)
-        if result.returncode == 0:
-            print(f"removed ollama model {name}")
-    except FileNotFoundError:
-        pass  # no local ollama install -- nothing to clean up there
+def parse_plan(text):
+    """Nested YAML subset, no dependencies: indented mappings, `- item` lists, [a, b], {k: v}, # comments."""
+    lines = []
+    for raw in text.splitlines():
+        line = "" if raw.lstrip().startswith("#") else raw.split(" #", 1)[0].rstrip()
+        if line.strip():
+            lines.append((len(line) - len(line.lstrip()), line.strip()))
+
+    def block(index, indent):
+        if lines[index][1].startswith("- "):
+            items = []
+            while index < len(lines) and lines[index][0] == indent and lines[index][1].startswith("- "):
+                items.append(parse_scalar(lines[index][1][2:]))
+                index += 1
+            return items, index
+        mapping = {}
+        while index < len(lines) and lines[index][0] == indent:
+            key, _, value = lines[index][1].partition(":")
+            index += 1
+            if value.strip():
+                mapping[key.strip()] = parse_scalar(value)
+            elif index < len(lines) and lines[index][0] > indent:
+                mapping[key.strip()], index = block(index, lines[index][0])
+            else:
+                mapping[key.strip()] = None
+        return mapping, index
+
+    return block(0, lines[0][0])[0]
 
 
-def cmd_list(args):
-    models = {entry["name"]: entry for entry in waldo_json("model", "list")
-              if entry.get("name", "").startswith("waldito-")}
-    # A topic is its yaml, its trained model, or both -- `reset` deletes the
-    # model but keeps the yaml, and that topic should keep showing up here
-    # (as empty) rather than vanish just because it isn't in `waldo model
-    # list` right now.
-    topics = {path.stem for path in WALDITO_DIR.glob("*.yaml")}
-    topics |= {name.removeprefix("waldito-") for name in models}
-    if args.topic:
-        topics &= {args.topic}
-    if not topics:
-        print("no waldito models yet -- try `waldito create <topic> ...`")
-        return
-    for topic in sorted(topics):
-        entry = models.get(model_name(topic))
-        if entry is None:
-            state, size = "empty", 0
-        else:
-            # No state key at all means architecture created, nothing trained yet.
-            state, size = entry.get("state", "no runs yet"), entry.get("approximate_parameters", "?")
-        print(f"{topic:<28} {state:<12} {size}")
+def piece_seed(*parts):
+    """Same for every replica of one piece of work, different across pieces."""
+    return int.from_bytes(hashlib.sha256("-".join(map(str, parts)).encode()).digest()[:3], "big")
 
 
-EXPORT_FORMATS = ["waldo", "huggingface", "mlx", "gguf", "ollama"]
+class Build:
+    """One plan: shards, a bootstrap model, replicated contributor rounds merged every round, checks."""
+
+    def __init__(self, path):
+        self.path = path
+        self.plan = parse_plan(path.read_text())
+        self.name = self.plan["name"]
+        self.home = WALDITO_HOME / "builds" / self.name
+        self.contributors = [str(contributor) for contributor in self.plan["contributors"]]
+        self.replicas = int(self.plan.get("replicas", 1))
+        self.tolerance = float(self.plan.get("replica_tolerance", 0.25))
+        self.min_steps = int(self.plan.get("min_steps_per_round", 0))
+        self.tamper = self.plan.get("tamper") or {}
+        self.port = 8770
+        self.env = {**os.environ, "AGX_RELAX_CDM_CTXSTORE_TIMEOUT": os.environ.get("AGX_RELAX_CDM_CTXSTORE_TIMEOUT", "1")}
+
+    def file(self, value):
+        return (self.path.parent / pathlib.Path(str(value)).expanduser()).resolve()
+
+    def states(self):
+        result = subprocess.run([WALDO_BIN, "--json", "model", "list"], cwd=REPO_ROOT, stdout=subprocess.PIPE, text=True, check=True)
+        return {entry["name"]: entry.get("state") for entry in json.loads(result.stdout or "[]")}
+
+    def compose(self, stage, base, seed, budget, **values):
+        template = string.Template(self.file(self.plan[stage]["compose"]).read_text())
+        return template.substitute(
+            base_block=f"base:\n  model: {base}" if base else "", seed=seed, budget=budget,
+            sources=json.dumps(values.get("sources", [])), corpus=values.get("corpus", ""),
+            learning_rate=values.get("learning_rate", 0.0005), weight_decay=values.get("weight_decay", 0.05),
+            extra=values.get("extra", ""))
+
+    def train(self, model, text, round_piece=False):
+        if self.states().get(model) == "complete":
+            say(f"   {model} already trained")
+            return
+        path = self.home / "composes" / f"{model}.yaml"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        run([WALDO_BIN, "model", "train", model, str(path)], env=self.env)
+        if round_piece and self.min_steps:
+            steps = max((int(row["planned_steps"]) for row in self.telemetry(model) if row["planned_steps"]), default=0)
+            if steps < self.min_steps:
+                error(f"{model} trained only {steps} steps; a round needs at least {self.min_steps} "
+                      "(min_steps_per_round) or contributors never get past ignoring the prompt")
+                sys.exit(1)
+
+    def telemetry(self, model):
+        runs = sorted((pathlib.Path.home() / ".waldo" / "models" / model / "runs").iterdir())
+        with open(runs[-1] / "TELEMETRY.csv", newline="") as stream:
+            import csv  # Only builds read telemetry.
+            return list(csv.DictReader(stream))
+
+    def export(self, model, tamper=None, base=None):
+        target = self.home / "exports" / model
+        if not (target / "model.safetensors").exists():
+            shutil.rmtree(target, ignore_errors=True)
+            run([WALDO_BIN, "model", "export", model, str(target), "--format", "huggingface", "--allow-incomplete"])
+        if tamper == "lazy" and not (target / "TAMPERED").exists():
+            # A free-rider: skips the work and submits the round's starting weights for credit.
+            shutil.copyfile(self.export(base) / "model.safetensors", target / "model.safetensors")
+            (target / "TAMPERED").write_text(f"demo: lazy submission of {base}'s weights, no training\n")
+            say(f"   !! {model} submitted {base}'s weights without training (demo)")
+        elif tamper == "noise" and not (target / "TAMPERED").exists():
+            import mlx.core as mx  # Imported here so catalog doesn't require MLX.
+            weights = mx.load(str(target / "model.safetensors"))
+            noisy = {key: (tensor.astype(mx.float32) + 0.1 * mx.std(tensor.astype(mx.float32))
+                           * mx.random.normal(tensor.shape)).astype(tensor.dtype) for key, tensor in weights.items()}
+            # mx.load is lazy: evaluate and write beside, or saving over the source truncates it first.
+            mx.eval(noisy)
+            mx.save_safetensors(str(target / "model.tmp.safetensors"), noisy, metadata={"format": "pt"})
+            os.replace(target / "model.tmp.safetensors", target / "model.safetensors")
+            (target / "TAMPERED").write_text("demo: 10% of each tensor's std added as noise\n")
+            say(f"   !! tampered with {model}'s submission (demo)")
+        return target
+
+    def distance(self, first, second):
+        import mlx.core as mx  # Imported here so catalog doesn't require MLX.
+        a, b = mx.load(str(first / "model.safetensors")), mx.load(str(second / "model.safetensors"))
+        difference = sum(mx.sum(mx.square(a[key].astype(mx.float32) - b[key].astype(mx.float32))).item() for key in a)
+        size = sum(mx.sum(mx.square(a[key].astype(mx.float32))).item() for key in a)
+        return (difference / size) ** 0.5
+
+    def probe(self, stage, export, values, tag=""):
+        """Held-out loss of submitted weights, measured by the verifier itself (never the contributor's
+        own report): pull the export, then one step at a negligible rate on a fixed probe."""
+        name = f"{export.name}-probe{tag}"
+        if name not in self.states():
+            shutil.copytree(export, self.home / "hub" / "waldito" / name, dirs_exist_ok=True)
+            run([WALDO_BIN, "model", "pull", name, f"huggingface://waldito/{name}"],
+                env={**os.environ, "HF_ENDPOINT": f"http://127.0.0.1:{self.port}"})
+        budget = "tokens: 16384" if stage == "pretrain" else "tokens: 4096"
+        probe_values = {key: value for key, value in values.items() if key in ("sources", "corpus")}
+        self.train(f"{name}-eval", self.compose(stage, name, 4242, budget, learning_rate=1e-12, weight_decay=0,
+                                                extra="      warmup_steps: 0\n      checkpoint_every: 0\n", **probe_values))
+        return float([row["heldout_loss"] for row in self.telemetry(f"{name}-eval") if row["heldout_loss"]][-1])
+
+    def verify(self, stage, label, exports, values, base, contributor):
+        """Replicas that agree with a majority of the others; the first is merged. Honest GPU runs are
+        not bit-reproducible and diverge most as loss falls, so agreement is judged against how far each
+        replica got from the round's starting weights: honest replicas improve alike, a free-rider not at all."""
+        if len(exports) == 1:
+            return exports[0]
+        start = self.probe(stage, self.export(base), values, tag=f"-{contributor.lower()}")
+        losses = [self.probe(stage, export, values) for export in exports]
+        say(f"   round start probe loss {start:.4f} on this shard")
+        agree = {index: 0 for index in range(len(exports))}
+        for first in range(len(exports)):
+            for second in range(first + 1, len(exports)):
+                progress = max(start - losses[first], start - losses[second], 1e-9)
+                gap = abs(losses[first] - losses[second]) / progress
+                verdict = "agree" if gap <= self.tolerance else "DISAGREE"
+                distance = self.distance(exports[first], exports[second])
+                say(f"   replicas {first + 1} vs {second + 1}: probe loss {losses[first]:.4f} vs {losses[second]:.4f} "
+                    f"(gap {gap:.0%} of the round's progress, weights {distance:.3f} apart)  {verdict}")
+                if gap <= self.tolerance:
+                    agree[first] += 1
+                    agree[second] += 1
+        accepted = [index for index, count in agree.items() if count >= len(exports) // 2]
+        rejected = [index + 1 for index in agree if index not in accepted]
+        if len(accepted) <= len(exports) // 2:
+            error(f"{label}: no majority of replicas agree within {self.tolerance:.0%} of the round's progress; not merging")
+            sys.exit(1)
+        say(f"   {label}: accepted replica {accepted[0] + 1}" + (f", rejected replica {', '.join(map(str, rejected))}" if rejected else ""))
+        return exports[accepted[0]]
+
+    def merge(self, model, submissions, base):
+        target = self.home / "hub" / "waldito" / model
+        if model in self.states():
+            say(f"   {model} already merged")
+            return target
+        shutil.rmtree(target, ignore_errors=True)
+        argv = [sys.executable, str(REPO_ROOT / "waldito"), "merge", str(target), *map(str, submissions)]
+        if self.plan.get("merge", "mean") == "diloco":
+            argv += ["--base", str(self.export(base)), "--outer-lr", "0.7"]
+            state = self.home / "hub" / "waldito" / base / "outer-momentum.safetensors"
+            if state.exists():
+                argv += ["--momentum-state", str(state)]
+        run(argv)
+        run([WALDO_BIN, "model", "pull", model, f"huggingface://waldito/{model}"],
+            env={**os.environ, "HF_ENDPOINT": f"http://127.0.0.1:{self.port}"})
+        return target
+
+    def shards(self):
+        """Post-training data split by record hash, one dev-ingested corpus per contributor."""
+        stage = self.plan["posttrain"]
+        rows = [json.loads(line) for line in self.file(stage["data"]).read_text().splitlines() if line.strip()]
+        template = self.file(stage["fetcher"]).read_text()
+        original = re.search(r"(?m)^id = (\S+)", template).group(1)
+        source = self.home / "source"
+        corpora = {}
+        for index, contributor in enumerate(self.contributors):
+            corpus = f"{self.name}-{contributor.lower()}"
+            shard = [row for row in rows if hashlib.sha256(row["id"].encode()).digest()[0] % len(self.contributors) == index]
+            target = source / "data" / "sft" / corpus / "train" / "part-00000.jsonl"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("".join(json.dumps(row, separators=(",", ":")) + "\n" for row in shard))
+            ini = self.home / "fetchers" / f"{corpus}.ini"
+            ini.parent.mkdir(parents=True, exist_ok=True)
+            ini.write_text(re.sub(r"(?m)^(\[fetch\][^\[]*?^url = ).*$", lambda match: match.group(1) + str(source),
+                                  template.replace(original, corpus)))
+            destination = f"post-train/sft/{corpus}"
+            if not (LOCAL_INDEX / destination).exists():
+                cmd_ingest(argparse.Namespace(ini=str(ini), destination=destination, update=False, dev=True))
+            corpora[contributor] = (LOCAL_INDEX / destination, len(shard))
+        return corpora
+
+    def rounds(self, stage, base, pieces):
+        """pieces: contributor -> (compose values, description); returns the final merged model."""
+        config = self.plan[stage]
+        title = {"pretrain": "Pretraining", "posttrain": "Post-training"}[stage]
+        for round_number in range(1, int(config["rounds"]) + 1):
+            say(f"\n== {title} round {round_number}/{config['rounds']} ==")
+            merged = f"{self.name}-{stage[:4]}-r{round_number}"
+            if merged in self.states():
+                say(f"   {merged} already merged")
+                base = merged
+                continue
+            submissions = []
+            for contributor in self.contributors:
+                values, description = pieces[contributor]
+                exports = []
+                for replica in range(1, self.replicas + 1):
+                    model = f"{self.name}-{stage[:4]}-r{round_number}-{contributor.lower()}-{replica}"
+                    say(f"-- Contributor {contributor}, replica {replica}: {description}")
+                    self.train(model, self.compose(stage, base, piece_seed(self.name, stage, round_number, contributor),
+                                                   **values), round_piece=True)
+                    target = {key: value for key, value in self.tamper.items() if key != "kind"}
+                    tamper = self.tamper.get("kind", "lazy") if target == {"stage": stage, "round": round_number,
+                                                                          "contributor": contributor, "replica": replica} else None
+                    exports.append(self.export(model, tamper=tamper, base=base))
+                submissions.append(self.verify(stage, f"contributor {contributor}", exports, values, base, contributor))
+            say(f"-- Merge round {round_number} ({self.plan.get('merge', 'mean')} of {len(submissions)} contributors)")
+            merged = f"{self.name}-{stage[:4]}-r{round_number}"
+            self.merge(merged, submissions, base)
+            base = merged
+        return base
+
+    def run(self):
+        hub = http.server.ThreadingHTTPServer(("127.0.0.1", self.port), HubHandler)
+        HubHandler.root = (self.home / "hub").resolve()
+        HubHandler.root.mkdir(parents=True, exist_ok=True)
+        import threading  # Only builds serve the hub in-process.
+        threading.Thread(target=hub.serve_forever, daemon=True).start()
+        try:
+            pretrain, posttrain = self.plan["pretrain"], self.plan["posttrain"]
+            say(f"== Plan {self.name}: {len(self.contributors)} contributors x {self.replicas} replicas, merge {self.plan.get('merge', 'mean')} ==")
+            corpora = self.shards()
+            everything = [source for shard in pretrain["shards"].values() for source in shard]
+            say("\n== Bootstrap: shared starting weights ==")
+            bootstrap = f"{self.name}-bootstrap"
+            self.train(bootstrap, self.compose("pretrain", None, 1, f"tokens: {pretrain['bootstrap_tokens']}", sources=everything))
+            # Fixed steps with repetition allowed, so a contributor with a small shard still gets a full round.
+            template = self.file(pretrain["compose"]).read_text()
+            per_step = int(re.search(r"batch_size: (\d+)", template).group(1)) * int(re.search(r"sequence_length: (\d+)", template).group(1))
+            steps = -(-int(pretrain["tokens_per_round"]) // per_step)
+            pieces = {contributor: ({"budget": f"steps: {steps}\n      epochs: 1000", "sources": pretrain["shards"][contributor]},
+                                    ", ".join(pretrain["shards"][contributor])) for contributor in self.contributors}
+            base = self.rounds("pretrain", bootstrap, pieces)
+            pieces = {contributor: ({"budget": f"epochs: {posttrain['epochs_per_round']}", "corpus": corpus},
+                                    f"{count} records of {pathlib.Path(posttrain['data']).parent.parent.name}")
+                      for contributor, (corpus, count) in corpora.items()}
+            base = self.rounds("posttrain", base, pieces)
+            # Pulled models can't chat yet; one step at a negligible rate gives a chat-capable run.
+            say(f"\n== Final model {self.name} ==")
+            first = next(iter(corpora.values()))[0]
+            self.train(self.name, self.compose("posttrain", base, 9, "tokens: 4096", corpus=first, learning_rate=1e-12,
+                                               weight_decay=0, extra="      warmup_steps: 0\n      checkpoint_every: 0\n"))
+            for records in self.plan.get("check") or []:
+                say(f"\n== Check {self.name} ==")
+                cmd_check(argparse.Namespace(model=self.name, records=str(self.file(records)), misses=False, max_tokens=200))
+        finally:
+            hub.shutdown()
+
+
+def cmd_build(args):
+    global BUILD_LOG
+    path = pathlib.Path(args.plan).expanduser()
+    if not path.exists():
+        path = WALDITO_HOME / "plans" / f"{args.plan}.yaml"
+    if not path.exists():
+        error(f"no plan {args.plan} (looked for {path})")
+        sys.exit(1)
+    build = Build(path.resolve())
+    build.home.mkdir(parents=True, exist_ok=True)
+    BUILD_LOG = open(build.home / "build.log", "a", encoding="utf-8")
+    say(f"log: {build.home / 'build.log'}")
+    build.run()
 
 
 def build_parser():
@@ -564,37 +864,43 @@ def build_parser():
     catalog_parser.add_argument("--lang", help="with --code, list only repos tagged with any of these comma-separated languages")
     catalog_parser.set_defaults(func=cmd_catalog)
 
-    list_parser = sub.add_parser("list", help="list waldito topics and their state")
-    list_parser.add_argument("topic", nargs="?")
-    list_parser.set_defaults(func=cmd_list)
+    merge = sub.add_parser("merge", help="average huggingface exports of models that share a parent")
+    merge.add_argument("output", help="new directory for the merged huggingface package")
+    merge.add_argument("inputs", nargs="+", help="`waldo model export --format huggingface` directories")
+    merge.add_argument("--base", help="export of the shared parent; switches from mean to task arithmetic")
+    merge.add_argument("--outer-lr", type=float, help="with --base: DiLoCo outer step at this learning rate (paper: 0.7)")
+    merge.add_argument("--momentum", type=float, default=0.9, help="DiLoCo Nesterov momentum (default 0.9)")
+    merge.add_argument("--momentum-state", help="previous round's outer-momentum.safetensors")
+    merge.set_defaults(func=cmd_merge)
 
-    create = sub.add_parser("create", help="generate <topic>.yaml")
-    create.add_argument("topic")
-    create.add_argument("--corpus", help="an index corpus path or glob (e.g. code/*); omit to be prompted -- `waldito catalog` shows what's there")
-    create.add_argument("--lang", default="", help="comma-separated catalog languages; takes every repo of each -- mutually exclusive with --repos")
-    create.add_argument("--repos", default="", help="comma-separated source repos, named exactly -- mutually exclusive with --lang")
-    create.add_argument("--size", choices=list(SIZES), help="omit to be prompted")
-    create.add_argument("--epochs", type=int, help="passes over the same tokens; each extra pass buys less than the last; omit to be prompted")
-    create.add_argument("--force", action="store_true")
-    create.set_defaults(func=cmd_create)
+    hub = sub.add_parser("hub", help="serve local huggingface packages to `waldo model pull` via HF_ENDPOINT")
+    hub.add_argument("root", help="directory laid out as <org>/<repo>/<files>")
+    hub.add_argument("--port", type=int, default=8765)
+    hub.set_defaults(func=cmd_hub)
 
-    train = sub.add_parser("train", help="train waldito-<topic>")
-    train.add_argument("topic")
+    ingest = sub.add_parser("ingest", help="fetch a committed local checkout and ingest it into the local test index")
+    ingest.add_argument("ini", help="fetcher INI whose [fetch] url is a local checkout path")
+    ingest.add_argument("destination", help="index path, e.g. post-train/sft/python-basics-v2")
+    ingest.add_argument("--update", action="store_true", help="rebuild an existing destination")
+    ingest.add_argument("--dev", action="store_true", help="ingest the uncommitted working tree via a throwaway scratch commit")
+    ingest.set_defaults(func=cmd_ingest)
+
+    check = sub.add_parser("check", help="exact-match score a model on prompt/response JSONL rows")
+    check.add_argument("model")
+    check.add_argument("records", help="JSONL with prompt, response, and optional category fields")
+    check.add_argument("--misses", action="store_true", help="print every mismatch")
+    check.add_argument("--max-tokens", type=int, default=200)
+    check.set_defaults(func=cmd_check)
+
+    train = sub.add_parser("train", help="regenerate, dev-ingest, train, and check one experiment file")
+    train.add_argument("experiment", help="name of ~/.waldo/waldito/<name>.yaml, or a path to one")
+    train.add_argument("--name", help="model name; default <experiment>-<data content hash>")
+    train.add_argument("--misses", action="store_true", help="print every check mismatch")
     train.set_defaults(func=cmd_train)
 
-    export = sub.add_parser("export", help="export waldito-<topic>")
-    export.add_argument("topic")
-    export.add_argument("format", nargs="?", default="ollama", choices=EXPORT_FORMATS,
-                         help="export format, default ollama (also runs `ollama create`); or waldo/huggingface/mlx/gguf")
-    export.set_defaults(func=cmd_export)
-
-    reset = sub.add_parser("reset", help="remove waldito-<topic>'s trained model only (keeps its yaml)")
-    reset.add_argument("topic")
-    reset.set_defaults(func=cmd_reset)
-
-    delete = sub.add_parser("delete", help="delete waldito-<topic> entirely -- yaml, trained model, and exports")
-    delete.add_argument("topic")
-    delete.set_defaults(func=cmd_delete)
+    build = sub.add_parser("build", help="run a distributed build plan: shards, replicated rounds, merges, checks")
+    build.add_argument("plan", help="name of ~/.waldo/waldito/plans/<name>.yaml, or a path to one")
+    build.set_defaults(func=cmd_build)
 
     return parser
 
@@ -618,8 +924,9 @@ def main():
         print()
         sys.exit(130)
     except FileNotFoundError as exc:
-        # go/ollama are external; missing one raises here instead of a traceback.
-        error(f"{exc.filename} is not installed or not on PATH")
+        # go is external; missing it raises here instead of a traceback.
+        missing = str(exc.filename or "")
+        error(f"{missing} is not installed or not on PATH" if os.sep not in missing else f"no such file: {missing}")
         sys.exit(1)
     except subprocess.CalledProcessError as exc:
         sys.exit(exc.returncode)
