@@ -970,7 +970,7 @@ func TestConfigGetJSONPreservesOrderedMatchesAndUnsetState(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	if len(output.Matches) != 7 || output.Matches[0].Key != "lookaside" || output.Matches[1].Key != "lookaside.region" || output.Matches[1].Set {
+	if len(output.Matches) != 8 || output.Matches[0].Key != "lookaside" || output.Matches[1].Key != "lookaside.region" || output.Matches[1].Set {
 		t.Fatalf("matches = %+v", output.Matches)
 	}
 }

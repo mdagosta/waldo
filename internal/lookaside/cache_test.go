@@ -141,6 +141,27 @@ func TestPurgeUsedRemovesSuccessfulFetches(t *testing.T) {
 	}
 }
 
+func TestPurgeUsedKeepsSuccessfulFetchesWhenConfigured(t *testing.T) {
+	root := t.TempDir()
+	content := "kept object"
+	digest := digestOf(content)
+	cache, err := NewCache(root, &http.Client{Transport: &fakeTransport{content: content}}, WithKeepUsed(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := cache.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	purged, err := cache.PurgeUsed()
+	if err != nil || purged.Objects != 0 {
+		t.Fatalf("PurgeUsed() = %+v, %v", purged, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("kept cache object was removed: %v", err)
+	}
+}
+
 func TestCleanPreservesExplicitlyProtectedObjects(t *testing.T) {
 	root := t.TempDir()
 	cache, err := NewCache(root, nil)
