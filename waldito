@@ -632,6 +632,8 @@ class Build:
         self.contributors = [str(contributor) for contributor in self.plan.get("contributors") or self.plan["units"]]
         self.replicas = int(self.plan.get("replicas", 1))
         self.tolerance = float(self.plan.get("replica_tolerance", 0.25))
+        # Once a round barely moves the loss, noise between honest replicas exceeds any share of it.
+        self.floor = float(self.plan.get("replica_floor", 0.001))
         self.min_steps = int(self.plan.get("min_steps_per_round", 0))
         self.tamper = self.plan.get("tamper") or {}
         self.port = 8770
@@ -738,11 +740,12 @@ class Build:
             for second in range(first + 1, len(exports)):
                 progress = max(start - losses[first], start - losses[second], 1e-9)
                 gap = abs(losses[first] - losses[second]) / progress
-                verdict = "agree" if gap <= self.tolerance else "DISAGREE"
+                close = gap <= self.tolerance or abs(losses[first] - losses[second]) <= self.floor
+                verdict = "agree" if close else "DISAGREE"
                 distance = self.distance(exports[first], exports[second])
                 say(f"   replicas {first + 1} vs {second + 1}: probe loss {losses[first]:.4f} vs {losses[second]:.4f} "
                     f"(gap {gap:.0%} of the round's progress, weights {distance:.3f} apart)  {verdict}")
-                if gap <= self.tolerance:
+                if close:
                     agree[first] += 1
                     agree[second] += 1
         accepted = [index for index, count in agree.items() if count >= len(exports) // 2]
@@ -1119,7 +1122,8 @@ class Join:
     def commit(self, path, record, message):
         """Signed record, committed with the identity as author and signed off; False if someone else's won."""
         if self.github:
-            branch = f"waldito/{self.build.name}/{path.relative_to(self.run_dir / 'rounds').with_suffix('').as_posix()}"
+            # The identity keeps two closers' merge.yaml branches apart.
+            branch = f"waldito/{self.build.name}/{self.identity}/{path.relative_to(self.run_dir / 'rounds').with_suffix('').as_posix()}"
             self.git("fetch", "-q", "origin")
             self.git("checkout", "-q", "-B", branch, "origin/HEAD")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1152,7 +1156,17 @@ class Join:
         """The record as a pull request; True once the runs repo's verifier merges it, False if it closes it."""
         remote, owner = self.head_remote()
         credentials = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]
-        self.git(*credentials, "push", "-q", "--force", remote, branch)
+        head = self.git("rev-parse", "HEAD").stdout.strip()
+        for attempt in range(1, 4):
+            if self.git(*credentials, "push", "-q", "--force", remote, branch, check=False).returncode == 0:
+                break
+            # A push can land even when git reports it failed (seen as "cannot lock ref" from GitHub).
+            if head in self.git("ls-remote", remote, f"refs/heads/{branch}", check=False).stdout:
+                break
+            error(f"   push of {branch} failed (attempt {attempt} of 3)")
+            if attempt == 3:
+                raise FetchError(branch)
+            time.sleep(15 * attempt)
         self.git("checkout", "-q", "main")
         repository = "/".join(self.github.groups())
         url = self.gh("pr", "create", "--repo", repository, "--base", "main", "--head", f"{owner}:{branch}", "--title", message,
@@ -1323,7 +1337,7 @@ def cmd_join(args):
                 outcome = join.step()
             except FetchError as exc:
                 # Nothing was committed: the next pass retries the same unit or close.
-                error(f"could not fetch {exc} from the store; nothing committed, retrying in {args.wait}s")
+                error(f"could not fetch or push {exc}; nothing committed, retrying in {args.wait}s")
                 if args.once:
                     sys.exit(1)
                 outcome = "idle"
