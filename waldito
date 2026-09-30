@@ -1,9 +1,15 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["mlx", "huggingface_hub"]
+# ///
 """
 waldito -- small machines making small contributions to openwaldo models
 
 Waldo is the tooling, the corpora index, the bill of materials, and systems to manage it all.
 Waldito, as the diminutive of waldo, aims to create the simplest possible waldo that can possibly work.
+
+Setup: `brew install uv`; `./waldito` then runs in a cached environment with mlx and huggingface_hub.
 
 Compose files are written by hand or with AI from what catalog shows -- see docs/MODEL-COMPOSE.md.
 
@@ -21,6 +27,7 @@ Usage:
     waldito ingest ../fetchers/corpora/x.ini post-train/sft/x   # committed local data -> local test index
     waldito check my-model evaluation.jsonl     # exact-match score of `model chat` against prompt/response rows
     waldito build waldito-python-basics         # plans/<name>.yaml: distributed build with replicas, merges, checks
+    waldito join ~/runs.git runs/tiny --identity alice   # one identity's turns in a run kept in git: train, verify, merge
     waldito train python-basics-v2              # ~/.waldo/waldito/python-basics-v2.yaml: generate, ingest --dev, train, check
 """
 import argparse
@@ -40,6 +47,7 @@ import socket
 import string
 import subprocess
 import sys
+import time
 import urllib.parse
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent
@@ -613,12 +621,14 @@ class Build:
         self.plan = parse_plan(path.read_text())
         self.name = self.plan["name"]
         self.home = WALDITO_HOME / "builds" / self.name
-        self.contributors = [str(contributor) for contributor in self.plan["contributors"]]
+        # `units` in join plans: data shards anyone may train, not people.
+        self.contributors = [str(contributor) for contributor in self.plan.get("contributors") or self.plan["units"]]
         self.replicas = int(self.plan.get("replicas", 1))
         self.tolerance = float(self.plan.get("replica_tolerance", 0.25))
         self.min_steps = int(self.plan.get("min_steps_per_round", 0))
         self.tamper = self.plan.get("tamper") or {}
         self.port = 8770
+        self.models = pathlib.Path.home() / ".waldo" / "models"
         self.env = {**os.environ, "AGX_RELAX_CDM_CTXSTORE_TIMEOUT": os.environ.get("AGX_RELAX_CDM_CTXSTORE_TIMEOUT", "1")}
 
     def file(self, value):
@@ -626,7 +636,8 @@ class Build:
 
     def states(self):
         result = subprocess.run([WALDO_BIN, "--json", "model", "list"], cwd=REPO_ROOT, stdout=subprocess.PIPE, text=True, check=True)
-        return {entry["name"]: entry.get("state") for entry in json.loads(result.stdout or "[]")}
+        # An empty model store lists as null, not [].
+        return {entry["name"]: entry.get("state") for entry in json.loads(result.stdout or "[]") or []}
 
     def compose(self, stage, base, seed, budget, **values):
         template = string.Template(self.file(self.plan[stage]["compose"]).read_text())
@@ -652,7 +663,7 @@ class Build:
                 sys.exit(1)
 
     def telemetry(self, model):
-        runs = sorted((pathlib.Path.home() / ".waldo" / "models" / model / "runs").iterdir())
+        runs = sorted((self.models / model / "runs").iterdir())
         with open(runs[-1] / "TELEMETRY.csv", newline="") as stream:
             import csv  # Only builds read telemetry.
             return list(csv.DictReader(stream))
@@ -707,7 +718,12 @@ class Build:
         replica got from the round's starting weights: honest replicas improve alike, a free-rider not at all."""
         if len(exports) == 1:
             return exports[0]
-        start = self.probe(stage, self.export(base), values, tag=f"-{contributor.lower()}")
+        if base:
+            start = self.probe(stage, self.export(base), values, tag=f"-{contributor.lower()}")
+        else:
+            # A bootstrap starts from random weights, whose loss is about uniform over the vocabulary.
+            import math  # Only bootstrap verification needs it.
+            start = math.log(int(re.search(r"vocabulary_size: (\d+)", self.file(self.plan[stage]["compose"]).read_text()).group(1)))
         losses = [self.probe(stage, export, values) for export in exports]
         say(f"   round start probe loss {start:.4f} on this shard")
         agree = {index: 0 for index in range(len(exports))}
@@ -726,7 +742,7 @@ class Build:
         rejected = [index + 1 for index in agree if index not in accepted]
         if len(accepted) <= len(exports) // 2:
             error(f"{label}: no majority of replicas agree within {self.tolerance:.0%} of the round's progress; not merging")
-            sys.exit(1)
+            return None
         say(f"   {label}: accepted replica {accepted[0] + 1}" + (f", rejected replica {', '.join(map(str, rejected))}" if rejected else ""))
         return exports[accepted[0]]
 
@@ -771,6 +787,12 @@ class Build:
             corpora[contributor] = (LOCAL_INDEX / destination, len(shard))
         return corpora
 
+    def pretrain_steps(self):
+        """Fixed steps with repetition allowed, so a contributor with a small shard still gets a full round."""
+        template = self.file(self.plan["pretrain"]["compose"]).read_text()
+        per_step = int(re.search(r"batch_size: (\d+)", template).group(1)) * int(re.search(r"sequence_length: (\d+)", template).group(1))
+        return -(-int(self.plan["pretrain"]["tokens_per_round"]) // per_step)
+
     def rounds(self, stage, base, pieces):
         """pieces: contributor -> (compose values, description); returns the final merged model."""
         config = self.plan[stage]
@@ -796,6 +818,8 @@ class Build:
                                                                           "contributor": contributor, "replica": replica} else None
                     exports.append(self.export(model, tamper=tamper, base=base))
                 submissions.append(self.verify(stage, f"contributor {contributor}", exports, values, base, contributor))
+                if submissions[-1] is None:
+                    sys.exit(1)
             say(f"-- Merge round {round_number} ({self.plan.get('merge', 'mean')} of {len(submissions)} contributors)")
             merged = f"{self.name}-{stage[:4]}-r{round_number}"
             self.merge(merged, submissions, base)
@@ -816,10 +840,7 @@ class Build:
             say("\n== Bootstrap: shared starting weights ==")
             bootstrap = f"{self.name}-bootstrap"
             self.train(bootstrap, self.compose("pretrain", None, 1, f"tokens: {pretrain['bootstrap_tokens']}", sources=everything))
-            # Fixed steps with repetition allowed, so a contributor with a small shard still gets a full round.
-            template = self.file(pretrain["compose"]).read_text()
-            per_step = int(re.search(r"batch_size: (\d+)", template).group(1)) * int(re.search(r"sequence_length: (\d+)", template).group(1))
-            steps = -(-int(pretrain["tokens_per_round"]) // per_step)
+            steps = self.pretrain_steps()
             pieces = {contributor: ({"budget": f"steps: {steps}\n      epochs: 1000", "sources": pretrain["shards"][contributor]},
                                     ", ".join(pretrain["shards"][contributor])) for contributor in self.contributors}
             base = self.rounds("pretrain", bootstrap, pieces)
@@ -852,6 +873,449 @@ def cmd_build(args):
     BUILD_LOG = open(build.home / "build.log", "a", encoding="utf-8")
     say(f"log: {build.home / 'build.log'}")
     build.run()
+
+
+JOIN_HOME = WALDITO_HOME / "join"
+SIGNING_NAMESPACE = "waldito"
+
+
+class FetchError(Exception):
+    """A store could not be read. Unlike a hash mismatch, this says nothing about the record: retry later."""
+
+
+def file_hashes(directory):
+    """sha256 of every file a record publishes, so no file can be swapped after the fact."""
+    return {path.name: sha256_file(path) for path in sorted(directory.iterdir())
+            if path.is_file() and not path.name.startswith(".")}
+
+
+def now_utc():
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+class Join:
+    """One identity in a run kept in a git repo: each pass reads the repo, does the next unit, commits its record."""
+
+    def __init__(self, url, run_dir, identity, key, email, port):
+        self.identity = identity
+        self.home = JOIN_HOME / identity
+        self.key = pathlib.Path(key).expanduser() if key else self.home / "signing-key"
+        self.email = email
+        self.port = port
+        if pathlib.Path(url).expanduser().exists():
+            url = str(pathlib.Path(url).expanduser().resolve())
+        # GitHub runs repos take records as pull requests, merged by the repo's verifier Action.
+        self.github = re.match(r"(?:https://github\.com/|git@github\.com:)([^/]+)/([^/]+?)(?:\.git)?/?$", url)
+        self.head = None
+        self.clone = self.home / (pathlib.PurePosixPath(url.rstrip("/")).name.removesuffix(".git") or "repo")
+        if not (self.clone / ".git").exists():
+            self.clone.parent.mkdir(parents=True, exist_ok=True)
+            run(["git", "clone", "-q", url, str(self.clone)])
+        self.run_dir = self.clone / run_dir
+        if not self.key.exists():
+            self.key.parent.mkdir(parents=True, exist_ok=True)
+            run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", f"waldito {identity}", "-f", str(self.key)])
+        self.corpora = None
+
+    def git(self, *args, check=True):
+        show_command(["git", *args], self.clone)
+        result = subprocess.run(["git", *args], cwd=self.clone, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        if result.returncode and check:
+            error(result.stdout.strip())
+            raise subprocess.CalledProcessError(result.returncode, ["git", *args])
+        return result
+
+    def gh(self, *args):
+        show_command(["gh", *args], self.clone)
+        return subprocess.run(["gh", *args], cwd=self.clone, stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+
+    def identity_entry(self, name):
+        """A plan identity as {key, hf}; a bare string is just the signing key."""
+        entry = (self.build.plan.get("identities") or {}).get(name)
+        return {"key": entry} if isinstance(entry, str) else entry or {}
+
+    def load(self):
+        """The plan as of this pass: amendments land through git like everything else."""
+        plan = self.run_dir / "plan.yaml"
+        if not plan.exists():
+            error(f"no {plan.relative_to(self.clone)} in {self.clone}")
+            sys.exit(1)
+        self.build = Build(plan)
+        self.build.home = self.home / "work" / self.build.name
+        self.build.port = self.port
+        self.build.models = self.home / "models"
+        (self.build.home / "hub").mkdir(parents=True, exist_ok=True)
+        HubHandler.root = (self.build.home / "hub").resolve()
+        identities = self.build.plan.get("identities") or {}
+        public = " ".join(pathlib.Path(f"{self.key}.pub").read_text().split()[:2])
+        hf_user = None
+        if self.store() is None:
+            from huggingface_hub import HfApi, get_token, login  # Imported here so file stores don't require it.
+            if not get_token():
+                say("Hugging Face login: paste a token with write access from https://huggingface.co/settings/tokens")
+                login()
+            hf_user = HfApi().whoami()["name"]
+        entry = self.identity_entry(self.identity)
+        if entry.get("key") != public or (hf_user and entry.get("hf") != hf_user):
+            error(f"{self.identity} is not in {plan.relative_to(self.clone)} with this key and Hugging Face account; "
+                  f"add under identities:\n  {self.identity}:\n    key: {public}" + (f"\n    hf: {hf_user}" if hf_user else ""))
+            sys.exit(1)
+        self.allowed = self.build.home / "allowed_signers"
+        self.allowed.write_text("".join(f'{name} namespaces="{SIGNING_NAMESPACE}" {self.identity_entry(name)["key"]}\n'
+                                        for name in identities))
+        self.stages = ["bootstrap"] + ["pretrain"] * int(self.build.plan["pretrain"]["rounds"]) \
+            + ["posttrain"] * int(self.build.plan["posttrain"]["rounds"])
+
+    def round_dir(self, number):
+        return self.run_dir / "rounds" / f"round-{number:04d}"
+
+    def verified(self, path):
+        """The record at `path` if it is signed by the plan identity it names, else None."""
+        record = json.loads(path.read_text())
+        signature = path.with_name(path.name + ".sig")
+        if signature.exists() and str(record.get("identity")) in (self.build.plan.get("identities") or {}):
+            with open(path, "rb") as stream:
+                result = subprocess.run(["ssh-keygen", "-Y", "verify", "-f", str(self.allowed), "-I", record["identity"],
+                                         "-n", SIGNING_NAMESPACE, "-s", str(signature)], stdin=stream, capture_output=True)
+            if result.returncode == 0:
+                return record
+        error(f"{path.relative_to(self.clone)}: not signed by the identity it names; ignored")
+        return None
+
+    def merged(self, number):
+        path = self.round_dir(number) / "merge.yaml"
+        if not path.exists():
+            return None
+        record = self.verified(path)
+        if not record or record.get("round") != number:
+            error(f"{path.relative_to(self.clone)} is not a valid merge record; the run needs a fix before anyone continues")
+            sys.exit(1)
+        return record
+
+    def submissions(self, number):
+        """unit -> verified records; a record must match the file it is in, so none can be replayed elsewhere."""
+        submitted = collections.defaultdict(list)
+        for path in sorted((self.round_dir(number) / "submissions").glob("*.yaml")):
+            record = self.verified(path)
+            if record and record.get("round") == number and path.name == f"{record['unit']}-{record['identity']}.yaml":
+                submitted[record["unit"]].append(record)
+        return submitted
+
+    def units(self, stage):
+        return ["all"] if stage == "bootstrap" else self.build.contributors
+
+    def values(self, stage, unit):
+        pretrain = self.build.plan["pretrain"]
+        if stage == "bootstrap":
+            return {"budget": f"tokens: {pretrain['bootstrap_tokens']}",
+                    "sources": [source for shard in pretrain["shards"].values() for source in shard]}
+        if stage == "pretrain":
+            return {"budget": f"steps: {self.build.pretrain_steps()}\n      epochs: 1000", "sources": pretrain["shards"][unit]}
+        if self.corpora is None:
+            import fcntl  # Only join shares the local index between processes.
+            # The local test index is one per machine; identities ingesting shards at once would collide.
+            with open(WALDITO_HOME / "ingest.lock", "w") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                self.corpora = self.build.shards()
+        return {"budget": f"epochs: {self.build.plan['posttrain']['epochs_per_round']}", "corpus": self.corpora[unit][0]}
+
+    def store(self):
+        """`huggingface` (each identity's own account) or a file:///path shared directory."""
+        store = str(self.build.plan.get("store") or "")
+        if store == "huggingface":
+            return None
+        if not store.startswith("file://"):
+            error(f"store {store!r}: expected huggingface or file:///path")
+            sys.exit(1)
+        return pathlib.Path(store[len("file://"):]).expanduser() / self.build.name
+
+    def publish(self, directory):
+        if self.store() is None:
+            from huggingface_hub import HfApi  # Imported here so file stores don't require it.
+            user = self.identity_entry(self.identity).get("hf")
+            if not user:
+                error(f"{self.identity} has no hf user in the plan's identities; Hugging Face stores need one")
+                sys.exit(1)
+            say(f"   publishing {directory.name} to huggingface://{user}/{directory.name}")
+            api = HfApi()
+            api.create_repo(f"{user}/{directory.name}", exist_ok=True)
+            commit = api.upload_folder(repo_id=f"{user}/{directory.name}", folder_path=str(directory),
+                                       commit_message=f"waldito {self.build.name}: {directory.name}")
+            return f"huggingface://{user}/{directory.name}@{commit.oid}"
+        target = self.store() / directory.name
+        if not target.exists():
+            say(f"   publishing {directory.name} to {target}")
+            shutil.copytree(directory, target)
+        return f"file://{target}"
+
+    def fetch(self, record, target):
+        """The record's files from the store into `target`, checked against the hashes it commits to.
+        None if the store serves different content (a verdict on the record); FetchError if it
+        could not be read at all (a verdict on the network, so nothing is decided)."""
+        expected = record.get("files") or {"model.safetensors": record["model_sha256"]}
+        if expected.get("model.safetensors") != record["model_sha256"]:
+            error(f"{record['model']}: its files and model_sha256 disagree")
+            return None
+        if record["url"].startswith("huggingface://"):
+            repository, _, revision = record["url"][len("huggingface://"):].rpartition("@")
+            if repository.split("/")[0] != self.identity_entry(record["identity"]).get("hf"):
+                error(f"{record['model']}: {record['url']} is not in {record['identity']}'s Hugging Face account")
+                return None
+        if not (target / "model.safetensors").exists():
+            # Downloaded beside and renamed, so an interrupted fetch never looks like a finished one.
+            partial = target.with_name(target.name + ".partial")
+            for attempt in range(1, 4):
+                shutil.rmtree(partial, ignore_errors=True)
+                try:
+                    if record["url"].startswith("huggingface://"):
+                        from huggingface_hub import snapshot_download  # Imported here so file stores don't require it.
+                        say(f"   fetching {record['url']}")
+                        snapshot_download(repository, revision=revision, local_dir=str(partial), allow_patterns=list(expected))
+                    else:
+                        partial.mkdir(parents=True)
+                        for name in expected:
+                            shutil.copyfile(self.store() / record["model"] / name, partial / name)
+                    break
+                except Exception as exc:  # Each store fails its own way; all of them mean "try again".
+                    error(f"   fetching {record['model']} failed (attempt {attempt} of 3): {exc}")
+                    if attempt == 3:
+                        shutil.rmtree(partial, ignore_errors=True)
+                        raise FetchError(record["model"]) from exc
+                    time.sleep(15 * attempt)
+            shutil.rmtree(target, ignore_errors=True)
+            os.replace(partial, target)
+        actual = file_hashes(target)
+        mismatched = [name for name, digest in expected.items() if actual.get(name) != digest]
+        if mismatched:
+            shutil.rmtree(target)
+            error(f"{record['model']}: {', '.join(mismatched)} in the store do not match the record's hashes")
+            return None
+        return target
+
+    def pull(self, model):
+        run([WALDO_BIN, "model", "pull", model, f"huggingface://waldito/{model}"],
+            env={**os.environ, "HF_ENDPOINT": f"http://127.0.0.1:{self.port}"})
+
+    def base(self, number):
+        """The previous round's merge, pulled locally; None for the bootstrap round."""
+        if number == 0:
+            return None
+        record = self.merged(number - 1)
+        if record["model"] not in self.build.states():
+            if not self.fetch(record, self.build.home / "hub" / "waldito" / record["model"]):
+                sys.exit(1)
+            self.pull(record["model"])
+        return record
+
+    def commit(self, path, record, message):
+        """Signed record, committed with the identity as author and signed off; False if someone else's won."""
+        if self.github:
+            branch = f"waldito/{self.build.name}/{path.relative_to(self.run_dir / 'rounds').with_suffix('').as_posix()}"
+            self.git("fetch", "-q", "origin")
+            self.git("checkout", "-q", "-B", branch, "origin/HEAD")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(record, indent=2) + "\n")
+        signature = path.with_name(path.name + ".sig")
+        signature.unlink(missing_ok=True)
+        subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(self.key), "-n", SIGNING_NAMESPACE, str(path)],
+                       check=True, capture_output=True)
+        self.git("add", str(path), str(signature))
+        self.git("-c", f"user.name={self.identity}", "-c", f"user.email={self.email}", "commit", "-q", "-s", "-m", message)
+        return self.propose(branch, message) if self.github else self.push()
+
+    def head_remote(self):
+        """Where record branches go: the runs repo itself if this account can push to it, else its fork."""
+        if self.head:
+            return self.head
+        owner, repo = self.github.groups()
+        if self.gh("api", f"repos/{owner}/{repo}", "--jq", ".permissions.push") == "true":
+            self.head = ("origin", owner)
+            return self.head
+        login = self.gh("api", "user", "--jq", ".login")
+        self.gh("repo", "fork", f"{owner}/{repo}", "--clone=false", "--remote=false")
+        fork = f"https://github.com/{login}/{repo}.git"
+        if self.git("remote", "set-url", "fork", fork, check=False).returncode:
+            self.git("remote", "add", "fork", fork)
+        self.head = ("fork", login)
+        return self.head
+
+    def propose(self, branch, message):
+        """The record as a pull request; True once the runs repo's verifier merges it, False if it closes it."""
+        remote, owner = self.head_remote()
+        credentials = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]
+        self.git(*credentials, "push", "-q", "--force", remote, branch)
+        self.git("checkout", "-q", "main")
+        repository = "/".join(self.github.groups())
+        url = self.gh("pr", "create", "--repo", repository, "--base", "main", "--head", f"{owner}:{branch}", "--title", message,
+                      "--body", "A signed record from `waldito join`; the runs repo's verifier merges it if its checks pass.")
+        say(f"   {url}: waiting for the verifier")
+        for _ in range(180):
+            state = json.loads(self.gh("pr", "view", url, "--json", "state"))["state"]
+            if state != "OPEN":
+                break
+            time.sleep(10)
+        else:
+            error(f"{url} is still open after 30 minutes; is the verifier Action enabled?")
+            sys.exit(1)
+        self.git("branch", "-q", "-D", branch)
+        self.git(*credentials, "push", "-q", remote, "--delete", branch, check=False)
+        self.git("pull", "-q", "--rebase")
+        if state != "MERGED":
+            error(f"{url} was closed by the verifier; its comment says why")
+        return state == "MERGED"
+
+    def push(self):
+        for _ in range(5):
+            if self.git("push", "-q", check=False).returncode == 0:
+                return True
+            if self.git("pull", "-q", "--rebase", check=False).returncode:
+                # Only another merge.yaml for the same round can conflict; theirs stands.
+                self.git("rebase", "--abort", check=False)
+                self.git("reset", "-q", "--hard", "@{u}")
+                return False
+        error("push kept being rejected; try again later")
+        sys.exit(1)
+
+    def sync(self):
+        """The repo as it is now, with any record a previous pass committed but never pushed."""
+        if self.github:
+            # A pass cut short mid-proposal leaves its record branch checked out.
+            self.git("checkout", "-q", "main")
+        self.git("pull", "-q", "--rebase")
+        if not self.github:
+            self.push()
+
+    def step(self):
+        """One unit of work: "done" once the last round is merged, "idle" if waiting on others, else "worked"."""
+        self.sync()
+        self.load()
+        number = next((number for number in range(len(self.stages)) if not self.merged(number)), len(self.stages))
+        if number == len(self.stages):
+            final = self.merged(number - 1)
+            say(f"run {self.build.name} is complete: {final['model']} ({final['model_sha256'][:12]}), {final['url']}")
+            return "done"
+        stage, units = self.stages[number], self.units(self.stages[number])
+        submitted = self.submissions(number)
+        base = self.base(number)
+        full = [unit for unit in units if len(submitted[unit]) >= self.build.replicas]
+        minutes = self.build.plan.get("round_minutes")
+        late = bool(minutes and base and datetime.datetime.now(datetime.timezone.utc)
+                    > datetime.datetime.fromisoformat(base["closed_at"]) + datetime.timedelta(minutes=float(minutes)))
+        if len(full) == len(units) or (late and full):
+            self.close(number, stage, units, submitted, base)
+            return "worked"
+        todo = [unit for unit in units if len(submitted[unit]) < self.build.replicas
+                and self.identity not in [record["identity"] for record in submitted[unit]]]
+        if not todo:
+            say(f"round {number}: nothing for {self.identity} until others submit")
+            return "idle"
+        self.contribute(number, stage, todo[0], base)
+        return "worked"
+
+    def contribute(self, number, stage, unit, base):
+        build, name = self.build, self.build.name
+        model = f"waldito-{name}-r{number:04d}-{unit}-{self.identity}"
+        say(f"\n== Round {number} ({stage}), unit {unit}: {self.identity} trains {model} ==")
+        base_model = base["model"] if base else None
+        build.train(model, build.compose("pretrain" if stage == "bootstrap" else stage, base_model,
+                                         piece_seed(name, number, unit), **self.values(stage, unit)),
+                    round_piece=stage != "bootstrap")
+        target = {key: value for key, value in build.tamper.items() if key != "kind"}
+        tamper = build.tamper.get("kind", "lazy") if target == {"round": number, "unit": unit, "identity": self.identity} else None
+        export = build.export(model, tamper=tamper, base=base_model)
+        record = {
+            "kind": "waldito-submission", "schema": 1, "run": name, "round": number, "stage": stage, "unit": unit,
+            "identity": self.identity, "base": base_model, "base_sha256": base["model_sha256"] if base else None,
+            "model": model, "model_sha256": sha256_file(export / "model.safetensors"),
+            "bom_sha256": sha256_file(export / "BOM.json") if (export / "BOM.json").exists() else None,
+            "files": file_hashes(export),
+            "url": self.publish(export), "created_at": now_utc(),
+        }
+        self.commit(self.round_dir(number) / "submissions" / f"{unit}-{self.identity}.yaml", record,
+                    f"{name} round {number}: {unit} by {self.identity}")
+
+    def close(self, number, stage, units, submitted, base):
+        build, name = self.build, self.build.name
+        say(f"\n== Round {number} ({stage}): {self.identity} closes it ==")
+        base_model = base["model"] if base else None
+        accepted, dropped = [], []
+        for unit in units:
+            records = submitted[unit]
+            if len(records) < build.replicas:
+                dropped.append({"unit": unit, "reason": f"{len(records)} of {build.replicas} replicas by the deadline"})
+                continue
+            exports = [self.fetch(record, build.home / "exports" / record["model"]) for record in records]
+            present = [(record, export) for record, export in zip(records, exports) if export]
+            winner = build.verify("pretrain" if stage == "bootstrap" else stage, f"unit {unit}", [export for _, export in present],
+                                  self.values(stage, unit), base_model, unit) if len(present) >= build.replicas else None
+            if winner is None:
+                dropped.append({"unit": unit, "reason": "replicas disagree", "identities": [record["identity"] for record in records]})
+                continue
+            accepted.append(next(record for record, export in present if export == winner))
+        if not accepted:
+            error(f"round {number}: no unit was accepted; the run cannot continue without new submissions")
+            sys.exit(1)
+        merged = f"waldito-{name}-r{number:04d}-merge"
+        exports = [build.home / "exports" / record["model"] for record in accepted]
+        target = build.home / "hub" / "waldito" / merged
+        if len(exports) > 1:
+            build.merge(merged, exports, base_model)
+        elif merged not in build.states():
+            # One accepted unit (always so for the bootstrap) is the merge.
+            shutil.copytree(exports[0], target, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".cache"))
+            self.pull(merged)
+        say(f"-- Merge round {number}: {len(accepted)} units accepted, {len(dropped)} dropped")
+        record = {
+            "kind": "waldito-merge", "schema": 1, "run": name, "round": number, "stage": stage, "identity": self.identity,
+            "method": build.plan.get("merge", "mean") if len(exports) > 1 else "single",
+            "base": base_model, "base_sha256": base["model_sha256"] if base else None,
+            "accepted": [{key: record[key] for key in ("unit", "identity", "model", "model_sha256")} for record in accepted],
+            "dropped": dropped, "model": merged, "model_sha256": sha256_file(target / "model.safetensors"),
+            "files": file_hashes(target),
+            "url": self.publish(target), "closed_at": now_utc(),
+        }
+        if not self.commit(self.round_dir(number) / "merge.yaml", record, f"{name} round {number}: merge by {self.identity}"):
+            theirs = self.merged(number)
+            verdict = "matches" if theirs["model_sha256"] == record["model_sha256"] else "DIFFERS from"
+            say(f"   {theirs['identity']} merged round {number} first; their hash {verdict} this one")
+
+
+def cmd_join(args):
+    global BUILD_LOG
+    import threading  # Only join and build serve the hub in-process.
+    # Port 0: several identities can join from one machine at once.
+    hub = http.server.ThreadingHTTPServer(("127.0.0.1", 0), HubHandler)
+    threading.Thread(target=hub.serve_forever, daemon=True).start()
+    email = args.email or subprocess.run(["git", "config", "user.email"], stdout=subprocess.PIPE, text=True).stdout.strip() \
+        or f"{args.identity}@waldito.invalid"
+    join = Join(args.url, args.run_dir, args.identity, args.key, email, hub.server_address[1])
+    # Its own waldo model store, as with its own clone: identities on one machine never share a model name.
+    config = join.home / "waldo-config.json"
+    source = pathlib.Path(waldo_json("config", "show")["path"])
+    if source.exists():
+        shutil.copyfile(source, config)
+    os.environ["WALDO_CONFIG"] = str(config)
+    run([WALDO_BIN, "config", "set", "model.root", str(join.home / "models")])
+    try:
+        join.sync()
+        join.load()
+        BUILD_LOG = open(join.build.home / "join.log", "a", encoding="utf-8")
+        say(f"log: {join.build.home / 'join.log'}")
+        while True:
+            try:
+                outcome = join.step()
+            except FetchError as exc:
+                # Nothing was committed: the next pass retries the same unit or close.
+                error(f"could not fetch {exc} from the store; nothing committed, retrying in {args.wait}s")
+                if args.once:
+                    sys.exit(1)
+                outcome = "idle"
+            if outcome == "done" or args.once:
+                return
+            if outcome == "idle":
+                time.sleep(args.wait)
+    finally:
+        hub.shutdown()
 
 
 def build_parser():
@@ -901,6 +1365,16 @@ def build_parser():
     build = sub.add_parser("build", help="run a distributed build plan: shards, replicated rounds, merges, checks")
     build.add_argument("plan", help="name of ~/.waldo/waldito/plans/<name>.yaml, or a path to one")
     build.set_defaults(func=cmd_build)
+
+    join = sub.add_parser("join", help="contribute to a run kept in a git repo: train, verify, and merge units in turn")
+    join.add_argument("url", help="git URL or local path of the runs repo")
+    join.add_argument("run_dir", help="run directory in that repo, e.g. runs/py-ts-go-v1")
+    join.add_argument("--identity", required=True, help="name listed under the plan's identities")
+    join.add_argument("--key", help="ssh signing key; default ~/.waldo/waldito/join/<identity>/signing-key, created if missing")
+    join.add_argument("--email", help="commit author email; default git config user.email")
+    join.add_argument("--once", action="store_true", help="do one unit and exit")
+    join.add_argument("--wait", type=int, default=60, help="seconds between checks while waiting on others")
+    join.set_defaults(func=cmd_join)
 
     return parser
 

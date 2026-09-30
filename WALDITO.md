@@ -57,10 +57,102 @@ commits its signed record, and repeats. Nothing else runs anywhere; no process c
 - `replicas: 2` is the smallest verifying plan: agreeing replicas are accepted; disagreeing
   ones are both dropped for that round (no majority to trust) and the merge proceeds without
   that unit. Three replicas can instead outvote one bad submission.
-- A round closes when any `join` sees its deadline passed; whoever gets there first merges,
-  later joiners confirm the hash. If nobody is online, the round closes when someone returns.
+- A round closes when any `join` sees its deadline passed; claimed closers merge
+  independently and must agree on the hash. If nobody is online, the round closes when someone returns.
 - `waldo model build <plan>` is the one-machine mode: every unit done locally, to test a plan
   before asking others for compute. It shares the code path with `join`.
+
+## `waldito join` v1 design
+
+Built with a local git repo and a `file://` store: `testing/e2e/waldito-join.sh` runs two
+identities through a bootstrap, a pretrain and a post-train round, with a free-rider's unit
+dropped in round 1. Next: the GitHub and Hugging Face paths below.
+
+- `waldito join <git-url> <run-dir> --identity alice [--once]`: each identity gets its own clone
+  under `~/.waldo/waldito/join/<identity>/`, so several contributors can run on one Mac.
+  `--once` does one unit and exits (tests, cron); without it, loop until the run is done.
+- Plan keys beyond build's: `identities` (name -> ssh signing key and Hugging Face user),
+  `replicas`, `units` (named data shards; `pretrain.shards` is keyed by them), `store`,
+  optional `round_minutes` deadline.
+- Round 0 is the bootstrap: one unit on all data, replicated; its accepted replica is the
+  round-1 base, so the start is verified like any round.
+- Next unit: the lowest unit in the open round with fewer than `replicas` submissions that this
+  identity has not submitted. A race just yields an extra replica.
+- A round closes when every unit has its replicas (or the deadline passed with at least one
+  accepted unit): the closer probes, votes, merges, publishes, and submits `merge.yaml`.
+- Records are JSON-compatible YAML signed with `ssh-keygen -Y sign`, committed `-s` with the
+  identity as author. Records that don't verify against the plan's keys are ignored.
+
+### Records arrive as pull requests
+
+- The runs repo is public; contributors need no write access. `join` commits each record to the
+  contributor's fork and opens a PR (`gh`). A PR is a transaction id: opened, checked, merged,
+  branch deleted, all unattended. The commit on `main` and its signed file are the record.
+- A GitHub Action is the stateless verifier. It auto-merges a PR only if it adds nothing but
+  record files under an existing run's `rounds/`, each file matches the identity it names, its
+  signature verifies against the plan's key, and its round has no `merge.yaml` on `main` yet.
+  It reads files and runs `ssh-keygen`; it never executes PR code. Anyone can rerun the same
+  checks, which are the ones `join` applies when reading.
+- Rebase-merge, so each contributor's signed-off commit lands on `main` with them as author.
+- `main` orders everything: the first `merge.yaml` merged for a round stands, a later one is
+  rejected, and its closer compares hashes (the merge is deterministic, so they should match).
+- Plan changes (new runs, adding yourself to `identities`) are ordinary PRs reviewed by the
+  run's organizer via CODEOWNERS; the Action never merges them.
+- Cost: seconds per check, and Actions are free on public repos. About units x replicas + 1 PRs
+  per round (~100 at 50 Macs); bursts queue behind the 20 concurrent jobs and `join` waits.
+  Organizers watch the repo as "Participating", not "All activity".
+- Batching records per PR would cut PR count but delay visibility, which unit assignment needs;
+  left out until volume requires it.
+
+### Weights on Hugging Face
+
+- Each identity uploads to its own Hugging Face account, one model repo per submission or merge:
+  `huggingface://<user>/<model>@<commit>`. No shared org is needed.
+- Records carry the commit revision and a `files` map of every published file's sha256; readers
+  download exactly those files at that revision and check each hash before using any of them.
+  `file:///path` stores (`<store>/<run>/<model>/`) stay for tests.
+- A store that cannot be read is retried, then the pass stops without committing: a network
+  failure never becomes a verdict. Only a complete download whose hashes differ counts against
+  a replica, since that is what the store serves at the pinned commit.
+
+### Claims: nobody does the same work twice (next to build)
+
+Today two identities that both see a free unit both train it, and every joiner that sees a full
+round closes it; only the first record lands. Claims make the repo a lock on the work itself.
+
+- Before any unit, `join` opens a signed claim PR and waits for it to merge. Claims live in
+  `rounds/round-NNNN/claims/`, one file per slot: `<unit>-<replica>.yaml` for training
+  (`u3-1.yaml`, `u3-2.yaml`) and `close-<n>.yaml` for closing.
+- Slots have fixed names, so two claims for one slot conflict and the verifier closes the second.
+  The loser takes the next free slot, or another unit. Only the winner trains or closes.
+- Next unit: the lowest unit with a free replica slot that this identity has not claimed; the
+  open round's close slots come first once every unit has its submissions.
+- A claim expires if its submission hasn't landed within the plan's `claim_minutes` (default
+  2x the plan's expected unit time). A new attempt, `<slot>.<attempt>.yaml` (`u3-1.2.yaml`), is
+  accepted only once the previous attempt has expired and its slot has no submission.
+- The verifier judges expiry by GitHub's clock, not the claimer's: it rejects a claim whose
+  `created_at` is more than 5 minutes from its own time, so nobody can backdate one.
+- Cost: one more PR round trip (~15-60 s) per unit, about twice the PRs per round (~200 at 50
+  Macs). Small next to the hours a duplicate training unit wastes.
+
+### Replicated closing (next to build)
+
+A round's merge is the next round's base, so it is verified like training: by independent
+replicas, not by trusting whoever closed first.
+
+- Closing is a unit with `close_replicas` slots (default 2). Each closer fetches every
+  submission, probes, votes, merges, and submits `rounds/round-NNNN/merges/<identity>.yaml`.
+- The round is closed once `close_replicas` merge records agree on the accepted set, the dropped
+  set, and the merged `files` hashes. The mean in a fixed order is deterministic: in `smoke-v1`,
+  two identities closed round 1 independently and got the same merged hash.
+- Disagreeing merge records flag the round instead of closing it: nobody builds on it until more
+  closers settle it or the organizer amends the plan. Probes are not bit-reproducible, so honest
+  closers can split on a replica pair right at `replica_tolerance`; that is a flag, never a
+  silent accept.
+- Cost: `close_replicas` downloads of the round's submissions (~40 GB per closer at 100 units of
+  ~200M parameters), not one per contributor. Everyone else checks the agreeing hashes only.
+- The verifier accepts `merges/*.yaml` under the same checks as submissions, one per identity.
+  `merge.yaml` stays readable for runs recorded before this.
 
 ## Local files
 
