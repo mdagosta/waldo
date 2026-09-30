@@ -315,6 +315,10 @@ def cmd_merge(args):
     if diloco and not base:
         error("--outer-lr needs --base: the round's starting (global) weights")
         sys.exit(1)
+    shares = [float(weight) for weight in args.weights.split(",")] if args.weights else [1.0] * len(inputs)
+    if len(shares) != len(inputs) or min(shares) <= 0 or (args.weights and base):
+        error("--weights needs one positive weight per input, and a plain mean (no --base)")
+        sys.exit(1)
     previous = mx.load(args.momentum_state) if diloco and args.momentum_state else {}
     merged, momentum = {}, {}
     for key, tensor in weights[0].items():
@@ -330,7 +334,9 @@ def cmd_merge(args):
             origin = base_weights[key].astype(mx.float32)
             merged[key] = (origin + total - len(weights) * origin).astype(tensor.dtype)
         else:
-            merged[key] = (total / len(weights)).astype(tensor.dtype)
+            # Weighted by tokens trained, so a small unit counts for its share of the data.
+            weighted = sum(tensors[key].astype(mx.float32) * share for tensors, share in zip(weights, shares))
+            merged[key] = (weighted / sum(shares)).astype(tensor.dtype)
     mx.eval(merged, momentum)
     output.mkdir(parents=True)
     for name in shared:
@@ -344,7 +350,8 @@ def cmd_merge(args):
     record = {
         "kind": "waldito-merge-record",
         "schema": 1,
-        "method": "diloco-nesterov" if diloco else "task-arithmetic" if base else "mean",
+        "method": "diloco-nesterov" if diloco else "task-arithmetic" if base else "weighted-mean" if args.weights else "mean",
+        "weights": shares if args.weights else None,
         "base_model_sha256": sha256_file(base / "model.safetensors") if base else None,
         "outer_lr": args.outer_lr,
         "momentum": args.momentum if diloco else None,
@@ -746,13 +753,15 @@ class Build:
         say(f"   {label}: accepted replica {accepted[0] + 1}" + (f", rejected replica {', '.join(map(str, rejected))}" if rejected else ""))
         return exports[accepted[0]]
 
-    def merge(self, model, submissions, base):
+    def merge(self, model, submissions, base, weights=None):
         target = self.home / "hub" / "waldito" / model
         if model in self.states():
             say(f"   {model} already merged")
             return target
         shutil.rmtree(target, ignore_errors=True)
         argv = [sys.executable, str(REPO_ROOT / "waldito"), "merge", str(target), *map(str, submissions)]
+        if weights:
+            argv += ["--weights", ",".join(map(str, weights))]
         if self.plan.get("merge", "mean") == "diloco":
             argv += ["--base", str(self.export(base)), "--outer-lr", "0.7"]
             state = self.home / "hub" / "waldito" / base / "outer-momentum.safetensors"
@@ -964,7 +973,7 @@ class Join:
         self.allowed.write_text("".join(f'{name} namespaces="{SIGNING_NAMESPACE}" {self.identity_entry(name)["key"]}\n'
                                         for name in identities))
         self.stages = ["bootstrap"] + ["pretrain"] * int(self.build.plan["pretrain"]["rounds"]) \
-            + ["posttrain"] * int(self.build.plan["posttrain"]["rounds"])
+            + ["posttrain"] * int((self.build.plan.get("posttrain") or {}).get("rounds", 0))  # Optional: pretrain-only runs.
 
     def round_dir(self, number):
         return self.run_dir / "rounds" / f"round-{number:04d}"
@@ -1229,6 +1238,8 @@ class Join:
             "model": model, "model_sha256": sha256_file(export / "model.safetensors"),
             "bom_sha256": sha256_file(export / "BOM.json") if (export / "BOM.json").exists() else None,
             "files": file_hashes(export),
+            # Tokens trained weight this unit in the merge; replicas must report the same count.
+            "tokens": max((int(row["tokens"]) for row in build.telemetry(model) if row["tokens"]), default=0),
             "url": self.publish(export), "created_at": now_utc(),
         }
         self.commit(self.round_dir(number) / "submissions" / f"{unit}-{self.identity}.yaml", record,
@@ -1246,6 +1257,10 @@ class Join:
                 continue
             exports = [self.fetch(record, build.home / "exports" / record["model"]) for record in records]
             present = [(record, export) for record, export in zip(records, exports) if export]
+            if len({record.get("tokens") for record in records}) > 1:
+                dropped.append({"unit": unit, "reason": "replicas report different tokens trained",
+                                "identities": [record["identity"] for record in records]})
+                continue
             winner = build.verify("pretrain" if stage == "bootstrap" else stage, f"unit {unit}", [export for _, export in present],
                                   self.values(stage, unit), base_model, unit) if len(present) >= build.replicas else None
             if winner is None:
@@ -1258,8 +1273,10 @@ class Join:
         merged = f"waldito-{name}-r{number:04d}-merge"
         exports = [build.home / "exports" / record["model"] for record in accepted]
         target = build.home / "hub" / "waldito" / merged
+        tokens = [record.get("tokens") for record in accepted]
+        weights = tokens if all(tokens) and build.plan.get("merge", "mean") == "mean" else None
         if len(exports) > 1:
-            build.merge(merged, exports, base_model)
+            build.merge(merged, exports, base_model, weights)
         elif merged not in build.states():
             # One accepted unit (always so for the bootstrap) is the merge.
             shutil.copytree(exports[0], target, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".cache"))
@@ -1267,9 +1284,9 @@ class Join:
         say(f"-- Merge round {number}: {len(accepted)} units accepted, {len(dropped)} dropped")
         record = {
             "kind": "waldito-merge", "schema": 1, "run": name, "round": number, "stage": stage, "identity": self.identity,
-            "method": build.plan.get("merge", "mean") if len(exports) > 1 else "single",
+            "method": ("token-weighted-mean" if weights else build.plan.get("merge", "mean")) if len(exports) > 1 else "single",
             "base": base_model, "base_sha256": base["model_sha256"] if base else None,
-            "accepted": [{key: record[key] for key in ("unit", "identity", "model", "model_sha256")} for record in accepted],
+            "accepted": [{key: record.get(key) for key in ("unit", "identity", "model", "model_sha256", "tokens")} for record in accepted],
             "dropped": dropped, "model": merged, "model_sha256": sha256_file(target / "model.safetensors"),
             "files": file_hashes(target),
             "url": self.publish(target), "closed_at": now_utc(),
@@ -1335,6 +1352,7 @@ def build_parser():
     merge.add_argument("--outer-lr", type=float, help="with --base: DiLoCo outer step at this learning rate (paper: 0.7)")
     merge.add_argument("--momentum", type=float, default=0.9, help="DiLoCo Nesterov momentum (default 0.9)")
     merge.add_argument("--momentum-state", help="previous round's outer-momentum.safetensors")
+    merge.add_argument("--weights", help="comma-separated weight per input for a weighted mean, e.g. tokens trained")
     merge.set_defaults(func=cmd_merge)
 
     hub = sub.add_parser("hub", help="serve local huggingface packages to `waldo model pull` via HF_ENDPOINT")
