@@ -26,6 +26,7 @@ var configKeys = []string{
 	"lookaside.mirrors",
 	"lookaside.cache",
 	"lookaside.cache.max-size",
+	"lookaside.cache.keep",
 	"lookaside.scratch",
 	"ingest.staging",
 	"model.root",
@@ -231,6 +232,14 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("lookaside.cache.max-size must be a positive byte size such as 20GiB or 500MiB")
 		}
+	case "lookaside.cache.keep":
+		if len(values) != 1 {
+			return oneConfigValue(key)
+		}
+		configuration.Lookaside.CacheKeep, err = strconv.ParseBool(values[0])
+		if err != nil {
+			return fmt.Errorf("lookaside.cache.keep must be true or false")
+		}
 	case "lookaside.scratch":
 		if len(values) != 1 {
 			return oneConfigValue(key)
@@ -363,6 +372,8 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.Lookaside.Cache = ""
 	case "lookaside.cache.max-size":
 		configuration.Lookaside.CacheMaxBytes = 0
+	case "lookaside.cache.keep":
+		configuration.Lookaside.CacheKeep = false
 	case "lookaside.scratch":
 		configuration.Lookaside.Scratch = ""
 	case "ingest.staging":
@@ -454,6 +465,8 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 		return value, err == nil, err
 	case "lookaside.cache.max-size":
 		return config.EffectiveCacheMaxBytes(configuration), true, nil
+	case "lookaside.cache.keep":
+		return configuration.Lookaside.CacheKeep, configuration.Lookaside.CacheKeep, nil
 	case "lookaside.scratch":
 		value, err := config.EffectiveScratchRoot(configuration)
 		return value, err == nil, err

@@ -23,7 +23,8 @@ operating system's temporary directory. Verified objects remain available
 while an operation is active and across a failure or interruption. After a
 successful operation commits, WALDO removes every cache object that operation
 used. `lookaside.cache.max-size` bounds recovery objects left by incomplete
-operations; it is not a post-success retention target.
+operations; it is not a post-success retention target. Cache objects can be
+kept across runs with `lookaside.cache.keep` set to `true` (ADR 0062).
 Multi-stage composes materialize only the stage about to run. A successful
 stage releases its objects before the next stage is materialized; a failed or
 interrupted stage retains its verified objects for retry. Operators can inspect

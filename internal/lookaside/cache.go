@@ -34,6 +34,7 @@ type Cache struct {
 	root     string
 	scratch  string
 	retain   bool
+	keepUsed bool
 	maxBytes int64
 	client   *http.Client
 	mirrors  []string
@@ -63,6 +64,12 @@ func WithMirrors(mirrors []string) Option {
 
 func WithPersistentStorage(scratch string, maxBytes int64) Option {
 	return func(cache *Cache) { cache.scratch = scratch; cache.retain = true; cache.maxBytes = maxBytes }
+}
+
+// WithKeepUsed makes PurgeUsed retain successfully used objects for later
+// commands; the persistent-storage size bound still prunes them.
+func WithKeepUsed(keep bool) Option {
+	return func(cache *Cache) { cache.keepUsed = keep }
 }
 
 func NewCache(root string, client *http.Client, options ...Option) (*Cache, error) {
@@ -97,6 +104,7 @@ func DefaultCache() (*Cache, error) {
 	// directory for both verified objects and partial downloads. New/default
 	// configurations separate the bounded recovery cache from download scratch.
 	if configuration.Lookaside.Cache == "" && configuration.Lookaside.Scratch != "" {
+		// No size bound applies to this legacy layout, so lookaside.cache.keep is ignored here.
 		return NewCache(configuration.Lookaside.Scratch, nil, WithMirrors(configuration.Lookaside.Mirrors))
 	}
 	root, err := config.EffectiveCacheRoot(configuration)
@@ -107,7 +115,7 @@ func DefaultCache() (*Cache, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewCache(root, nil, WithMirrors(configuration.Lookaside.Mirrors), WithPersistentStorage(scratch, config.EffectiveCacheMaxBytes(configuration)))
+	return NewCache(root, nil, WithMirrors(configuration.Lookaside.Mirrors), WithPersistentStorage(scratch, config.EffectiveCacheMaxBytes(configuration)), WithKeepUsed(configuration.Lookaside.CacheKeep))
 }
 
 func (cache *Cache) Root() string    { return cache.root }
@@ -312,6 +320,11 @@ func (cache *Cache) FetchWithProgress(ctx context.Context, objectURL, digest str
 // not a reason to retain a second copy of an immutable lookaside object.
 func (cache *Cache) PurgeUsed() (Stats, error) {
 	cache.mu.Lock()
+	if cache.keepUsed {
+		cache.used = map[string]bool{}
+		cache.mu.Unlock()
+		return Stats{}, nil
+	}
 	paths := make([]string, 0, len(cache.used))
 	for path := range cache.used {
 		paths = append(paths, path)

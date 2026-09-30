@@ -24,12 +24,16 @@ success cleanup, leaving its verified objects available for retry.
 `lookaside.cache.max-size` remains an LRU bound for objects retained by
 incomplete work. It does not describe post-success retention.
 
+`lookaside.cache.keep true` opts a machine out of success cleanup for
+repeated runs over the same corpus: used objects stay cached and are evicted
+only by that LRU bound or `waldo lookaside cache clean`.
+
 ## Consequences
 
 - Successful audit, verification, export, calibration, and training release
   the local copies they consumed.
 - Exact retries after failure or interruption can still reuse verified bytes.
 - A later independent command redownloads an object purged by an earlier
-  successful command.
+  successful command, unless `lookaside.cache.keep` retained it.
 - Durable model artifacts, index state, published lookaside objects, and
   ingestion recovery state are unaffected.

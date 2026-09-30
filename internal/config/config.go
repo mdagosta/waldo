@@ -59,6 +59,7 @@ type AI struct {
 type Lookaside struct {
 	Cache         string   `json:"cache,omitempty"`
 	CacheMaxBytes int64    `json:"cache_max_bytes,omitempty"`
+	CacheKeep     bool     `json:"cache_keep,omitempty"`
 	Scratch       string   `json:"scratch,omitempty"`
 	Mirrors       []string `json:"mirrors,omitempty"`
 	Publish       *Publish `json:"publish,omitempty"`

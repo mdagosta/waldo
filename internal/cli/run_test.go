@@ -875,6 +875,42 @@ func TestConfigSetAcceptsFileLookasideAndUnset(t *testing.T) {
 	}
 }
 
+func TestConfigSetGetUnsetLookasideCacheKeep(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	run := func(args ...string) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := Run(args, &stdout, &stderr)
+		return code, strings.TrimSpace(stdout.String()), stderr.String()
+	}
+	if code, out, errOut := run("config", "get", "lookaside.cache.keep"); code != 0 || out != "(unset)" {
+		t.Fatalf("initial get code = %d, stdout = %q, stderr = %q", code, out, errOut)
+	}
+	if code, _, errOut := run("config", "set", "lookaside.cache.keep", "true"); code != 0 {
+		t.Fatalf("set code = %d, stderr = %q", code, errOut)
+	}
+	if configuration, err := config.Load(); err != nil || !configuration.Lookaside.CacheKeep {
+		t.Fatalf("after set: keep = %v, err = %v", configuration.Lookaside.CacheKeep, err)
+	}
+	if code, out, errOut := run("config", "get", "lookaside.cache.keep"); code != 0 || out != "true" {
+		t.Fatalf("get after set code = %d, stdout = %q, stderr = %q", code, out, errOut)
+	}
+	if code, _, errOut := run("config", "set", "lookaside.cache.keep", "sometimes"); code == 0 || !strings.Contains(errOut, "must be true or false") {
+		t.Fatalf("invalid set code = %d, stderr = %q", code, errOut)
+	}
+	if configuration, err := config.Load(); err != nil || !configuration.Lookaside.CacheKeep {
+		t.Fatalf("invalid set changed keep to %v, err = %v", configuration.Lookaside.CacheKeep, err)
+	}
+	if code, _, errOut := run("config", "unset", "lookaside.cache.keep"); code != 0 {
+		t.Fatalf("unset code = %d, stderr = %q", code, errOut)
+	}
+	if configuration, err := config.Load(); err != nil || configuration.Lookaside.CacheKeep {
+		t.Fatalf("after unset: keep = %v, err = %v", configuration.Lookaside.CacheKeep, err)
+	}
+	if code, out, errOut := run("config", "get", "lookaside.cache.keep"); code != 0 || out != "(unset)" {
+		t.Fatalf("get after unset code = %d, stdout = %q, stderr = %q", code, out, errOut)
+	}
+}
+
 func TestConfigShowAndGetUseCanonicalKeys(t *testing.T) {
 	configurationPath := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("WALDO_CONFIG", configurationPath)
@@ -970,7 +1006,7 @@ func TestConfigGetJSONPreservesOrderedMatchesAndUnsetState(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatal(err)
 	}
-	if len(output.Matches) != 7 || output.Matches[0].Key != "lookaside" || output.Matches[1].Key != "lookaside.region" || output.Matches[1].Set {
+	if len(output.Matches) != 8 || output.Matches[0].Key != "lookaside" || output.Matches[1].Key != "lookaside.region" || output.Matches[1].Set {
 		t.Fatalf("matches = %+v", output.Matches)
 	}
 }
