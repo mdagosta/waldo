@@ -104,6 +104,26 @@ dropped in round 1. Next: the GitHub and Hugging Face paths below.
 - Batching records per PR would cut PR count but delay visibility, which unit assignment needs;
   left out until volume requires it.
 
+### Automation account (next to set up)
+
+`python-basics-v1` opened 129 PRs from the organizer's own account, and every PR plus every
+merged commit authored with a linked email lands on that account's contribution graph. Records
+should come from a machine account instead: GitHub allows one per person, for automation only.
+
+- Create `mdagosta-bot` (a plus-address email works), add it as a Write collaborator on the runs
+  repo, and accept the invite as the bot.
+- Token: a classic token with only `public_repo`. A fine-grained token only reaches repos its own
+  account owns, so it cannot open PRs on a repo owned by another personal account; the bot has
+  access to nothing else, so the broader scope exposes nothing.
+- Run as the bot without touching the personal `gh` login: `GH_TOKEN=<bot token> waldito join ...
+  --email mdagosta-bot@users.noreply.github.com`. The noreply email keeps commits off the
+  personal graph too.
+- Identity is unchanged: records are still signed with each identity's key and weights still go
+  to its Hugging Face account. One bot can carry several identities, as in the testbed.
+- Untested: that `gh auth git-credential` (used for `join`'s pushes) honors `GH_TOKEN`. Planned:
+  `join --github-token-file`, so the token never appears on a command line.
+- Contributions already on the personal graph stay; they only go away with the repo.
+
 ### Weights on Hugging Face
 
 - Each identity uploads to its own Hugging Face account, one model repo per submission or merge:
@@ -196,8 +216,9 @@ replicas, not by trusting whoever closed first.
 ## Milestones
 
 1. Done: network-built model matches single-machine training at equal steps.
-2. Testbed on `mdagosta/waldo-builds`: two identities (own account + an automation account),
-   `replicas: 2`, one injected disagreement; then a round with 3-5 real people.
+2. Testbed on `mdagosta/waldo-builds`: two identities, `replicas: 2`, one injected disagreement
+   (done: `smoke-v1`, then `python-basics-v1` at 372/374 and 220/220). Next: records from an
+   automation account (see above), then a round with 3-5 real people.
 3. `waldito join <git-url>` first, reusing waldito's working pieces (merge, probe) plus git and
    real Hugging Face uploads, so nothing is needed in waldo yet. `waldo model join` comes later.
 4. Python + TypeScript + Go, ~200M parameters, ~4B tokens (~2 days on 50 Macs, ~6 h on one H100).
