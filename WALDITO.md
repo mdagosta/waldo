@@ -134,6 +134,13 @@ should come from a machine account instead: GitHub allows one per person, for au
 - A store that cannot be read is retried, then the pass stops without committing: a network
   failure never becomes a verdict. Only a complete download whose hashes differ counts against
   a replica, since that is what the store serves at the pinned commit.
+- Storage is finite (8.8 TB per account here) but not a concern until full scale.
+  `python-basics-v1` uploads ~19 MB per model, ~133 MB per round: 24/7 on one Mac fills it in
+  ~5 years of pretraining or ~1 year of post-training. At milestone 4 (~400 MB per model), one
+  Mac submitting ~4 replicas an hour fills its account in ~230 days.
+- Later: delete a round's submissions from Hugging Face once its merge is committed (after an
+  optional audit window), keeping only merges. Records keep every hash, so attribution
+  survives; only re-checking an old replica's bytes is lost. Cuts storage ~99% at milestone 4.
 
 ### Claims: nobody does the same work twice (next to build)
 
