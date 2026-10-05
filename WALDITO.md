@@ -212,10 +212,18 @@ replicas, not by trusting whoever closed first.
 
 ## Composing models
 
+- A run is a voyage: contributors embark on one plan together, from a pinned start to a
+  final merge. The product is that lineage, not its pieces. "Build flask" is never done on
+  its own; flask trained from another start, mix, or round is a different, unmergeable flask.
+- Mergeable = same tokenizer + same architecture + shared ancestor weights, synced each
+  round. Matching a compose yaml alone gives the same shape, not compatible weights; building
+  on another model (e.g. a waldo foundation) needs its published checkpoint and tokenizer.
 - One shared pretrain run per mix (e.g. Python + TypeScript + Go): vscode chunks, django,
   flask, thefuck are all units in the same rounds. Result: the general base.
 - Add data later by continuing the run: a new plan whose round-1 base is the last merge,
   with some earlier data replayed. Post-training is then replayed on the new base.
+  Not built: a plan `base:` key (HF URL @commit, sha256, `from:` round) that replaces the
+  bootstrap, so e.g. python-basics -> full stack skips the original pretraining.
 - Separately finished pretrains are not averaged together; they drift apart.
 - Specialists (vscode, your company's code) are fine-tunes of the shared base, run locally.
 - Combining specialists = routing (mixture of experts, FlexOlmo-style), a later step.
