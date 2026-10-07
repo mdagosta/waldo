@@ -218,6 +218,11 @@ replicas, not by trusting whoever closed first.
 - Mergeable = same tokenizer + same architecture + shared ancestor weights, synced each
   round. Matching a compose yaml alone gives the same shape, not compatible weights; building
   on another model (e.g. a waldo foundation) needs its published checkpoint and tokenizer.
+- Data units are the reusable part, not weights. Today a plan names repos
+  (`shards: u1: [pallets/flask, httpie/cli]`) and each contributor's local index resolves
+  them; the commit is only recorded afterwards in the BOM. Not built: pin each unit before
+  training (repo @ commit, filter, corpus/index revision, expected selection hash) so every
+  contributor feeds the same bytes, and a refreshed index refuses instead of drifting.
 - One shared pretrain run per mix (e.g. Python + TypeScript + Go): vscode chunks, django,
   flask, thefuck are all units in the same rounds. Result: the general base.
 - Add data later by continuing the run: a new plan whose round-1 base is the last merge,
