@@ -43,7 +43,7 @@ expected to be a reliable open-domain factual system.
 | 0003 | same 30.7M core | Inherit rung 0002 exactly; add only a supervised interaction stage | Respond to simple, grounded prompts inside the TinyStories language domain | Passed |
 | 0004 | 64.7M total / 59.5M core | 12 layers, width 640, SwiGLU 1,728, 10/10 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Passed |
 | 0005 | 124.6M total / about 106.2M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Grammatical, locally relevant general-language continuation without assistant claims | Passed |
-| 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | 5-TPP pilot passed; 10-TPP phase underway |
+| 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | 5- and 10-TPP phases passed advancement checks; 20-TPP phase authorized |
 | 0007 | inherit passed 0006 | No architecture change; supervised post-training only | Constrained assistant for extraction, classification, rewriting, and grounded QA | Defined, not authorized |
 
 The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
@@ -222,6 +222,17 @@ artifact reloaded exactly, 20/20 sampled outputs contained two complete
 sentences, 17/20 remained grammatical and on topic for both sentences, and the
 sampled/greedy suites contained one/two loops respectively.
 
+The controlled 10-core-TPP phase also passed its advancement checks, but it is
+not the promoted rung. It consumed 3.146B tokens over six packing passes and
+selected step 190,000 of 192,017. Selected held-out BPB improved from 0.8442
+to 0.8178, the artifact reloaded exactly, all 20 sampled outputs contained two
+complete sentences, and neither the sampled nor greedy suite looped. Manual
+review found 16/20 grammatical and on topic for two sentences, a one-item
+change from the 5-TPP phase rather than a material regression. Only 15/20
+remained grammatical and on topic for three sentences, so the 10-TPP artifact
+does not meet the final-promotion gate. Sampled EOS was 17/20 and remains a
+diagnostic rather than a gate.
+
 Ten and twenty core TPP are controlled follow-on exposure phases, not automatic
 full runs. They retain the exact tokenizer, source views, mixture weights,
 architecture, optimizer, schedule, seed, and evaluation suite; only token
@@ -395,13 +406,16 @@ failed qualification run.
 
 ## Next authorized work
 
-Rung 0005 is passed and frozen. Rung 0006 is the next bounded experiment. It
-must hold the rung-0005 tokenizer, corpus views, mixture, context, optimizer,
-and native evaluation suite constant while changing model capacity. The first
-candidate is limited to 5 core TPP. It may advance to 10 and then 20 core TPP
-only when held-out fit and native generation improve without exceeding four
-effective passes over any source view. Only the passing recipe enters the
-promoted rung directory.
+Rung 0005 is passed and frozen. Rung 0006 has passed its controlled 5- and
+10-core-TPP advancement phases but has not met its final three-sentence gate.
+The next authorized experiment is the controlled 20-core-TPP phase. It must
+retain the exact 10-TPP tokenizer, corpus views, mixture weights, architecture,
+context, optimizer, schedule type, seed, held-out selection, and native
+evaluation suite; only token exposure changes. Effective source passes must be
+reported, but they are evidence rather than an arbitrary failure ceiling. Stop
+if held-out BPB regresses, the selected checkpoint falls outside the final 20%,
+or native generation materially regresses. Only the final passing recipe enters
+the promoted rung directory.
 
 ## Rung directory contract
 
