@@ -1,0 +1,22 @@
+[
+  {"form":"narrative","prompt":"Mara carried the blue lantern into the cave because the path was dark. Inside the cave,","continuation":" Mara used the lantern to see the rocky floor. Its blue light helped her follow the path safely."},
+  {"form":"narrative","prompt":"Jon found a small red boat beside the lake. He wanted to cross the water, so","continuation":" he climbed into the boat and began to paddle. Soon Jon reached the other side of the lake."},
+  {"form":"narrative","prompt":"Lina planted three sunflower seeds behind the white fence. Every morning,","continuation":" Lina watered the seeds and made sure they had sunlight. Before long, three tall sunflowers grew behind the fence."},
+  {"form":"narrative","prompt":"Owen left his green scarf on the wooden chair before he went outside. When he returned,","continuation":" Owen found the scarf where he had left it. He picked it up from the chair and put it on."},
+  {"form":"narrative","prompt":"Ava heard thunder over the hill and saw rain moving toward the village. She decided","continuation":" to hurry home before the storm arrived. Ava reached shelter just as the heavy rain began."},
+  {"form":"description","prompt":"The library was a quiet brick building with tall windows. Near the front door,","continuation":" a wooden sign listed the hours. Inside, long shelves held many rows of books."},
+  {"form":"description","prompt":"A tiny brown rabbit lived under the old apple tree. Its home was","continuation":" a warm hole beneath the roots. Dry grass made the rabbit's small room soft and comfortable."},
+  {"form":"description","prompt":"The classroom had a round clock, twelve desks, and a large map. On the teacher’s table,","continuation":" there were pencils, paper, and a red book. Everything was ready for the morning lesson."},
+  {"form":"description","prompt":"The silver bicycle belonged to Elena. It had a basket on the front and","continuation":" a bright bell on the handlebar. Elena kept the bicycle clean and rode it to the park."},
+  {"form":"description","prompt":"The beach was empty after the storm. Wet shells covered the sand, while","continuation":" small waves washed over the shore. Dark clouds slowly moved away from the beach."},
+  {"form":"dialogue","prompt":"\"Please close the gate,\" said Nora. \"I will,\" Ben replied, \"because","continuation":" we do not want the dog to get out.\" Ben closed the gate and checked the latch."},
+  {"form":"dialogue","prompt":"\"Why is the puppy hiding?\" asked Eli. Mia looked under the table and said,","continuation":" \"The thunder scared him.\" Eli and Mia sat quietly beside the puppy until he felt safe."},
+  {"form":"dialogue","prompt":"\"May I borrow your yellow pencil?\" Tom asked. Sara handed it to him and said,","continuation":" \"Yes, but please give it back after class.\" Tom thanked Sara and began to write."},
+  {"form":"dialogue","prompt":"\"The soup is too hot,\" said Ana. Her father answered,","continuation":" \"Let it cool for a few minutes.\" Ana waited until the soup was safe to eat."},
+  {"form":"explanation","prompt":"Plants need light to grow. Their leaves use energy from sunlight to","continuation":" make food from water and carbon dioxide. This process is called photosynthesis."},
+  {"form":"explanation","prompt":"Rain forms when water vapor in the air cools and","continuation":" condenses into tiny drops of water. The drops join together and fall from clouds as rain."},
+  {"form":"explanation","prompt":"A thermometer is a tool used to measure temperature. When the liquid inside becomes warmer,","continuation":" it expands and rises in the narrow tube. A numbered scale shows the temperature."},
+  {"form":"explanation","prompt":"A map helps people understand where places are. Symbols on a map can show","continuation":" roads, rivers, buildings, and other features. A map key explains what each symbol means."},
+  {"form":"explanation","prompt":"Bees visit flowers to collect nectar. As they move from one flower to another,","continuation":" they carry pollen between the flowers. This pollination helps plants make seeds."},
+  {"form":"explanation","prompt":"A shadow appears when an object blocks light. If the light source moves,","continuation":" the shadow's position and shape can change. Its size depends on the positions of the light and object."}
+]

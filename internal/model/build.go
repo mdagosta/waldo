@@ -33,18 +33,29 @@ type Progress struct {
 	RunID    string          `json:"run_id,omitempty"`
 	State    RunState        `json:"state,omitempty"`
 	Message  string          `json:"message"`
+	Bar      *ProgressBar    `json:"bar,omitempty"`
 	Training *training.Event `json:"training,omitempty"`
 }
 
+type ProgressBar struct {
+	Label    string `json:"label"`
+	Current  int64  `json:"current"`
+	Total    int64  `json:"total"`
+	Detail   string `json:"detail,omitempty"`
+	Complete bool   `json:"complete,omitempty"`
+}
+
 type Builder struct {
-	Root         string
-	Now          func() time.Time
-	NewID        func() (string, error)
-	Resolver     training.Resolver
-	OriginPuller *Puller
-	Progress     func(Progress)
-	ComposeName  string
-	MultiNode    MultiNodeHandoff
+	Root                   string
+	Now                    func() time.Time
+	NewID                  func() (string, error)
+	Resolver               training.Resolver
+	OriginPuller           *Puller
+	Progress               func(Progress)
+	ComposeName            string
+	PreparedCacheDirectory string
+	PreparedCacheMaxBytes  int64
+	MultiNode              MultiNodeHandoff
 	// StagePreparer materializes a planned stage immediately before it runs.
 	// StageReleaser releases those local objects after the stage commits.
 	StagePreparer func(context.Context, PreparedStage) (PreparedStage, error)
@@ -183,9 +194,14 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 			return Inspection{}, fmt.Errorf("stage %s %w", stage.Name, err)
 		}
 	}
-	codec, err := training.ResolveTokenizerCodec(inspection.Model.Architecture.Tokenizer.Name)
+	_, codec, err := inspection.Model.Architecture.ResolveTokenizer()
 	if err != nil {
-		return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
+		// Legacy imported and test architectures may carry an opaque revision.
+		// Real backends still validate the exact contract before execution.
+		codec, err = training.ResolveTokenizerCodec(inspection.Model.Architecture.Tokenizer.Name)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
+		}
 	}
 	conversation := training.ConversationTransform{}
 	if stage.Conversation != nil {
@@ -195,10 +211,25 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err != nil {
 		return Inspection{}, err
 	}
+	var distributionReview *corpus.DistributionReview
+	if resolvedParameters.DistributionPolicy == corpus.DistributionPolicyDistributable {
+		review, err := corpus.ReviewDistributable(prepared.BOM)
+		if err != nil {
+			return Inspection{}, fmt.Errorf("stage %s distributable corpus gate: %w", stage.Name, err)
+		}
+		distributionReview = &review
+	}
 	preflightIdentity, err := hashJSON(stagePreflightIdentity{
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256, CorpusBOMSHA256: bomHash,
 		Stage: stage.Name, StageType: stage.Type, Objective: stage.Objective,
 		Conversation: conversation, Parameters: resolvedParameters,
+	})
+	if err != nil {
+		return Inspection{}, err
+	}
+	selectionIdentity, err := hashJSON(stageSelectionIdentity{
+		Schema: 1, ArchitectureSHA256: inspection.Model.ArchitectureSHA256, CorpusBOMSHA256: bomHash,
+		Objective: stage.Objective, Conversation: conversation, Seed: resolvedParameters.Seed, Evaluation: resolvedParameters.Evaluation,
 	})
 	if err != nil {
 		return Inspection{}, err
@@ -226,14 +257,41 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("reused verified capacity for %d optimizer steps", resolvedParameters.Steps)})
 		}
 	} else {
-		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))})
-		partition, err = training.NewRecordPartitionContextWithTransform(ctx, prepared.Inputs, resolvedParameters, codec, stage.Objective, conversation, func(event training.PartitionProgress) {
-			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("evaluation selection %d/%d shards, %d records indexed", event.CurrentShard, event.TotalShards, event.Records)})
-		})
-		if err != nil {
-			return Inspection{}, fmt.Errorf("stage %s held-out evaluation partition: %w", stage.Name, err)
+		selectionCached := false
+		if cached, ok, loadErr := builder.loadStageSelection(selectionIdentity); loadErr != nil {
+			return Inspection{}, fmt.Errorf("stage %s cached evaluation selection: %w", stage.Name, loadErr)
+		} else if ok {
+			partition, err = training.NewRecordPartitionFromPreflight(ctx, prepared.Inputs, resolvedParameters, codec, stage.Objective, conversation, cached)
+			if err != nil {
+				return Inspection{}, fmt.Errorf("stage %s cached evaluation selection: %w", stage.Name, err)
+			}
+			selectionCached = true
+			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("reused cached evaluation selection with %d held-out records; no shard scan required", partition.Evaluation.Records)})
 		}
-		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selected %d held-out records (%s text)", partition.Evaluation.Records, byteCount(partition.Evaluation.TextBytes))})
+		if !selectionCached {
+			selectionMessage := fmt.Sprintf("selecting deterministic held-out records across %d shards", len(prepared.Inputs))
+			if resolvedParameters.Evaluation != nil && training.IsIndexedEvaluationSelection(resolvedParameters.Evaluation.Selection) {
+				selectionMessage = fmt.Sprintf("selecting deterministic held-out sample with bounded indexed reads from %d shards; no corpus scan required", len(prepared.Inputs))
+			} else if stage.Parameters.Tokens > 0 {
+				selectionMessage = fmt.Sprintf("1/3 applying corpus filters and excluding held-out records across %d shards", len(prepared.Inputs))
+			}
+			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: selectionMessage})
+			partition, err = training.NewRecordPartitionContextWithTransform(ctx, prepared.Inputs, resolvedParameters, codec, stage.Objective, conversation, func(event training.PartitionProgress) {
+				builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("evaluation selection %d/%d shards with %d parallel workers, %d records indexed", event.CurrentShard, event.TotalShards, event.Workers, event.Records)})
+			})
+			if err != nil {
+				return Inspection{}, fmt.Errorf("stage %s held-out evaluation partition: %w", stage.Name, err)
+			}
+			evaluationKind := "held-out records"
+			if resolvedParameters.Evaluation != nil && resolvedParameters.Evaluation.Selection == "contiguous-tail-v1" {
+				evaluationKind = "partially held-out records"
+			}
+			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("selected %d %s (%s text)", partition.Evaluation.Records, evaluationKind, byteCount(partition.Evaluation.TextBytes))})
+			selectionSnapshot := partition.Preflight(selectionIdentity, resolvedParameters, false)
+			if err := builder.storeStageSelection(selectionSnapshot); err != nil {
+				return Inspection{}, fmt.Errorf("stage %s cache evaluation selection: %w", stage.Name, err)
+			}
+		}
 		if stage.Parameters.Steps == 0 && stage.Parameters.Tokens == 0 {
 			builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("deriving optimizer steps from %d epochs", resolvedParameters.Epochs)})
 			derivedSteps, err := partition.TrainingSteps(ctx)
@@ -265,6 +323,9 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		}
 		preflight = partition.Preflight(preflightIdentity, resolvedParameters, capacityVerified)
 	}
+	if stage.Parameters.Tokens > 0 {
+		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("training-ready Parquet will be filtered, tokenized, and packed while training runs; the canonical stream repeats until %d optimizer steps are supplied", resolvedParameters.Steps)})
+	}
 	for _, corpus := range partition.ZeroEligibleCorpora() {
 		builder.report(Progress{Phase: "preflight", Stage: stage.Name, Message: fmt.Sprintf("warning: %s has no records after stage filters and will contribute zero training tokens", corpus)})
 	}
@@ -295,8 +356,23 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	if err := validateSelection(selection, []string{stage.Objective}); err != nil {
 		return Inspection{}, err
 	}
+	capabilities := selection.Backend.Descriptor().Capabilities
+	if resolvedParameters.ActivationCheckpointing && !capabilities.ActivationCheckpointing {
+		return Inspection{}, fmt.Errorf("backend %s does not support activation_checkpointing", selection.Execution.Backend.Name)
+	}
+	if resolvedParameters.Compile && !capabilities.Compile {
+		return Inspection{}, fmt.Errorf("backend %s does not support compile", selection.Execution.Backend.Name)
+	}
+	if selection.Execution.WorldSize <= 1 {
+		selection.Execution.Parallelism.DataPlane = training.DataPlaneLocal
+	} else {
+		selection.Execution.Parallelism.DataPlane = training.DataPlaneNodeLocal
+	}
+	if err := training.ValidateBatchTopology(resolvedParameters, selection.Execution.WorldSize); err != nil {
+		return Inspection{}, fmt.Errorf("resolve training batch topology: %w", err)
+	}
 	builder.report(Progress{Phase: "backend", Stage: stage.Name, Message: fmt.Sprintf("selected %s@%s", selection.Execution.Backend.Name, selection.Execution.Backend.Revision)})
-	for _, message := range training.DescribeParallelism(selection.Execution.Parallelism, resolvedParameters.BatchSize) {
+	for _, message := range training.DescribeParallelism(selection.Execution.Parallelism, resolvedParameters.BatchSize/resolvedParameters.GradientAccumulation) {
 		builder.report(Progress{Phase: "parallelism", Stage: stage.Name, Message: message})
 	}
 	var initialization *training.Initialization
@@ -308,7 +384,11 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 	}
 
 	if candidate, ok := resumableRun(inspection, stage, resolvedParameters, partition.Evaluation, bomHash, selection.Execution); ok {
-		return builder.resumeTraining(ctx, name, inspection, candidate, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection)
+		result, err := builder.resumeTraining(ctx, name, inspection, candidate, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection, resolvedParameters)
+		if err == nil {
+			builder.reportRecordSelection(stage.Name, partition.SelectionSummary())
+		}
+		return result, err
 	}
 
 	runID, err := builder.identifier()()
@@ -334,6 +414,7 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		ArchitectureSHA256: inspection.Model.ArchitectureSHA256,
 		CorpusBOMSHA256:    bomHash, CorpusBOM: prepared.BOM, Parameters: resolvedParameters,
 		EvaluationSet: &partition.Evaluation, Preflight: &preflightArtifact, Initialization: initialization,
+		DistributionReview: distributionReview,
 	}
 	if stage.Conversation != nil {
 		runBOM.Conversation = *stage.Conversation
@@ -357,7 +438,41 @@ func (builder Builder) Train(ctx context.Context, name string, prepared Prepared
 		return Inspection{}, err
 	}
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: runID, State: RunPlanned, Message: "persisted run OpenWALDO BOM"})
-	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection, nil)
+	result, err := builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, partition.EligibleRecords(), architectureJSON, selection, nil, nil)
+	if err == nil {
+		builder.reportRecordSelection(stage.Name, partition.SelectionSummary())
+	}
+	return result, err
+}
+
+func (builder Builder) reportRecordSelection(stage string, summary training.RecordSelectionSummary) {
+	if summary.InputRecords == 0 {
+		return
+	}
+	available := summary.IncludedRecords - summary.HeldOutRecords
+	detail := fmt.Sprintf("%d available for training, %d held out", available, summary.HeldOutRecords)
+	if summary.PartiallyHeldOutRecords > 0 {
+		detail += fmt.Sprintf(", %d partially held out", summary.PartiallyHeldOutRecords)
+	}
+	builder.report(Progress{Phase: "summary", Stage: stage, Message: fmt.Sprintf("data selection: %d input, %d included (%s), %d skipped", summary.InputRecords, summary.IncludedRecords, detail, summary.SkippedRecords)})
+	for _, group := range []struct {
+		label  string
+		counts map[string]int64
+	}{{"included licenses", summary.IncludedLicenses}, {"skipped licenses", summary.SkippedLicenses}} {
+		if len(group.counts) == 0 {
+			continue
+		}
+		licenses := make([]string, 0, len(group.counts))
+		for license := range group.counts {
+			licenses = append(licenses, license)
+		}
+		sort.Strings(licenses)
+		parts := make([]string, 0, len(licenses))
+		for _, license := range licenses {
+			parts = append(parts, fmt.Sprintf("%s=%d", license, group.counts[license]))
+		}
+		builder.report(Progress{Phase: "summary", Stage: stage, Message: group.label + ": " + strings.Join(parts, ", ")})
+	}
 }
 
 func byteCount(value int64) string {
@@ -384,6 +499,55 @@ type stagePreflightIdentity struct {
 	Objective          string                         `json:"objective"`
 	Conversation       training.ConversationTransform `json:"conversation,omitzero"`
 	Parameters         training.ResolvedParameters    `json:"parameters"`
+}
+
+type stageSelectionIdentity struct {
+	Schema             int                            `json:"schema"`
+	ArchitectureSHA256 string                         `json:"architecture_sha256"`
+	CorpusBOMSHA256    string                         `json:"corpus_bom_sha256"`
+	Objective          string                         `json:"objective"`
+	Conversation       training.ConversationTransform `json:"conversation,omitzero"`
+	Seed               uint64                         `json:"seed"`
+	Evaluation         *training.EvaluationPolicy     `json:"evaluation,omitempty"`
+}
+
+func (builder Builder) stageSelectionPath(identity string) string {
+	if builder.Root == "" {
+		return ""
+	}
+	// Selection evidence is small, reusable model metadata rather than prepared
+	// sequence data. Keep it under the durable model root so normal lookaside
+	// scratch cleanup cannot discard an hours-long deterministic scan.
+	return filepath.Join(builder.Root, ".waldo-preflight", "stage-selection", identity+".json")
+}
+
+func (builder Builder) loadStageSelection(identity string) (training.StagePreflight, bool, error) {
+	path := builder.stageSelectionPath(identity)
+	if path == "" {
+		return training.StagePreflight{}, false, nil
+	}
+	var snapshot training.StagePreflight
+	if err := readStrictJSON(path, &snapshot); err != nil {
+		if os.IsNotExist(err) {
+			return training.StagePreflight{}, false, nil
+		}
+		return training.StagePreflight{}, false, err
+	}
+	if err := snapshot.Validate(); err != nil {
+		return training.StagePreflight{}, false, err
+	}
+	if snapshot.IdentitySHA256 != identity {
+		return training.StagePreflight{}, false, fmt.Errorf("cached selection identity differs")
+	}
+	return snapshot, true, nil
+}
+
+func (builder Builder) storeStageSelection(snapshot training.StagePreflight) error {
+	path := builder.stageSelectionPath(snapshot.IdentitySHA256)
+	if path == "" {
+		return nil
+	}
+	return writeJSONAtomic(path, snapshot)
 }
 
 func reusableStagePreflight(inspection Inspection, identity string) (training.StagePreflight, int, bool, error) {
@@ -427,6 +591,9 @@ func validateCachedPreflightParameters(stage Stage, paths []string, snapshot tra
 			return err
 		}
 	}
+	if stage.Parameters.Tokens > 0 && snapshot.CapacityVerified {
+		expected.Epochs = snapshot.Parameters.Epochs
+	}
 	if !equivalentTrainingParameters(expected, snapshot.Parameters) {
 		return fmt.Errorf("cached optimizer parameters do not match the current stage")
 	}
@@ -468,7 +635,7 @@ func resumableRun(inspection Inspection, stage Stage, parameters training.Resolv
 	if stage.Conversation != nil {
 		conversation = *stage.Conversation
 	}
-	if !resumableRunState(run, parameters) || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || bom.CorpusBOMSHA256 != corpusHash || !equivalentTrainingParameters(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
+	if !resumableRunState(run, parameters) || bom.Stage != stage.Name || bom.StageType != stage.Type || bom.Objective != stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || bom.CorpusBOMSHA256 != corpusHash || !equivalentResumeParameters(bom.Parameters, parameters) || bom.EvaluationSet == nil || !reflect.DeepEqual(*bom.EvaluationSet, evaluation) || !reflect.DeepEqual(bom.Execution, execution) {
 		return 0, false
 	}
 	return index, true
@@ -478,25 +645,62 @@ func resumableRunState(run RunRecord, parameters training.ResolvedParameters) bo
 	if run.State == RunInterrupted {
 		return true
 	}
-	// Earlier releases could successfully verify a final artifact and then mark
-	// the run failed during final bookkeeping. Permit only recognized,
-	// checkpoint-backed finalization failures to resume; ordinary failed runs
-	// remain terminal.
+	if run.FailureClass == training.WorkerErrorArtifactIntegrity || run.FailureClass == training.WorkerErrorNumericalIntegrity {
+		return false
+	}
+	// A checkpoint is WALDO's durable recovery boundary. Once its artifacts were
+	// verified and recorded, the error that ended the attempt does not invalidate
+	// it: runtime, transport, validation, and bookkeeping failures may all be
+	// retried from that same immutable state.
 	if run.State != RunFailed || run.Progress == nil || len(run.Progress.Checkpoints) == 0 {
 		return false
 	}
-	recoverableError := strings.HasPrefix(run.Error, "persist training progress: evaluation step ") && strings.HasSuffix(run.Error, " does not advance durable progress")
-	recoverableError = recoverableError || strings.HasPrefix(run.Error, "invalid backend observation: corpus consumption accounts for ")
-	if !recoverableError {
-		return false
-	}
 	checkpoint := run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1]
-	return checkpoint.Step == parameters.Steps && checkpoint.Tokens == parameters.PlannedTokenCapacity
+	return checkpoint.Step > 0 && checkpoint.Step <= parameters.Steps && checkpoint.Tokens > 0 && checkpoint.Tokens <= parameters.PlannedTokenCapacity
 }
 
-// HasRecoverableFinalizationFailure identifies narrowly scoped,
-// checkpoint-backed final bookkeeping failures from earlier WALDO releases.
-func HasRecoverableFinalizationFailure(inspection Inspection) bool {
+func hasVerifiedCheckpoint(progress *training.Progress) bool {
+	return progress != nil && len(progress.Checkpoints) > 0
+}
+
+func interruptedTrainingError(err error, progress *training.Progress) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+		hasVerifiedCheckpoint(progress) && !training.IsNonRetryableWorkerError(err)
+}
+
+func equivalentResumeParameters(persisted, effective training.ResolvedParameters) bool {
+	if equivalentTrainingParameters(persisted, effective) {
+		return true
+	}
+	if persisted.RequestedTokens <= 0 || persisted.RequestedTokens != effective.RequestedTokens {
+		return false
+	}
+	if persisted.Data.RepeatUntilSteps && effective.Data.RepeatUntilSteps {
+		persisted.Epochs = effective.Epochs
+		return equivalentTrainingParameters(persisted, effective)
+	}
+	if !persisted.Data.RepeatUntilSteps && effective.Data.RepeatUntilSteps {
+		persisted.Data.RepeatUntilSteps = true
+		persisted.Epochs = effective.Epochs
+		return equivalentTrainingParameters(persisted, effective)
+	}
+	if effective.Epochs <= persisted.Epochs {
+		return false
+	}
+	persisted.Epochs = effective.Epochs
+	return equivalentTrainingParameters(persisted, effective)
+}
+
+func resumeCorrection(persisted, effective training.ResolvedParameters) string {
+	if !persisted.Data.RepeatUntilSteps && effective.Data.RepeatUntilSteps {
+		return "streaming-token-source-v1"
+	}
+	return "fixed-token-capacity-v1"
+}
+
+// HasRecoverableCheckpointFailure reports whether WALDO has a durable
+// checkpoint from which it can safely continue the latest run.
+func HasRecoverableCheckpointFailure(inspection Inspection) bool {
 	if len(inspection.Runs) == 0 || len(inspection.RunBOMs) != len(inspection.Runs) {
 		return false
 	}
@@ -504,7 +708,7 @@ func HasRecoverableFinalizationFailure(inspection Inspection) bool {
 	return resumableRunState(inspection.Runs[last], inspection.RunBOMs[last].Parameters)
 }
 
-func (builder Builder) resumeTraining(ctx context.Context, name string, inspection Inspection, index int, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, eligibleRecords map[string]int64, architectureJSON json.RawMessage, selection training.Selection) (Inspection, error) {
+func (builder Builder) resumeTraining(ctx context.Context, name string, inspection Inspection, index int, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, eligibleRecords map[string]int64, architectureJSON json.RawMessage, selection training.Selection, effectiveParameters training.ResolvedParameters) (Inspection, error) {
 	pin := inspection.Model.Runs[index]
 	run := inspection.Runs[index]
 	runBOM := inspection.RunBOMs[index]
@@ -514,9 +718,13 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 	var resume *training.ResumePoint
 	if pin.Resume != nil {
 		resume = cloneResumePoint(pin.Resume)
+		if run.Progress != nil {
+			resume.Checkpoints = append([]training.Checkpoint(nil), run.Progress.Checkpoints...)
+			resume.Evaluations = append([]training.Evaluation(nil), run.Progress.Evaluations...)
+		}
 	} else if run.Progress != nil && len(run.Progress.Checkpoints) > 0 {
 		checkpoint := run.Progress.Checkpoints[len(run.Progress.Checkpoints)-1]
-		resume = &training.ResumePoint{Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint}
+		resume = &training.ResumePoint{Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint, Checkpoints: append([]training.Checkpoint(nil), run.Progress.Checkpoints...), Evaluations: append([]training.Evaluation(nil), run.Progress.Evaluations...)}
 	}
 	if resume != nil {
 		runDirectory := filepath.Join(inspection.Path, "runs", runDirectoryName(pin))
@@ -540,14 +748,32 @@ func (builder Builder) resumeTraining(ctx context.Context, name string, inspecti
 	}
 	record := inspection.Model
 	builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunInterrupted, Message: fmt.Sprintf("resuming existing run from step %d", resumeStep(resume))})
-	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, eligibleRecords, architectureJSON, selection, resume)
+	var correction *training.ResolvedParameters
+	if !equivalentTrainingParameters(runBOM.Parameters, effectiveParameters) {
+		if !equivalentResumeParameters(runBOM.Parameters, effectiveParameters) {
+			return Inspection{}, fmt.Errorf("resume run %s: effective training parameters are incompatible with its immutable run BOM", pin.ID)
+		}
+		corrected := effectiveParameters
+		correction = &corrected
+		if resumeCorrection(runBOM.Parameters, effectiveParameters) == "streaming-token-source-v1" {
+			builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunInterrupted, Message: fmt.Sprintf("upgrading the token-budget input to stream and repeat on demand while resuming checkpoint step %d", resumeStep(resume))})
+		} else {
+			builder.report(Progress{Phase: "run", Stage: pin.Stage, RunID: pin.ID, State: RunInterrupted, Message: fmt.Sprintf("correcting fixed-token source passes from %d to %d while resuming checkpoint step %d", runBOM.Parameters.Epochs, effectiveParameters.Epochs, resumeStep(resume))})
+		}
+	}
+	return builder.executeTrainingAttempt(ctx, name, inspection.Path, &record, pin, run, runBOM, stage, prepared, records, evaluationRecords, eligibleRecords, architectureJSON, selection, resume, correction)
 }
 
-func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPath string, record *ModelRecord, pin RunPin, run RunRecord, runBOM RunBOM, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, eligibleRecords map[string]int64, architectureJSON json.RawMessage, selection training.Selection, resume *training.ResumePoint) (Inspection, error) {
+func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPath string, record *ModelRecord, pin RunPin, run RunRecord, runBOM RunBOM, stage Stage, prepared PreparedStage, records, evaluationRecords training.RecordSource, eligibleRecords map[string]int64, architectureJSON json.RawMessage, selection training.Selection, resume *training.ResumePoint, effectiveParameters *training.ResolvedParameters) (Inspection, error) {
+	correction := ""
+	if effectiveParameters != nil {
+		correction = resumeCorrection(runBOM.Parameters, *effectiveParameters)
+		runBOM.Parameters = *effectiveParameters
+	}
 	tokenizerSpec := training.TokenizerSpec{Name: record.Architecture.Tokenizer.Name, Revision: record.Architecture.Tokenizer.Revision, VocabularySize: int(record.Architecture.VocabularySize), PadID: 0, BOSID: 1, EOSID: 2}
 	if selection.Execution.Backend.Name == training.BackendPyTorch || selection.Execution.Backend.Name == training.BackendTorchTitan || selection.Execution.Backend.Name == training.BackendMLX {
 		var err error
-		tokenizerSpec, _, err = training.ResolveTokenizer(record.Architecture.Tokenizer.Name, record.Architecture.Tokenizer.Revision, record.Architecture.VocabularySize)
+		tokenizerSpec, _, err = record.Architecture.ResolveTokenizer()
 		if err != nil {
 			return Inspection{}, fmt.Errorf("stage %s tokenizer: %w", stage.Name, err)
 		}
@@ -569,10 +795,17 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	run.State = RunRunning
 	run.Finished = ""
 	run.Error = ""
+	run.FailureClass = ""
 	if run.Started == "" {
 		run.Started = formatTime(attemptStarted)
 	}
-	run.Attempts = append(run.Attempts, RunAttempt{Ordinal: len(run.Attempts) + 1, Started: formatTime(attemptStarted), State: RunRunning, ResumeStep: resumeStep(resume)})
+	runAttempt := RunAttempt{Ordinal: len(run.Attempts) + 1, Started: formatTime(attemptStarted), State: RunRunning, ResumeStep: resumeStep(resume)}
+	if effectiveParameters != nil {
+		parameters := *effectiveParameters
+		runAttempt.Correction = correction
+		runAttempt.EffectiveParameters = &parameters
+	}
+	run.Attempts = append(run.Attempts, runAttempt)
 	if err := persistRunAndPin(modelPath, runDirectory, record, pin, run, now()); err != nil {
 		return Inspection{}, err
 	}
@@ -606,6 +839,8 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		Parameters: runBOM.Parameters, Records: records, EvaluationRecords: evaluationRecords, EvaluationSet: EvaluationSetValue(runBOM.EvaluationSet), Initialization: initializationForAttempt(runBOM.Initialization, resume), Resume: resume,
 		Parallelism:       runBOM.Execution.Parallelism,
 		ArtifactDirectory: filepath.Join(runDirectory, artifactPrefix), ArtifactPrefix: artifactPrefix, Report: report,
+		PreparedCacheDirectory: builder.PreparedCacheDirectory,
+		PreparedCacheMaxBytes:  builder.PreparedCacheMaxBytes,
 	})
 	progressMutex.Lock()
 	if progressErr != nil {
@@ -619,7 +854,7 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 		planned := PlannedStage{Name: stage.Name, Parameters: plannedParameters, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity}
 		if err := validateBackendObservation(runDirectory, planned, observation); err != nil {
 			backendErr = fmt.Errorf("invalid backend observation: %w", err)
-		} else if set := runBOM.EvaluationSet; set != nil && set.Records > 0 && runBOM.Parameters.EvaluateEvery > 0 {
+		} else if set := runBOM.EvaluationSet; set != nil && set.Records > 0 && (runBOM.Parameters.EvaluateEvery > 0 || backendRequiresArtifactVerification(selection.Execution.Backend.Name)) {
 			if len(observation.Evaluations) == 0 {
 				backendErr = fmt.Errorf("invalid backend observation: held-out evaluation was configured but no metrics were reported")
 			} else {
@@ -629,10 +864,21 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 						break
 					}
 				}
-				if backendErr == nil && selection.Execution.Backend.Name == training.BackendPyTorch {
-					metrics := observation.Evaluations[len(observation.Evaluations)-1].Metrics
-					if _, ok := metrics["artifact_heldout_loss"]; !ok {
-						backendErr = fmt.Errorf("invalid backend observation: final PyTorch evaluation does not verify the persisted model artifact")
+				if backendErr == nil && backendRequiresArtifactVerification(selection.Execution.Backend.Name) {
+					if observation.SelectedCheckpoint == nil {
+						backendErr = fmt.Errorf("invalid backend observation: %s did not identify the checkpoint used for the persisted model artifact", selection.Execution.Backend.Name)
+					} else {
+						verified := false
+						for _, evaluation := range observation.Evaluations {
+							if evaluation.Step != observation.SelectedCheckpoint.Step {
+								continue
+							}
+							_, verified = evaluation.Metrics["artifact_heldout_loss"]
+							break
+						}
+						if !verified {
+							backendErr = fmt.Errorf("invalid backend observation: selected %s checkpoint does not verify the persisted model artifact", selection.Execution.Backend.Name)
+						}
 					}
 				}
 			}
@@ -648,12 +894,14 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	attempt.Finished = run.Finished
 	if backendErr != nil {
 		run.State = RunFailed
-		if errors.Is(backendErr, context.Canceled) || errors.Is(backendErr, context.DeadlineExceeded) {
+		attempt.State = RunFailed
+		if interruptedTrainingError(backendErr, run.Progress) {
 			run.State = RunInterrupted
 		}
 		run.Error = backendErr.Error()
-		attempt.State = run.State
+		run.FailureClass = training.WorkerErrorClass(backendErr)
 		attempt.Error = run.Error
+		attempt.FailureClass = run.FailureClass
 		if err := appendTelemetry(telemetryPath, telemetryRow{Observed: now(), Started: attemptStarted, RunID: pin.ID, Stage: stage.Name, Attempt: attemptOrdinal, Event: "run", State: run.State, PlannedSteps: runBOM.Parameters.Steps, PlannedTokens: runBOM.Parameters.PlannedTokenCapacity, Message: run.Error}); err != nil {
 			backendErr = errors.Join(backendErr, telemetryError(telemetryPath, err))
 		}
@@ -792,6 +1040,14 @@ func cloneResumePoint(value *training.ResumePoint) *training.ResumePoint {
 	}
 	clone := *value
 	clone.Checkpoint.Artifacts = append([]training.Artifact(nil), value.Checkpoint.Artifacts...)
+	clone.Checkpoints = append([]training.Checkpoint(nil), value.Checkpoints...)
+	for index := range clone.Checkpoints {
+		clone.Checkpoints[index].Artifacts = append([]training.Artifact(nil), value.Checkpoints[index].Artifacts...)
+	}
+	clone.Evaluations = append([]training.Evaluation(nil), value.Evaluations...)
+	for index := range clone.Evaluations {
+		clone.Evaluations[index].Metrics = cloneMetrics(clone.Evaluations[index].Metrics)
+	}
 	clone.Paths = append([]string(nil), value.Paths...)
 	return &clone
 }
@@ -837,7 +1093,11 @@ func persistTrainingEvent(modelPath, runDirectory string, record *ModelRecord, p
 			}
 		}
 		run.Progress.Checkpoints = append(run.Progress.Checkpoints, checkpoint)
-		resume := &training.ResumePoint{Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint}
+		resume := &training.ResumePoint{
+			Step: checkpoint.Step, Tokens: checkpoint.Tokens, Checkpoint: checkpoint,
+			Checkpoints: append([]training.Checkpoint(nil), run.Progress.Checkpoints...),
+			Evaluations: append([]training.Evaluation(nil), run.Progress.Evaluations...),
+		}
 		for index := range record.Runs {
 			if record.Runs[index].ID == pin.ID {
 				record.Runs[index].Resume = resume
@@ -854,6 +1114,12 @@ func persistTrainingEvent(modelPath, runDirectory string, record *ModelRecord, p
 		}
 		if !changed {
 			return nil
+		}
+		for index := range record.Runs {
+			if record.Runs[index].ID == pin.ID && record.Runs[index].Resume != nil {
+				record.Runs[index].Resume.Evaluations = append([]training.Evaluation(nil), run.Progress.Evaluations...)
+				break
+			}
 		}
 	}
 	return persistRunAndPin(modelPath, runDirectory, record, pin, *run, now)
@@ -894,15 +1160,21 @@ func mergeProgress(progress *training.Progress, observation training.Observation
 		}
 	}
 	evaluations := append([]training.Evaluation(nil), progress.Evaluations...)
-	for _, evaluation := range observation.Evaluations {
-		if len(evaluations) > 0 && evaluation.Step == evaluations[len(evaluations)-1].Step {
-			// The completion observation may enrich the already-durable event at
-			// the same step with post-save artifact verification metrics.
-			evaluations[len(evaluations)-1] = evaluation
-		} else if len(evaluations) == 0 || evaluation.Step > evaluations[len(evaluations)-1].Step {
-			evaluations = append(evaluations, evaluation)
-		}
+	evaluationIndexes := make(map[int64]int, len(evaluations))
+	for index, evaluation := range evaluations {
+		evaluationIndexes[evaluation.Step] = index
 	}
+	for _, evaluation := range observation.Evaluations {
+		if index, ok := evaluationIndexes[evaluation.Step]; ok {
+			// The completion observation may enrich any already-durable event,
+			// including an earlier selected checkpoint, with artifact metrics.
+			evaluations[index] = evaluation
+			continue
+		}
+		evaluationIndexes[evaluation.Step] = len(evaluations)
+		evaluations = append(evaluations, evaluation)
+	}
+	sort.Slice(evaluations, func(i, j int) bool { return evaluations[i].Step < evaluations[j].Step })
 	observation.Checkpoints = checkpoints
 	observation.Evaluations = evaluations
 	return observation
@@ -1018,7 +1290,11 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 		return err
 	}
 	if pending != nil {
-		if !reflect.DeepEqual(pending.Compose, compose) {
+		matches, err := pendingComposeMatchesRequest(builder.Root, *pending, compose)
+		if err != nil {
+			return err
+		}
+		if !matches {
 			return fmt.Errorf("model %q has an unfinished compose with different inputs; repeat the exact command to resume it", name)
 		}
 		return nil
@@ -1045,10 +1321,53 @@ func (builder Builder) CheckComposeTarget(name string, compose Compose) error {
 	return validateComposeTarget(target, compose)
 }
 
+func pendingComposeMatchesRequest(root string, pending composeTransaction, requested Compose) (bool, error) {
+	if reflect.DeepEqual(pending.Compose, requested) {
+		return true, nil
+	}
+	normalized, _, err := normalizePendingComposeRequest(root, pending, requested)
+	if err != nil {
+		return false, err
+	}
+	return reflect.DeepEqual(pending.Compose, normalized), nil
+}
+
+// NormalizePendingComposeRequest removes only corpora completed before the
+// pending transaction began. Stages completed by the transaction remain in
+// the request so Compose can verify and advance past them durably.
+func NormalizePendingComposeRequest(root, name string, requested Compose) (Compose, []SkippedCorpus, error) {
+	pending, err := pendingComposeTransaction(root, name)
+	if err != nil {
+		return Compose{}, nil, err
+	}
+	if pending == nil {
+		return requested, nil, nil
+	}
+	return normalizePendingComposeRequest(root, *pending, requested)
+}
+
+func normalizePendingComposeRequest(root string, pending composeTransaction, requested Compose) (Compose, []SkippedCorpus, error) {
+	inspection, err := Inspect(root, pending.Name)
+	if err != nil {
+		return Compose{}, nil, fmt.Errorf("inspect model for pending compose normalization: %w", err)
+	}
+	if pending.StartRun < 0 || pending.StartRun > len(inspection.Model.Runs) || pending.StartRun > len(inspection.RunBOMs) {
+		return Compose{}, nil, fmt.Errorf("model %q pending compose has invalid start run %d", pending.Name, pending.StartRun)
+	}
+	// A transaction created while extending an existing model stores the
+	// requested compose after corpora completed before that transaction were
+	// removed. Recreate exactly that boundary; runs completed by the pending
+	// transaction must remain in its compose until the transaction finishes.
+	inspection.Model.Runs = inspection.Model.Runs[:pending.StartRun]
+	inspection.RunBOMs = inspection.RunBOMs[:pending.StartRun]
+	normalized, skipped := SkipCompletedCorpora(requested, inspection)
+	return normalized, skipped, nil
+}
+
 func validateComposeTarget(target Inspection, compose Compose) error {
 	if len(target.Runs) > 0 {
 		state := target.Runs[len(target.Runs)-1].State
-		if state == RunRunning || state == RunInterrupted {
+		if state == RunRunning || state == RunInterrupted && !HasRecoverableCheckpointFailure(target) {
 			return fmt.Errorf("model %q has an unfinished %s run; resume that training before starting another compose", target.Model.Name, state)
 		}
 	}
@@ -1056,7 +1375,7 @@ func validateComposeTarget(target Inspection, compose Compose) error {
 }
 
 func validateComposeCompatibility(target Inspection, compose Compose) error {
-	architectureHash, err := canonicalHash(compose.Architecture)
+	architectureHash, err := canonicalHash(composeModelArchitecture(compose.Architecture))
 	if err != nil {
 		return err
 	}
@@ -1367,7 +1686,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	if err != nil {
 		return Inspection{}, fmt.Errorf("inspect composing model %s: %w", destination, err)
 	}
-	architectureHash, err := canonicalHash(compose.Architecture)
+	architectureHash, err := canonicalHash(composeModelArchitecture(compose.Architecture))
 	if err != nil {
 		return Inspection{}, err
 	}
@@ -1420,7 +1739,12 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 			releaseErr = builder.StageReleaser(stage)
 		}
 		if trainErr != nil {
-			if errors.Is(trainErr, context.Canceled) || errors.Is(trainErr, context.DeadlineExceeded) {
+			retain := errors.Is(trainErr, context.Canceled) || errors.Is(trainErr, context.DeadlineExceeded)
+			if !retain {
+				latest, inspectErr := Inspect(builder.Root, name)
+				retain = inspectErr == nil && HasRecoverableCheckpointFailure(latest)
+			}
+			if retain {
 				builder.report(Progress{Phase: "compose", Message: fmt.Sprintf("retained transaction %s; repeat the exact command to resume", transactionID[:12])})
 			} else {
 				finishFailedCompose(workspace)
@@ -1447,7 +1771,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 }
 
 func recoverableComposeStart(inspection Inspection, stages []PreparedStage) (int, bool) {
-	if !HasRecoverableFinalizationFailure(inspection) {
+	if !HasRecoverableCheckpointFailure(inspection) {
 		return 0, false
 	}
 	failed := len(inspection.Runs) - 1
@@ -1521,7 +1845,10 @@ func findComposeTransaction(root string, requested composeTransaction) (string, 
 			return workspace, &existing, nil
 		}
 		if existing.Kind == requested.Kind && existing.Schema == requested.Schema && existing.Name == requested.Name {
-			return "", nil, fmt.Errorf("model %q has an unfinished compose with different inputs; repeat the exact command to resume it", requested.Name)
+			if reflect.DeepEqual(candidate.Compose, requested.Compose) {
+				return "", nil, fmt.Errorf("model %q has an unfinished compose with different corpus BOMs (saved %v, requested %v); repeat the exact command to resume it", requested.Name, candidate.CorpusBOMs, requested.CorpusBOMs)
+			}
+			return "", nil, fmt.Errorf("model %q has an unfinished compose with a different resolved compose; repeat the exact command to resume it", requested.Name)
 		}
 	}
 	return "", nil, nil
@@ -1647,8 +1974,15 @@ func validateStagedComposeRun(inspection Inspection, index int, prepared Prepare
 		conversation = *prepared.Stage.Conversation
 	}
 	corpusMatches := bom.CorpusBOMSHA256 == corpusHash || equivalentPlannedCorpusBOM(bom.CorpusBOM, prepared.BOM)
-	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || !corpusMatches || !equivalentTrainingParameters(bom.Parameters, parameters) {
-		return fmt.Errorf("run %d immutable facts do not match stage %s", index+1, prepared.Stage.Name)
+	parametersMatch := equivalentTrainingParameters(bom.Parameters, parameters)
+	if prepared.Stage.Parameters.Tokens > 0 {
+		parametersMatch = equivalentResumeParameters(bom.Parameters, parameters)
+	}
+	if bom.Stage != prepared.Stage.Name || bom.StageType != prepared.Stage.Type || bom.Objective != prepared.Stage.Objective || !reflect.DeepEqual(bom.Conversation, conversation) || !corpusMatches || !parametersMatch {
+		return fmt.Errorf("run %d immutable facts do not match stage %s (name=%t type=%t objective=%t conversation=%t corpus=%t parameters=%t; saved parameters=%+v; requested parameters=%+v)", index+1, prepared.Stage.Name,
+			bom.Stage == prepared.Stage.Name, bom.StageType == prepared.Stage.Type, bom.Objective == prepared.Stage.Objective,
+			reflect.DeepEqual(bom.Conversation, conversation), corpusMatches, parametersMatch,
+			training.NormalizeResolvedParameters(bom.Parameters), training.NormalizeResolvedParameters(parameters))
 	}
 	return nil
 }

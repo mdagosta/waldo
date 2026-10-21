@@ -1,0 +1,52 @@
+{
+  "kind": "openwaldo-training-rung-evidence",
+  "schema": 1,
+  "rung": "0004-small-simple-english",
+  "model": {
+    "name": "small-simple-english-65m-gpt4-education-01",
+    "id": "e1ad80e6a6f4f15a0f819dab75bf6ed0f0dbe73ac4bbdda8d9bb872da65a9106",
+    "run_id": "6b78d8d47cdc0545",
+    "parameters": 64732800,
+    "core_parameters": 59489920,
+    "selected_step": 72620,
+    "planned_steps": 72620,
+    "consumed_tokens": 1189806080,
+    "heldout_loss_initial": 9.0928,
+    "heldout_loss_selected": 1.6311617541787946,
+    "heldout_loss_reloaded": 1.6311617541787946
+  },
+  "architecture_pilot": {
+    "deep_24x448_tokens": 315000000,
+    "deep_24x448_heldout_loss": 2.9966,
+    "control_12x640_tokens": 346000000,
+    "control_12x640_heldout_loss": 2.9279,
+    "selected": "12x640"
+  },
+  "data": {
+    "unique_targets": 865800000,
+    "tinystories_gpt4_target_tokens": 595169281,
+    "tinystories_gpt4_effective_passes": 0.92,
+    "cosmopedia_filtered_target_tokens": 594636799,
+    "cosmopedia_filtered_effective_passes": 2.73
+  },
+  "likelihood": {
+    "candidate_bpb": 1.1188947976434616,
+    "rung0002_bpb": 1.2964096105100298,
+    "paired_delta_bpb": -0.17751481286656823,
+    "paired_bootstrap_95": [-0.4021461142051419, -0.0017480919677275164],
+    "probability_candidate_better": 0.9761,
+    "candidate_context_advantage_bpb": 0.47011569441337264,
+    "rung0002_context_advantage_bpb": 0.46974510399842817,
+    "untrained_context_advantage_bpb": 0.0033547893954164465,
+    "candidate_explanation_bpb": 1.0909006582830216,
+    "rung0002_explanation_bpb": 1.8258854734469026
+  },
+  "generation": {
+    "sampled_responses": 20,
+    "two_complete_sentences": 20,
+    "sampled_eos_within_512": 15,
+    "sampled_loops": 0,
+    "greedy_loops": 0
+  },
+  "passed": true
+}

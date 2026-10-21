@@ -227,15 +227,19 @@ func conversionProfile(plan Plan) string {
 	if !configured {
 		if documentAdapter {
 			encoded, _ := json.Marshal(struct {
-				Adapters []string       `json:"adapters"`
-				Profiles []InputProfile `json:"profiles"`
-			}{adapters, profiles})
+				AdapterRecipe string         `json:"adapter_recipe"`
+				Adapters      []string       `json:"adapters"`
+				Profiles      []InputProfile `json:"profiles"`
+			}{plan.Writer.AdapterRecipe, adapters, profiles})
 			digest := sha256.Sum256(encoded)
 			return "canonical-document-text-v1@sha256:" + hex.EncodeToString(digest[:])
 		}
-		return "canonical-text-schema-2"
+		return "canonical-text-schema-2@" + plan.Writer.AdapterRecipe
 	}
-	encoded, _ := json.Marshal(profiles)
+	encoded, _ := json.Marshal(struct {
+		AdapterRecipe string         `json:"adapter_recipe"`
+		Profiles      []InputProfile `json:"profiles"`
+	}{plan.Writer.AdapterRecipe, profiles})
 	digest := sha256.Sum256(encoded)
 	return "canonical-text-schema-2@sha256:" + hex.EncodeToString(digest[:])
 }

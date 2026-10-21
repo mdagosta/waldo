@@ -44,6 +44,7 @@ type RecordView struct {
 	Language           string `json:"language,omitempty"`
 	LanguageScore      int64  `json:"language_score,omitempty"`
 	Date               string `json:"date,omitempty"`
+	Metadata           string `json:"meta,omitempty"`
 	Tokens             int64  `json:"tokens"`
 	Bytes              int64  `json:"bytes"`
 	EmailAddresses     *bool  `json:"email_addresses,omitempty"`
@@ -619,7 +620,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 				return fmt.Errorf("read record %d: %w", position, readErr)
 			}
 			row := rows[0]
-			view := RecordView{ID: row.SHA256, Kind: kind, Text: row.Text, Source: row.Source, SourceName: row.SourceName, License: row.License, Language: row.Lang, LanguageScore: row.LangScore, Date: row.Date, Tokens: row.Tokens, Bytes: int64(len(row.Text)), MainContent: true}
+			view := RecordView{ID: row.SHA256, Kind: kind, Text: row.Text, Source: row.Source, SourceName: row.SourceName, License: row.License, Language: row.Lang, LanguageScore: row.LangScore, Date: row.Date, Metadata: row.Meta, Tokens: row.Tokens, Bytes: int64(len(row.Text)), MainContent: true}
 			if err := callback(position, view); err != nil {
 				return err
 			}
@@ -691,7 +692,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 			}
 			row := rows[0]
 			email, repetitive, boilerplate := row.EmailAddresses, row.RepetitiveContent, row.BoilerplateContent
-			view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Kind: kind, Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &email, RepetitiveContent: &repetitive, BoilerplateContent: &boilerplate, MainContent: row.MainContent}
+			view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Kind: kind, Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Metadata: stringValue(row.Meta), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &email, RepetitiveContent: &repetitive, BoilerplateContent: &boilerplate, MainContent: row.MainContent}
 			if err := callback(position, view); err != nil {
 				return err
 			}
@@ -716,7 +717,7 @@ func ReadRecordsAt(path string, positions []int64, callback func(int64, RecordVi
 		emailAddresses := row.EmailAddresses
 		repetitiveContent := row.RepetitiveContent
 		boilerplateContent := row.BoilerplateContent
-		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Kind: kind, Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &emailAddresses, RepetitiveContent: &repetitiveContent, BoilerplateContent: &boilerplateContent, MainContent: row.MainContent}
+		view := RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Kind: kind, Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Metadata: stringValue(row.Meta), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &emailAddresses, RepetitiveContent: &repetitiveContent, BoilerplateContent: &boilerplateContent, MainContent: row.MainContent}
 		if err := callback(position, view); err != nil {
 			return err
 		}
@@ -1070,14 +1071,14 @@ func canonicalTextRowV1(row textRowV1) record.Record {
 }
 
 func recordViewV1(row textRowV1) RecordView {
-	return RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), MainContent: true}
+	return RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Metadata: stringValue(row.Meta), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), MainContent: true}
 }
 
 func recordViewV2(row textRowV2) RecordView {
 	emailAddresses := row.EmailAddresses
 	repetitiveContent := row.RepetitiveContent
 	boilerplateContent := row.BoilerplateContent
-	return RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &emailAddresses, RepetitiveContent: &repetitiveContent, BoilerplateContent: &boilerplateContent, MainContent: true}
+	return RecordView{ID: hex.EncodeToString(row.ContentSHA256[:]), Text: row.Text, Source: row.Source, SourceName: stringValue(row.SourceName), License: row.License, Language: stringValue(row.Language), LanguageScore: int64(int32Value(row.LanguageScore)), Date: stringValue(row.Date), Metadata: stringValue(row.Meta), Tokens: int64Value(row.TokenCount), Bytes: int64(len(row.Text)), EmailAddresses: &emailAddresses, RepetitiveContent: &repetitiveContent, BoilerplateContent: &boilerplateContent, MainContent: true}
 }
 
 func scanLegacy(file *parquet.File, validate bool, callback func(int64, RecordView, record.Record, string) error) (Summary, error) {
@@ -1129,7 +1130,7 @@ func (consumer *rowConsumer) add(canonical record.Record, meta string, tokenPres
 			return fmt.Errorf("record %d (%s): meta is not a JSON object", position, canonical.SHA256)
 		}
 	}
-	view := RecordView{ID: canonical.SHA256, Kind: canonical.Kind, Text: canonical.Text, Source: canonical.Source, SourceName: canonical.SourceName, License: canonical.License, Language: canonical.Lang, LanguageScore: canonical.LangScore, Date: canonical.Date, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text)), EmailAddresses: emailAddresses, RepetitiveContent: repetitiveContent, BoilerplateContent: boilerplateContent, MainContent: mainContent}
+	view := RecordView{ID: canonical.SHA256, Kind: canonical.Kind, Text: canonical.Text, Source: canonical.Source, SourceName: canonical.SourceName, License: canonical.License, Language: canonical.Lang, LanguageScore: canonical.LangScore, Date: canonical.Date, Metadata: meta, Tokens: canonical.Tokens, Bytes: int64(len(canonical.Text)), EmailAddresses: emailAddresses, RepetitiveContent: repetitiveContent, BoilerplateContent: boilerplateContent, MainContent: mainContent}
 	if consumer.callback != nil {
 		if err := consumer.callback(position, view, canonical, meta); err != nil {
 			return err

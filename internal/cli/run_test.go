@@ -690,6 +690,7 @@ func TestConfigSetPersistsLookasideSettings(t *testing.T) {
 		{"config", "set", "lookaside.region", "us-west-2"},
 		{"config", "set", "lookaside.workers", "6"},
 		{"config", "set", "lookaside.scratch", scratchRoot},
+		{"config", "set", "lookaside.cache.retain-completed", "true"},
 		{"config", "set", "lookaside.mirrors", "https://mirror.example/lookaside/v1/"},
 	}
 	for _, command := range commands {
@@ -704,7 +705,7 @@ func TestConfigSetPersistsLookasideSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	publish := configuration.Lookaside.Publish
-	if publish == nil || publish.URL != "s3://bucket/lookaside/v1" || publish.Region != "us-west-2" || publish.Workers != 6 || configuration.Lookaside.Scratch != scratchRoot || len(configuration.Lookaside.Mirrors) != 1 {
+	if publish == nil || publish.URL != "s3://bucket/lookaside/v1" || publish.Region != "us-west-2" || publish.Workers != 6 || configuration.Lookaside.Scratch != scratchRoot || !configuration.Lookaside.RetainCompleted || len(configuration.Lookaside.Mirrors) != 1 {
 		t.Fatalf("configuration = %+v", configuration)
 	}
 	stdout.Reset()
@@ -875,42 +876,6 @@ func TestConfigSetAcceptsFileLookasideAndUnset(t *testing.T) {
 	}
 }
 
-func TestConfigSetGetUnsetLookasideCacheKeep(t *testing.T) {
-	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
-	run := func(args ...string) (int, string, string) {
-		var stdout, stderr bytes.Buffer
-		code := Run(args, &stdout, &stderr)
-		return code, strings.TrimSpace(stdout.String()), stderr.String()
-	}
-	if code, out, errOut := run("config", "get", "lookaside.cache.keep"); code != 0 || out != "(unset)" {
-		t.Fatalf("initial get code = %d, stdout = %q, stderr = %q", code, out, errOut)
-	}
-	if code, _, errOut := run("config", "set", "lookaside.cache.keep", "true"); code != 0 {
-		t.Fatalf("set code = %d, stderr = %q", code, errOut)
-	}
-	if configuration, err := config.Load(); err != nil || !configuration.Lookaside.CacheKeep {
-		t.Fatalf("after set: keep = %v, err = %v", configuration.Lookaside.CacheKeep, err)
-	}
-	if code, out, errOut := run("config", "get", "lookaside.cache.keep"); code != 0 || out != "true" {
-		t.Fatalf("get after set code = %d, stdout = %q, stderr = %q", code, out, errOut)
-	}
-	if code, _, errOut := run("config", "set", "lookaside.cache.keep", "sometimes"); code == 0 || !strings.Contains(errOut, "must be true or false") {
-		t.Fatalf("invalid set code = %d, stderr = %q", code, errOut)
-	}
-	if configuration, err := config.Load(); err != nil || !configuration.Lookaside.CacheKeep {
-		t.Fatalf("invalid set changed keep to %v, err = %v", configuration.Lookaside.CacheKeep, err)
-	}
-	if code, _, errOut := run("config", "unset", "lookaside.cache.keep"); code != 0 {
-		t.Fatalf("unset code = %d, stderr = %q", code, errOut)
-	}
-	if configuration, err := config.Load(); err != nil || configuration.Lookaside.CacheKeep {
-		t.Fatalf("after unset: keep = %v, err = %v", configuration.Lookaside.CacheKeep, err)
-	}
-	if code, out, errOut := run("config", "get", "lookaside.cache.keep"); code != 0 || out != "(unset)" {
-		t.Fatalf("get after unset code = %d, stdout = %q, stderr = %q", code, out, errOut)
-	}
-}
-
 func TestConfigShowAndGetUseCanonicalKeys(t *testing.T) {
 	configurationPath := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("WALDO_CONFIG", configurationPath)
@@ -1008,6 +973,14 @@ func TestConfigGetJSONPreservesOrderedMatchesAndUnsetState(t *testing.T) {
 	}
 	if len(output.Matches) != 8 || output.Matches[0].Key != "lookaside" || output.Matches[1].Key != "lookaside.region" || output.Matches[1].Set {
 		t.Fatalf("matches = %+v", output.Matches)
+	}
+}
+
+func TestConfigRejectsInvalidCompletedCacheRetention(t *testing.T) {
+	t.Setenv("WALDO_CONFIG", filepath.Join(t.TempDir(), "config.json"))
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"config", "set", "lookaside.cache.retain-completed", "yes"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "must be true or false") {
+		t.Fatalf("code = %d, stderr = %q", code, stderr.String())
 	}
 }
 

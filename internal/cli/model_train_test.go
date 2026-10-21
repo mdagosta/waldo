@@ -107,6 +107,20 @@ func TestModelProgressMessageIncludesStableETA(t *testing.T) {
 	}
 }
 
+func TestFormatModelProgressBar(t *testing.T) {
+	got := formatModelProgressBar(model.ProgressBar{
+		Label:   "pack",
+		Current: 25,
+		Total:   100,
+		Detail:  "200 cumulative record visits; corpus pass 2 (1 completed)",
+	})
+	for _, want := range []string{"pack", "25%", "25/100 sequences", "200 cumulative record visits", "corpus pass 2 (1 completed)"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("progress bar %q does not contain %q", got, want)
+		}
+	}
+}
+
 func TestModelMaterializeProgressReportsEveryCompletedShardToLogs(t *testing.T) {
 	var output bytes.Buffer
 	report := modelMaterializeProgressPrinter(&output)
@@ -117,8 +131,29 @@ func TestModelMaterializeProgressReportsEveryCompletedShardToLogs(t *testing.T) 
 			Shard: corpus.ShardPin{SHA256: strings.Repeat(string(rune('a'+position-1)), 64)},
 		})
 	}
-	if strings.Count(output.String(), "materialized") != 3 || !strings.Contains(output.String(), "30 B/30 B") {
+	if strings.Count(output.String(), "materialize [") != 3 ||
+		!strings.Contains(output.String(), " 66%") ||
+		!strings.Contains(output.String(), "100%") ||
+		!strings.Contains(output.String(), "30 B/30 B") {
 		t.Fatalf("progress output = %q", output.String())
+	}
+}
+
+func TestEpochStageExplainsMaterializationBeforeResolvingShards(t *testing.T) {
+	var progress bytes.Buffer
+	stage := model.Stage{Name: "pretrain", Parameters: training.Parameters{Epochs: 3}}
+	_, err := materializeModelStage(Context{Execution: context.Background()}, stage, corpus.BOM{}, nil, &progress, false)
+	if err == nil {
+		t.Fatal("empty BOM unexpectedly materialized")
+	}
+	got := progress.String()
+	note := "epoch-based training requires every selected shard to be materialized (or reused from cache) and hash-verified"
+	resolved := "preflight/pretrain          resolving"
+	if !strings.Contains(got, note) {
+		t.Fatalf("progress = %q, missing epoch materialization explanation", got)
+	}
+	if strings.Index(got, note) > strings.Index(got, resolved) {
+		t.Fatalf("epoch explanation follows shard resolution: %q", got)
 	}
 }
 

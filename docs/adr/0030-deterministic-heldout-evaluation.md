@@ -4,10 +4,17 @@ Status: accepted
 
 ## Decision
 
-Training selects held-out records by the lowest seeded SHA-256 scores over
-canonical shard and row identities. The default is one percent of records,
-capped at 256 records and 1 MiB of source content while leaving at least one
-training record.
+Training selects held-out records through a named deterministic policy. The
+default indexed policies derive a bounded sample of row positions from the
+pinned shard counts and seed, apply record filters to those candidates, and
+read only the selected complete records. The stratified form distributes
+candidates across logical corpus paths. The target is one percent of declared
+records, capped at 256 records and 1 MiB of source content while leaving at
+least one declared training record.
+
+The original `lowest-sha256-v1` policies remain available for exact selection
+by the lowest seeded SHA-256 scores over every eligible canonical shard and row
+identity. They require a complete eligible-row scan.
 
 The run BOM pins the selection algorithm, seed, record count, selected-model
 token targets, content bytes, and digest of the ordered identities. Selected

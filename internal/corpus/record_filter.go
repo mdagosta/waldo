@@ -6,6 +6,7 @@
 package corpus
 
 import (
+	"encoding/json"
 	"fmt"
 	"path"
 	"regexp"
@@ -27,18 +28,20 @@ var (
 // in a corpus BOM. A record must satisfy the global filter and its selected
 // logical corpus filter.
 type RecordFilterPolicy struct {
-	Schema  int                     `json:"schema" yaml:"schema"`
-	Global  *RecordFilter           `json:"global,omitempty" yaml:"global,omitempty"`
-	Corpora map[string]RecordFilter `json:"corpora,omitempty" yaml:"corpora,omitempty"`
+	Schema        int                     `json:"schema" yaml:"schema"`
+	Distributable bool                    `json:"distributable,omitempty" yaml:"distributable,omitempty"`
+	Global        *RecordFilter           `json:"global,omitempty" yaml:"global,omitempty"`
+	Corpora       map[string]RecordFilter `json:"corpora,omitempty" yaml:"corpora,omitempty"`
 }
 
 type RecordFilter struct {
-	MainContent *bool            `json:"main_content,omitempty" yaml:"main_content,omitempty"`
-	Exclude     *ExclusionFilter `json:"exclude,omitempty" yaml:"exclude,omitempty"`
-	Licenses    *ValueFilter     `json:"licenses,omitempty" yaml:"licenses,omitempty"`
-	Languages   *ValueFilter     `json:"languages,omitempty" yaml:"languages,omitempty"`
-	Sources     *ValueFilter     `json:"sources,omitempty" yaml:"sources,omitempty"`
-	Date        *DateFilter      `json:"date,omitempty" yaml:"date,omitempty"`
+	MainContent *bool                  `json:"main_content,omitempty" yaml:"main_content,omitempty"`
+	Exclude     *ExclusionFilter       `json:"exclude,omitempty" yaml:"exclude,omitempty"`
+	Licenses    *ValueFilter           `json:"licenses,omitempty" yaml:"licenses,omitempty"`
+	Languages   *ValueFilter           `json:"languages,omitempty" yaml:"languages,omitempty"`
+	Sources     *ValueFilter           `json:"sources,omitempty" yaml:"sources,omitempty"`
+	Metadata    map[string]ValueFilter `json:"metadata,omitempty" yaml:"metadata,omitempty"`
+	Date        *DateFilter            `json:"date,omitempty" yaml:"date,omitempty"`
 }
 
 // ExclusionFilter is the canonical deny-list form. A record is excluded when
@@ -69,7 +72,7 @@ func (policy RecordFilterPolicy) Validate(paths []string) error {
 			return fmt.Errorf("global record filter: %w", err)
 		}
 	}
-	if policy.Global == nil && len(policy.Corpora) == 0 {
+	if !policy.Distributable && policy.Global == nil && len(policy.Corpora) == 0 {
 		return fmt.Errorf("record filter policy must declare a global or corpus filter")
 	}
 	selected := make(map[string]bool, len(paths))
@@ -109,6 +112,14 @@ func (filter RecordFilter) Validate() error {
 			}
 		}
 	}
+	for key, values := range filter.Metadata {
+		if key == "" {
+			return fmt.Errorf("metadata keys must not be empty")
+		}
+		if err := values.Validate(); err != nil {
+			return fmt.Errorf("metadata.%s: %w", key, err)
+		}
+	}
 	if filter.Date != nil {
 		if err := filter.Date.Validate(); err != nil {
 			return err
@@ -121,7 +132,7 @@ func (filter RecordFilter) Validate() error {
 }
 
 func (filter RecordFilter) empty() bool {
-	return filter.MainContent == nil && filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && filter.Date == nil
+	return filter.MainContent == nil && filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && len(filter.Metadata) == 0 && filter.Date == nil
 }
 
 func (filter ExclusionFilter) Validate() error {
@@ -184,11 +195,40 @@ func (filter DateFilter) Validate() error {
 }
 
 func (policy RecordFilterPolicy) Allows(corpusPath string, record shard.RecordView) bool {
+	if policy.Distributable && !DistributableLicense(record.License) {
+		return false
+	}
 	if policy.Global != nil && !policy.Global.Allows(record) {
 		return false
 	}
 	filter, exists := policy.Corpora[corpusPath]
 	return !exists || filter.Allows(record)
+}
+
+// AllowsLicense applies only the license facets of a record policy. It is used
+// to review the possible license set before record bodies are streamed.
+func (policy RecordFilterPolicy) AllowsLicense(corpusPath, license string) bool {
+	if policy.Distributable && !DistributableLicense(license) {
+		return false
+	}
+	allows := func(filter *RecordFilter) bool {
+		if filter == nil {
+			return true
+		}
+		if filter.Exclude != nil {
+			for _, pattern := range filter.Exclude.Licenses {
+				if matched, _ := path.Match(pattern, license); matched {
+					return false
+				}
+			}
+		}
+		return filter.Licenses == nil || filter.Licenses.Allows(license)
+	}
+	if !allows(policy.Global) {
+		return false
+	}
+	filter, exists := policy.Corpora[corpusPath]
+	return !exists || allows(&filter)
 }
 
 func (filter RecordFilter) Allows(record shard.RecordView) bool {
@@ -198,7 +238,7 @@ func (filter RecordFilter) Allows(record shard.RecordView) bool {
 	if filter.Exclude != nil && filter.Exclude.Matches(record) {
 		return false
 	}
-	if filter.Licenses != nil && !filter.Licenses.Allows(record.License) {
+	if filter.Licenses != nil && !filter.Licenses.AllowsLicense(record.License) {
 		return false
 	}
 	if filter.Languages != nil && !filter.Languages.Allows(record.Language) {
@@ -207,7 +247,31 @@ func (filter RecordFilter) Allows(record shard.RecordView) bool {
 	if filter.Sources != nil && !filter.Sources.AllowsAny(record.Source, record.SourceName) {
 		return false
 	}
+	if !filter.allowsMetadata(record.Metadata) {
+		return false
+	}
 	return filter.Date == nil || filter.Date.Allows(record.Date)
+}
+
+func (filter RecordFilter) allowsMetadata(raw string) bool {
+	if len(filter.Metadata) == 0 {
+		return true
+	}
+	values := map[string]json.RawMessage{}
+	if raw == "" || json.Unmarshal([]byte(raw), &values) != nil {
+		return false
+	}
+	for key, constraint := range filter.Metadata {
+		var value string
+		encoded, exists := values[key]
+		if exists && json.Unmarshal(encoded, &value) != nil {
+			return false
+		}
+		if !constraint.Allows(value) {
+			return false
+		}
+	}
+	return true
 }
 
 func (filter ExclusionFilter) Matches(record shard.RecordView) bool {
@@ -217,12 +281,7 @@ func (filter ExclusionFilter) Matches(record shard.RecordView) bool {
 	if filter.BoilerplateContent != nil && record.BoilerplateContent != nil && *filter.BoilerplateContent == *record.BoilerplateContent {
 		return true
 	}
-	for _, pattern := range filter.Licenses {
-		if matched, _ := path.Match(pattern, record.License); matched {
-			return true
-		}
-	}
-	return false
+	return licenseExcluded(filter.Licenses, record.License)
 }
 
 // ContentAssessmentExclusions returns the assessment fields whose true or
@@ -258,6 +317,16 @@ func (filter RecordFilter) addContentAssessmentExclusions(fields map[string]bool
 
 func (filter ValueFilter) Allows(value string) bool {
 	return filter.AllowsAny(value)
+}
+
+// AllowsLicense applies the filter to a license expression with the same
+// term semantics as LicensePolicy: any excluded term rejects the record and
+// includes must cover every term.
+func (filter ValueFilter) AllowsLicense(license string) bool {
+	if licenseExcluded(filter.Exclude, license) {
+		return false
+	}
+	return len(filter.Include) == 0 || licenseIncluded(filter.Include, license)
 }
 
 func (filter ValueFilter) AllowsAny(values ...string) bool {

@@ -1,0 +1,43 @@
+{
+  "kind": "openwaldo-training-rung-evidence",
+  "schema": 1,
+  "rung": "0005-general-base",
+  "model": {
+    "name": "general-base-125m-20tpp-01",
+    "id": "2d21eb00a261c58e1514cae674b8251ae97f6e74f6cbeab781339bf5fa8c0248",
+    "run_id": "50fdb491d54e0bdf",
+    "parameters": 124635456,
+    "core_parameters": 106203456,
+    "selected_step": 114000,
+    "planned_steps": 129639,
+    "consumed_tokens": 2124005376,
+    "heldout_loss_initial": 10.431771330505814,
+    "heldout_loss_selected": 2.4652140889784593,
+    "heldout_loss_final": 2.4855515621918967,
+    "heldout_loss_reloaded": 2.4652140889784593,
+    "heldout_bpb_selected": 0.8976615720062489
+  },
+  "data": {
+    "stackexchange_target_tokens": 318708363,
+    "wikimedia_target_tokens": 956077465,
+    "cosmopedia_filtered_target_tokens": 636772874,
+    "tinystories_gpt4_target_tokens": 212446674,
+    "maximum_effective_source_passes": 3.40
+  },
+  "generation": {
+    "sampled_responses": 20,
+    "grammatical_and_on_topic_for_two_sentences": 16,
+    "two_complete_sentences": 20,
+    "sampled_eos_within_512": 16,
+    "sampled_loops": 0,
+    "greedy_loops": 2
+  },
+  "supplementary_public_evaluation": {
+    "wikitext_bpb": 1.0633,
+    "arc_easy_normalized_accuracy": 0.3754,
+    "piqa_normalized_accuracy": 0.5680,
+    "sciq_normalized_accuracy": 0.4910,
+    "lambada_exact_match_accuracy": 0.2467
+  },
+  "passed": true
+}

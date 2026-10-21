@@ -147,7 +147,7 @@ func TestIngestionFlagsContentAssessmentsAndSummarizesManifest(t *testing.T) {
 }
 
 func TestDeclarativeProfileIsPartOfConversionAndSourceIdentity(t *testing.T) {
-	base := Plan{Inputs: []PlanInput{{
+	base := Plan{Writer: WriterPlan{AdapterRecipe: textAdapterRecipe}, Inputs: []PlanInput{{
 		Artifact: Artifact{SHA256: fmt.Sprintf("%064x", 1), Bytes: 10, Format: "json"}, Adapter: "json",
 		Profile: InputProfile{Type: ProfileRecordMap, Fields: ProfileFields{Text: []string{"body"}}},
 	}}}
@@ -164,6 +164,11 @@ func TestDeclarativeProfileIsPartOfConversionAndSourceIdentity(t *testing.T) {
 	}
 	if baseSource == changedSource || conversionProfile(base) == conversionProfile(changed) {
 		t.Fatal("profile mapping did not change persisted identities")
+	}
+	changedRecipe := base
+	changedRecipe.Writer.AdapterRecipe = "canonical-adapters-test"
+	if conversionProfile(base) == conversionProfile(changedRecipe) {
+		t.Fatal("adapter recipe did not change persisted conversion identity")
 	}
 }
 

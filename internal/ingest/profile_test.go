@@ -51,6 +51,8 @@ func TestInputProfileValidation(t *testing.T) {
 		"incomplete tree":      {Type: ProfileRankedConversationTree, Tree: ConversationTree{Text: "text"}},
 		"bad rank fallback":    {Type: ProfileRankedConversationTree, Tree: ConversationTree{Replies: "replies", Text: "text", Rank: "rank", MissingRank: "random"}},
 		"bad boundary":         {Type: ProfileBoundedText, Bounds: TextBounds{StartPattern: "[", EndPattern: "end"}},
+		"missing separator":    {Type: ProfileSeparatedText},
+		"NUL separator":        {Type: ProfileSeparatedText, Separator: "\x00"},
 		"relative XPath":       {Type: ProfileXMLRecord, Fields: ProfileFields{Text: []string{"doc/body"}}},
 		"bad empty policy":     {Type: ProfileRecordMap, OnEmpty: "discard", Fields: ProfileFields{Text: []string{"body"}}},
 		"bad NUL policy":       {Type: ProfileRecordMap, NUL: "drop", Fields: ProfileFields{Text: []string{"body"}}},
@@ -68,6 +70,9 @@ func TestInputProfileValidation(t *testing.T) {
 	}
 	if err := (InputProfile{Type: ProfileBoundedText, OnEmpty: "skip", Bounds: TextBounds{StartPattern: "start", EndPattern: "end"}}).Validate(); err != nil {
 		t.Fatalf("bounded-text on_empty policy was rejected: %v", err)
+	}
+	if err := (InputProfile{Type: ProfileSeparatedText, OnEmpty: "skip", Separator: "<END>"}).Validate(); err != nil {
+		t.Fatalf("separated-text profile was rejected: %v", err)
 	}
 	if err := (InputProfile{
 		Type:        ProfileDialoguePair,

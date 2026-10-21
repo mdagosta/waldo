@@ -13,7 +13,7 @@ Setup: `brew install uv`; `./waldito` then runs in a cached environment with mlx
 
 Compose files are written by hand or with AI from what catalog shows -- see docs/MODEL-COMPOSE.md.
 
-Repeated runs: `waldo config set lookaside.cache.keep true` skips re-downloading shards (LRU-bounded by
+Repeated runs: `waldo config set lookaside.cache.retain-completed true` skips re-downloading shards (LRU-bounded by
 lookaside.cache.max-size); `waldo lookaside cache status` to inspect, `waldo lookaside cache clean` when done.
 
 Usage:

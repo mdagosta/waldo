@@ -65,6 +65,27 @@ func TestRecordMapPreservesAndConservativelyCombinesLicenseArray(t *testing.T) {
 	}
 }
 
+func TestRecordMapPreservesMixedLicenseMentionUnderVersionedAdapter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "records.jsonl")
+	rawLicense := "GPL-3.0-only; docs: https://creativecommons.org/licenses/by/4.0/"
+	contents := `{"text":"licensed text","metadata":{"license":"` + rawLicense + `"}}` + "\n"
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	profile := InputProfile{
+		Type:   ProfileRecordMap,
+		Fields: ProfileFields{Text: []string{"text"}, License: "metadata.license"},
+	}
+	plan := mappedFixturePlan(t, path, profile)
+	if plan.Writer.AdapterRecipe != textAdapterRecipe {
+		t.Fatalf("adapter recipe = %q, want %q", plan.Writer.AdapterRecipe, textAdapterRecipe)
+	}
+	rows := collectMappedRows(t, plan)
+	if len(rows) != 1 || rows[0].License != rawLicense || rows[0].LicenseRaw == nil || *rows[0].LicenseRaw != rawLicense {
+		t.Fatalf("rows = %+v", rows)
+	}
+}
+
 func TestRecordMapPreservesSelectedProvenanceMetadata(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "records.jsonl")
 	contents := `{"text":"training record","id":"record-7","metadata":{"dataset_id":"dataset-a","url":"https://source.example/7","tags":["one","two"]}}` + "\n"
@@ -387,20 +408,22 @@ func TestPerRecordLicensesShareObjectsAndRemainInManifest(t *testing.T) {
 
 func TestMappedLicensePolicyExcludesAndCountsRows(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "licenses.jsonl")
-	contents := "{\"text\":\"keep\",\"license\":\"CC0-1.0\"}\n{\"text\":\"omit\",\"license\":\"LicenseRef-Proprietary\"}\n"
+	contents := "{\"text\":\"keep\",\"license\":[\"CC0-1.0\"]}\n" +
+		"{\"text\":\"omit\",\"license\":[\"LicenseRef-Proprietary\"]}\n" +
+		"{\"text\":\"omit compound\",\"license\":[\"MIT\",\"CC-BY-NC-4.0\"]}\n"
 	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	profile := InputProfile{
 		Type:          ProfileRecordMap,
-		Fields:        ProfileFields{Text: []string{"text"}, License: "license"},
-		LicensePolicy: corpus.LicensePolicy{Include: []string{"CC*"}},
+		Fields:        ProfileFields{Text: []string{"text"}, License: "license[]"},
+		LicensePolicy: corpus.LicensePolicy{Include: []string{"CC*", "MIT"}, Exclude: []string{"CC-BY-NC-*"}},
 	}
 	assembly, err := AssembleTextObjects(context.Background(), mappedFixturePlan(t, path, profile), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assembly.RetainedDocs != 1 || assembly.RejectedDocs != 1 || assembly.Rejections[RejectionLicense] != 1 {
+	if assembly.RetainedDocs != 1 || assembly.RejectedDocs != 2 || assembly.Rejections[RejectionLicense] != 2 {
 		t.Fatalf("assembly = %+v", assembly)
 	}
 }

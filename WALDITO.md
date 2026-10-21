@@ -246,8 +246,7 @@ replicas, not by trusting whoever closed first.
 
 ## Needed in waldo (proposal to maintainers)
 
-Small, narrow patches first (`lookaside.cache.keep`, the absolute-path corpus-weights bug,
-chat on pulled models, `model.gpu-throttle` config, skipping the checkpoint at a run's final
+Small, narrow patches first (the absolute-path corpus-weights bug, `model.gpu-throttle` config, skipping the checkpoint at a run's final
 step since the terminal weights supersede it, which cuts a run's writes from ~91 MB to ~36 MB here
 and leaves no dead optimizer state; interim checkpoints stay for resuming); the larger items once
 `waldito join` works. Plans should set `checkpoint_every` by time per unit, not rely on the

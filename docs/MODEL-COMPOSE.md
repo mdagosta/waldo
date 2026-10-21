@@ -19,10 +19,44 @@ waldo model train babble composes/0001-babble.yaml
 exist, or appends the declared stages when the existing model has exactly the
 same architecture.
 
+### Optional exact tokenizer measurement
+
+Use `--measure-tokenizer` when testing a tokenizer or qualifying a new
+tokenizer/corpus combination:
+
+```bash
+waldo model forecast model.yaml --measure-tokenizer
+```
+
+This is an exact full-corpus analysis, not a normal training prerequisite. It
+materializes every selected shard, applies the compose filters and held-out
+partition, and tokenizes every eligible record. WALDO reports tokenizer
+fertility, record-length percentiles, context fit, packing boundaries, exact
+source exposure, and effective corpus passes. Runtime therefore scales with
+the complete selected text volume and can be substantial for large corpora.
+The ordinary `forecast` command remains the fast metadata-based forecast. Do
+not routinely run `--measure-tokenizer` before `model train`: the measurement
+artifact is not currently consumed by training, so that workflow scans the
+corpus twice. The former ambiguous name `--preflight` now fails immediately
+with this guidance instead of starting the expensive scan. Structured output
+places the result under `tokenizer_measurement`.
+
 Forecasts calculate fixed-token stages immediately. Epoch-driven stage sizes
 depend on the selected index revision, filters, held-out records, tokenizer,
 and objective, so their exact tokens, steps, and added runtime are reported
 during training preflight rather than guessed.
+
+Forecast JSON includes a versioned `forecast.fitness` object. It decomposes
+WALDO's exact bias-free RoPE/RMSNorm/GQA/SwiGLU architecture, reports both
+conventional `6ND` and architecture-aware compute approximations, separates
+memory components, and shows batch arithmetic for compatible world sizes.
+Corpus-dependent fields explicitly say `requires-corpus-preflight` (the stable
+JSON compatibility value) until `--measure-tokenizer` has scanned the selected
+immutable corpus with the selected tokenizer. The
+forecast refuses empirical loss prediction when comparable run evidence is
+absent; it never treats a token/parameter ratio as a capability promise. The
+formulas and evidence policy are specified in
+[`MODEL-TRAINING-FITNESS.md`](MODEL-TRAINING-FITNESS.md).
 
 ## Why the profile is called causal pretraining
 
@@ -109,6 +143,7 @@ stages:
       profile: causal-pretrain-weighted
       tokens: 1966080000
       batch_size: 32
+      gradient_accumulation_steps: 4
       sequence_length: 1024
       learning_rate: 0.0002
       seed: 42
@@ -125,6 +160,21 @@ stages:
 
 Unknown fields and additional YAML documents are rejected. JSON uses the same
 field names and structure.
+
+`batch_size` is the global number of packed sequences contributing to one
+optimizer step. Optional `gradient_accumulation_steps` defaults to 1 and must
+divide `batch_size` exactly. Each physical global micro-batch is
+`batch_size / gradient_accumulation_steps`; the selected distributed world
+size must divide that value evenly. Schedulers, checkpoints, `steps`, and token
+budgets count optimizer steps, never micro-batches.
+
+For shared-plan multi-node training, WALDO mirrors and verifies corpus objects
+once per node, prepares deterministic sequence partitions in the node
+coordinator, and distributes them only to local ranks. Do not configure a
+separate corpus mirror per GPU. NFS is suitable for the small rendezvous plan,
+but it is not the default training-data path. Launcher-stream compatibility
+runs retain global-rank-zero broadcast and record that fallback in the run
+BOM.
 
 ## Top-level fields
 
@@ -190,7 +240,7 @@ to `waldo model train`. A compose supports three initialization modes:
 | Compose declaration | Initial weights | Architecture rule |
 | --- | --- | --- |
 | no `base` | Newly initialized weights | `architecture` is required. |
-| `base.model` | Verified completed checkpoint from a named managed model, falling back to its origin when it has no completed run | `architecture` is required and must exactly match the managed model. |
+| `base.model` | Verified completed checkpoint from a named managed model, falling back to its origin when it has no completed run | `architecture` may be omitted and inherited; when present, it must exactly match. |
 | `base.source` | Verified origin weights acquired from an external source | `architecture` may be omitted and inherited; when present, it must exactly match. |
 
 `model` and `source` are mutually exclusive. A base initializes the destination
@@ -212,10 +262,11 @@ base:
   # artifact_sha256: <optional-checkpoint-sha256>
 ```
 
-The compose must contain a complete architecture exactly matching the named
-model. Use this form when the base should be visible to `waldo model list` and
-independently inspectable with `waldo model summary conversation`. Resolution
-turns omitted pins into immutable values before training starts.
+The compose may omit `architecture` and inherit it from the named model. When
+present, the complete architecture must exactly match. Use this form when the
+base should be visible to `waldo model list` and independently inspectable with
+`waldo model summary conversation`. Resolution turns the inherited architecture
+and omitted pins into immutable values before training starts.
 
 ### Direct external base
 
@@ -284,9 +335,14 @@ compatibility boundary.
 | `key_value_heads` | yes | positive integer | Key/value-head count. Must divide `attention_heads`. |
 | `dropout` | no | `0 <= value < 1`; default `0` | Residual dropout applied during training and disabled during evaluation and inference. |
 | `tie_embeddings` | no | boolean; default `false` | Reuses input embeddings as the output projection when true. False adds a separate output matrix. Reference composes set it explicitly. |
+| `qk_normalization` | no | boolean; default `false` | RMS-normalizes rotary query and key vectors before attention. |
+| `initialization` | no | `normal` or `depth-scaled`; default `normal` | Weight initialization recipe. `depth-scaled` reduces residual output projection variance by model depth. |
 | `parameter_dtype` | yes | `float32`, `float16`, or `bfloat16` | Portable parameter and mixed-precision artifact declaration. Backend support is checked before training. |
-| `tokenizer.name` | yes | supported name | Selects WALDO's offline tokenizer implementation. |
-| `tokenizer.revision` | yes | immutable revision | Pins exact tokenizer behavior. |
+| `tokenizer.name` | yes for built-ins | supported name | Selects WALDO's offline tokenizer implementation. It is populated from a trained artifact when `artifact_path` is used. |
+| `tokenizer.revision` | yes for built-ins | immutable revision | Pins exact tokenizer behavior. It is populated from a trained artifact when `artifact_path` is used. |
+| `tokenizer.artifact_path` | trained tokenizer only | path | Loads a `waldo-trained-tokenizer` artifact relative to the compose, validates it, and embeds it in the immutable model contract. |
+| `tokenizer.artifact` (`artifact`) | resolved form only | object | Content-pinned trained tokenizer embedded by WALDO in saved compose, run-plan, and model artifacts. Authors should use `artifact_path` rather than inline this object. |
+| `tokenizer.training` | compose-trained tokenizer only | object | Declares a tokenizer phase that runs before model initialization. The resolved artifact is embedded in the immutable architecture and distributed to every worker. |
 
 The architecture determines the model parameter count. WALDO derives and
 reports that count in forecasts and model summaries; it is not an independent
@@ -301,9 +357,38 @@ The tokenizer name, revision, and vocabulary size are one exact contract:
 | `byte` | `builtin-byte-schema-1` | 259 | Legacy and very small byte-token models. |
 | `tiktoken/r50k_base` | `tiktoken-r50k-base` | 50259 | Compact English-oriented subword models. |
 | `tiktoken/cl100k_base` | `tiktoken-cl100k-base` | 100259 | Larger multilingual and code-capable subword vocabulary. |
+| `waldo/byte-bpe` | artifact revision | artifact vocabulary | Corpus-trained byte-level BPE vocabulary selected with `tokenizer.artifact_path`. |
+| `waldo/bytepiece` | artifact revision | artifact vocabulary | Read-only compatibility for schema-1 artifacts; new training never creates this format. |
 
-WALDO performs tokenization before the framework worker, ensuring supported
-backends receive identical token IDs.
+WALDO tokenizes the canonical Parquet stream on demand while the framework
+worker is running, ensuring supported backends receive identical token IDs
+without requiring a separate full-corpus preprocessing pass. A trained
+artifact is expanded into the saved architecture, so secondary hosts and later
+inference do not depend on a machine-local tokenizer path.
+
+### Tokenizer training fields
+
+`tokenizer.training` makes tokenizer creation part of the same model compose:
+
+| Field | Required | Value | Meaning |
+| --- | --- | --- | --- |
+| `algorithm` | yes | `byte-bpe-v1` | Deterministic byte-level BPE trainer with all 256 bytes as fallback tokens. |
+| `sample_bytes` | yes | positive integer | Maximum admitted bytes sampled evenly across selected corpus paths. |
+| `seed` | yes | unsigned integer | Pins balanced record ordering. |
+| `max_token_inflation` | no | `0..1`; default `0` | Maximum permitted fractional increase in candidate token count relative to r50k on the identical sample. |
+| `distribution_policy` | yes | `distributable` | Requires the tokenizer corpus BOM to pass the strict distribution review. |
+| `filter` | no | record filter | Global record filter for tokenizer training. |
+| `corpora` | yes | non-empty unique corpus selections | Corpus paths sampled evenly. Weights are rejected because tokenizer sampling is balanced. |
+
+The architecture's `vocabulary_size` is the requested and required artifact
+size. Forecast validates this declaration without acquiring corpus objects.
+Training resolves the corpus BOM, trains and checks the tokenizer on rank 0,
+then persists model identity and launches model stages. A compose may instead
+select a previously trained artifact with `artifact_path`, but it cannot combine
+`artifact_path` and `training`. The resolved compose records the tokenizer
+corpus BOM as `corpus_bom`; model architecture identity contains the resulting
+artifact but excludes the producing recipe, so regenerated declarative YAML
+does not change model structure.
 
 ## Stage fields
 
@@ -387,6 +472,11 @@ corpora:
         include_unset: true
       sources:
         exclude: [deprecated-*]
+      metadata:
+        audience:
+          include: [middle_school_students]
+        format:
+          include: [textbook]
       date:
         from: "1900"
         to: "2025-06-30"
@@ -400,10 +490,11 @@ corpora:
 | `filter.main_content` | no | Requires the canonical main-content boolean to equal the declared value. Normally `true`; older schemas default to `true`. |
 | `filter.exclude.repetitive_content` | no | Excludes rows whose schema-2 repeated-token flag equals the declared boolean. The normal policy is `true`. |
 | `filter.exclude.boilerplate_content` | no | Excludes rows whose schema-2 duplicated-structure flag equals the declared boolean. The normal policy is `true`. |
-| `filter.exclude.licenses` | no | Excludes rows whose normalized license matches any listed shell-style pattern. |
-| `licenses` | no | Matches the canonical row's normalized license. |
+| `filter.exclude.licenses` | no | Excludes rows whose normalized license, or any term of a compound license expression, matches any listed shell-style pattern. |
+| `licenses` | no | Matches the canonical row's normalized license. Compound expressions are matched term by term, as described below. |
 | `languages` | no | Matches the canonical row's language. |
 | `sources` | no | Matches either the canonical source identifier or source name. |
+| `metadata` | no | Maps canonical `meta` JSON keys to value filters. Each declared key must contain a string value and all declared keys must match. Missing, malformed, or non-string values are rejected. |
 | `date` | no | Selects canonical dates that overlap the inclusive `from`/`to` interval. |
 | `include` | no | At least one shell-style, case-sensitive pattern must match. |
 | `exclude` | no | Any matching pattern rejects the record and takes precedence over `include`. |
@@ -418,6 +509,17 @@ rejects the row. A stage-wide
 cannot loosen the global one. Other filter fields are ANDed with the exclusion
 decision. Missing or malformed row values do not satisfy an include or date
 condition.
+
+License patterns apply to each term of a compound license expression such as
+`Apache-2.0 AND CC-BY-NC-4.0`, the form recorded for rows that declare several
+upstream licenses. Terms are separated by `AND` or `OR`. A license exclude
+rejects the row when it matches the whole expression or any term. A license
+include must match every term, unless the include pattern is itself a compound
+expression that matches the whole value. `OR` alternatives are treated like
+`AND` terms, so an alternative that is not included keeps the row out. In
+license patterns, `*` and `?` also match `/`. Malformed compound expressions,
+including empty operands or unbalanced parentheses, do not satisfy an explicit
+license policy.
 
 The older `filter.licenses.include`/`exclude` representation remains accepted.
 It cannot be combined with `filter.exclude.licenses` in the same filter.
@@ -435,6 +537,14 @@ silently train on a different subset. The BOM's manifest totals remain the
 indexed reference totals; run and evaluation evidence describe actual training
 consumption. If the combined filters eliminate every row from one selected
 corpus, preflight warns that the corpus will contribute zero training tokens.
+
+When an exact policy scans the rows, WALDO prints the input, included, fully
+held-out, partially held-out, and skipped record counts after the successful
+stage. It also prints included and skipped counts grouped by effective license,
+and preserves that selection accounting in the stage preflight artifact. The
+default indexed policy deliberately avoids that scan, so it reports and pins
+the bounded held-out sample while actual per-corpus token consumption remains
+the authoritative evidence for streamed training.
 The corpus remains in the selection BOM for auditability, while observed
 consumption lists only corpora that supplied positive token targets.
 
@@ -448,20 +558,30 @@ must use one representation or the other, never both.
 | --- | --- | --- | --- |
 | `profile` | no | `causal-pretrain-shuffled` | Selects versioned record ordering, corpus exposure, and held-out selection. |
 | `parallelism` | no | `auto` | TorchTitan placement: `auto`, `data-parallel`, `hybrid-sharded-data-parallel`, or `fully-sharded-data-parallel`. The resolved placement is pinned in the run BOM. |
-| `tokens` | one training budget | positive integer | Fixed pretraining target budget. WALDO rounds it up to a complete optimizer step and persists the derived step count. Cannot be combined with `epochs` or `steps`. |
+| `tokens` | one training budget | positive integer | Fixed training target budget. WALDO rounds it up to a complete optimizer step, then filters, tokenizes, and packs Parquet rows while training runs until the budget is met. Cannot be combined with `epochs` or `steps`. |
 | `epochs` | one training budget | `1..1000000` | Complete deterministic passes over every selected canonical record. When `steps` is omitted, WALDO derives the exact optimizer-step count after filtering and held-out selection. |
 | `steps` | legacy/fixed-step budget | positive integer | Explicit optimizer steps and learning-rate schedule length. Retained for existing composes and exact fixed-step experiments; it may be combined with `epochs` as a repetition limit. |
 | `batch_size` | yes | positive integer | Global number of packed sequences in each optimizer step. Multi-GPU training partitions these sequences across ranks, so the value must be at least and evenly divisible by the aggregate GPU count. |
+| `gradient_accumulation_steps` | no | default `1`; exact divisor of `batch_size` | Splits the logical global batch into physical micro-batches. Each micro-batch must remain divisible by world size. |
+| `compute_precision` | no | `auto`, `float32`, `float16`, or `bfloat16` | Compute autocast precision. `auto` follows `parameter_dtype`. CUDA FP16 uses persisted dynamic loss scaling. |
+| `activation_checkpointing` | no | default `false` | Recomputes transformer layers during backward to reduce activation memory. PyTorch/TorchTitan only. |
+| `compile` | no | default `false` | Compiles the live PyTorch/TorchTitan forward graph. The unwrapped model remains the checkpoint and export source. |
+| `distribution_policy` | no | `distributable` | Selects only records whose effective license is on WALDO's reviewed distributable allowlist. Other records in the same corpus are skipped. Selected sources must carry a pinned version and license evidence; the resulting review and obligations are pinned in the run BOM. |
 | `sequence_length` | yes | positive integer, at most `context_tokens` | Number of predicted token targets per packed sequence. |
-| `learning_rate` | yes | finite positive number | Peak AdamW learning rate. |
+| `learning_rate` | yes | finite positive number | Peak optimizer learning rate. |
+| `optimizer` | no | `adamw` or `muon-adamw`; default `adamw` | Optimizer recipe. Muon applies orthogonalized momentum updates to hidden matrices and AdamW to embeddings, output heads, and vectors; it currently requires PyTorch data-parallel placement. |
+| `schedule` | no | `cosine` or `warmup-stable-warmdown`; default `cosine` | Learning-rate schedule. |
 | `seed` | no | default `0` | Controls deterministic shuffling, evaluation selection, initialization, and training randomness. Reference composes set it explicitly. |
 | `weight_decay` | no | default `0.1`; `0..1` | AdamW weight decay. Explicit zero disables it. |
 | `warmup_steps` | no | `min(100, steps/10)`; `0..steps` | Linear warmup duration. For runs longer than one step, the default is at least one. Explicit zero disables warmup. |
+| `warmdown_steps` | no | half of the run for `warmup-stable-warmdown`, otherwise `0` | Linear warmdown duration. Warmup plus warmdown cannot exceed the run. |
+| `minimum_learning_rate_ratio` | no | `0.1` for cosine, `0` for warmup-stable-warmdown; `0..1` | Final learning rate as a fraction of the peak. |
 | `checkpoint_every` | no | `min(500, steps)`; `0..steps` | Checkpoint interval. Explicit zero disables periodic checkpoints. |
-| `evaluate_every` | no | `min(500, steps)`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation. |
+| `evaluate_every` | no | `min(500, steps)`; `0..steps` | Held-out evaluation interval. Explicit zero disables periodic evaluation; real backends still run safety and terminal artifact-quality evaluations whenever a held-out set exists. |
 | `shuffle_buffer_records` | no | default `1024`; `1..1000000` | Maximum records retained by deterministic bounded shuffle. |
 | `shuffle_buffer_bytes` | no | default 64 MiB; `1 B..16 GiB` | Maximum record text retained by deterministic bounded shuffle. |
 | `corpus_weights` | only for `causal-pretrain-weighted`; legacy form | each weight `1..1000000` | Integer relative token exposure keyed by every selected corpus path. Configured corpus `weight` fields are preferred. |
+| `evaluation_selection` | no | Profile default | `indexed-sample-v1` and `stratified-indexed-sample-v1` use bounded deterministic direct row reads and are the defaults. Legacy `lowest-sha256-v1` policies perform an exact full eligible-row scan. `contiguous-tail-v1` requires the shuffled profile and exactly one eligible text record; it trains on the leading portion and evaluates the trailing `evaluation_fraction`. |
 | `evaluation_fraction` | no | default `0.01`; `0 <= value < 1` | Candidate fraction for deterministic held-out selection. |
 | `evaluation_max_records` | no | default `256`; `0..1000000` | Held-out record cap. |
 | `evaluation_max_bytes` | no | default 1 MiB; `0 B..16 GiB` | Held-out text-byte cap. |
@@ -479,24 +599,48 @@ derived_steps * batch_size * sequence_length
 Records are continuously packed with an EOS token between records; document
 boundaries do not force padding to a new sequence. Epoch-driven stages scan the
 finite filtered stream and derive their exact steps before creating a run.
-Fixed-token stages derive steps without a full scan and retain a single source
-pass. Legacy stages declaring both fields verify that their epochs contain
-enough packed targets to reach the requested steps. A run fails rather than
-silently shortening its declared budget.
+Fixed-token stages derive steps from the requested budget without scanning.
+Their canonical Parquet rows are filtered, tokenized, and packed on demand,
+with deterministic passes repeated until the worker receives the requested
+number of optimizer steps.
+Legacy stages declaring both fields verify that their epochs contain enough
+packed targets to reach the requested steps. An impossible run fails during
+preflight rather than after accelerator work begins or by silently shortening
+its declared budget.
 
 Setting any one of `evaluation_fraction`, `evaluation_max_records`, or
 `evaluation_max_bytes` to zero disables the held-out set and resolves all
 three values to zero.
 
+The default indexed evaluation policies derive deterministic row positions
+from the pinned shard record counts and seed, then read only a bounded sample
+of complete rows. License and content filters are applied to those candidates;
+the selected identities and evaluation evidence are pinned before training.
+There is no corpus-wide evaluation scan. The `stratified-` form distributes
+candidates across logical corpus paths. The small selection artifact is
+content-addressed under the model root and can be reused by later models and
+token-budget variants.
+
+The legacy `lowest-sha256-v1` and `stratified-lowest-sha256-v1` policies remain
+available when an exact lowest-hash selection over every eligible row is
+required. They scan all selected rows on first use and cache the result. They
+should not be used accidentally for petabyte-scale training.
+
+`contiguous-tail-v1` is the narrow single-stream control for corpora such as
+Tiny Shakespeare. Its UTF-8 byte boundary, canonical row identity, held-out
+byte count, and tokenizer targets are pinned in stage preflight. It does not
+split the indexed record or add intermediate EOS boundaries. The held-out tail
+must fit `evaluation_max_bytes`; WALDO fails rather than truncating it.
+
 ### Fixed profile behavior
 
-All profiles resolve to AdamW with betas `0.9` and `0.95`, epsilon `1e-8`, and
-a cosine schedule ending at 10% of the peak learning rate. Those values and
-continuous EOS packing are versioned profile facts, not compose fields.
+All profiles default to AdamW with betas `0.9` and `0.95`, epsilon `1e-8`, and
+a cosine schedule ending at 10% of the peak learning rate. A compose may select
+the controlled Muon/AdamW or warmup-stable-warmdown experiments explicitly.
+Continuous EOS packing remains a versioned profile fact.
 
 A schema-1 compose has no fields for arbitrary chat-template expressions,
-optimizer choice, gradient accumulation, activation checkpointing,
-mixture-of-experts routing, or distributed topology. The optional built-in
+mixture-of-experts routing, or physical distributed topology. The optional built-in
 interaction contract controls inference formatting; it does not change the
 causal training objective. Hardware and backend topology remain machine-local
 policy; other training behaviors require a separately versioned portable
@@ -504,9 +648,9 @@ contract rather than an ignored compose field.
 
 | Profile | Training record order | Held-out selection | Corpus weights |
 | --- | --- | --- | --- |
-| `causal-pretrain-shuffled` | One bounded deterministic shuffle across the selection. | Deterministic lowest SHA-256 candidates across the selection. | Not accepted. |
-| `causal-pretrain-balanced` | Balances emitted tokenizer targets equally across logical corpus paths, with bounded shuffle within each. | Deterministically stratified across corpus paths. | Not accepted. |
-| `causal-pretrain-weighted` | Selects the corpus with the lowest emitted-target-to-declared-weight ratio, with bounded shuffle within each. | Deterministically stratified across corpus paths. | Required for every selected corpus. |
+| `causal-pretrain-shuffled` | One bounded deterministic shuffle across the selection. | Deterministic bounded indexed sample across the selection. | Not accepted. |
+| `causal-pretrain-balanced` | Balances emitted tokenizer targets equally across logical corpus paths, with bounded shuffle within each. | Deterministic bounded indexed sample stratified across corpus paths. | Not accepted. |
+| `causal-pretrain-weighted` | Selects the corpus with the lowest emitted-target-to-declared-weight ratio, with bounded shuffle within each. | Deterministic bounded indexed sample stratified across corpus paths. | Required for every selected corpus. |
 
 Each named profile currently has `profile_schema: 1` in the resolved run BOM.
 That field versions the behavior contract independently; it is not a model

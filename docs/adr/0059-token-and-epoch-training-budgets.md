@@ -27,6 +27,9 @@ Schema-1 composes accept three budget forms:
 WALDO rounds token budgets up to a complete optimizer step. Epoch-derived and
 token-derived step counts are persisted in the immutable run BOM. Static
 forecasts identify epoch-derived stages rather than inventing their size.
+Token-budget stages stream, filter, tokenize, and pack canonical Parquet rows
+while the worker runs, repeating deterministic passes until the exact step
+target is met. They do not make a separate corpus-wide capacity pass.
 
 ## Consequences
 

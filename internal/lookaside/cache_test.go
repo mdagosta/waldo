@@ -18,8 +18,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/openwaldo/waldo/internal/config"
 )
 
 func TestFetchVerifiesAndCachesHTTPObject(t *testing.T) {
@@ -143,76 +141,6 @@ func TestPurgeUsedRemovesSuccessfulFetches(t *testing.T) {
 	}
 }
 
-func TestPurgeUsedKeepsSuccessfulFetchesWhenConfigured(t *testing.T) {
-	root := t.TempDir()
-	content := "kept object"
-	digest := digestOf(content)
-	cache, err := NewCache(root, &http.Client{Transport: &fakeTransport{content: content}}, WithKeepUsed(true))
-	if err != nil {
-		t.Fatal(err)
-	}
-	path, err := cache.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	purged, err := cache.PurgeUsed()
-	if err != nil || purged.Objects != 0 {
-		t.Fatalf("PurgeUsed() = %+v, %v", purged, err)
-	}
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("kept cache object was removed: %v", err)
-	}
-}
-
-func TestDefaultCacheAppliesConfiguredKeep(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		keep   bool
-		legacy bool
-		kept   bool
-	}{
-		{name: "default purges", kept: false},
-		{name: "keep retains", keep: true, kept: true},
-		{name: "legacy scratch-only layout has no bound, so keep is ignored", keep: true, legacy: true, kept: false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			directory := t.TempDir()
-			t.Setenv("WALDO_CONFIG", filepath.Join(directory, "config.json"))
-			configuration := config.Default()
-			configuration.Lookaside.CacheKeep = test.keep
-			if test.legacy {
-				configuration.Lookaside.Scratch = filepath.Join(directory, "scratch")
-			} else {
-				configuration.Lookaside.Cache = filepath.Join(directory, "cache")
-			}
-			if err := config.Save(configuration); err != nil {
-				t.Fatal(err)
-			}
-			content := "configured object: " + test.name
-			source := filepath.Join(directory, "object")
-			if err := os.WriteFile(source, []byte(content), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			cache, err := DefaultCache()
-			if err != nil {
-				t.Fatal(err)
-			}
-			objectURL := (&url.URL{Scheme: "file", Path: filepath.ToSlash(source)}).String()
-			path, err := cache.Fetch(context.Background(), objectURL, digestOf(content), int64(len(content)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := cache.PurgeUsed(); err != nil {
-				t.Fatal(err)
-			}
-			_, statErr := os.Stat(path)
-			if kept := statErr == nil; kept != test.kept {
-				t.Fatalf("object kept = %v, want %v (stat error %v)", kept, test.kept, statErr)
-			}
-		})
-	}
-}
-
 func TestCleanPreservesExplicitlyProtectedObjects(t *testing.T) {
 	root := t.TempDir()
 	cache, err := NewCache(root, nil)
@@ -285,6 +213,43 @@ func TestConfiguredCachePurgesSuccessfulObjectAndCleansScratch(t *testing.T) {
 	}
 	if transport.requests != 2 {
 		t.Fatalf("purged cache made %d requests, want 2", transport.requests)
+	}
+}
+
+func TestConfiguredCacheCanRetainSuccessfulObject(t *testing.T) {
+	root, scratch := t.TempDir(), t.TempDir()
+	content := "reusable verified object"
+	digest := digestOf(content)
+	transport := &fakeTransport{content: content}
+	cache, err := NewCache(root, &http.Client{Transport: transport},
+		WithPersistentStorage(scratch, 1<<20),
+		WithCompletedRetention(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, err := cache.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if purged, err := cache.PurgeUsed(); err != nil || purged.Objects != 0 || purged.Bytes != 0 {
+		t.Fatalf("PurgeUsed() = %+v, %v", purged, err)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("retained cache object = %v", err)
+	}
+	second, err := NewCache(root, &http.Client{Transport: transport},
+		WithPersistentStorage(scratch, 1<<20),
+		WithCompletedRetention(true),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Fetch(context.Background(), "https://objects.example/item", digest, int64(len(content))); err != nil {
+		t.Fatal(err)
+	}
+	if transport.requests != 1 {
+		t.Fatalf("retained cache made %d requests, want 1", transport.requests)
 	}
 }
 

@@ -10,8 +10,10 @@ EPUB.
 Compressed JSONL and mbox are streamed.
 
 Current logical profiles are `record-map`, `dialogue-pair`, `chat-messages`,
-`ranked-conversation-tree`, `bounded-text`, and `xml-record`. JSON accepts one
-object or one top-level array and streams array elements. Profiles are strict,
+`ranked-conversation-tree`, `bounded-text`, `separated-text`, and `xml-record`.
+JSON accepts one object or one top-level array and streams array elements.
+`separated-text` maps literal delimiter-separated UTF-8 segments to logical
+records without changing the retained input bytes. Profiles are strict,
 versioned plan facts and never recognize a particular corpus.
 
 Per-record licenses are normalized and retained with raw evidence. Profile

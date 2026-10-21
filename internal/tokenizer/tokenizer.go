@@ -113,3 +113,22 @@ func NewCodec(name string) (Codec, error) {
 	}
 	return codec, nil
 }
+
+// CloneCodec returns an independent codec with identical tokenization
+// semantics. Independent instances are required when callers tokenize in
+// parallel because third-party tokenizer implementations do not universally
+// document concurrent use as safe.
+func CloneCodec(codec Codec) (Codec, error) {
+	switch value := codec.(type) {
+	case *tiktokenCounter:
+		return NewCodec(value.name)
+	case *bpeCodec:
+		cloned := *value
+		return &cloned, nil
+	case *legacyCodec:
+		cloned := *value
+		return &cloned, nil
+	default:
+		return nil, fmt.Errorf("cannot clone tokenizer codec %T", codec)
+	}
+}

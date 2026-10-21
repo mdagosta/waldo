@@ -64,6 +64,8 @@ func StreamCanonicalTextBatches(ctx context.Context, plan Plan, consume func(Tex
 		switch input.Adapter {
 		case "text", "markdown":
 			err = StreamTextBatches(ctx, inputPlan, consumeWithProgress)
+		case ProfileSeparatedText:
+			err = StreamSeparatedTextBatches(ctx, inputPlan, consumeWithProgress)
 		case "parquet":
 			err = StreamParquetTextBatches(ctx, inputPlan, consumeWithProgress)
 		case "jsonl":

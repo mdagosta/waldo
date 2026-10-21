@@ -4,19 +4,21 @@ Status: accepted
 
 ## Context
 
-Held-out selection enumerates every eligible record, and epoch-driven training
-also scans the filtered token stream to derive an exact optimizer-step count.
-Repeating an unchanged failed or interrupted stage formerly repeated both
-operations even though their inputs are immutable.
+Legacy exact held-out selection enumerates every eligible record, and
+epoch-driven training scans the filtered token stream to derive an exact
+optimizer-step count. Repeating an unchanged failed or interrupted stage
+formerly repeated both operations even though their inputs are immutable.
 
 ## Decision
 
 Each new run stores `PREFLIGHT.json` beside its run records. The artifact
 contains the exact sorted held-out selection, its evaluation summary, resolved
-parameters, post-filter and post-held-out training record counts by corpus, and
-whether an explicit epoch capacity check succeeded. The per-corpus counts let
-WALDO warn before training when filtering and held-out selection leave an
-entire corpus with no training rows.
+parameters, any available exact post-filter and post-held-out training record
+counts by corpus, and whether an explicit epoch capacity check succeeded. When
+an exact policy produces them, the per-corpus counts let WALDO warn before
+training when filtering and held-out selection leave an entire corpus with no
+training rows. Indexed selection omits those corpus-wide counts rather than
+scanning solely to compute them.
 `RUN-BOM.json` pins its size and SHA-256.
 
 WALDO computes a preflight identity from the immutable architecture, corpus
@@ -33,6 +35,7 @@ from those older artifacts without rescanning.
 
 ## Consequences
 
-Exact retries avoid repeated corpus-wide evaluation selection and
-epoch-to-step scans. WALDO still materializes and verifies required shard
-objects and rechecks the execution environment before training.
+Exact retries avoid repeated indexed evaluation reads, legacy corpus-wide
+evaluation selection, and epoch-to-step scans. WALDO still materializes and
+verifies required shard objects and rechecks the execution environment before
+training.

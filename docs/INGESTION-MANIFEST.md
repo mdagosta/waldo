@@ -186,8 +186,25 @@ probes the bytes to verify that declaration:
 
 JSON/JSONL/Parquet mappings use `record-map`, `dialogue-pair`,
 `chat-messages`, or `ranked-conversation-tree`. Whole-file text may use
-`bounded-text`; XML uses `xml-record`. Acquisition tools retain general raw
-upstream formats and do not render corpus-specific conversation templates.
+`bounded-text` or `separated-text`; XML uses `xml-record`. Acquisition tools
+retain general raw upstream formats and do not render corpus-specific
+conversation templates.
+
+`separated-text` preserves one upstream text artifact while interpreting a
+literal delimiter as the logical record boundary. For example:
+
+```json
+{
+  "format": "text",
+  "type": "separated-text",
+  "separator": "<|endoftext|>",
+  "on_empty": "skip"
+}
+```
+
+Each non-empty segment becomes one canonical record with a distinct source
+identity. The adapter trims boundary whitespace and appends one newline; it
+does not rewrite the retained source artifact.
 
 PDF and EPUB are built-in document adapters and do not require a logical
 profile type:

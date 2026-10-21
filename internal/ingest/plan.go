@@ -19,6 +19,13 @@ import (
 	"github.com/openwaldo/waldo/internal/shard"
 )
 
+const (
+	// Adapter recipes identify code-level mapping semantics that are not fully
+	// represented by the declarative input profile.
+	textAdapterRecipe         = "canonical-adapters-4"
+	conversationAdapterRecipe = "canonical-conversation-adapters-3"
+)
+
 type Plan struct {
 	Kind          string         `json:"kind"`
 	Schema        int            `json:"schema"`
@@ -184,7 +191,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 		Update: request.Update,
 		Writer: WriterPlan{
 			Format: "parquet", RecordKind: record.KindPretrain, RecordSchema: shard.TextRecordSchema, Recipe: shard.TextWriterRecipe,
-			AdapterRecipe:    "canonical-adapters-2",
+			AdapterRecipe:    textAdapterRecipe,
 			CompressedTarget: 256 << 20, CompressedMaximum: 512 << 20,
 			RowGroupLogicalBytes: 64 << 20, PageBytes: 1 << 20,
 			AdapterBatchBytes: 16 << 20, RecordMaximumBytes: 64 << 20,
@@ -277,6 +284,11 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 				return Plan{}, fmt.Errorf("%s: bounded-text requires text input, not %q", artifact.Path, artifact.Format)
 			}
 			input.Adapter = ProfileBoundedText
+		case ProfileSeparatedText:
+			if artifact.Format != "text" {
+				return Plan{}, fmt.Errorf("%s: separated-text requires text input, not %q", artifact.Path, artifact.Format)
+			}
+			input.Adapter = ProfileSeparatedText
 		case ProfileXMLRecord:
 			if artifact.Format != "xml" {
 				return Plan{}, fmt.Errorf("%s: xml-record requires XML input, not %q", artifact.Path, artifact.Format)
@@ -335,7 +347,7 @@ func NewPlan(probe Probe, request PlanRequest) (Plan, error) {
 			plan.Writer.RecordKind = record.KindConversation
 			plan.Writer.RecordSchema = shard.ConversationRecordSchema
 			plan.Writer.Recipe = shard.ConversationWriterRecipe
-			plan.Writer.AdapterRecipe = "canonical-conversation-adapters-1"
+			plan.Writer.AdapterRecipe = conversationAdapterRecipe
 		}
 	}
 	if err := plan.Validate(); err != nil {
@@ -461,8 +473,8 @@ func chooseTextColumn(artifact Artifact, requested string) (string, error) {
 }
 
 func (plan Plan) Validate() error {
-	textWriter := plan.Writer.RecordKind == record.KindPretrain && plan.Writer.RecordSchema == shard.TextRecordSchema && plan.Writer.Recipe == shard.TextWriterRecipe && plan.Writer.AdapterRecipe == "canonical-adapters-2"
-	conversationWriter := plan.Writer.RecordKind == record.KindConversation && plan.Writer.RecordSchema == shard.ConversationRecordSchema && plan.Writer.Recipe == shard.ConversationWriterRecipe && plan.Writer.AdapterRecipe == "canonical-conversation-adapters-1"
+	textWriter := plan.Writer.RecordKind == record.KindPretrain && plan.Writer.RecordSchema == shard.TextRecordSchema && plan.Writer.Recipe == shard.TextWriterRecipe && plan.Writer.AdapterRecipe == textAdapterRecipe
+	conversationWriter := plan.Writer.RecordKind == record.KindConversation && plan.Writer.RecordSchema == shard.ConversationRecordSchema && plan.Writer.Recipe == shard.ConversationWriterRecipe && plan.Writer.AdapterRecipe == conversationAdapterRecipe
 	if plan.Kind != "waldo-ingest-plan" || plan.Schema != 1 || plan.Writer.Format != "parquet" || (!textWriter && !conversationWriter) {
 		return fmt.Errorf("unsupported ingestion plan identity or writer")
 	}
@@ -561,6 +573,10 @@ func (plan Plan) Validate() error {
 		case ProfileBoundedText:
 			if artifact.Format != "text" || input.Profile.Type != ProfileBoundedText {
 				return fmt.Errorf("input %s has an inconsistent bounded-text adapter", artifact.Path)
+			}
+		case ProfileSeparatedText:
+			if artifact.Format != "text" || input.Profile.Type != ProfileSeparatedText {
+				return fmt.Errorf("input %s has an inconsistent separated-text adapter", artifact.Path)
 			}
 		case ProfileXMLRecord:
 			if artifact.Format != "xml" || input.Profile.Type != ProfileXMLRecord {

@@ -28,8 +28,67 @@ func TestLicensePolicy(t *testing.T) {
 	}
 }
 
+func TestLicensePolicyAppliesToEveryExpressionTerm(t *testing.T) {
+	policy, err := NewLicensePolicy([]string{"CC-*", "Apache-2.0", "MIT"}, []string{"CC-BY-NC-*", "*NC*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		license string
+		want    bool
+	}{
+		{"Apache-2.0 AND CC-BY-NC-4.0", false},
+		{"CC-BY-NC-4.0 AND MIT", false},
+		{"(Apache-2.0 OR CC-BY-NC-SA-4.0)", false},
+		{"Apache-2.0 and CC-BY-NC-4.0", false},
+		{"https://example.org/licenses/NC/1.0", false},
+		{"Apache-2.0 AND CC-BY-4.0", true},
+		{"CC-BY-SA-4.0 AND MIT", true},
+		{"Apache-2.0 AND GPL-3.0-only", false},
+		{"CC-BY-4.0 AND GPL-3.0-only", false},
+		{"MIT OR GPL-3.0-only", false},
+		{"", false},
+	}
+	for _, test := range tests {
+		if got := policy.Allows(test.license); got != test.want {
+			t.Errorf("Allows(%q) = %v, want %v", test.license, got, test.want)
+		}
+	}
+	exact, err := NewLicensePolicy([]string{"Apache-2.0 AND GPL-3.0-only"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !exact.Allows("Apache-2.0 AND GPL-3.0-only") {
+		t.Error("include pattern matching the whole expression was rejected")
+	}
+}
+
 func TestLicensePolicyRejectsInvalidGlob(t *testing.T) {
 	if _, err := NewLicensePolicy([]string{"["}, nil); err == nil {
 		t.Fatal("NewLicensePolicy() accepted invalid glob")
+	}
+}
+
+func TestLicensePolicyRejectsMalformedExpressions(t *testing.T) {
+	include, err := NewLicensePolicy([]string{"MIT"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exclude, err := NewLicensePolicy(nil, []string{"LicenseRef-Proprietary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, license := range []string{
+		"MIT AND ", "MIT AND", " AND MIT", "AND MIT", "(MIT", "MIT AND (",
+		"MIT AND ()", "MIT AND OR Apache-2.0", "MIT AND(Apache-2.0)",
+	} {
+		t.Run(license, func(t *testing.T) {
+			if include.Allows(license) {
+				t.Errorf("include policy allowed malformed expression %q", license)
+			}
+			if exclude.Allows(license) {
+				t.Errorf("exclude policy allowed malformed expression %q", license)
+			}
+		})
 	}
 }

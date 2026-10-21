@@ -1,0 +1,71 @@
+# Promoted rung 0004: a small base model for narrative, descriptive,
+# dialogue, and elementary explanatory continuations.
+kind: waldo-model-compose
+schema: 1
+architecture:
+  family: decoder-transformer
+  context_tokens: 1024
+  vocabulary_size: 8192
+  hidden_size: 640
+  intermediate_size: 1728
+  layers: 12
+  attention_heads: 10
+  key_value_heads: 10
+  dropout: 0.1
+  qk_normalization: false
+  initialization: depth-scaled
+  tie_embeddings: true
+  parameter_dtype: float32
+  tokenizer:
+    training:
+      algorithm: byte-bpe-v1
+      sample_bytes: 134217728
+      seed: 42
+      max_token_inflation: 0.50
+      distribution_policy: distributable
+      filter:
+        main_content: true
+        exclude:
+          repetitive_content: true
+          boilerplate_content: true
+      corpora:
+        - core/common-pile/pressbooks
+stages:
+  - name: simple-english-pretrain
+    type: pre-training
+    objective: causal-language-modeling
+    corpora:
+      - path: core/synthetic/tinystories-gpt4-v2
+        weight: 1
+      - path: core/synthetic/cosmopedia-v2
+        weight: 1
+        filter:
+          metadata:
+            audience:
+              include: [young_children]
+            format:
+              include: [textbook_narrative]
+    parameters:
+      profile: causal-pretrain-weighted
+      parallelism: auto
+      tokens: 1189798400
+      batch_size: 16
+      gradient_accumulation_steps: 4
+      compute_precision: auto
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 1024
+      learning_rate: 0.0004
+      optimizer: adamw
+      schedule: cosine
+      seed: 42
+      weight_decay: 0.1
+      warmup_steps: 100
+      checkpoint_every: 1000
+      evaluate_every: 1000
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 1073741824
+      evaluation_selection: indexed-sample-v1
+      evaluation_fraction: 0.01
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216

@@ -22,10 +22,12 @@ import (
 	"github.com/openwaldo/waldo/internal/inference"
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/modelquant"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 type Options struct {
 	EUBOM        []byte
+	Attribution  []byte
 	Finalize     func(string) error
 	Quantization *Quantization
 	Report       func(string)
@@ -96,6 +98,9 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	_ = ctx
 	record := inspection.Model
 	record.Interaction = inspection.EffectiveInteraction()
+	if err := validateStandardLlamaArchitecture(record.Architecture, format); err != nil {
+		return "", err
+	}
 	artifacts, err := inference.ResolveArtifacts(inspection)
 	if err != nil {
 		return "", err
@@ -129,13 +134,19 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 		return "", err
 	}
 	files := map[string][]byte{
+		"ATTRIBUTION.md":            options.Attribution,
 		"EU-BOM.json":               options.EUBOM,
 		"generation_config.json":    []byte(huggingFaceGenerationConfig),
 		"special_tokens_map.json":   []byte(huggingFaceSpecialTokens),
-		"tokenization_openwaldo.py": []byte(huggingFaceTokenizerSource),
+		"tokenization_openwaldo.py": []byte(huggingFaceTokenizerPython()),
 		"architecture.py":           []byte(architectureSource),
 		"README.md":                 []byte(readme),
 	}
+	tokenizerArtifact, _, err := exportTokenizerArtifact(artifacts.Tokenizer, record.Architecture.VocabularySize)
+	if err != nil {
+		return "", err
+	}
+	files["openwaldo_tokenizer.json"] = tokenizerArtifact
 	tokenizerConfiguration, interactionTemplate, err := huggingFaceTokenizerConfiguration(record)
 	if err != nil {
 		return "", err
@@ -164,8 +175,9 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 		"model.safetensors": "weights", "config.json": "configuration",
 		"generation_config.json": "generation-configuration",
 		"tokenizer_config.json":  "tokenizer", "special_tokens_map.json": "tokenizer",
+		"openwaldo_tokenizer.json":  "tokenizer-artifact",
 		"tokenization_openwaldo.py": "tokenizer-code", "architecture.py": "architecture-code",
-		"README.md": "documentation", "EU-BOM.json": "regulatory-disclosure",
+		"README.md": "documentation", "EU-BOM.json": "regulatory-disclosure", "ATTRIBUTION.md": "training-data-attribution",
 	}
 	if interactionTemplate != "" {
 		roles["chat_template.jinja"] = "interaction-template"
@@ -190,16 +202,52 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	return absolute, nil
 }
 
+func exportTokenizerArtifact(path string, architectureVocabularySize uint64) ([]byte, training.TokenizerSpec, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, training.TokenizerSpec{}, fmt.Errorf("read tokenizer artifact: %w", err)
+	}
+	var artifact struct {
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
+	}
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		return nil, training.TokenizerSpec{}, fmt.Errorf("decode tokenizer artifact: %w", err)
+	}
+	if artifact.Schema != 1 || (artifact.Kind != "waldo-tokenizer" && artifact.Kind != "waldo-byte-tokenizer") {
+		return nil, training.TokenizerSpec{}, fmt.Errorf("unsupported WALDO tokenizer artifact")
+	}
+	spec, _, err := training.ResolveTokenizerSpec(artifact.TokenizerSpec)
+	if err != nil {
+		return nil, training.TokenizerSpec{}, fmt.Errorf("resolve tokenizer artifact: %w", err)
+	}
+	if uint64(spec.VocabularySize) != architectureVocabularySize {
+		return nil, training.TokenizerSpec{}, fmt.Errorf("tokenizer vocabulary_size %d does not match architecture %d", spec.VocabularySize, architectureVocabularySize)
+	}
+	if spec.Name != "byte" && spec.Name != "waldo/byte-bpe" && spec.Name != "waldo/bytepiece" {
+		return nil, training.TokenizerSpec{}, fmt.Errorf("%s export does not yet support tokenizer %s@%s", "huggingface/MLX", spec.Name, spec.Revision)
+	}
+	return append(data, '\n'), spec, nil
+}
+
+func validateStandardLlamaArchitecture(architecture model.Architecture, format string) error {
+	if architecture.QKNormalization {
+		return fmt.Errorf("%s export cannot preserve WALDO qk_normalization; use the native waldo export until this runtime has an exact architecture implementation", format)
+	}
+	return nil
+}
+
 func huggingFaceTokenizerConfiguration(record model.ModelRecord) (map[string]any, string, error) {
 	interactionTemplate, err := jinjaInteractionTemplate(record.Interaction)
 	if err != nil {
 		return nil, "", err
 	}
 	configuration := map[string]any{
-		"auto_map":  map[string]any{"AutoTokenizer": []any{"tokenization_openwaldo.OpenWALDOByteTokenizer", nil}},
+		"auto_map":  map[string]any{"AutoTokenizer": []any{"tokenization_openwaldo.OpenWALDOTokenizer", nil}},
 		"bos_token": "<bos>", "eos_token": "<eos>", "pad_token": "<pad>",
 		"model_max_length": record.Architecture.ContextTokens,
-		"tokenizer_class":  "OpenWALDOByteTokenizer",
+		"tokenizer_class":  "OpenWALDOTokenizer",
 	}
 	if interactionTemplate != "" {
 		configuration["chat_template"] = interactionTemplate
@@ -305,64 +353,190 @@ const huggingFaceSpecialTokens = `{"bos_token":"<bos>","eos_token":"<eos>","pad_
 const huggingFaceGenerationConfig = `{"_from_model_config":true,"bos_token_id":1,"eos_token_id":2,"pad_token_id":0}
 `
 
-const huggingFaceTokenizerSource = `from transformers import PreTrainedTokenizer
+const huggingFaceTokenizerSource = `import base64
+import json
+import os
+import shutil
 
-class OpenWALDOByteTokenizer(PreTrainedTokenizer):
-    vocab_files_names = {}
-    model_input_names = ["input_ids", "attention_mask"]
+from transformers import PreTrainedTokenizer
 
-    def __init__(self, **kwargs):
-        kwargs.setdefault("pad_token", "<pad>")
-        kwargs.setdefault("bos_token", "<bos>")
-        kwargs.setdefault("eos_token", "<eos>")
-        super().__init__(**kwargs)
 
-    @property
-    def vocab_size(self):
-        return 259
+class OpenWALDOTokenizer(PreTrainedTokenizer):
+	vocab_files_names = {"vocab_file": "openwaldo_tokenizer.json"}
+	model_input_names = ["input_ids", "attention_mask"]
 
-    def get_vocab(self):
-        result = {"<pad>": 0, "<bos>": 1, "<eos>": 2}
-        result.update({f"<0x{value:02X}>": value + 3 for value in range(256)})
-        return result
+	def __init__(self, vocab_file=None, **kwargs):
+		if vocab_file is None:
+			vocab_file = kwargs.pop("vocab_file", None)
+		if not vocab_file:
+			raise ValueError("OpenWALDO tokenizer artifact is required")
+		with open(vocab_file, "r", encoding="utf-8") as handle:
+			payload = json.load(handle)
+		self.vocab_file = vocab_file
+		self._name = payload["name"]
+		self._vocab_size = int(payload["vocabulary_size"])
+		self._ranks = {}
+		self._legacy_pieces = []
+		self._token_bytes = [b""] * self._vocab_size
+		for value in range(256):
+			self._token_bytes[value + 3] = bytes([value])
+		artifact = payload.get("artifact")
+		if artifact:
+			if artifact.get("schema") == 2 and artifact.get("name") == "waldo/byte-bpe":
+				for rank, merge in enumerate(artifact.get("merges", [])):
+					left, right = int(merge["left"]), int(merge["right"])
+					self._ranks[(left, right)] = rank
+					self._token_bytes[259 + rank] = self._token_bytes[left] + self._token_bytes[right]
+			elif artifact.get("schema") == 1 and artifact.get("name") == "waldo/bytepiece":
+				self._legacy_pieces = [base64.b64decode(value) for value in artifact.get("pieces", [])]
+				for index, value in enumerate(self._legacy_pieces):
+					self._token_bytes[259 + index] = value
+			else:
+				raise ValueError("unsupported OpenWALDO trained tokenizer artifact")
+		elif self._name != "byte" or self._vocab_size != 259:
+			raise ValueError("unsupported OpenWALDO tokenizer artifact")
+		kwargs.setdefault("pad_token", "<pad>")
+		kwargs.setdefault("bos_token", "<bos>")
+		kwargs.setdefault("eos_token", "<eos>")
+		super().__init__(**kwargs)
 
-    def _tokenize(self, text):
-        return [f"<0x{value:02X}>" for value in text.encode("utf-8")]
+	@property
+	def vocab_size(self):
+		return self._vocab_size
 
-    def _convert_token_to_id(self, token):
-        if token == "<pad>": return 0
-        if token == "<bos>": return 1
-        if token == "<eos>": return 2
-        if len(token) == 6 and token.startswith("<0x") and token.endswith(">"):
-            return int(token[3:5], 16) + 3
-        return 0
+	def get_vocab(self):
+		return {self._token_name(index): index for index in range(self._vocab_size)}
 
-    def _convert_id_to_token(self, index):
-        if index == 0: return "<pad>"
-        if index == 1: return "<bos>"
-        if index == 2: return "<eos>"
-        if 3 <= index < 259: return f"<0x{index - 3:02X}>"
-        return "<pad>"
+	@staticmethod
+	def _kind(character):
+		if character == "_" or character.isalpha() or character.isnumeric():
+			return 0
+		if character.isspace():
+			return 1
+		return 2
 
-    def convert_tokens_to_string(self, tokens):
-        data = bytearray()
-        text = []
+	@classmethod
+	def _chunks(cls, text):
+		runs = []
+		start = 0
+		current = None
+		for index, character in enumerate(text):
+			kind = cls._kind(character)
+			if current is not None and kind != current:
+				runs.append((text[start:index].encode("utf-8"), current == 1))
+				start = index
+			current = kind
+		if start < len(text):
+			runs.append((text[start:].encode("utf-8"), current == 1))
+		whitespace = b""
+		result = []
+		for value, space in runs:
+			if space:
+				whitespace += value
+				continue
+			value = whitespace + value
+			whitespace = b""
+			result.extend(value[offset:offset + 64] for offset in range(0, len(value), 64))
+		if whitespace:
+			result.extend(whitespace[offset:offset + 64] for offset in range(0, len(whitespace), 64))
+		return result
+
+	@staticmethod
+	def _merge_pair(symbols, selected, replacement):
+		result = []
+		index = 0
+		while index < len(symbols):
+			if index + 1 < len(symbols) and (symbols[index], symbols[index + 1]) == selected:
+				result.append(replacement)
+				index += 2
+			else:
+				result.append(symbols[index])
+				index += 1
+		return result
+
+	def _encode_text(self, text):
+		if self._legacy_pieces:
+			pieces = sorted(enumerate(self._legacy_pieces), key=lambda item: -len(item[1]))
+			data = text.encode("utf-8")
+			result = []
+			while data:
+				match = next(((index, piece) for index, piece in pieces if data.startswith(piece)), None)
+				if match:
+					result.append(259 + match[0])
+					data = data[len(match[1]):]
+				else:
+					result.append(data[0] + 3)
+					data = data[1:]
+			return result
+		result = []
+		for chunk in self._chunks(text):
+			symbols = [value + 3 for value in chunk]
+			while True:
+				candidates = [(self._ranks[pair], pair) for pair in zip(symbols, symbols[1:]) if pair in self._ranks]
+				if not candidates:
+					break
+				rank, selected = min(candidates, key=lambda item: item[0])
+				symbols = self._merge_pair(symbols, selected, 259 + rank)
+			result.extend(symbols)
+		return result
+
+	@staticmethod
+	def _token_name(index):
+		if index == 0: return "<pad>"
+		if index == 1: return "<bos>"
+		if index == 2: return "<eos>"
+		return f"<|waldo:{index}|>"
+
+	def _tokenize(self, text):
+		return [self._token_name(index) for index in self._encode_text(text)]
+
+	def _convert_token_to_id(self, token):
+		if token == "<pad>": return 0
+		if token == "<bos>": return 1
+		if token == "<eos>": return 2
+		if token.startswith("<|waldo:") and token.endswith("|>"):
+			try:
+				index = int(token[8:-2])
+				return index if 0 <= index < self._vocab_size else 0
+			except ValueError:
+				pass
+		return 0
+
+	def _convert_id_to_token(self, index):
+		return self._token_name(index) if 0 <= index < self._vocab_size else "<pad>"
+
+	def convert_tokens_to_string(self, tokens):
+		data = bytearray()
+		text = []
         def flush():
             if data:
-                text.append(bytes(data).decode("utf-8", errors="replace"))
-                data.clear()
-        for token in tokens:
-            if len(token) == 6 and token.startswith("<0x") and token.endswith(">"):
-                data.append(int(token[3:5], 16))
-            else:
-                flush()
-                text.append(token)
+				text.append(bytes(data).decode("utf-8", errors="replace"))
+				data.clear()
+		for token in tokens:
+			index = self._convert_token_to_id(token)
+			if index >= 3:
+				data.extend(self._token_bytes[index])
+			else:
+				flush()
+				text.append(token)
         flush()
         return "".join(text)
 
-    def save_vocabulary(self, save_directory, filename_prefix=None):
-        return ()
+	def save_vocabulary(self, save_directory, filename_prefix=None):
+		name = ((filename_prefix + "-") if filename_prefix else "") + "openwaldo_tokenizer.json"
+		destination = os.path.join(save_directory, name)
+		if os.path.abspath(destination) != os.path.abspath(self.vocab_file):
+			shutil.copyfile(self.vocab_file, destination)
+		return (destination,)
+
+
+# Compatibility for previously exported class references.
+OpenWALDOByteTokenizer = OpenWALDOTokenizer
 `
+
+func huggingFaceTokenizerPython() string {
+	return strings.ReplaceAll(huggingFaceTokenizerSource, "\t", "    ")
+}
 
 const huggingFaceArchitectureSource = `"""Executable architecture declaration for this OpenWALDO release."""
 from transformers import LlamaConfig, LlamaForCausalLM
@@ -379,7 +553,7 @@ pipeline_tag: text-generation
 # OpenWALDO model export
 
 This package uses the standard Transformers Llama causal-language-model
-architecture with OpenWALDO's schema-1 byte tokenizer. Load the tokenizer with
+architecture with OpenWALDO's exact byte or trained byte-BPE tokenizer. Load the tokenizer with
 ` + "`trust_remote_code=True`" + `. ` + "`BOM.json`" + ` inventories every release file and
 ` + "`EU-BOM.json`" + ` contains the EU GPAI training-content disclosure mapping.
 `
@@ -399,7 +573,7 @@ pipeline_tag: text-generation
 # OpenWALDO MLX model export
 
 This package uses MLX-LM's standard Llama implementation and OpenWALDO's
-schema-1 byte tokenizer. The Safetensors payload is copied without numerical
+exact byte or trained byte-BPE tokenizer. The Safetensors payload is copied without numerical
 conversion. ` + "`BOM.json`" + ` inventories every release file and ` + "`EU-BOM.json`" + `
 contains the EU GPAI training-content disclosure mapping.
 `
