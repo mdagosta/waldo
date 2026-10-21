@@ -11,29 +11,21 @@ Waldito, as the diminutive of waldo, aims to create the simplest possible waldo 
 
 Setup: `brew install uv`; `./waldito` then runs in a cached environment with mlx and huggingface_hub.
 
-Compose files are written by hand or with AI from what catalog shows -- see docs/MODEL-COMPOSE.md.
+Compose files are written by hand or with `waldo advisor` -- see docs/MODEL-COMPOSE.md.
 
 Repeated runs: `waldo config set lookaside.cache.retain-completed true` skips re-downloading shards (LRU-bounded by
 lookaside.cache.max-size); `waldo lookaside cache status` to inspect, `waldo lookaside cache clean` when done.
 
 Usage:
-    waldito catalog                             # every corpus in the index (fiction, caselaw, ...)
-    waldito catalog code/*                      # ...narrowed to corpora matching a glob
-    waldito catalog code/* --code               # languages and repo counts merged across that glob
-    waldito catalog --code --lang python,typescript              # specify specific programming_languages
-    waldito catalog code/permissive --code --lang typescript     # ...just within that one corpus
     waldito merge merged/ a-hf/ b-hf/           # average huggingface exports that share a parent
-    waldito hub ~/hub                           # serve ~/hub/<org>/<repo>/ to `waldo model pull` via HF_ENDPOINT
     waldito ingest ../fetchers/corpora/x.ini post-train/sft/x   # committed local data -> local test index
     waldito check my-model evaluation.jsonl     # exact-match score of `model chat` against prompt/response rows
     waldito build waldito-python-basics         # plans/<name>.yaml: distributed build with replicas, merges, checks
     waldito join ~/runs.git runs/tiny --identity alice   # one identity's turns in a run kept in git: train, verify, merge
-    waldito train python-basics-v2              # ~/.waldo/waldito/python-basics-v2.yaml: generate, ingest --dev, train, check
 """
 import argparse
 import collections
 import datetime
-import fnmatch
 import getpass
 import hashlib
 import http.server
@@ -96,41 +88,6 @@ def format_duration(seconds):
     return f"{seconds}s"
 
 
-def code_corpora(corpora):
-    """`corpora` narrowed to ones tagged with programming languages -- the
-    subset --lang can search, as opposed to WALDO's non-code catalogs
-    (fiction, mailing lists, caselaw, ...)."""
-    return [corpus for corpus in corpora if corpus.get("programming_languages")]
-
-
-def matching_corpora(corpora, pattern):
-    """`corpora` (index list entries) whose path matches `pattern` by shell
-    globbing -- a literal path like code/permissive matches only itself,
-    code/* groups every corpus in that namespace."""
-    return [corpus for corpus in corpora if fnmatch.fnmatch(corpus["path"], pattern)]
-
-
-def catalog(corpora):
-    """Repos across `corpora` (index list entries) by lowercased language,
-    plus their combined totals. A single entry is today's plain per-corpus
-    menu; several are merged by `waldo index bom`, in one process rather
-    than one per corpus, which also dedupes any repo two corpora both
-    happen to carry."""
-    # Manifest files, not corpus paths: bom walks a bare corpus path's whole
-    # subtree, which would silently fold in a nested corpus like
-    # code/permissive/linux-core alongside code/permissive.
-    bom = waldo_json("index", "bom", *(corpus["manifest"] for corpus in corpora))
-    languages = collections.defaultdict(set)
-    repo_count = 0
-    for manifest in bom["manifests"]:
-        for source in manifest["sources"]:
-            # Case-folded: the index carries both "Shell" and "shell".
-            for language in source.get("content", {}).get("programming_languages", []):
-                languages[language.lower()].add(source["name"])
-        repo_count += len(manifest["sources"])
-    return languages, bom["totals"]["tokens"], repo_count
-
-
 def prompt(cwd):
     """user@host:~/path style prefix, matching a real shell prompt."""
     user = os.environ.get("USER") or getpass.getuser()
@@ -191,78 +148,6 @@ def waldo_json(*args):
     return json.loads(result.stdout) if result.stdout.strip() else []
 
 
-def print_corpus_table(corpora):
-    """CORPUS/SOURCES/TOKENS, straight off index list entries -- no manifest
-    fetch needed. A Total row closes it out when there's more than one to sum;
-    for a single corpus it would just repeat that one row."""
-    print(f"{'CORPUS':<36}{'SOURCES':>8}{'TOKENS':>10}")
-    corpora = sorted(corpora, key=lambda corpus: corpus["path"])
-    for entry in corpora:
-        print(f"{entry['path']:<36}{entry.get('sources', 0):>8}{entry.get('tokens', 0) / 1e9:>9.2f}B")
-    if len(corpora) > 1:
-        total_sources = sum(entry.get("sources", 0) for entry in corpora)
-        total_tokens = sum(entry.get("tokens", 0) for entry in corpora)
-        print(f"{'TOTAL':<36}{total_sources:>8}{total_tokens / 1e9:>9.2f}B")
-
-
-def cmd_catalog(args):
-    """`corpus` narrows which corpora are in play (everything, if omitted).
-    Default: list them. --code: summarize them by programming language
-    instead -- every code-tagged corpus, if `corpus` was omitted -- or with
-    --lang, just the repos tagged with it."""
-    corpora = waldo_json("index", "list")["corpora"]
-    if args.corpus:
-        matches = matching_corpora(corpora, args.corpus)
-        if not matches:
-            error(f"no corpora match {args.corpus!r}; `waldito catalog` lists what is there")
-            sys.exit(1)
-    elif args.code:
-        matches = code_corpora(corpora)
-    else:
-        matches = corpora
-    if not matches:
-        error("no matching corpora in the index")
-        sys.exit(1)
-    if not args.code:
-        print_corpus_table(matches)
-        return
-    if len(matches) == 1:
-        label = matches[0]["path"]
-    elif args.corpus:
-        label = f"{len(matches)} corpora matching {args.corpus!r}"
-    else:
-        label = f"{len(matches)} corpora"
-    languages, _, _ = catalog(sorted(matches, key=lambda corpus: corpus["path"]))
-    print()
-    if args.lang:
-        # Comma-separated, because plenty of projects mix languages
-        # (a Python backend with a TypeScript frontend, say).
-        wanted = [name.strip().lower() for name in args.lang.split(",") if name.strip()]
-        missing = [name for name in wanted if name not in languages]
-        if missing:
-            error(f"no {', '.join(missing)} repos in {label}")
-            sys.exit(1)
-        # Grouped by language and sorted, same as the LANGUAGE/REPOS summary --
-        # a repo tagged with more than one of `wanted` reappears in each of
-        # its groups, since it does belong to all of them.
-        for index, name in enumerate(sorted(wanted, key=lambda name: -len(languages[name]))):
-            if index:
-                print()
-            print(f"{name} ({len(languages[name])})")
-            for repo in sorted(languages[name]):
-                print(f"  {repo}")
-        return
-    print_corpus_table(matches)
-    if not languages:
-        # No content.programming_languages tags to break down by -- true of
-        # every non-code catalog (caselaw, mailing lists, ...).
-        return
-    print()
-    print(f"{'LANGUAGE':<16}{'REPOS':>6}")
-    for language, repos in sorted(languages.items(), key=lambda item: -len(item[1])):
-        print(f"{language:<16}{len(repos):>6}")
-
-
 # Everything a `waldo model export --format huggingface` package needs except weights and
 # per-model provenance; these must be identical across merge inputs.
 MERGE_SHARED_FILES = ("config.json", "generation_config.json", "tokenizer_config.json", "special_tokens_map.json",
@@ -281,7 +166,7 @@ def cmd_merge(args):
     """Element-wise mean of huggingface exports, i.e. one DiLoCo outer step with outer
     learning rate 1. With --base, task arithmetic instead: base + the sum of each input's
     change from base, which keeps every skill at full strength. Inputs must share a parent."""
-    import mlx.core as mx  # Imported here so catalog doesn't require MLX.
+    import mlx.core as mx  # Imported here so ingest and check don't require MLX.
     output = pathlib.Path(args.output)
     inputs = [pathlib.Path(path) for path in args.inputs]
     base = pathlib.Path(args.base) if args.base else None
@@ -417,14 +302,6 @@ class HubHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def cmd_hub(args):
-    HubHandler.root = pathlib.Path(args.root).expanduser().resolve()
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", args.port), HubHandler)
-    print(f"serving {HubHandler.root}/<org>/<repo>/ -- in another shell:")
-    print(f"  HF_ENDPOINT=http://127.0.0.1:{args.port} waldo model pull <name> huggingface://<org>/<repo>")
-    server.serve_forever()
-
-
 def fetch_source(ini_text):
     """The [fetch] url of a fetcher INI (whose repeated keys configparser rejects)."""
     section = None
@@ -519,53 +396,6 @@ def cmd_check(args):
         say(f"{category:<16}{correct:>5}/{total:<4}")
     correct, total = (sum(score[0] for score in scores.values()), sum(score[1] for score in scores.values()))
     say(f"{'TOTAL':<16}{correct:>5}/{total:<4}")
-
-
-EXPERIMENT_KEYS = ("generate", "fetcher", "destination", "compose", "eval")
-
-
-def load_experiment(reference):
-    """Flat `key: value` YAML naming one experiment's pieces; relative paths are
-    beside the file. A bare name means ~/.waldo/waldito/<name>.yaml."""
-    path = pathlib.Path(reference).expanduser()
-    if not path.exists() and not reference.endswith((".yaml", ".yml")):
-        path = WALDITO_HOME / f"{reference}.yaml"
-    if not path.exists():
-        error(f"no experiment file {path}")
-        sys.exit(1)
-    experiment = {}
-    for number, line in enumerate(path.read_text().splitlines(), 1):
-        line = line.split(" #", 1)[0].strip()
-        if not line or line.startswith("#"):
-            continue
-        key, separator, value = line.partition(":")
-        if not separator or key.strip() not in EXPERIMENT_KEYS:
-            error(f"{path}:{number}: expected one of {', '.join(EXPERIMENT_KEYS)} as `key: value`")
-            sys.exit(1)
-        experiment[key.strip()] = value.strip().strip("\"'")
-    for key in ("fetcher", "compose", "eval"):
-        if key in experiment:
-            experiment[key] = str((path.parent / pathlib.Path(experiment[key]).expanduser()).resolve())
-    missing = [key for key in ("fetcher", "destination", "compose") if key not in experiment]
-    if missing:
-        error(f"{path}: missing {', '.join(missing)}")
-        sys.exit(1)
-    return path.stem, experiment
-
-
-def cmd_train(args):
-    """One development iteration from an experiment file: regenerate, dev-ingest, train, check."""
-    label, experiment = load_experiment(args.experiment)
-    if "generate" in experiment:
-        source = fetch_source(pathlib.Path(experiment["fetcher"]).read_text())
-        run(shlex.split(experiment["generate"]), cwd=source)
-    content = cmd_ingest(argparse.Namespace(ini=experiment["fetcher"], destination=experiment["destination"], update=False, dev=True))
-    # Named per data content, so each data change trains a new model instead of colliding.
-    name = args.name or f"{label}-{content[:7]}"
-    env = {**os.environ, "AGX_RELAX_CDM_CTXSTORE_TIMEOUT": os.environ.get("AGX_RELAX_CDM_CTXSTORE_TIMEOUT", "1")}
-    run([WALDO_BIN, "model", "train", name, experiment["compose"]], env=env)
-    if "eval" in experiment:
-        cmd_check(argparse.Namespace(model=name, records=experiment["eval"], misses=args.misses, max_tokens=200))
 
 
 def parse_scalar(text):
@@ -688,7 +518,7 @@ class Build:
             (target / "TAMPERED").write_text(f"demo: lazy submission of {base}'s weights, no training\n")
             say(f"   !! {model} submitted {base}'s weights without training (demo)")
         elif tamper == "noise" and not (target / "TAMPERED").exists():
-            import mlx.core as mx  # Imported here so catalog doesn't require MLX.
+            import mlx.core as mx  # Imported here so ingest and check don't require MLX.
             weights = mx.load(str(target / "model.safetensors"))
             noisy = {key: (tensor.astype(mx.float32) + 0.1 * mx.std(tensor.astype(mx.float32))
                            * mx.random.normal(tensor.shape)).astype(tensor.dtype) for key, tensor in weights.items()}
@@ -701,7 +531,7 @@ class Build:
         return target
 
     def distance(self, first, second):
-        import mlx.core as mx  # Imported here so catalog doesn't require MLX.
+        import mlx.core as mx  # Imported here so ingest and check don't require MLX.
         a, b = mx.load(str(first / "model.safetensors")), mx.load(str(second / "model.safetensors"))
         difference = sum(mx.sum(mx.square(a[key].astype(mx.float32) - b[key].astype(mx.float32))).item() for key in a)
         size = sum(mx.sum(mx.square(a[key].astype(mx.float32))).item() for key in a)
@@ -1353,12 +1183,6 @@ def build_parser():
     parser = argparse.ArgumentParser(prog="waldito", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
 
-    catalog_parser = sub.add_parser("catalog", help="corpora in the index, and what they can train on")
-    catalog_parser.add_argument("corpus", nargs="?", help="an index corpus path or glob (e.g. code/*); omit for the whole index")
-    catalog_parser.add_argument("--code", action="store_true", help="summarize by programming language instead of listing corpora")
-    catalog_parser.add_argument("--lang", help="with --code, list only repos tagged with any of these comma-separated languages")
-    catalog_parser.set_defaults(func=cmd_catalog)
-
     merge = sub.add_parser("merge", help="average huggingface exports of models that share a parent")
     merge.add_argument("output", help="new directory for the merged huggingface package")
     merge.add_argument("inputs", nargs="+", help="`waldo model export --format huggingface` directories")
@@ -1368,11 +1192,6 @@ def build_parser():
     merge.add_argument("--momentum-state", help="previous round's outer-momentum.safetensors")
     merge.add_argument("--weights", help="comma-separated weight per input for a weighted mean, e.g. tokens trained")
     merge.set_defaults(func=cmd_merge)
-
-    hub = sub.add_parser("hub", help="serve local huggingface packages to `waldo model pull` via HF_ENDPOINT")
-    hub.add_argument("root", help="directory laid out as <org>/<repo>/<files>")
-    hub.add_argument("--port", type=int, default=8765)
-    hub.set_defaults(func=cmd_hub)
 
     ingest = sub.add_parser("ingest", help="fetch a committed local checkout and ingest it into the local test index")
     ingest.add_argument("ini", help="fetcher INI whose [fetch] url is a local checkout path")
@@ -1387,12 +1206,6 @@ def build_parser():
     check.add_argument("--misses", action="store_true", help="print every mismatch")
     check.add_argument("--max-tokens", type=int, default=200)
     check.set_defaults(func=cmd_check)
-
-    train = sub.add_parser("train", help="regenerate, dev-ingest, train, and check one experiment file")
-    train.add_argument("experiment", help="name of ~/.waldo/waldito/<name>.yaml, or a path to one")
-    train.add_argument("--name", help="model name; default <experiment>-<data content hash>")
-    train.add_argument("--misses", action="store_true", help="print every check mismatch")
-    train.set_defaults(func=cmd_train)
 
     build = sub.add_parser("build", help="run a distributed build plan: shards, replicated rounds, merges, checks")
     build.add_argument("plan", help="name of ~/.waldo/waldito/plans/<name>.yaml, or a path to one")
