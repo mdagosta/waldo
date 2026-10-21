@@ -32,7 +32,7 @@ func isolateHuggingFaceToken(t *testing.T) {
 func TestDownloadHuggingFaceModelCreatesVerifiedOrigin(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
-	files := huggingFaceFixture(t, architecture, "OpenWALDOByteTokenizer")
+	files := huggingFaceFixture(t, architecture, "OpenWALDOTokenizer")
 	revision := strings.Repeat("a", 40)
 	client := &http.Client{Transport: huggingFaceTransport(t, files, revision)}
 	root := t.TempDir()

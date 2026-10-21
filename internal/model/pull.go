@@ -399,7 +399,8 @@ func validateDownloadedTokenizer(directory string, architecture Architecture) er
 	if err := readJSON(filepath.Join(directory, "tokenizer_config.json"), &config); err != nil {
 		return err
 	}
-	if config.TokenizerClass != "OpenWALDOByteTokenizer" || config.BOS != "<bos>" || config.EOS != "<eos>" || config.PAD != "<pad>" || architecture.VocabularySize != 259 {
+	// Exports since 0b46a16 name the class OpenWALDOTokenizer; earlier ones OpenWALDOByteTokenizer.
+	if (config.TokenizerClass != "OpenWALDOTokenizer" && config.TokenizerClass != "OpenWALDOByteTokenizer") || config.BOS != "<bos>" || config.EOS != "<eos>" || config.PAD != "<pad>" || architecture.VocabularySize != 259 {
 		return fmt.Errorf("download currently supports OpenWALDOByteTokenizer with vocabulary_size 259; this model uses %q with vocabulary_size %d", config.TokenizerClass, architecture.VocabularySize)
 	}
 	return nil
