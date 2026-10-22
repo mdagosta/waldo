@@ -263,7 +263,7 @@ func (joiner *Joiner) commit(ctx context.Context, path string, record any, messa
 		return false, err
 	}
 	if joiner.github != nil {
-		return joiner.propose(ctx, branch, message)
+		return joiner.propose(ctx, branch, path, message)
 	}
 	return joiner.push(ctx)
 }
