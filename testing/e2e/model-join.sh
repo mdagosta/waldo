@@ -1,11 +1,30 @@
 #!/bin/sh
+# Copyright (c) 2026 OpenWALDO Project contributors
+# Copyright (c) 2026 CtrlIQ, Inc.
+# Copyright (c) 2026 Gregory M. Kurtzer
+# SPDX-License-Identifier: Apache-2.0
+
 # End-to-end `waldo model join`: a local bare runs repo, a tiny plan, alice and
 # bob alternating --once until the run is merged, with bob free-riding on one
-# unit in round 1. Real MLX training on the code/permissive index; not part of
-# all.sh. Set JOIN_POSTTRAIN_CORPUS to an index path to add a post-training
-# round whose units each train a filter.slice of it.
+# unit in round 1. It trains for real with MLX on the configured index's
+# code/permissive corpus and keeps its identities in ~/.waldo/join/e2e-*, so it
+# is opt-in: WALDO_E2E_JOIN=1. Set JOIN_POSTTRAIN_CORPUS to an index path to add
+# a post-training round whose units each train a filter.slice of it.
 
 set -eu
+
+if [ "${WALDO_E2E_JOIN:-0}" != "1" ]; then
+  echo "testing: model join skipped (opt-in: WALDO_E2E_JOIN=1)"
+  exit 0
+fi
+if [ "$(uname -s)" != "Darwin" ] || [ "$(uname -m)" != "arm64" ]; then
+  echo "testing: model join skipped (requires Apple Silicon)"
+  exit 0
+fi
+if ! python3 -c 'import mlx.core as mx; mx.eval(mx.array([1]))' >/dev/null 2>&1; then
+  echo "testing: model join skipped (no Metal-capable MLX Python runtime on PATH; try uv run --with mlx)"
+  exit 0
+fi
 
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 repo_root=$(CDPATH='' cd -- "$script_dir/../.." && pwd)
@@ -25,6 +44,8 @@ git clone -q "$work/runs.git" "$work/seed"
 mkdir -p "$work/seed/runs/$run"
 cp "$repo_root/testing/join/pretrain.yaml.tmpl" "$repo_root/testing/join/sft.yaml.tmpl" "$work/seed/runs/$run/"
 cat > "$work/seed/runs/$run/plan.yaml" <<EOF
+kind: waldo-join-plan
+schema: 1
 name: $run
 units: [u0, u1, u2]
 replicas: 2
@@ -121,7 +142,7 @@ import json, sys
 merge, round_number = json.load(sys.stdin), int(sys.argv[1])
 honest = ["u0", "u1"] if round_number == 1 else ["u0", "u1", "u2"]
 assert sorted(unit["unit"] for unit in merge["accepted"]) == honest, merge["accepted"]
-assert merge["method"] == "token-weighted-mean" and "BOM.json" in merge["files"], merge
+assert merge["method"] == "weighted-mean-f32-v1" and "BOM.json" in merge["files"], merge
 assert sorted(unit["unit"] for unit in merge["evidence"]) == ["u0", "u1", "u2"], merge.get("evidence")
 for unit in merge["evidence"]:
     assert len(unit["replicas"]) == 2 and len(unit["evaluation_set_sha256"]) == 64, unit
