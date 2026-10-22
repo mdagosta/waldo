@@ -23,6 +23,7 @@ const SigningNamespace = "waldo-join"
 const (
 	SubmissionKind = "waldo-join-submission"
 	MergeKind      = "waldo-join-merge"
+	ClaimKind      = "waldo-join-claim"
 	RecordSchema   = 1
 )
 
@@ -46,7 +47,32 @@ type Submission struct {
 	CreatedAt   string            `json:"created_at"`
 }
 
-// MergeRecord closes a round: the accepted submissions, the dropped units, and the merged weights.
+// Claim reserves one slot of a round for one identity before it does the
+// work: replica n of a unit (slot <unit>-<n>) or closer n (slot close-<n>).
+// A slot's file name is fixed, so a second claim on it conflicts in git; a
+// claim not followed by its record within the plan's claim_minutes may be
+// retaken as the slot's next attempt.
+type Claim struct {
+	Kind      string `json:"kind"`
+	Schema    int    `json:"schema"`
+	Run       string `json:"run"`
+	Round     int    `json:"round"`
+	Stage     string `json:"stage"`
+	Slot      string `json:"slot"`
+	Attempt   int    `json:"attempt"`
+	Identity  string `json:"identity"`
+	CreatedAt string `json:"created_at"`
+}
+
+// claimFile is a slot's first attempt as <slot>.yaml and later ones as <slot>.<attempt>.yaml.
+func claimFile(slot string, attempt int) string {
+	if attempt == 1 {
+		return slot + ".yaml"
+	}
+	return fmt.Sprintf("%s.%d.yaml", slot, attempt)
+}
+
+// MergeRecord is one closer's proposed close of a round: the accepted submissions, the dropped units, and the merged weights.
 type MergeRecord struct {
 	Kind        string            `json:"kind"`
 	Schema      int               `json:"schema"`

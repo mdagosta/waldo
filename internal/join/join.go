@@ -127,42 +127,76 @@ func (joiner *Joiner) environment() []string {
 // configure gives the identity its own copy of the waldo config with its own
 // model store, so identities on one machine never share a model name.
 func (joiner *Joiner) configure(ctx context.Context) error {
-	if _, err := os.Stat(joiner.config()); err == nil {
-		return nil
-	}
-	if source, err := config.Path(); err == nil {
-		if data, err := os.ReadFile(source); err == nil {
-			if err := os.WriteFile(joiner.config(), data, 0o600); err != nil {
-				return err
+	if _, err := os.Stat(joiner.config()); os.IsNotExist(err) {
+		if source, err := config.Path(); err == nil {
+			if data, err := os.ReadFile(source); err == nil {
+				if err := os.WriteFile(joiner.config(), data, 0o600); err != nil {
+					return err
+				}
 			}
 		}
 	}
-	return joiner.waldo(ctx, "config", "set", "model.root", joiner.models())
+	if err := joiner.waldo(ctx, "config", "set", "model.root", joiner.models()); err != nil {
+		return err
+	}
+	// Every round reads the same corpus shards, so keep them between commands rather than
+	// purging and re-downloading them, which would also pull them from under another
+	// identity sharing this machine's cache.
+	return joiner.waldo(ctx, "config", "set", "lookaside.cache.retain-completed", "true")
 }
 
-// Step does one unit of work and reports "done", "idle", or "worked".
+// Step does one unit of work and reports "done", "idle", or "worked". Work
+// is claimed first, so a pass that wins its claim goes straight on to the work.
 func (joiner *Joiner) Step(ctx context.Context) (string, error) {
-	if err := joiner.sync(ctx); err != nil {
-		return "", err
+	for {
+		if err := joiner.sync(ctx); err != nil {
+			return "", err
+		}
+		state, err := joiner.load()
+		if err != nil {
+			return "", err
+		}
+		action := state.Next(joiner.Identity, joiner.Now())
+		switch action.Kind {
+		case "done":
+			final := state.Rounds[action.Round].Merge
+			for number, round := range state.Rounds {
+				agreeing, dissenting := round.Agreeing()
+				for _, record := range dissenting {
+					fmt.Fprintf(joiner.Log, "round %d: %s's merge %s dissents from the %d closers who agreed on %s\n",
+						number, record.Identity, record.ModelSHA256[:12], len(agreeing), round.Merge.ModelSHA256[:12])
+				}
+			}
+			fmt.Fprintf(joiner.Log, "run %s is complete: %s (%s), %s\n", joiner.plan.Name, final.Model, final.ModelSHA256[:12], final.URL)
+			return "done", nil
+		case "idle":
+			fmt.Fprintf(joiner.Log, "round %d: nothing for %s until others finish\n", action.Round, joiner.Identity)
+			return "idle", nil
+		case "claim":
+			won, err := joiner.claim(ctx, action)
+			if err != nil || !won {
+				return "worked", err
+			}
+		case "contribute":
+			return "worked", joiner.contribute(ctx, state, action)
+		default:
+			return "worked", joiner.close(ctx, state, action)
+		}
 	}
-	state, err := joiner.load()
-	if err != nil {
-		return "", err
+}
+
+// claim commits this identity's claim on a slot; false if another identity's claim landed first.
+func (joiner *Joiner) claim(ctx context.Context, action Action) (bool, error) {
+	record := Claim{
+		Kind: ClaimKind, Schema: RecordSchema, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage,
+		Slot: action.Slot, Attempt: action.Attempt, Identity: joiner.Identity, CreatedAt: joiner.timestamp(),
 	}
-	action := state.Next(joiner.Identity, joiner.Now())
-	switch action.Kind {
-	case "done":
-		final := state.Rounds[action.Round].Merge
-		fmt.Fprintf(joiner.Log, "run %s is complete: %s (%s), %s\n", joiner.plan.Name, final.Model, final.ModelSHA256[:12], final.URL)
-		return "done", nil
-	case "idle":
-		fmt.Fprintf(joiner.Log, "round %d: nothing for %s until others submit\n", action.Round, joiner.Identity)
-		return "idle", nil
-	case "contribute":
-		return "worked", joiner.contribute(ctx, state, action)
-	default:
-		return "worked", joiner.close(ctx, state, action)
+	path := filepath.Join(roundDir(joiner.runDir, action.Round), "claims", claimFile(action.Slot, action.Attempt))
+	won, err := joiner.commit(ctx, path, record, fmt.Sprintf("%s round %d: %s claims %s", joiner.plan.Name, action.Round, joiner.Identity, action.Slot))
+	if err == nil && !won {
+		fmt.Fprintf(joiner.Log, "round %d: another identity claimed %s first\n", action.Round, action.Slot)
 	}
+	return won, err
 }
 
 // load reads the plan as of this pass, since amendments land through git, and checks this identity is in it.
@@ -194,14 +228,28 @@ func (joiner *Joiner) workDir() string {
 	return filepath.Join(joiner.Home, "work", filepath.Base(joiner.runDir))
 }
 
-// commit signs record into path and pushes it; false if another closer's merge record won the race.
+// commit signs record into path and pushes it; false if another identity's claim on the same slot won the race.
 func (joiner *Joiner) commit(ctx context.Context, path string, record any, message string) (bool, error) {
 	branch := joiner.branch(path)
 	if joiner.github != nil {
+		remote, _, err := joiner.headRemote(ctx)
+		if err != nil {
+			return false, err
+		}
+		// Branch from the main of the remote the record is pushed to, so the push carries
+		// only the record commit: pushing upstream commits into a fork would also push any
+		// workflow changes among them, which GitHub refuses without the workflow scope.
+		base := "origin/HEAD"
+		if remote != "origin" {
+			if _, err := joiner.git(ctx, joiner.clone, append(credentials, "fetch", "-q", remote, "main")...); err != nil {
+				return false, err
+			}
+			base = remote + "/main"
+		}
 		if _, err := joiner.git(ctx, joiner.clone, "fetch", "-q", "origin"); err != nil {
 			return false, err
 		}
-		if _, err := joiner.git(ctx, joiner.clone, "checkout", "-q", "-B", branch, "origin/HEAD"); err != nil {
+		if _, err := joiner.git(ctx, joiner.clone, "checkout", "-q", "-B", branch, base); err != nil {
 			return false, err
 		}
 	}
@@ -226,7 +274,7 @@ func (joiner *Joiner) push(ctx context.Context) (bool, error) {
 			return true, nil
 		}
 		if _, err := joiner.git(ctx, joiner.clone, "pull", "-q", "--rebase"); err != nil {
-			// Only another merge.yaml for the same round can conflict; theirs stands.
+			// Only another claim on the same slot can conflict; theirs stands.
 			_, _ = joiner.git(ctx, joiner.clone, "rebase", "--abort")
 			_, resetErr := joiner.git(ctx, joiner.clone, "reset", "-q", "--hard", "@{u}")
 			return false, resetErr
