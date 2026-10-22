@@ -152,7 +152,17 @@ if round_number == 1:
     lazy = next(unit for unit in merge["evidence"] if unit["unit"] == "u2")
     losses = {r["identity"]: r["heldout_loss"] for r in lazy["replicas"]}
     # The free-rider scores the round start; honest training improved on it.
-    assert abs(losses["e2e-bob"] - lazy["start_loss"]) < 1e-6 and losses["e2e-alice"] < lazy["start_loss"], lazy' "$round"
+    assert abs(losses["e2e-bob"] - lazy["start_loss"]) < 1e-6 and losses["e2e-alice"] < lazy["start_loss"], lazy
+# The merge publishes its round'"'"'s run BOMs and its whole training history, and discloses it.
+package = merge["url"][len("file://"):]
+provenance = [name for name in merge["files"] if name.startswith("provenance-")]
+assert len(provenance) == len(merge["accepted"]), provenance
+closure = json.load(open(package + "/TRAINING-CLOSURE.json"))
+assert closure["complete"] and len(closure["corpora"]) >= 3, [(c["corpus_bom_sha256"][:12], c["uses"]) for c in closure["corpora"]]
+disclosure = json.load(open(package + "/EU-BOM.json"))
+inherited = [c for c in disclosure["training"]["unique_corpora"] if "inherited" in c["stages"]]
+assert len(inherited) >= 3, disclosure["training"]
+print(f"round {round_number} merge publishes {len(provenance)} run BOMs and a complete history of {len(closure['"'"'corpora'"'"'])} corpora")' "$round"
 done
 git --git-dir="$work/runs.git" log --format='%an %s' main
 echo "model-join: ok"

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 
 	"github.com/openwaldo/waldo/internal/modelweights"
 )
@@ -20,6 +21,11 @@ func (node LineageNode) validate() error {
 	for _, link := range node.Parents {
 		if !lineageDigest.MatchString(link.WeightsSHA256) || (link.LineageSHA256 != "" && !lineageDigest.MatchString(link.LineageSHA256)) {
 			return fmt.Errorf("parent %q is not a SHA-256", link.WeightsSHA256)
+		}
+	}
+	for _, run := range node.Runs {
+		if !lineageDigest.MatchString(run) {
+			return fmt.Errorf("run BOM %q is not a SHA-256", run)
 		}
 	}
 	return nil
@@ -40,6 +46,11 @@ func ModelLineage(inspection Inspection) (LineageNode, error) {
 		return originNode(*inspection.Origin)
 	}
 	node := LineageNode{WeightsSHA256: initialization.Artifact.SHA256}
+	for _, pin := range inspection.Model.Runs {
+		if pin.State == RunComplete && !pin.Simulated {
+			node.Runs = append(node.Runs, pin.BOMSHA256)
+		}
+	}
 	if parent := inspection.Model.Parent; parent != nil {
 		node.Parents = []LineageLink{{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}}
 	} else if inspection.Origin != nil {
@@ -290,6 +301,35 @@ func (builder Builder) mergeOrigin(base ComposeBase) (Inspection, error) {
 	if err != nil {
 		return Inspection{}, err
 	}
+	carried := map[string]string{}
+	for _, parent := range parents {
+		records, err := ProvenanceRecords(parent.inspection)
+		if err != nil {
+			return Inspection{}, err
+		}
+		for digest, path := range records {
+			carried[digest] = path
+		}
+	}
+	provenance, err := copyProvenance(temporary, carried)
+	if err != nil {
+		return Inspection{}, err
+	}
+	artifacts = append(artifacts, provenance...)
+	// The merge inherits every parent's whole training history.
+	var closures []TrainingClosure
+	for _, parent := range parents {
+		closure, err := ModelClosure(parent.inspection)
+		if err != nil {
+			return Inspection{}, err
+		}
+		closures = append(closures, closure)
+	}
+	closure, err := writeClosure(temporary, unionClosures(closures...))
+	if err != nil {
+		return Inspection{}, err
+	}
+	artifacts = append(artifacts, closure...)
 	origin := OriginBOM{
 		Kind: "openwaldo-bom", Schema: 1, Subject: "model-origin", Source: OriginSource{Provider: "merge"},
 		ArchitectureSHA256: parents[0].inspection.Model.ArchitectureSHA256, SourceArtifacts: []OriginArtifact{}, Artifacts: artifacts,
@@ -305,4 +345,67 @@ func (builder Builder) mergeOrigin(base ComposeBase) (Inspection, error) {
 	}
 	committed = true
 	return Inspect(root, key)
+}
+
+// ProvenanceRole marks a run BOM published beside weights, named by its hash.
+const ProvenanceRole = "training-provenance"
+
+func provenanceName(digest string) string {
+	return "provenance-" + digest + ".json"
+}
+
+// ProvenanceRecords are the run BOMs a release of this model publishes,
+// keyed by hash: a trained model's own runs; a merged model's parents' own
+// runs, so a merge carries its round; a pulled model's release runs. Older
+// history is published by the releases it came from, so a release never
+// grows with its history.
+func ProvenanceRecords(inspection Inspection) (map[string]string, error) {
+	records := map[string]string{}
+	trained := false
+	for _, pin := range inspection.Model.Runs {
+		if pin.State != RunComplete || pin.Simulated {
+			continue
+		}
+		trained = true
+		records[pin.BOMSHA256] = filepath.Join(inspection.Path, "runs", runDirectoryName(pin), "RUN-BOM.json")
+	}
+	if trained || inspection.Origin == nil {
+		return records, nil
+	}
+	// Kept run BOMs are named by their canonical hash, the hash lineage nodes list.
+	wanted := map[string]bool{}
+	if inspection.Origin.Lineage != nil && inspection.Origin.Merge == nil {
+		for _, run := range inspection.Origin.Lineage.Runs {
+			wanted[run] = true
+		}
+	}
+	for _, artifact := range inspection.Origin.Artifacts {
+		match := provenanceFile.FindStringSubmatch(filepath.Base(artifact.Path))
+		if artifact.Role != ProvenanceRole || match == nil {
+			continue
+		}
+		// A merge publishes every run BOM it carries; a pulled model, its release's own runs.
+		if inspection.Origin.Merge != nil || wanted[match[1]] {
+			records[match[1]] = filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path))
+		}
+	}
+	return records, nil
+}
+
+// copyProvenance places run BOMs in origin/provenance under temporary and inventories them.
+func copyProvenance(temporary string, records map[string]string) ([]OriginArtifact, error) {
+	var paths []string
+	for digest, source := range records {
+		logical := "origin/provenance/" + provenanceName(digest)
+		if err := copyArtifactFile(source, filepath.Join(temporary, filepath.FromSlash(logical))); err != nil {
+			return nil, err
+		}
+		paths = append(paths, logical)
+	}
+	sort.Strings(paths)
+	artifacts, err := inventoryOriginArtifacts(temporary, paths)
+	for index := range artifacts {
+		artifacts[index].Role = ProvenanceRole
+	}
+	return artifacts, err
 }
