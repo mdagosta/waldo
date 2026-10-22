@@ -48,6 +48,7 @@ Individual end-to-end tests are available under `testing/e2e/`:
 ./testing/e2e/model-pytorch.sh
 ./testing/e2e/model-pytorch-memorization.sh
 ./testing/e2e/model-torchtitan.sh
+./testing/e2e/model-join.sh
 ./testing/e2e/model-torchtitan-multinode.sh
 ```
 
