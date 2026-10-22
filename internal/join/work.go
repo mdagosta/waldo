@@ -8,7 +8,6 @@ package join
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
@@ -24,7 +23,6 @@ import (
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/model"
-	"github.com/openwaldo/waldo/internal/modelweights"
 	"gopkg.in/yaml.v3"
 )
 
@@ -465,7 +463,7 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 		return err
 	}
 	record := Submission{
-		Kind: "waldo-join-submission", Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Unit: action.Unit,
+		Kind: SubmissionKind, Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Unit: action.Unit,
 		Identity: joiner.Identity, Model: name, ModelSHA256: files["model.safetensors"], Files: files, Tokens: int64(tokens),
 		URL: url, CreatedAt: joiner.timestamp(),
 	}
@@ -476,7 +474,10 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 		record.BOMSHA256 = &digest
 	}
 	path := filepath.Join(roundDir(joiner.runDir, action.Round), "submissions", action.Unit+"-"+joiner.Identity+".yaml")
-	_, err = joiner.commit(ctx, path, record, fmt.Sprintf("%s round %d: %s by %s", joiner.plan.Name, action.Round, action.Unit, joiner.Identity))
+	won, err := joiner.commit(ctx, path, record, fmt.Sprintf("%s round %d: %s by %s", joiner.plan.Name, action.Round, action.Unit, joiner.Identity))
+	if err == nil && !won {
+		err = fmt.Errorf("round %d unit %s: the runs repo did not accept this submission; on GitHub, the verifier's comment on its pull request says why", action.Round, action.Unit)
+	}
 	return err
 }
 
@@ -520,69 +521,8 @@ func (joiner *Joiner) probe(ctx context.Context, stage, export string, seed int,
 	return evaluation, nil
 }
 
-// distance is the replicas' relative weight difference, shown beside their verdict.
-func distance(first, second string) (float64, error) {
-	a, err := readTensors(filepath.Join(first, "model.safetensors"))
-	if err != nil {
-		return 0, err
-	}
-	b, err := readTensors(filepath.Join(second, "model.safetensors"))
-	if err != nil {
-		return 0, err
-	}
-	var difference, size float64
-	for name, values := range a {
-		other := b[name]
-		for index, value := range values {
-			delta := float64(value) - float64(other[index])
-			difference += delta * delta
-			size += float64(value) * float64(value)
-		}
-	}
-	return math.Sqrt(difference / size), nil
-}
-
-func readTensors(path string) (map[string][]float32, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	length := binary.LittleEndian.Uint64(data[:8])
-	var header map[string]json.RawMessage
-	if err := json.Unmarshal(data[8:8+length], &header); err != nil {
-		return nil, err
-	}
-	payload := data[8+length:]
-	result := map[string][]float32{}
-	for name, raw := range header {
-		if name == "__metadata__" {
-			continue
-		}
-		var descriptor modelweights.Descriptor
-		if err := json.Unmarshal(raw, &descriptor); err != nil {
-			return nil, err
-		}
-		bytes := payload[descriptor.DataOffsets[0]:descriptor.DataOffsets[1]]
-		var values []float32
-		switch descriptor.DType {
-		case "BF16":
-			for index := 0; index+1 < len(bytes); index += 2 {
-				values = append(values, math.Float32frombits(uint32(binary.LittleEndian.Uint16(bytes[index:]))<<16))
-			}
-		case "F32":
-			for index := 0; index+3 < len(bytes); index += 4 {
-				values = append(values, math.Float32frombits(binary.LittleEndian.Uint32(bytes[index:])))
-			}
-		default:
-			return nil, fmt.Errorf("tensor %s is %s", name, descriptor.DType)
-		}
-		result[name] = values
-	}
-	return result, nil
-}
-
-// verify returns the index of the first replica a majority of the others
-// agree with, or -1. Honest replicas improve alike from the round's start; a
+// verify returns the index of the replica most others agree with, among
+// those agreeing with at least half of the others, or -1 without a majority. Honest replicas improve alike from the round's start; a
 // free-rider does not, so gaps are judged against each round's progress.
 func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports []string, records []Submission, values map[string]string, base *MergeRecord, round int, unit string) (int, *UnitEvidence, error) {
 	seed := pieceSeed(joiner.plan.Name, round, unit)
@@ -603,7 +543,11 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 		if err != nil {
 			return -1, nil, err
 		}
-		start = math.Log(float64(templateInt(template, "vocabulary_size")))
+		vocabulary := templateInt(template, "vocabulary_size")
+		if vocabulary < 2 {
+			return -1, nil, fmt.Errorf("%s needs vocabulary_size to judge bootstrap replicas", joiner.plan.Pretrain.Compose)
+		}
+		start = math.Log(float64(vocabulary))
 	}
 	evidence.StartLoss = start
 	losses := make([]float64, len(exports))
@@ -629,19 +573,16 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 				agree[first]++
 				agree[second]++
 			}
-			apart, err := distance(exports[first], exports[second])
-			if err != nil {
-				return -1, nil, err
-			}
-			fmt.Fprintf(joiner.Log, "   replicas %d vs %d: probe loss %.4f vs %.4f (gap %.0f%% of the round's progress, weights %.3f apart)  %s\n",
-				first+1, second+1, losses[first], losses[second], gap*100, apart, verdict)
+			fmt.Fprintf(joiner.Log, "   replicas %d vs %d: probe loss %.4f vs %.4f (gap %.0f%% of the round's progress)  %s\n",
+				first+1, second+1, losses[first], losses[second], gap*100, verdict)
 		}
 	}
 	var accepted, rejected []string
 	winner := -1
 	for index, count := range agree {
 		if count >= len(exports)/2 {
-			if winner < 0 {
+			// The most widely agreed replica wins, so one that some peers dispute never beats one none dispute.
+			if winner < 0 || count > agree[winner] {
 				winner = index
 			}
 			accepted = append(accepted, strconv.Itoa(index+1))
@@ -738,7 +679,12 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	if len(accepted) == 0 {
 		return fmt.Errorf("round %d: no unit was accepted; the run cannot continue without new submissions", action.Round)
 	}
-	name := joiner.modelName(action.Round, "merge")
+	// Named by the units it merges, so a retried close with a different accepted set never reuses another set's merge.
+	digest := sha256.New()
+	for _, submission := range accepted {
+		fmt.Fprintf(digest, "%s %s\n", submission.Unit, submission.ModelSHA256)
+	}
+	name := joiner.modelName(action.Round, "merge-"+hex.EncodeToString(digest.Sum(nil))[:12])
 	target := filepath.Join(joiner.workDir(), "exports", name)
 	method := "single"
 	if _, err := os.Stat(filepath.Join(target, "model.safetensors")); os.IsNotExist(err) {
@@ -768,7 +714,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		return err
 	}
 	record := MergeRecord{
-		Kind: "waldo-join-merge", Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
+		Kind: MergeKind, Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
 		Method: method, Dropped: dropped, Evidence: evidence, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(),
 	}
 	if base != nil {

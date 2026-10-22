@@ -81,14 +81,28 @@ replica_tolerance: 0.5
 
 func TestLoadPlanRejectsUnsupportedPlans(t *testing.T) {
 	for name, text := range map[string]string{
-		"store":  "name: x\nunits: [u0]\nstore: s3://bucket\npretrain: {compose: p.tmpl}\n",
-		"merge":  "name: x\nunits: [u0]\nmerge: diloco\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"units":  "name: x\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"signer": "name: x\nunits: [u0]\nstore: huggingface\nidentities: {alice: {hf: alice}}\npretrain: {compose: p.tmpl}\n",
+		"store":     "name: x\nunits: [u0]\nstore: s3://bucket\npretrain: {compose: p.tmpl}\n",
+		"merge":     "name: x\nunits: [u0]\nmerge: diloco\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"units":     "name: x\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"signer":    "name: x\nunits: [u0]\nstore: huggingface\nidentities: {alice: {hf: alice}}\npretrain: {compose: p.tmpl}\n",
+		"unit name": "name: x\nunits: [../u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"identity":  "name: x\nunits: [u0]\nstore: huggingface\nidentities: {Alice/x: k}\npretrain: {compose: p.tmpl}\n",
+		"run name":  "name: X Run\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"all unit":  "name: x\nunits: [all]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"duplicate": "name: x\nunits: [u0, u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
 	} {
 		if _, err := LoadPlan(writePlan(t, text)); err == nil {
 			t.Fatalf("%s: plan accepted", name)
 		}
+	}
+}
+
+func submissionFixture(unit, identity string) Submission {
+	digest := strings.Repeat("a", 64)
+	return Submission{
+		Kind: SubmissionKind, Schema: 1, Run: "run", Round: 0, Stage: "bootstrap", Unit: unit, Identity: identity,
+		Model: "waldo-run-r0000-" + unit + "-" + identity, ModelSHA256: digest,
+		Files: map[string]string{"model.safetensors": digest, "config.json": strings.Repeat("b", 64)},
 	}
 }
 
@@ -102,16 +116,16 @@ func TestReadStateVerifiesSignatures(t *testing.T) {
 		t.Fatal(err)
 	}
 	submissions := filepath.Join(roundDir(runDir, 0), "submissions")
-	if err := writeSigned(filepath.Join(submissions, "all-alice.yaml"), Submission{Round: 0, Unit: "all", Identity: "alice"}, aliceKey); err != nil {
-		t.Fatal(err)
+	write := func(file string, record any, key string) {
+		t.Helper()
+		if err := writeSigned(filepath.Join(submissions, file), record, key); err != nil {
+			t.Fatal(err)
+		}
 	}
-	// Forged: claims alice but signed by another key. Misplaced: a valid record in the wrong file.
-	if err := writeSigned(filepath.Join(submissions, "all-bob.yaml"), Submission{Round: 0, Unit: "all", Identity: "bob"}, malloryKey); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeSigned(filepath.Join(submissions, "u9-alice.yaml"), Submission{Round: 0, Unit: "all", Identity: "alice"}, aliceKey); err != nil {
-		t.Fatal(err)
-	}
+	write("all-alice.yaml", submissionFixture("all", "alice"), aliceKey)
+	// Forged: claims bob but signed by another key. Misplaced: a valid record in the wrong file.
+	write("all-bob.yaml", submissionFixture("all", "bob"), malloryKey)
+	write("u9-alice.yaml", submissionFixture("all", "alice"), aliceKey)
 	state, err := ReadState(runDir, plan, allowed)
 	if err != nil {
 		t.Fatal(err)
@@ -119,11 +133,44 @@ func TestReadStateVerifiesSignatures(t *testing.T) {
 	if got := state.Rounds[0].Submissions["all"]; len(got) != 1 || got[0].Identity != "alice" {
 		t.Fatalf("submissions = %+v", state.Rounds[0].Submissions)
 	}
-	if err := writeSigned(filepath.Join(roundDir(runDir, 0), "merge.yaml"), MergeRecord{Round: 0, Identity: "bob"}, malloryKey); err != nil {
+	merge := MergeRecord{Kind: MergeKind, Run: "run", Round: 0, Stage: "bootstrap", Identity: "bob", Model: "waldo-run-r0000-merge", ModelSHA256: strings.Repeat("c", 64), Files: map[string]string{"model.safetensors": strings.Repeat("c", 64)}}
+	if err := writeSigned(filepath.Join(roundDir(runDir, 0), "merge.yaml"), merge, malloryKey); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ReadState(runDir, plan, allowed); err == nil || !strings.Contains(err.Error(), "not a valid merge record") {
 		t.Fatalf("forged merge error = %v", err)
+	}
+}
+
+func TestReadStateIgnoresMalformedRecords(t *testing.T) {
+	key, public := signingKey(t, "bob")
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Identities: map[string]Identity{"bob": {Key: public}}}
+	allowed := filepath.Join(t.TempDir(), "allowed_signers")
+	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(*Submission){
+		"model path":    func(record *Submission) { record.Model = "../../.." },
+		"file path":     func(record *Submission) { record.Files["../../.bashrc"] = strings.Repeat("d", 64) },
+		"hidden file":   func(record *Submission) { record.Files[".git"] = strings.Repeat("d", 64) },
+		"other run":     func(record *Submission) { record.Run = "another-run" },
+		"wrong kind":    func(record *Submission) { record.Kind = MergeKind },
+		"wrong stage":   func(record *Submission) { record.Stage = "pretrain" },
+		"unpinned file": func(record *Submission) { record.Files["model.safetensors"] = strings.Repeat("e", 64) },
+	} {
+		runDir := t.TempDir()
+		record := submissionFixture("all", "bob")
+		mutate(&record)
+		if err := writeSigned(filepath.Join(roundDir(runDir, 0), "submissions", "all-bob.yaml"), record, key); err != nil {
+			t.Fatal(err)
+		}
+		state, err := ReadState(runDir, plan, allowed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(state.Rounds[0].Submissions) != 0 {
+			t.Fatalf("%s: malformed record accepted: %+v", name, state.Rounds[0].Submissions)
+		}
 	}
 }
 

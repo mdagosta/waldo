@@ -58,7 +58,7 @@ git -C "$work/seed" -c user.name=e2e -c user.email=e2e@waldo.invalid commit -q -
 git -C "$work/seed" push -q origin main
 
 # A free-rider: bob submits round 1's starting weights for u2 without training, with
-# alice's token count so only the closer's held-out measurement can catch it.
+# the round's token count, so only the closer's held-out measurement can catch it.
 submit_lazy_u2() {
   rounds="runs/$run/rounds"
   git -C "$work/seed" pull -q
@@ -66,7 +66,8 @@ submit_lazy_u2() {
 import hashlib, json, pathlib, shutil, sys
 seed, store, rounds = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
 base = json.loads((seed / rounds / "round-0000" / "merge.yaml").read_text())
-honest = json.loads((seed / rounds / "round-0001" / "submissions" / "u2-e2e-alice.yaml").read_text())
+# Every unit trains the same fixed steps, so any honest round-1 record has the right tokens.
+honest = json.loads(sorted((seed / rounds / "round-0001" / "submissions").glob("*.yaml"))[0].read_text())
 model = "waldo-join-e2e-r0001-u2-e2e-bob"
 shutil.copytree(store / base["model"], store / model)
 files = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((store / model).iterdir())}
@@ -90,6 +91,13 @@ on_main() {
   git --git-dir="$work/runs.git" cat-file -e "main:runs/$run/rounds/$1" 2>/dev/null
 }
 
+# Join takes the lowest unit this identity has not submitted, so with two identities u2
+# is bob's next unit in round 1 once he has submitted u0 and u1.
+bob_turns_to_u2() {
+  on_main round-0000/merge.yaml && ! on_main round-0001/submissions/u2-e2e-bob.yaml &&
+    on_main round-0001/submissions/u0-e2e-bob.yaml && on_main round-0001/submissions/u1-e2e-bob.yaml
+}
+
 last=$(grep -c '^  rounds: 1' "$work/seed/runs/$run/plan.yaml")
 final="round-$(printf %04d "$last")/merge.yaml"
 passes=0
@@ -97,7 +105,7 @@ until on_main "$final"; do
   passes=$((passes + 1))
   [ "$passes" -le 20 ] || { echo "model-join: run not merged after 20 passes" >&2; exit 1; }
   for identity in e2e-alice e2e-bob; do
-    if [ "$identity" = e2e-bob ] && on_main round-0001/submissions/u2-e2e-alice.yaml && ! on_main round-0001/submissions/u2-e2e-bob.yaml; then
+    if [ "$identity" = e2e-bob ] && bob_turns_to_u2; then
       submit_lazy_u2
       continue
     fi
