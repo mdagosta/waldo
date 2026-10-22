@@ -1388,7 +1388,7 @@ func validateComposeCompatibility(target Inspection, compose Compose) error {
 	if compose.Base != nil && compose.Base.OriginSHA256 != "" && target.Model.OriginBOMSHA256 != compose.Base.OriginSHA256 {
 		return fmt.Errorf("compose base does not match existing model %q; use a new model name", target.Model.Name)
 	}
-	if compose.Base != nil && compose.Base.RunID != "" && !reflect.DeepEqual(target.Model.Parent, composeParent(compose)) {
+	if compose.Base != nil && compose.Base.RunID != "" && !sameParent(target.Model.Parent, composeParent(compose)) {
 		return fmt.Errorf("compose parent does not match existing model %q; use a new model name", target.Model.Name)
 	}
 	return nil
@@ -1516,11 +1516,18 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		if compose.Base.ArtifactBytes != 0 && compose.Base.ArtifactBytes != initialization.Artifact.Bytes {
 			return Compose{}, nil, fmt.Errorf("compose base artifact has %d bytes, not requested %d", initialization.Artifact.Bytes, compose.Base.ArtifactBytes)
 		}
-		lineage := Ancestry(base)
-		if len(compose.Base.Lineage) > 0 && !reflect.DeepEqual(compose.Base.Lineage, lineage) {
+		node, err := ModelLineage(base)
+		if err != nil {
+			return Compose{}, nil, err
+		}
+		lineage, err := hashJSON(node)
+		if err != nil {
+			return Compose{}, nil, err
+		}
+		if compose.Base.LineageSHA256 != "" && compose.Base.LineageSHA256 != lineage {
 			return Compose{}, nil, fmt.Errorf("compose base lineage does not match the base model's recorded ancestry")
 		}
-		compose.Base.Lineage = lineage
+		compose.Base.LineageSHA256 = lineage
 		compose.Base.RunID = initialization.SourceRunID
 		compose.Base.RunBOMSHA256 = pin.BOMSHA256
 		compose.Base.ArtifactSHA256 = initialization.Artifact.SHA256
@@ -1715,7 +1722,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
 	if staged.Model.ArchitectureSHA256 != architectureHash {
 		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture", destination)
 	}
-	if transaction.ModelID == "" && (staged.Model.OriginBOMSHA256 != composeOriginHash(compose) || !reflect.DeepEqual(staged.Model.Parent, composeParent(compose))) {
+	if transaction.ModelID == "" && (staged.Model.OriginBOMSHA256 != composeOriginHash(compose) || !sameParent(staged.Model.Parent, composeParent(compose))) {
 		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture or origin", destination)
 	}
 	if transaction.ModelID != "" && staged.Model.ID != transaction.ModelID {
@@ -1889,6 +1896,17 @@ func composeOriginHash(compose Compose) string {
 	return compose.Base.OriginSHA256
 }
 
+// sameParent compares parent pins. Models created before parent pins recorded
+// lineage match on every other field, so they keep accepting new stages.
+func sameParent(stored, wanted *ModelParent) bool {
+	if stored != nil && wanted != nil && stored.LineageSHA256 == "" {
+		legacy := *wanted
+		legacy.LineageSHA256 = ""
+		return reflect.DeepEqual(*stored, legacy)
+	}
+	return reflect.DeepEqual(stored, wanted)
+}
+
 func composeParent(compose Compose) *ModelParent {
 	if compose.Base == nil || compose.Base.RunID == "" {
 		return nil
@@ -1896,8 +1914,8 @@ func composeParent(compose Compose) *ModelParent {
 	return &ModelParent{
 		Model: compose.Base.Model, ModelID: compose.Base.ModelID,
 		RunID: compose.Base.RunID, RunBOMSHA256: compose.Base.RunBOMSHA256,
-		Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
-		Lineage:  compose.Base.Lineage,
+		Artifact:      training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
+		LineageSHA256: compose.Base.LineageSHA256,
 	}
 }
 

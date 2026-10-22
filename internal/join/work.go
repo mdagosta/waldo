@@ -636,6 +636,15 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: "a replica did not start from the round's merged weights", Identities: identities})
 			continue
 		}
+		// GPU training is not bit-reproducible, so identical weights mean one replica copied another.
+		weights := map[string]bool{}
+		for _, record := range records {
+			weights[record.ModelSHA256] = true
+		}
+		if len(weights) < len(records) {
+			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: "replicas submitted identical weights", Identities: identities})
+			continue
+		}
 		tokens := map[int64]bool{}
 		for _, record := range records {
 			tokens[record.Tokens] = true

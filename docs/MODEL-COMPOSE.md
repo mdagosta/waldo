@@ -231,7 +231,7 @@ model-level contract. New composes should use only `interaction.tools`.
 | `artifact_sha256` | no | SHA-256 | Asserts the selected checkpoint bytes. WALDO fills it during resolution. |
 | `artifact_bytes` | no | non-negative bytes | Asserts the selected checkpoint size. WALDO fills it during resolution. |
 | `merge` | exactly one of `model`, `source`, or `merge` | two or more `{model, weight}` | Averages managed models into a merged origin. `weight` is optional and must be given for every parent or none; weighted parents contribute in proportion. |
-| `lineage` | no | SHA-256 list | Asserts a trained base's recorded ancestry. WALDO fills it during resolution. |
+| `lineage_sha256` | no | SHA-256 | Asserts a trained base's lineage node. WALDO fills it during resolution. |
 
 ## Base initialization
 
@@ -285,21 +285,30 @@ base:
 ```
 
 Averaging weights is meaningful only for models trained from common weights,
-so WALDO fails closed unless every parent's lineage shares at least one weights
-hash: a model's lineage is its current weights, the weights it started from,
-and the ancestry recorded for those. Parents trained from random weights, or
-pulled from releases that record no lineage, cannot be merged. Merges accept
-byte-tokenizer models with `bfloat16` or `float32` parameters.
+so WALDO fails closed unless the parents share an ancestor. Ancestry is
+recorded the way git records history: every model has a lineage node naming
+its current weights and the weights they came from, each by weights hash and by
+the hash of that parent's own node. A fine-tune's parent pin, a pulled model's
+origin, and a merge's origin each record a node, and a release's `BOM.json`
+carries the released model's node, so nodes stay the same size however long
+the history behind them. WALDO walks each parent's chain through every node
+the model store holds, like `git merge-base`, and requires a weights hash that
+every parent reaches. Where a chain leaves the store, the walk stops there.
+Parents trained from random weights, or pulled from releases that record no
+lineage, cannot be merged. Merges accept byte-tokenizer models with `bfloat16`
+or `float32` parameters.
 
 WALDO writes the merge as an origin under the model store's `.merges`
 directory, keyed by its parents and weights, so the same merge is built once.
-Its origin BOM records the method, each parent's model ID and weights hash in
-merge order, the weights, and the combined lineage; anyone holding the parents
-can recompute the merged weights and compare hashes. A compose with
+Its origin BOM records the method, each parent's model ID, weights hash, and
+lineage node hash in merge order, and the weights; its lineage node names every
+parent's node, like a git merge commit. Anyone holding the parents can
+recompute the merged weights and compare hashes. A compose with
 `base.merge` may have no stages: the destination is then the merged model
 itself, usable for chat, export, or as another compose's base. With stages, the
-merge initializes training like any origin. Exports record the lineage in their
-release `BOM.json`, and pulls restore it, so ancestry survives publication.
+merge initializes training like any origin. Exports record the model's lineage node in
+their release `BOM.json`, and pulls keep it in the origin, so the chain
+continues across publication.
 
 ### Direct external base
 

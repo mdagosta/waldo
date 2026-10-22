@@ -731,9 +731,9 @@ func publishOrigin(root, name, temporary string, origin OriginBOM, architecture 
 	return nil
 }
 
-// releaseLineage is the lineage a WALDO release's BOM.json records, if the
-// package has one; the file itself is pinned among the source artifacts.
-func releaseLineage(path string) ([]string, error) {
+// releaseLineage is the lineage node a WALDO release's BOM.json records, if
+// the package has one; the file itself is pinned among the source artifacts.
+func releaseLineage(path string) (*LineageNode, error) {
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -741,19 +741,15 @@ func releaseLineage(path string) ([]string, error) {
 		return nil, err
 	}
 	var release struct {
-		Kind    string   `json:"kind"`
-		Subject string   `json:"subject"`
-		Lineage []string `json:"lineage"`
+		Kind    string       `json:"kind"`
+		Subject string       `json:"subject"`
+		Lineage *LineageNode `json:"lineage"`
 	}
-	if json.Unmarshal(data, &release) != nil || release.Kind != "openwaldo-bom" || release.Subject != "model-release" {
+	if json.Unmarshal(data, &release) != nil || release.Kind != "openwaldo-bom" || release.Subject != "model-release" || release.Lineage == nil {
 		return nil, nil
 	}
-	seen := map[string]bool{}
-	for _, digest := range release.Lineage {
-		if !lineageDigest.MatchString(digest) {
-			return nil, fmt.Errorf("release BOM.json lineage entry %q is not a SHA-256", digest)
-		}
-		seen[digest] = true
+	if err := release.Lineage.validate(); err != nil {
+		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
 	}
-	return sortedKeys(seen), nil
+	return release.Lineage, nil
 }

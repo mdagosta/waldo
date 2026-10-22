@@ -122,8 +122,8 @@ type ComposeBase struct {
 	ArtifactBytes  int64  `json:"artifact_bytes,omitempty" yaml:"artifact_bytes,omitempty"`
 	// Merge averages two or more local models that share an ancestor.
 	Merge []ComposeMergeParent `json:"merge,omitempty" yaml:"merge,omitempty"`
-	// Lineage is resolved from a trained base model and pinned with it.
-	Lineage []string `json:"lineage,omitempty" yaml:"lineage,omitempty"`
+	// LineageSHA256 is resolved from a trained base model's lineage node and pinned with it.
+	LineageSHA256 string `json:"lineage_sha256,omitempty" yaml:"lineage_sha256,omitempty"`
 }
 
 type ComposeMergeParent struct {
@@ -568,7 +568,7 @@ func IsComposeFile(path string) (bool, error) {
 }
 
 func validateComposeMerge(base ComposeBase) error {
-	if base.ModelID != "" || base.RunID != "" || base.RunBOMSHA256 != "" || base.ArtifactSHA256 != "" || base.ArtifactBytes != 0 || len(base.Lineage) > 0 {
+	if base.ModelID != "" || base.RunID != "" || base.RunBOMSHA256 != "" || base.ArtifactSHA256 != "" || base.ArtifactBytes != 0 || base.LineageSHA256 != "" {
 		return fmt.Errorf("base.merge cannot declare managed-model run pins")
 	}
 	if len(base.Merge) < 2 {

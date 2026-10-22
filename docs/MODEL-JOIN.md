@@ -104,6 +104,12 @@ commits to. Then, for each unit:
 - **Starting weights.** Every replica must record the round's merged weights as
   its `base_sha256`. A unit with a replica that started anywhere else is dropped.
 - **Tokens.** Replicas must report the same tokens trained.
+- **Distinct weights.** GPU training is not bit-reproducible, so replicas with
+  identical weights mean one copied another; the unit is dropped as a
+  duplicate. This catches an exact copy, not a copy perturbed slightly: the
+  complete defense is commit-reveal, where each replica commits its weights'
+  hash before any replica publishes, so nobody can copy weights they have not
+  yet seen (not built).
 - **Held-out loss.** The closer measures each replica itself, never trusting a
   contributor's own report, with `waldo model train <model> <compose>
   --evaluate-only` (see [Model lifecycle](MODEL-LIFECYCLE.md)) and the unit's
