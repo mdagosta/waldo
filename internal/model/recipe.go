@@ -120,6 +120,15 @@ type ComposeBase struct {
 	RunBOMSHA256   string `json:"run_bom_sha256,omitempty" yaml:"run_bom_sha256,omitempty"`
 	ArtifactSHA256 string `json:"artifact_sha256,omitempty" yaml:"artifact_sha256,omitempty"`
 	ArtifactBytes  int64  `json:"artifact_bytes,omitempty" yaml:"artifact_bytes,omitempty"`
+	// Merge averages two or more local models that share an ancestor.
+	Merge []ComposeMergeParent `json:"merge,omitempty" yaml:"merge,omitempty"`
+	// Lineage is resolved from a trained base model and pinned with it.
+	Lineage []string `json:"lineage,omitempty" yaml:"lineage,omitempty"`
+}
+
+type ComposeMergeParent struct {
+	Model  string  `json:"model" yaml:"model"`
+	Weight float64 `json:"weight,omitempty" yaml:"weight,omitempty"`
 }
 
 type Architecture struct {
@@ -558,6 +567,33 @@ func IsComposeFile(path string) (bool, error) {
 	return header.Kind == "waldo-model-compose", nil
 }
 
+func validateComposeMerge(base ComposeBase) error {
+	if base.ModelID != "" || base.RunID != "" || base.RunBOMSHA256 != "" || base.ArtifactSHA256 != "" || base.ArtifactBytes != 0 || len(base.Lineage) > 0 {
+		return fmt.Errorf("base.merge cannot declare managed-model run pins")
+	}
+	if len(base.Merge) < 2 {
+		return fmt.Errorf("base.merge needs at least two parents")
+	}
+	seen := map[string]bool{}
+	weighted := 0
+	for _, parent := range base.Merge {
+		if !validName.MatchString(parent.Model) || seen[parent.Model] {
+			return fmt.Errorf("base.merge parents must name distinct locally managed models")
+		}
+		seen[parent.Model] = true
+		if parent.Weight < 0 || math.IsInf(parent.Weight, 0) || math.IsNaN(parent.Weight) {
+			return fmt.Errorf("base.merge weights must be positive and finite")
+		}
+		if parent.Weight > 0 {
+			weighted++
+		}
+	}
+	if weighted != 0 && weighted != len(base.Merge) {
+		return fmt.Errorf("base.merge weights must be given for every parent or for none")
+	}
+	return nil
+}
+
 func (compose Compose) Validate() error {
 	if compose.Kind != "waldo-model-compose" || compose.Schema != ComposeSchema {
 		return fmt.Errorf("unsupported model compose identity %q schema %d", compose.Kind, compose.Schema)
@@ -572,9 +608,14 @@ func (compose Compose) Validate() error {
 		}
 	}
 	if compose.Base != nil {
-		hasModel, hasSource := compose.Base.Model != "", compose.Base.Source != ""
-		if hasModel == hasSource {
-			return fmt.Errorf("base must declare exactly one of model or source")
+		hasModel, hasSource, hasMerge := compose.Base.Model != "", compose.Base.Source != "", len(compose.Base.Merge) > 0
+		if (hasModel && hasSource) || (hasModel && hasMerge) || (hasSource && hasMerge) || !(hasModel || hasSource || hasMerge) {
+			return fmt.Errorf("base must declare exactly one of model, source, or merge")
+		}
+		if hasMerge {
+			if err := validateComposeMerge(*compose.Base); err != nil {
+				return err
+			}
 		}
 		if hasModel && !validName.MatchString(compose.Base.Model) {
 			return fmt.Errorf("base.model must name a locally managed model")
@@ -595,8 +636,8 @@ func (compose Compose) Validate() error {
 			return fmt.Errorf("base artifact_bytes cannot be negative")
 		}
 	}
-	if len(compose.Stages) == 0 {
-		return fmt.Errorf("at least one training stage is required")
+	if len(compose.Stages) == 0 && (compose.Base == nil || len(compose.Base.Merge) == 0) {
+		return fmt.Errorf("at least one training stage is required unless base.merge creates the model")
 	}
 	seen := map[string]bool{}
 	hasToolTraining := false

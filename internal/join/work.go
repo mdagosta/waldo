@@ -25,6 +25,7 @@ import (
 
 	"github.com/openwaldo/waldo/internal/model"
 	"github.com/openwaldo/waldo/internal/modelweights"
+	"gopkg.in/yaml.v3"
 )
 
 // Files a merged Hugging Face package takes from its first input; inputs must agree on every one.
@@ -677,6 +678,16 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: fmt.Sprintf("%d of %d replicas by the deadline", len(records), joiner.plan.Replicas)})
 			continue
 		}
+		wrongBase := false
+		for _, record := range records {
+			if (base == nil) != (record.BaseSHA256 == nil) || (base != nil && *record.BaseSHA256 != base.ModelSHA256) {
+				wrongBase = true
+			}
+		}
+		if wrongBase {
+			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: "a replica did not start from the round's merged weights", Identities: identities})
+			continue
+		}
 		tokens := map[int64]bool{}
 		for _, record := range records {
 			tokens[record.Tokens] = true
@@ -726,7 +737,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 			if err := copyDirectory(filepath.Join(joiner.workDir(), "exports", accepted[0].Model), target); err != nil {
 				return err
 			}
-		} else if err := joiner.merge(accepted, target); err != nil {
+		} else if err := joiner.merge(ctx, name, accepted, target); err != nil {
 			return err
 		}
 	}
@@ -773,89 +784,43 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	return nil
 }
 
-// merge writes the token-weighted mean of the accepted exports as a Hugging Face package.
-func (joiner *Joiner) merge(accepted []Submission, target string) error {
-	var sources []string
-	var weights []float64
+// merge imports the accepted exports and composes their token-weighted
+// merge in waldo, whose records pin every parent and their shared ancestry;
+// the exported merge carries that lineage to the next round.
+func (joiner *Joiner) merge(ctx context.Context, name string, accepted []Submission, target string) error {
+	interaction, err := joiner.interaction()
+	if err != nil {
+		return err
+	}
+	text := "kind: waldo-model-compose\nschema: 1\n" + interaction + "base:\n  merge:\n"
 	for _, submission := range accepted {
-		sources = append(sources, filepath.Join(joiner.workDir(), "exports", submission.Model, "model.safetensors"))
-		weights = append(weights, float64(submission.Tokens))
-	}
-	for _, weight := range weights {
-		if weight <= 0 {
-			weights = nil
-			break
+		if err := joiner.ensure(submission.Model, filepath.Join(joiner.workDir(), "exports", submission.Model)); err != nil {
+			return err
 		}
+		text += fmt.Sprintf("    - model: %s\n      weight: %d\n", submission.Model, submission.Tokens)
 	}
-	first := filepath.Dir(sources[0])
-	partial := target + ".partial"
-	_ = os.RemoveAll(partial)
-	if err := os.MkdirAll(partial, 0o755); err != nil {
+	if err := joiner.train(ctx, name, text); err != nil {
 		return err
 	}
-	for _, file := range mergeSharedFiles {
-		data, err := os.ReadFile(filepath.Join(first, file))
-		if os.IsNotExist(err) {
-			continue
-		} else if err != nil {
-			return err
-		}
-		for _, source := range sources[1:] {
-			other, err := os.ReadFile(filepath.Join(filepath.Dir(source), file))
-			if err != nil || string(other) != string(data) {
-				return fmt.Errorf("merge inputs disagree on %s; they must share an architecture and packaging", file)
-			}
-		}
-		if err := os.WriteFile(filepath.Join(partial, file), data, 0o644); err != nil {
-			return err
-		}
-	}
-	if _, err := modelweights.Merge(sources, weights, filepath.Join(partial, "model.safetensors")); err != nil {
-		return err
-	}
-	// Named BOM.json because importing the package pins that file in its origin,
-	// which carries this merge's inputs into the next round's lineage.
-	type mergeInput struct {
-		Path        string  `json:"path"`
-		ModelSHA256 string  `json:"model_sha256"`
-		BOMSHA256   *string `json:"bom_sha256"`
-	}
-	record := struct {
-		Kind              string       `json:"kind"`
-		Schema            int          `json:"schema"`
-		Method            string       `json:"method"`
-		Weights           []float64    `json:"weights"`
-		Inputs            []mergeInput `json:"inputs"`
-		OutputModelSHA256 string       `json:"output_model_sha256"`
-	}{Kind: "waldito-merge-record", Schema: 1, Method: "weighted-mean", Weights: weights}
-	if weights == nil {
-		record.Method = "mean"
-	}
-	for _, source := range sources {
-		digest, err := hashFile(source)
-		if err != nil {
-			return err
-		}
-		input := mergeInput{Path: filepath.Dir(source), ModelSHA256: digest}
-		if bom, err := hashFile(filepath.Join(filepath.Dir(source), "BOM.json")); err == nil {
-			input.BOMSHA256 = &bom
-		}
-		record.Inputs = append(record.Inputs, input)
-	}
-	digest, err := hashFile(filepath.Join(partial, "model.safetensors"))
+	_, err = joiner.export(ctx, name)
+	return err
+}
+
+// interaction is the plan's compose interaction block, so merged models chat like trained ones.
+func (joiner *Joiner) interaction() (string, error) {
+	text, err := joiner.compose("pretrain", "", 0, "tokens: 1", nil, false)
 	if err != nil {
-		return err
+		return "", err
 	}
-	record.OutputModelSHA256 = digest
-	data, err := json.MarshalIndent(record, "", "  ")
-	if err != nil {
-		return err
+	var compose model.Compose
+	if err := yaml.Unmarshal([]byte(text), &compose); err != nil {
+		return "", err
 	}
-	if err := os.WriteFile(filepath.Join(partial, "BOM.json"), append(data, '\n'), 0o644); err != nil {
-		return err
+	if compose.Interaction == (model.Interaction{}) {
+		return "", nil
 	}
-	_ = os.RemoveAll(target)
-	return os.Rename(partial, target)
+	encoded, err := yaml.Marshal(map[string]any{"interaction": compose.Interaction})
+	return string(encoded), err
 }
 
 func copyDirectory(source, target string) error {

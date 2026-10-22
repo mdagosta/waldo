@@ -49,6 +49,7 @@ type ModelParent struct {
 	RunID        string            `json:"run_id"`
 	RunBOMSHA256 string            `json:"run_bom_sha256"`
 	Artifact     training.Artifact `json:"artifact"`
+	Lineage      []string          `json:"lineage,omitempty"`
 }
 
 type OriginSource struct {
@@ -75,6 +76,24 @@ type OriginBOM struct {
 	ArchitectureSHA256 string           `json:"architecture_sha256"`
 	SourceArtifacts    []OriginArtifact `json:"source_artifacts"`
 	Artifacts          []OriginArtifact `json:"artifacts"`
+	Merge              *OriginMerge     `json:"merge,omitempty"`
+	// Lineage lists the SHA-256 of every weights artifact these weights
+	// descend from, as recorded by the source or computed for a merge.
+	Lineage []string `json:"lineage,omitempty"`
+}
+
+// OriginMerge records a merged origin: its parents in merge order, so anyone
+// holding them can recompute the weights and compare hashes.
+type OriginMerge struct {
+	Method  string              `json:"method"`
+	Parents []OriginMergeParent `json:"parents"`
+}
+
+type OriginMergeParent struct {
+	Model         string  `json:"model"`
+	ModelID       string  `json:"model_id"`
+	WeightsSHA256 string  `json:"weights_sha256"`
+	Weight        float64 `json:"weight,omitempty"`
 }
 
 type PlannedStage struct {
