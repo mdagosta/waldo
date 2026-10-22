@@ -92,7 +92,7 @@ func (joiner *Joiner) values(stage, unit string) (map[string]string, error) {
 	}
 	posttrain := joiner.plan.Posttrain
 	if posttrain.Corpus == "" {
-		return nil, fmt.Errorf("post-training needs posttrain.corpus, an index path that every unit takes a shard of")
+		return nil, fmt.Errorf("post-training needs posttrain.corpus, an index path that every unit takes a slice of")
 	}
 	template, err := os.ReadFile(joiner.planFile(posttrain.Compose))
 	if err != nil {
@@ -109,7 +109,7 @@ func (joiner *Joiner) values(stage, unit string) (map[string]string, error) {
 		}
 	}
 	indent := string(line[1]) + "  "
-	corpus := fmt.Sprintf("%s\n%sfilter:\n%s  shard: {count: %d, index: %d}", posttrain.Corpus, indent, indent, len(joiner.plan.Units), index)
+	corpus := fmt.Sprintf("%s\n%sfilter:\n%s  slice: {index: %d, count: %d}", posttrain.Corpus, indent, indent, index, len(joiner.plan.Units))
 	return map[string]string{"budget": fmt.Sprintf("epochs: %d", posttrain.EpochsPerRound), "corpus": corpus}, nil
 }
 
@@ -609,7 +609,7 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 		}
 		losses[index] = loss
 	}
-	fmt.Fprintf(joiner.Log, "   round start probe loss %.4f on this shard\n", start)
+	fmt.Fprintf(joiner.Log, "   round start probe loss %.4f on this unit's data\n", start)
 	agree := make([]int, len(exports))
 	for first := range exports {
 		for second := first + 1; second < len(exports); second++ {

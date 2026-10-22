@@ -50,9 +50,8 @@ type PretrainPlan struct {
 
 type PosttrainPlan struct {
 	Compose        string `yaml:"compose"`
-	Corpus         string `yaml:"corpus"` // index path; each unit trains its own shard of it
+	Corpus         string `yaml:"corpus"` // index path; each unit trains its own slice of it
 	Data           string `yaml:"data"`
-	ShardBy        string `yaml:"shard_by"`
 	Fetcher        string `yaml:"fetcher"`
 	Rounds         int    `yaml:"rounds"`
 	EpochsPerRound int    `yaml:"epochs_per_round"`

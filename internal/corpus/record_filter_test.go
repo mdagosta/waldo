@@ -193,16 +193,16 @@ func TestContentAssessmentExclusionsCombineGlobalAndCorpusPolicy(t *testing.T) {
 	}
 }
 
-func TestShardFilterSplitsRecordsDisjointly(t *testing.T) {
+func TestSliceFilterDividesRecordsDisjointly(t *testing.T) {
 	filters := make([]RecordFilter, 3)
 	for index := range filters {
-		filters[index] = RecordFilter{Shard: &ShardFilter{Count: 3, Index: index}}
+		filters[index] = RecordFilter{Slice: &SliceFilter{Index: index, Count: 3}}
 		if err := filters[index].Validate(); err != nil {
 			t.Fatal(err)
 		}
 	}
 	counts := make([]int, 3)
-	for number := range 300 {
+	for number := range 3000 {
 		record := shard.RecordView{ID: fmt.Sprintf("record-%d", number)}
 		matched := 0
 		for index, filter := range filters {
@@ -212,21 +212,21 @@ func TestShardFilterSplitsRecordsDisjointly(t *testing.T) {
 			}
 		}
 		if matched != 1 {
-			t.Fatalf("%s matched %d shards", record.ID, matched)
+			t.Fatalf("%s matched %d slices", record.ID, matched)
 		}
 	}
 	for index, count := range counts {
-		if count < 60 {
-			t.Fatalf("shard %d holds only %d of 300 records", index, count)
+		if count < 900 || count > 1100 {
+			t.Fatalf("slice %d holds %d of 3000 records", index, count)
 		}
 	}
-	// waldito splits post-training data by the same rule: sha256(id)[0] % count.
-	if !(RecordFilter{Shard: &ShardFilter{Count: 3, Index: 1}}).Allows(shard.RecordView{ID: "hello-name-0000"}) {
-		t.Fatal("hello-name-0000 is not in shard 1 of 3")
+	// Counts are not limited to what one hash byte could divide.
+	if err := (RecordFilter{Slice: &SliceFilter{Index: 999, Count: 1000}}).Validate(); err != nil {
+		t.Fatal(err)
 	}
-	for _, bad := range []ShardFilter{{Count: 0}, {Count: 3, Index: 3}, {Count: 2, Index: -1}, {Count: 257}} {
-		if err := (RecordFilter{Shard: &bad}).Validate(); err == nil {
-			t.Fatalf("shard %+v accepted", bad)
+	for _, bad := range []SliceFilter{{Count: 0}, {Index: 3, Count: 3}, {Index: -1, Count: 2}} {
+		if err := (RecordFilter{Slice: &bad}).Validate(); err == nil {
+			t.Fatalf("slice %+v accepted", bad)
 		}
 	}
 }
