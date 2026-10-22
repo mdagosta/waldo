@@ -24,17 +24,16 @@ waldo model join <runs-repo> <run-dir> --identity <name> [--once] [--email <addr
 | `--identity` | The contributor's name under the plan's `identities`. Required. |
 | `--once` | Do one unit of work and exit. Without it, join loops until the run is merged, waiting `--wait` seconds (default 60) between checks while others work. |
 | `--email` | Commit author email for records. Default `<identity>@waldo.invalid`. |
-| `--key` | SSH signing key. Default `~/.waldo/identity/<identity>/signing-key`, created on first use. |
+| `--key` | SSH signing key. Default `~/.waldo/join/<identity>/signing-key`, created on first use. |
 
 `<runs-repo>` is any git URL or local path; `<run-dir>` is the run's directory
 in it, such as `runs/python-basics-v1`. An identity not yet in the plan gets a
 signing key and the exact `identities` entry to add.
 
-Each identity keeps its credentials in `~/.waldo/identity/<identity>/`
-(`signing-key`, `signing-key.pub`, and an optional `github-token`) and its work
-in `~/.waldo/join/<identity>/`: its clone of the runs repository, its own model
+Each identity keeps everything in `~/.waldo/join/<identity>/`: its signing
+key, an optional `github-token`, its clone of the runs repository, its own model
 store and WALDO configuration, and its exports. Several identities can share
-one machine.
+one machine, and retiring one removes one directory.
 
 ## Runs repository
 
@@ -139,6 +138,41 @@ every replica's measured loss.
 The merge is deterministic, so independent closers of one round compute the
 same hash; the first `merge.yaml` on the default branch stands.
 
+## Choosing replicas
+
+Replicas trade compute for verification: two replicas cost twice the compute of
+one, and three cost three times. Verification works by measuring each replica's
+progress from the round's starting loss, so its power depends on how far a
+round moves the loss. The numbers below come from the runs recorded so far and
+are guidance, not enforced rules.
+
+| Round | Progress (starting minus replica loss) | Honest replica gap | Free-rider gap |
+| --- | --- | --- | --- |
+| Early pretraining | about 0.3 to 2 | 0 to 3% of progress | 100% of progress |
+| Late post-training | about 0.0001 | below `replica_floor` | also below `replica_floor` |
+
+- **Replicate while rounds make clear progress.** While each round's progress is
+  well above `replica_floor` (roughly ten times it, about 0.01 with the
+  default), honest replicas sit far inside `replica_tolerance` and a free-rider
+  sits far outside it, so `replicas: 2` catches free-riders reliably.
+- **Below that, replicas stop verifying.** Once a round's progress falls under
+  `replica_floor`, a free-rider who submits the starting weights is
+  indistinguishable from honest work and passes. Further replicas only
+  duplicate compute; spend it on new data instead, which restores measurable
+  progress and with it the check's power.
+- **Use three replicas for high stakes.** Two disagreeing replicas are both
+  dropped; three can outvote one bad submission, at three times the compute.
+  Reserve them for rounds whose loss would be costly, or for identities not yet
+  trusted.
+- **Spot-check at scale (not built).** Replicating a random share of units,
+  chosen after submissions arrive, and removing an identity caught free-riding
+  would deter cheating at a fraction of full replication's cost: a contributor
+  risks their whole standing on every unit.
+
+Each merge record's evidence holds the starting loss and every replica's
+measured loss, so every run measures its own progress curve and shows where
+replication stopped verifying.
+
 ## Records and signatures
 
 Records are JSON (valid YAML) signed with `ssh-keygen -Y sign` in the
@@ -175,7 +209,7 @@ on a repository their owner does not control, so record pull requests need a
 classic token with `public_repo`. Give that token to a GitHub machine account
 rather than a personal one: it then reaches only the machine account's forks,
 and the records stay off the person's contribution graph. Store it in
-`~/.waldo/identity/<identity>/github-token` with mode 600; join passes it only
+`~/.waldo/join/<identity>/github-token` with mode 600; join passes it only
 to its own `gh` and `git` calls and refuses a token file others can read.
 Without that file, join uses the caller's `GH_TOKEN` or `gh` login.
 

@@ -22,16 +22,15 @@ import (
 // Joiner is one identity's view of a run: its own clone of the runs repo,
 // signing key, and working directory under Home.
 type Joiner struct {
-	Home     string // per identity work: clone, models, exports
+	// Home is everything of one identity: its signing key and optional
+	// github-token, its clone of the runs repo, models, and exports.
+	Home     string
 	Identity string
-	// Credentials holds the identity's signing key and an optional
-	// github-token, apart from its work, e.g. ~/.waldo/identity/<identity>.
-	Credentials string
-	Key         string // ssh signing key; Credentials/signing-key when empty
-	Email       string // commit author email
-	Waldo       string // this waldo executable, run with the identity's own config
-	Log         io.Writer
-	Now         func() time.Time
+	Key      string // ssh signing key; Home/signing-key when empty
+	Email    string // commit author email
+	Waldo    string // this waldo executable, run with the identity's own config
+	Log      io.Writer
+	Now      func() time.Time
 
 	clone  string
 	runDir string
@@ -74,10 +73,7 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 		return err
 	}
 	if joiner.Key == "" {
-		joiner.Key = filepath.Join(joiner.Credentials, "signing-key")
-		if err := os.MkdirAll(joiner.Credentials, 0o700); err != nil {
-			return err
-		}
+		joiner.Key = filepath.Join(joiner.Home, "signing-key")
 	}
 	if _, err := os.Stat(joiner.Key); os.IsNotExist(err) {
 		comment := "waldo " + joiner.Identity
@@ -88,11 +84,11 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 	return nil
 }
 
-// loadToken reads Credentials/github-token when present, so this identity's
+// loadToken reads Home/github-token when present, so this identity's
 // gh and git calls use its own GitHub account; like ssh with private keys,
 // it refuses a token file that others can read.
 func (joiner *Joiner) loadToken() error {
-	path := filepath.Join(joiner.Credentials, "github-token")
+	path := filepath.Join(joiner.Home, "github-token")
 	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return nil
