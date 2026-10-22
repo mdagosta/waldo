@@ -257,3 +257,27 @@ func sortStrings(values []string) {
 		}
 	}
 }
+
+func TestPullDirectoryImportsAnExportedPackage(t *testing.T) {
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
+	directory := t.TempDir()
+	for name, data := range huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass) {
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inspection, err := (Puller{Root: t.TempDir()}).PullDirectory("local", directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := inspection.Origin.Source
+	if source.Provider != "file" || source.URL != "file://"+filepath.ToSlash(directory) || len(source.Revision) != 64 || len(inspection.Origin.SourceArtifacts) != 4 {
+		t.Fatalf("origin = %+v", inspection.Origin)
+	}
+	if _, err := os.Stat(filepath.Join(inspection.Path, "origin", "artifacts", "model.safetensors")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (Puller{Root: filepath.Dir(inspection.Path)}).PullDirectory("local", directory); err == nil {
+		t.Fatal("pulled over an existing model")
+	}
+}
