@@ -755,6 +755,12 @@ func runModelTrainWithCluster(context Context, args []string, cluster training.C
 	if err != nil {
 		return err
 	}
+	if boolOption(context, "evaluate-only") {
+		if composePath == "" {
+			return fmt.Errorf("--evaluate-only needs a compose file that selects the held-out records")
+		}
+		return runModelEvaluate(context, name, composePath, cluster, stdout, stderr)
+	}
 	if composePath != "" {
 		if context.Command != nil && context.Command.Flags().Changed("epochs") {
 			return fmt.Errorf("--epochs cannot be used with compose %q; set each stage budget in the compose file", composePath)

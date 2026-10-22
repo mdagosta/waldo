@@ -140,8 +140,8 @@ func (joiner *Joiner) planFile(value string) string {
 	return filepath.Join(joiner.runDir, value)
 }
 
-// compose fills a stage template; probes train one step at a negligible rate to read held-out loss.
-func (joiner *Joiner) compose(stage, base string, seed int, budget string, values map[string]string, probe bool) (string, error) {
+// compose fills a stage template for one unit.
+func (joiner *Joiner) compose(stage, base string, seed int, budget string, values map[string]string) (string, error) {
 	compose := joiner.plan.Pretrain.Compose
 	if stage == "posttrain" {
 		compose = joiner.plan.Posttrain.Compose
@@ -160,9 +160,6 @@ func (joiner *Joiner) compose(stage, base string, seed int, budget string, value
 			fill[key] = value
 		}
 	}
-	if probe {
-		fill["learning_rate"], fill["weight_decay"], fill["extra"] = "1e-12", "0", "      warmup_steps: 0\n      checkpoint_every: 0\n"
-	}
 	return fillTemplate(string(template), fill)
 }
 
@@ -175,6 +172,19 @@ func (joiner *Joiner) waldo(ctx context.Context, args ...string) error {
 		return fmt.Errorf("waldo %s: %w", args[0]+" "+args[1], err)
 	}
 	return nil
+}
+
+// waldoOutput runs waldo like waldo() but returns its standard output.
+func (joiner *Joiner) waldoOutput(ctx context.Context, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, joiner.Waldo, args...)
+	command.Env = append(os.Environ(), "WALDO_CONFIG="+joiner.config())
+	command.Stderr = joiner.Log
+	fmt.Fprintf(joiner.Log, "$ waldo %s\n", strings.Join(args, " "))
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("waldo %s: %w", strings.Join(args[1:3], " "), err)
+	}
+	return output, nil
 }
 
 func (joiner *Joiner) config() string {
@@ -427,7 +437,7 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 	if base != nil {
 		baseName = base.Model
 	}
-	text, err := joiner.compose(stage, baseName, pieceSeed(joiner.plan.Name, action.Round, action.Unit), values["budget"], values, false)
+	text, err := joiner.compose(stage, baseName, pieceSeed(joiner.plan.Name, action.Round, action.Unit), values["budget"], values)
 	if err != nil {
 		return err
 	}
@@ -479,15 +489,13 @@ func (joiner *Joiner) timestamp() string {
 	return joiner.Now().UTC().Format("2006-01-02T15:04:05+00:00")
 }
 
-// probe is the held-out loss the verifier itself measures on an export: one step at a negligible rate.
-func (joiner *Joiner) probe(ctx context.Context, stage string, export, tag string, values map[string]string) (float64, error) {
-	name := filepath.Base(export) + "-probe" + tag
+// probe is the held-out loss the verifier itself measures on an export's
+// exact weights, never the contributor's own report. seed must be the unit's
+// training seed, so the probe scores the records every replica held out.
+func (joiner *Joiner) probe(ctx context.Context, stage, export string, seed int, values map[string]string) (model.Evaluation, error) {
+	name := filepath.Base(export)
 	if err := joiner.ensure(name, export); err != nil {
-		return 0, err
-	}
-	budget := "tokens: 4096"
-	if stage == "pretrain" {
-		budget = "tokens: 16384"
+		return model.Evaluation{}, err
 	}
 	probeValues := map[string]string{}
 	for _, key := range []string{"sources", "corpus"} {
@@ -495,27 +503,26 @@ func (joiner *Joiner) probe(ctx context.Context, stage string, export, tag strin
 			probeValues[key] = value
 		}
 	}
-	text, err := joiner.compose(stage, name, 4242, budget, probeValues, true)
+	text, err := joiner.compose(stage, "", seed, "tokens: 16384", probeValues)
 	if err != nil {
-		return 0, err
+		return model.Evaluation{}, err
 	}
-	if err := joiner.train(ctx, name+"-eval", text); err != nil {
-		return 0, err
+	path := filepath.Join(joiner.workDir(), "composes", fmt.Sprintf("%s-probe-%d.yaml", name, seed))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return model.Evaluation{}, err
 	}
-	rows, err := joiner.telemetry(name + "-eval")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		return model.Evaluation{}, err
+	}
+	output, err := joiner.waldoOutput(ctx, "--json", "model", "train", name, path, "--evaluate-only")
 	if err != nil {
-		return 0, err
+		return model.Evaluation{}, err
 	}
-	loss := math.NaN()
-	for _, row := range rows {
-		if value, err := strconv.ParseFloat(row["heldout_loss"], 64); err == nil {
-			loss = value
-		}
+	var evaluation model.Evaluation
+	if err := json.Unmarshal(output, &evaluation); err != nil {
+		return model.Evaluation{}, fmt.Errorf("read evaluation of %s: %w", name, err)
 	}
-	if math.IsNaN(loss) {
-		return 0, fmt.Errorf("%s recorded no held-out loss", name)
-	}
-	return loss, nil
+	return evaluation, nil
 }
 
 // distance is the replicas' relative weight difference, shown beside their verdict.
@@ -582,33 +589,37 @@ func readTensors(path string) (map[string][]float32, error) {
 // verify returns the index of the first replica a majority of the others
 // agree with, or -1. Honest replicas improve alike from the round's start; a
 // free-rider does not, so gaps are judged against each round's progress.
-func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports []string, values map[string]string, base *MergeRecord, unit string) (int, error) {
+func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports []string, records []Submission, values map[string]string, base *MergeRecord, round int, unit string) (int, *UnitEvidence, error) {
+	seed := pieceSeed(joiner.plan.Name, round, unit)
 	if len(exports) == 1 {
-		return 0, nil
+		return 0, nil, nil
 	}
+	evidence := &UnitEvidence{Unit: unit}
 	var start float64
 	if base != nil {
-		directory := filepath.Join(joiner.workDir(), "exports", base.Model)
-		loss, err := joiner.probe(ctx, stage, directory, "-"+strings.ToLower(unit), values)
+		measured, err := joiner.probe(ctx, stage, filepath.Join(joiner.workDir(), "exports", base.Model), seed, values)
 		if err != nil {
-			return -1, err
+			return -1, nil, err
 		}
-		start = loss
+		start = measured.Loss
 	} else {
 		// A bootstrap starts from random weights, whose loss is about uniform over the vocabulary.
 		template, err := os.ReadFile(joiner.planFile(joiner.plan.Pretrain.Compose))
 		if err != nil {
-			return -1, err
+			return -1, nil, err
 		}
 		start = math.Log(float64(templateInt(template, "vocabulary_size")))
 	}
+	evidence.StartLoss = start
 	losses := make([]float64, len(exports))
 	for index, export := range exports {
-		loss, err := joiner.probe(ctx, stage, export, "", values)
+		measured, err := joiner.probe(ctx, stage, export, seed, values)
 		if err != nil {
-			return -1, err
+			return -1, nil, err
 		}
-		losses[index] = loss
+		losses[index] = measured.Loss
+		evidence.EvaluationSetSHA256 = measured.Set.SHA256
+		evidence.Replicas = append(evidence.Replicas, ReplicaEvidence{Identity: records[index].Identity, ModelSHA256: records[index].ModelSHA256, HeldoutLoss: measured.Loss})
 	}
 	fmt.Fprintf(joiner.Log, "   round start probe loss %.4f on this unit's data\n", start)
 	agree := make([]int, len(exports))
@@ -625,7 +636,7 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 			}
 			apart, err := distance(exports[first], exports[second])
 			if err != nil {
-				return -1, err
+				return -1, nil, err
 			}
 			fmt.Fprintf(joiner.Log, "   replicas %d vs %d: probe loss %.4f vs %.4f (gap %.0f%% of the round's progress, weights %.3f apart)  %s\n",
 				first+1, second+1, losses[first], losses[second], gap*100, apart, verdict)
@@ -645,14 +656,14 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 	}
 	if len(accepted) <= len(exports)/2 {
 		fmt.Fprintf(joiner.Log, "%s: no majority of replicas agree within %.0f%% of the round's progress; not merging\n", label, joiner.plan.Tolerance()*100)
-		return -1, nil
+		return -1, evidence, nil
 	}
 	message := fmt.Sprintf("   %s: accepted replica %d", label, winner+1)
 	if len(rejected) > 0 {
 		message += ", rejected replica " + strings.Join(rejected, ", ")
 	}
 	fmt.Fprintln(joiner.Log, message)
-	return winner, nil
+	return winner, evidence, nil
 }
 
 func (joiner *Joiner) close(ctx context.Context, state State, action Action) error {
@@ -667,6 +678,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	}
 	submitted := state.Rounds[action.Round].Submissions
 	var accepted []Submission
+	var evidence []UnitEvidence
 	dropped := []DroppedUnit{}
 	for _, unit := range joiner.plan.RoundUnits(action.Stage) {
 		records := submitted[unit]
@@ -713,7 +725,11 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 			if err != nil {
 				return err
 			}
-			winner, err = joiner.verify(ctx, stage, "unit "+unit, exports, values, base, unit)
+			var unitEvidence *UnitEvidence
+			winner, unitEvidence, err = joiner.verify(ctx, stage, "unit "+unit, exports, present, values, base, action.Round, unit)
+			if unitEvidence != nil {
+				evidence = append(evidence, *unitEvidence)
+			}
 			if err != nil {
 				return err
 			}
@@ -758,7 +774,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	}
 	record := MergeRecord{
 		Kind: "waldito-merge", Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
-		Method: method, Dropped: dropped, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(),
+		Method: method, Dropped: dropped, Evidence: evidence, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(),
 	}
 	if base != nil {
 		record.Base, record.BaseSHA256 = &base.Model, &base.ModelSHA256
@@ -808,7 +824,7 @@ func (joiner *Joiner) merge(ctx context.Context, name string, accepted []Submiss
 
 // interaction is the plan's compose interaction block, so merged models chat like trained ones.
 func (joiner *Joiner) interaction() (string, error) {
-	text, err := joiner.compose("pretrain", "", 0, "tokens: 1", nil, false)
+	text, err := joiner.compose("pretrain", "", 0, "tokens: 1", nil)
 	if err != nil {
 		return "", err
 	}

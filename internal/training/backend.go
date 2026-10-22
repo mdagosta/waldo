@@ -380,6 +380,9 @@ type Request struct {
 	PreparedCacheDirectory string
 	PreparedCacheMaxBytes  int64
 	Report                 func(Event)
+	// EvaluateOnly scores the initialization weights on the held-out
+	// records and returns without training or writing weights.
+	EvaluateOnly bool
 }
 
 // ResumePoint is the newest verified, fully committed checkpoint from an

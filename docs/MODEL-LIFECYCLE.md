@@ -446,6 +446,17 @@ For `--hostfile` runs, WALDO performs this local completion check before
 probing or staging secondary hosts. A verified no-op therefore has no remote
 side effects.
 
+Passing `--evaluate-only` measures instead of training: `waldo model train
+<name> <compose> --evaluate-only` scores the named model's current weights on
+the held-out records that the compose's first stage selects, prepared exactly
+as training would prepare them, and prints the held-out loss, the selected
+set's size and SHA-256, and the weights' SHA-256. It trains nothing, writes no
+weights, and records no run, so the model is unchanged. Because selection
+depends on the corpus, filters, objective, evaluation parameters, and seed, but
+not on the training budget, two machines scoring different weights with the
+same compose and seed score the same records. `waldo model join` verifiers use
+it to compare replicas.
+
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
 logs receive one completion line for every shard. The optional audit is shown
