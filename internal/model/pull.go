@@ -158,23 +158,104 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 		}
 		sourceArtifacts = append(sourceArtifacts, OriginArtifact{Role: sourceRole(filename), Path: filename, SHA256: digest, Bytes: bytes})
 	}
-	if err := validateShardIndex(sourceDirectory, names); err != nil {
+	origin := OriginSource{Provider: "huggingface", Repository: metadata.ID, RequestedRevision: requested, Revision: metadata.SHA, URL: endpoint + "/" + metadata.ID, License: metadata.CardData.License}
+	if err := puller.importSource(name, temporary, sourceDirectory, names, sourceArtifacts, origin); err != nil {
 		return Inspection{}, err
+	}
+	committed = true
+	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s at %s", metadata.ID, metadata.SHA)})
+	return Inspect(puller.Root, name)
+}
+
+// PullDirectory imports a Hugging Face package exported to a local directory.
+// Its origin names the directory and pins every imported file by hash.
+func (puller Puller) PullDirectory(name, directory string) (Inspection, error) {
+	if err := ValidateName(name); err != nil {
+		return Inspection{}, err
+	}
+	directory, err := filepath.Abs(directory)
+	if err != nil {
+		return Inspection{}, err
+	}
+	if _, err := os.Stat(filepath.Join(puller.Root, name)); err == nil {
+		return Inspection{}, fmt.Errorf("model %q already exists", name)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return Inspection{}, err
+	}
+	var listing hubModel
+	for _, entry := range entries {
+		if entry.Type().IsRegular() {
+			listing.Siblings = append(listing.Siblings, struct {
+				Name string `json:"rfilename"`
+				Size int64  `json:"size"`
+			}{Name: entry.Name()})
+		}
+	}
+	names, err := selectModelFiles(listing)
+	if err != nil {
+		return Inspection{}, err
+	}
+	if err := os.MkdirAll(puller.Root, 0o755); err != nil {
+		return Inspection{}, err
+	}
+	temporary, err := os.MkdirTemp(puller.Root, ".waldo-pull-*")
+	if err != nil {
+		return Inspection{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.RemoveAll(temporary)
+		}
+	}()
+	sourceDirectory := filepath.Join(temporary, ".source")
+	var sourceArtifacts []OriginArtifact
+	revision := ""
+	for _, filename := range names {
+		target := filepath.Join(sourceDirectory, filename)
+		if err := copyArtifactFile(filepath.Join(directory, filename), target); err != nil {
+			return Inspection{}, err
+		}
+		digest, bytes, err := hashFile(target)
+		if err != nil {
+			return Inspection{}, err
+		}
+		if filename == "model.safetensors" {
+			revision = digest
+		}
+		sourceArtifacts = append(sourceArtifacts, OriginArtifact{Role: sourceRole(filename), Path: filename, SHA256: digest, Bytes: bytes})
+	}
+	origin := OriginSource{Provider: "file", Repository: filepath.Base(directory), RequestedRevision: revision, Revision: revision, URL: "file://" + filepath.ToSlash(directory)}
+	if err := puller.importSource(name, temporary, sourceDirectory, names, sourceArtifacts, origin); err != nil {
+		return Inspection{}, err
+	}
+	committed = true
+	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s", origin.URL)})
+	return Inspect(puller.Root, name)
+}
+
+// importSource validates a Hugging Face layout in sourceDirectory and
+// publishes it as model name with an origin BOM naming source.
+func (puller Puller) importSource(name, temporary, sourceDirectory string, names []string, sourceArtifacts []OriginArtifact, source OriginSource) error {
+	if err := validateShardIndex(sourceDirectory, names); err != nil {
+		return err
 	}
 	architecture, err := loadHuggingFaceArchitecture(filepath.Join(sourceDirectory, "config.json"))
 	if err != nil {
-		return Inspection{}, err
+		return err
 	}
 	if err := validateDownloadedTokenizer(sourceDirectory, architecture); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	architectureHash, err := hashJSON(architecture)
 	if err != nil {
-		return Inspection{}, err
+		return err
 	}
 	artifactDirectory := filepath.Join(temporary, "origin", "artifacts")
 	if err := os.MkdirAll(artifactDirectory, 0o755); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	var weightFiles []string
 	for _, filename := range names {
@@ -186,45 +267,45 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 	puller.report(PullProgress{Phase: "normalize", Message: fmt.Sprintf("normalizing %d Safetensors file(s)", len(weightFiles))})
 	descriptors, err := modelweights.NormalizeHuggingFace(weightFiles, filepath.Join(artifactDirectory, "model.safetensors"))
 	if err != nil {
-		return Inspection{}, fmt.Errorf("normalize Hugging Face weights: %w", err)
+		return fmt.Errorf("normalize Hugging Face weights: %w", err)
 	}
 	if err := validateDownloadedTensors(architecture, descriptors); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "config.json"), map[string]any{
 		"kind": "waldo-downloaded-model-config", "schema": 1,
 		"architecture_sha256": architectureHash, "architecture": architecture,
 		"backend": map[string]any{"name": "portable-safetensors", "revision": "huggingface-schema-1"},
 	}); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "tokenizer.json"), map[string]any{
 		"kind": "waldo-byte-tokenizer", "schema": 1, "name": "byte", "revision": "builtin-byte-schema-1",
 		"pad_id": 0, "bos_id": 1, "eos_id": 2, "byte_offset": 3, "vocabulary_size": 259,
 	}); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	artifacts, err := inventoryOriginArtifacts(temporary, []string{"origin/artifacts/model.safetensors", "origin/artifacts/config.json", "origin/artifacts/tokenizer.json"})
 	if err != nil {
-		return Inspection{}, err
+		return err
 	}
 	origin := OriginBOM{
 		Kind: "openwaldo-bom", Schema: 1, Subject: "model-origin",
-		Source:             OriginSource{Provider: "huggingface", Repository: metadata.ID, RequestedRevision: requested, Revision: metadata.SHA, URL: endpoint + "/" + metadata.ID, License: metadata.CardData.License},
+		Source:             source,
 		ArchitectureSHA256: architectureHash, SourceArtifacts: sourceArtifacts, Artifacts: artifacts,
 	}
 	originHash, err := hashJSON(origin)
 	if err != nil {
-		return Inspection{}, err
+		return err
 	}
 	plan, err := composePlan(name, Compose{Architecture: architecture})
 	if err != nil {
-		return Inspection{}, err
+		return err
 	}
 	plan.OriginBOMSHA256 = originHash
 	planHash, err := hashJSON(plan)
 	if err != nil {
-		return Inspection{}, err
+		return err
 	}
 	now := time.Now
 	if puller.Now != nil {
@@ -237,26 +318,24 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
 		Created: created, Updated: created, Runs: []RunPin{}, OriginBOMSHA256: originHash, OriginArtifacts: artifacts,
 	}
 	if err := os.RemoveAll(sourceDirectory); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(temporary, "ORIGIN-BOM.json"), origin); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(temporary, "PLAN.json"), plan); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL.json"), record); err != nil {
-		return Inspection{}, err
+		return err
 	}
 	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL-BOM.json"), modelBOM(record)); err != nil {
-		return Inspection{}, err
+		return err
 	}
-	if err := os.Rename(temporary, destination); err != nil {
-		return Inspection{}, fmt.Errorf("publish pulled model %q: %w", name, err)
+	if err := os.Rename(temporary, filepath.Join(puller.Root, name)); err != nil {
+		return fmt.Errorf("publish pulled model %q: %w", name, err)
 	}
-	committed = true
-	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s at %s", metadata.ID, metadata.SHA)})
-	return Inspect(puller.Root, name)
+	return nil
 }
 
 func (puller Puller) resolveHub(ctx context.Context, source string) (hubModel, string, string, string, string, *http.Client, error) {
