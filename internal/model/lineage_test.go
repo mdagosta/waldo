@@ -8,9 +8,11 @@ package model
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,7 +29,18 @@ func releasePackage(t *testing.T, parent string, salt byte) string {
 	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
 	weights := files["model.safetensors"]
 	weights[len(weights)-1] ^= salt
-	node := LineageNode{WeightsSHA256: strings.Repeat(string("0123456789"[salt]), 64), Parents: []LineageLink{{WeightsSHA256: parent}}}
+	// Published run BOMs are pinned, like a model's runs, by the hash of their canonical JSON.
+	runBOM := RunBOM{Kind: "openwaldo-bom", Subject: "training-run", ID: fmt.Sprintf("run-%d", salt)}
+	runDigest, err := hashJSON(runBOM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runJSON, err := json.MarshalIndent(runBOM, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["provenance-"+runDigest+".json"] = runJSON
+	node := LineageNode{WeightsSHA256: strings.Repeat(string("0123456789"[salt]), 64), Parents: []LineageLink{{WeightsSHA256: parent}}, Runs: []string{runDigest}}
 	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node})
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +83,26 @@ func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 	// The common ancestor is two links up the chain, through each release's own node.
 	if reached := ancestry(*origin.Lineage, builder.lineageIndex()); !reached[common] || reached[other] {
 		t.Fatalf("ancestry = %v", reached)
+	}
+	// The merge carries both parents' published run BOMs, so its release proves the round's data.
+	carried, err := ProvenanceRecords(merged)
+	if err != nil || len(carried) != 2 {
+		t.Fatalf("merged provenance = %v, %v", carried, err)
+	}
+	for _, name := range []string{"left", "right"} {
+		parent, err := Inspect(root, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		records, err := ProvenanceRecords(parent)
+		if err != nil || len(records) != 1 {
+			t.Fatalf("%s provenance = %v, %v", name, records, err)
+		}
+		for digest := range records {
+			if _, ok := carried[digest]; !ok || !slices.Contains(parent.Origin.Lineage.Runs, digest) {
+				t.Fatalf("%s run %s was not carried", name, digest)
+			}
+		}
 	}
 	if merged.BOM.CurrentOriginSHA256 == "" || len(merged.Runs) != 0 {
 		t.Fatalf("merged model is not usable from its origin: %+v", merged.BOM)
@@ -121,5 +154,23 @@ func TestSameParentAcceptsPinsRecordedBeforeLineage(t *testing.T) {
 	changed.RunID = "another"
 	if sameParent(&changed, &withLineage) || sameParent(nil, &withLineage) {
 		t.Fatal("a different parent matched")
+	}
+}
+
+func TestPullRefusesProvenanceThatDoesNotMatchItsName(t *testing.T) {
+	directory := releasePackage(t, strings.Repeat("a", 64), 0)
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "provenance-") {
+			if err := os.WriteFile(filepath.Join(directory, entry.Name()), []byte(`{"tampered":true}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := (Puller{Root: t.TempDir()}).PullDirectory("tampered", directory); err == nil || !strings.Contains(err.Error(), "does not hash") {
+		t.Fatalf("tampered provenance error = %v", err)
 	}
 }

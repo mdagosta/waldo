@@ -1,0 +1,137 @@
+// Copyright (c) 2026 OpenWALDO Project contributors
+// Copyright (c) 2026 CtrlIQ, Inc.
+// Copyright (c) 2026 Gregory M. Kurtzer
+// SPDX-License-Identifier: Apache-2.0
+
+package model
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+
+	"github.com/openwaldo/waldo/internal/corpus"
+)
+
+// ClosureRole marks the training closure a release publishes and a pulled or merged origin keeps.
+const ClosureRole = "training-closure"
+
+// ClosureFile is the training closure's name in a release package.
+const ClosureFile = "TRAINING-CLOSURE.json"
+
+// TrainingClosure is every distinct corpus a model's weights were trained on,
+// across its whole lineage: its own runs, its parents', theirs, and so on.
+// Keyed by corpus BOM, it grows with the corpora a history uses, not with its
+// length. Complete is false when part of the history is not recorded.
+type TrainingClosure struct {
+	Kind     string          `json:"kind"`
+	Schema   int             `json:"schema"`
+	Subject  string          `json:"subject"`
+	Complete bool            `json:"complete"`
+	Corpora  []ClosureCorpus `json:"corpora"`
+}
+
+type ClosureCorpus struct {
+	CorpusBOMSHA256 string     `json:"corpus_bom_sha256"`
+	Uses            int        `json:"uses"`
+	CorpusBOM       corpus.BOM `json:"corpus_bom"`
+}
+
+func emptyClosure(complete bool) TrainingClosure {
+	return TrainingClosure{Kind: "openwaldo-bom", Schema: 1, Subject: "training-closure", Complete: complete, Corpora: []ClosureCorpus{}}
+}
+
+// unionClosures sums uses per corpus; the union is complete only if every part is.
+func unionClosures(closures ...TrainingClosure) TrainingClosure {
+	result := emptyClosure(true)
+	byHash := map[string]*ClosureCorpus{}
+	for _, closure := range closures {
+		result.Complete = result.Complete && closure.Complete
+		for _, entry := range closure.Corpora {
+			if existing := byHash[entry.CorpusBOMSHA256]; existing != nil {
+				existing.Uses += entry.Uses
+				continue
+			}
+			copied := entry
+			byHash[entry.CorpusBOMSHA256] = &copied
+		}
+	}
+	keys := make([]string, 0, len(byHash))
+	for key := range byHash {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		result.Corpora = append(result.Corpora, *byHash[key])
+	}
+	return result
+}
+
+// ownClosure is the corpora of the model's own completed real runs.
+func ownClosure(inspection Inspection) TrainingClosure {
+	closure := emptyClosure(true)
+	for position, runBOM := range inspection.RunBOMs {
+		if position < len(inspection.Runs) && inspection.Runs[position].State == RunComplete && (inspection.Runs[position].Observation == nil || !inspection.Runs[position].Observation.Simulated) {
+			closure.Corpora = append(closure.Corpora, ClosureCorpus{CorpusBOMSHA256: runBOM.CorpusBOMSHA256, Uses: 1, CorpusBOM: runBOM.CorpusBOM})
+		}
+	}
+	return unionClosures(closure)
+}
+
+// InheritedClosure is the training history behind a model's starting
+// weights: a local parent's whole closure, the closure a pulled release or a
+// merge recorded, or nothing for weights initialized at random. Where that
+// history is not recorded, the result is incomplete rather than silently empty.
+func InheritedClosure(inspection Inspection) (TrainingClosure, error) {
+	if parent := inspection.Model.Parent; parent != nil {
+		ancestor, err := Inspect(filepath.Dir(inspection.Path), parent.Model)
+		if err != nil || ancestor.Model.ID != parent.ModelID {
+			return emptyClosure(false), nil
+		}
+		return ModelClosure(ancestor)
+	}
+	if inspection.Origin == nil {
+		return emptyClosure(true), nil
+	}
+	for _, artifact := range inspection.Origin.Artifacts {
+		if artifact.Role != ClosureRole {
+			continue
+		}
+		var closure TrainingClosure
+		data, err := os.ReadFile(filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)))
+		if err != nil {
+			return TrainingClosure{}, err
+		}
+		if err := json.Unmarshal(data, &closure); err != nil || closure.Kind != "openwaldo-bom" || closure.Subject != "training-closure" || closure.Schema != 1 {
+			return TrainingClosure{}, fmt.Errorf("model origin training closure is not a schema-1 training closure")
+		}
+		return closure, nil
+	}
+	// A release that recorded no closure, or weights from outside WALDO, carry unrecorded history.
+	return emptyClosure(false), nil
+}
+
+// ModelClosure is the model's whole training history: what its starting
+// weights inherited and its own runs.
+func ModelClosure(inspection Inspection) (TrainingClosure, error) {
+	inherited, err := InheritedClosure(inspection)
+	if err != nil {
+		return TrainingClosure{}, err
+	}
+	return unionClosures(inherited, ownClosure(inspection)), nil
+}
+
+// writeClosure places a closure in origin/ under temporary and inventories it.
+func writeClosure(temporary string, closure TrainingClosure) ([]OriginArtifact, error) {
+	logical := "origin/" + ClosureFile
+	if err := writeJSONAtomic(filepath.Join(temporary, filepath.FromSlash(logical)), closure); err != nil {
+		return nil, err
+	}
+	artifacts, err := inventoryOriginArtifacts(temporary, []string{logical})
+	for index := range artifacts {
+		artifacts[index].Role = ClosureRole
+	}
+	return artifacts, err
+}

@@ -59,6 +59,7 @@ type hubModel struct {
 var huggingFaceRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var huggingFaceCommit = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
 var lineageDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var provenanceFile = regexp.MustCompile(`^provenance-([a-f0-9]{64})\.json$`)
 var huggingFaceShard = regexp.MustCompile(`^model-[0-9]{5}-of-[0-9]{5}\.safetensors$`)
 
 // Probe resolves only the portable architecture and tokenizer contract. It is
@@ -277,6 +278,47 @@ func (puller Puller) importSource(name, temporary, sourceDirectory string, names
 	if err != nil {
 		return err
 	}
+	// Keep the release's run BOMs with the origin, each verified against the hash it is named by.
+	records := map[string]string{}
+	for _, name := range names {
+		match := provenanceFile.FindStringSubmatch(name)
+		if match == nil {
+			continue
+		}
+		// Run BOMs are pinned by the hash of their canonical JSON, as models pin their runs.
+		path := filepath.Join(sourceDirectory, name)
+		var runBOM RunBOM
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if json.Unmarshal(data, &runBOM) != nil {
+			return fmt.Errorf("%s is not a run BOM", name)
+		}
+		if digest, err := hashJSON(runBOM); err != nil || digest != match[1] {
+			return fmt.Errorf("%s does not hash to the run BOM it names", name)
+		}
+		records[match[1]] = path
+	}
+	provenance, err := copyProvenance(temporary, records)
+	if err != nil {
+		return err
+	}
+	artifacts = append(artifacts, provenance...)
+	// Keep the release's training closure, so models built from it inherit its whole history.
+	if data, err := os.ReadFile(filepath.Join(sourceDirectory, ClosureFile)); err == nil {
+		var closure TrainingClosure
+		if err := json.Unmarshal(data, &closure); err != nil || closure.Kind != "openwaldo-bom" || closure.Subject != "training-closure" || closure.Schema != 1 {
+			return fmt.Errorf("%s is not a schema-1 training closure", ClosureFile)
+		}
+		kept, err := writeClosure(temporary, closure)
+		if err != nil {
+			return err
+		}
+		artifacts = append(artifacts, kept...)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	lineage, err := releaseLineage(filepath.Join(sourceDirectory, "BOM.json"))
 	if err != nil {
 		return err
@@ -367,6 +409,15 @@ func selectModelFiles(metadata hubModel) ([]string, error) {
 	var selected []string
 	for _, name := range []string{"config.json", "tokenizer_config.json", "special_tokens_map.json", "tokenization_openwaldo.py", "README.md", "LICENSE", "LICENSE.md", "BOM.json"} {
 		if available[name] {
+			selected = append(selected, name)
+		}
+	}
+	if available[ClosureFile] {
+		selected = append(selected, ClosureFile)
+	}
+	// A WALDO release publishes its training run BOMs beside its weights.
+	for name := range available {
+		if provenanceFile.MatchString(name) {
 			selected = append(selected, name)
 		}
 	}
@@ -636,6 +687,10 @@ func sourceRole(name string) string {
 		return "source-tokenizer"
 	case name == "BOM.json":
 		return "source-bom"
+	case provenanceFile.MatchString(name):
+		return "source-" + ProvenanceRole
+	case name == ClosureFile:
+		return "source-" + ClosureRole
 	case strings.HasPrefix(name, "LICENSE"):
 		return "source-license"
 	default:

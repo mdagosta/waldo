@@ -1677,6 +1677,14 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
 			trainingBOMs = append(trainingBOMs, runBOM.CorpusBOM)
 		}
 	}
+	// Attribution, and with it the distributable licence review, covers the whole lineage.
+	inherited, err := model.InheritedClosure(inspection)
+	if err != nil {
+		return err
+	}
+	for _, ancestor := range inherited.Corpora {
+		trainingBOMs = append(trainingBOMs, ancestor.CorpusBOM)
+	}
 	attribution, err := corpus.AttributionNotice(trainingBOMs)
 	if err != nil {
 		return fmt.Errorf("build training data attribution: %w", err)
