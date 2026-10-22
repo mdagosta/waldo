@@ -10,21 +10,25 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/openwaldo/waldo/internal/training"
 )
 
-// releasePackage writes an exported package whose release BOM claims lineage;
-// salt changes one weight byte so packages can hold different weights.
-func releasePackage(t *testing.T, lineage []string, salt byte) string {
+// releasePackage writes an exported package whose release BOM records a
+// lineage node descending from parent; salt changes one weight byte so
+// packages can hold different weights.
+func releasePackage(t *testing.T, parent string, salt byte) string {
 	t.Helper()
 	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
 	directory := t.TempDir()
 	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
 	weights := files["model.safetensors"]
 	weights[len(weights)-1] ^= salt
-	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": lineage})
+	node := LineageNode{WeightsSHA256: strings.Repeat(string("0123456789"[salt]), 64), Parents: []LineageLink{{WeightsSHA256: parent}}}
+	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +44,7 @@ func releasePackage(t *testing.T, lineage []string, salt byte) string {
 func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 	common, other := strings.Repeat("a", 64), strings.Repeat("b", 64)
 	root := t.TempDir()
-	for name, directory := range map[string]string{"left": releasePackage(t, []string{common}, 0), "right": releasePackage(t, []string{common}, 1), "stranger": releasePackage(t, []string{other}, 2)} {
+	for name, directory := range map[string]string{"left": releasePackage(t, common, 0), "right": releasePackage(t, common, 1), "stranger": releasePackage(t, other, 2)} {
 		if _, err := (Puller{Root: root}).PullDirectory(name, directory); err != nil {
 			t.Fatal(err)
 		}
@@ -54,16 +58,26 @@ func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 	if origin == nil || origin.Source.Provider != "merge" || origin.Merge == nil || origin.Merge.Method != "weighted-mean" || len(origin.Merge.Parents) != 2 || origin.Merge.Parents[1].Weight != 3 {
 		t.Fatalf("origin = %+v", origin)
 	}
-	if !slices.Contains(origin.Lineage, common) || !slices.Contains(origin.Lineage, origin.Merge.Parents[0].WeightsSHA256) {
-		t.Fatalf("lineage = %v", origin.Lineage)
+	// Like a git merge commit, the merged node names each parent's node and nothing older.
+	if origin.Lineage == nil || len(origin.Lineage.Parents) != 2 || origin.Lineage.Parents[0].LineageSHA256 != origin.Merge.Parents[0].LineageSHA256 || origin.Merge.Parents[0].LineageSHA256 == "" {
+		t.Fatalf("lineage = %+v", origin.Lineage)
+	}
+	for _, artifact := range origin.Artifacts {
+		if artifact.Role == "weights" && artifact.SHA256 != origin.Lineage.WeightsSHA256 {
+			t.Fatalf("merged node weights = %s, artifact %s", origin.Lineage.WeightsSHA256, artifact.SHA256)
+		}
+	}
+	// The common ancestor is two links up the chain, through each release's own node.
+	if reached := ancestry(*origin.Lineage, builder.lineageIndex()); !reached[common] || reached[other] {
+		t.Fatalf("ancestry = %v", reached)
 	}
 	if merged.BOM.CurrentOriginSHA256 == "" || len(merged.Runs) != 0 {
 		t.Fatalf("merged model is not usable from its origin: %+v", merged.BOM)
 	}
-	// The merged model's own descendants inherit everything it descends from.
+	// A release of the merge records the merged node, so the chain continues past publication.
 	lineage, err := ExportLineage(merged)
-	if err != nil || !slices.Contains(lineage, common) {
-		t.Fatalf("export lineage = %v, %v", lineage, err)
+	if err != nil || !reflect.DeepEqual(*lineage, *origin.Lineage) {
+		t.Fatalf("export lineage = %+v, %v", lineage, err)
 	}
 	_, err = builder.Compose(context.Background(), "unrelated", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "stranger"}}}}, nil)
 	if err == nil || !strings.Contains(err.Error(), "share no recorded ancestor") {
@@ -88,5 +102,24 @@ func TestMergeComposeValidation(t *testing.T) {
 	}
 	if err := (Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "a"}}).Validate(); err == nil {
 		t.Fatal("stageless compose without base.merge accepted")
+	}
+}
+
+func TestSameParentAcceptsPinsRecordedBeforeLineage(t *testing.T) {
+	pin := ModelParent{Model: "base", ModelID: "id", RunID: "run", RunBOMSHA256: "bom", Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: "weights"}}
+	withLineage := pin
+	withLineage.LineageSHA256 = strings.Repeat("a", 64)
+	if !sameParent(&pin, &withLineage) || !sameParent(&withLineage, &withLineage) {
+		t.Fatal("matching parents rejected")
+	}
+	other := withLineage
+	other.LineageSHA256 = strings.Repeat("b", 64)
+	if sameParent(&withLineage, &other) {
+		t.Fatal("a recorded lineage must match exactly")
+	}
+	changed := pin
+	changed.RunID = "another"
+	if sameParent(&changed, &withLineage) || sameParent(nil, &withLineage) {
+		t.Fatal("a different parent matched")
 	}
 }
