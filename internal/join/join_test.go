@@ -179,7 +179,7 @@ func TestComposeInputsMatchWaldito(t *testing.T) {
 	}
 }
 
-func TestPosttrainComposeTakesItsUnitsShard(t *testing.T) {
+func TestPosttrainComposeTakesItsUnitsSlice(t *testing.T) {
 	runDir := t.TempDir()
 	template, err := os.ReadFile("../../testing/join/sft.yaml.tmpl")
 	if err != nil {
@@ -202,7 +202,7 @@ func TestPosttrainComposeTakesItsUnitsShard(t *testing.T) {
 		t.Fatalf("%v\n%s", err, text)
 	}
 	selection := compose.Stages[0].Corpora[0]
-	if selection.Path != "post-train/sft/python-hello-v1" || selection.Filter == nil || *selection.Filter.Shard != (corpus.ShardFilter{Count: 3, Index: 1}) {
+	if selection.Path != "post-train/sft/python-hello-v1" || selection.Filter == nil || *selection.Filter.Slice != (corpus.SliceFilter{Index: 1, Count: 3}) {
 		t.Fatalf("corpus selection = %+v\n%s", selection, text)
 	}
 	if compose.Base == nil || compose.Base.Model != "base-model" || compose.Stages[0].Parameters.Epochs != 4 {

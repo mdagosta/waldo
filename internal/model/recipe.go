@@ -248,15 +248,15 @@ func validateCorpusSelectionYAML(node *yaml.Node) error {
 }
 
 func validateRecordFilterYAML(node *yaml.Node) error {
-	if err := knownYAMLFields(node, map[string]bool{"main_content": true, "exclude": true, "licenses": true, "languages": true, "sources": true, "metadata": true, "date": true, "shard": true}); err != nil {
+	if err := knownYAMLFields(node, map[string]bool{"main_content": true, "exclude": true, "licenses": true, "languages": true, "sources": true, "metadata": true, "date": true, "slice": true}); err != nil {
 		return err
 	}
 	for index := 0; index < len(node.Content); index += 2 {
 		key, value := node.Content[index].Value, node.Content[index+1]
 		if key == "main_content" {
 			continue
-		} else if key == "shard" {
-			if err := knownYAMLFields(value, map[string]bool{"count": true, "index": true}); err != nil {
+		} else if key == "slice" {
+			if err := knownYAMLFields(value, map[string]bool{"index": true, "count": true}); err != nil {
 				return err
 			}
 		} else if key == "date" {
