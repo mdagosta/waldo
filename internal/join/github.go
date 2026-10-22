@@ -25,6 +25,7 @@ var credentials = []string{"-c", "credential.helper=", "-c", "credential.helper=
 func (joiner *Joiner) gh(ctx context.Context, args ...string) (string, error) {
 	command := exec.CommandContext(ctx, "gh", args...)
 	command.Dir = joiner.clone
+	command.Env = joiner.environment()
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	output, err := command.Output()
@@ -50,8 +51,11 @@ func (joiner *Joiner) headRemote(ctx context.Context) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if _, err := joiner.gh(ctx, "repo", "fork", owner+"/"+repo, "--clone=false", "--remote=false"); err != nil {
-		return "", "", err
+	// Forking needs more than a fork-only token, so only fork when the fork is missing.
+	if _, err := joiner.gh(ctx, "api", "repos/"+login+"/"+repo, "--jq", ".fork"); err != nil {
+		if _, err := joiner.gh(ctx, "repo", "fork", owner+"/"+repo, "--clone=false"); err != nil {
+			return "", "", err
+		}
 	}
 	fork := "https://github.com/" + login + "/" + repo + ".git"
 	if _, err := joiner.git(ctx, joiner.clone, "remote", "set-url", "fork", fork); err != nil {

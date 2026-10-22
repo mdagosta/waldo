@@ -35,7 +35,8 @@ func runModelJoin(context Context, args []string, stdout, stderr io.Writer) erro
 	}
 	joiner := &join.Joiner{Waldo: executable,
 		Home: filepath.Join(home, ".waldo", "join", identity), Identity: identity,
-		Key: stringOption(context, "key"), Email: email, Log: stdout,
+		Credentials: filepath.Join(home, ".waldo", "identity", identity),
+		Key:         stringOption(context, "key"), Email: email, Log: stdout,
 	}
 	if err := joiner.Open(context.Execution, args[0], args[1]); err != nil {
 		return err

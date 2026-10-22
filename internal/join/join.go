@@ -22,18 +22,22 @@ import (
 // Joiner is one identity's view of a run: its own clone of the runs repo,
 // signing key, and working directory under Home.
 type Joiner struct {
-	Home     string // per identity, e.g. ~/.waldo/join/<identity>
+	Home     string // per identity work: clone, models, exports
 	Identity string
-	Key      string // ssh signing key; created under Home when empty
-	Email    string // commit author email
-	Waldo    string // this waldo executable, run with the identity's own config
-	Log      io.Writer
-	Now      func() time.Time
+	// Credentials holds the identity's signing key and an optional
+	// github-token, apart from its work, e.g. ~/.waldo/identity/<identity>.
+	Credentials string
+	Key         string // ssh signing key; Credentials/signing-key when empty
+	Email       string // commit author email
+	Waldo       string // this waldo executable, run with the identity's own config
+	Log         io.Writer
+	Now         func() time.Time
 
 	clone  string
 	runDir string
 	plan   Plan
 	github []string // owner and repo when the runs repo is on GitHub
+	token  string   // GitHub token for this identity's gh and git calls
 	remote string   // where record branches are pushed, once known
 	owner  string
 }
@@ -63,11 +67,17 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 			return err
 		}
 	}
+	if err := joiner.loadToken(); err != nil {
+		return err
+	}
 	if err := joiner.configure(ctx); err != nil {
 		return err
 	}
 	if joiner.Key == "" {
-		joiner.Key = filepath.Join(joiner.Home, "signing-key")
+		joiner.Key = filepath.Join(joiner.Credentials, "signing-key")
+		if err := os.MkdirAll(joiner.Credentials, 0o700); err != nil {
+			return err
+		}
 	}
 	if _, err := os.Stat(joiner.Key); os.IsNotExist(err) {
 		comment := "waldo " + joiner.Identity
@@ -76,6 +86,37 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 		}
 	}
 	return nil
+}
+
+// loadToken reads Credentials/github-token when present, so this identity's
+// gh and git calls use its own GitHub account; like ssh with private keys,
+// it refuses a token file that others can read.
+func (joiner *Joiner) loadToken() error {
+	path := filepath.Join(joiner.Credentials, "github-token")
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%s is readable by others; run chmod 600 %s", path, path)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	joiner.token = strings.TrimSpace(string(data))
+	return nil
+}
+
+// environment passes this identity's GitHub token, if it has one, to gh and
+// to git's gh credential helper; otherwise the caller's environment stands.
+func (joiner *Joiner) environment() []string {
+	if joiner.token == "" {
+		return nil
+	}
+	return append(os.Environ(), "GH_TOKEN="+joiner.token)
 }
 
 // configure gives the identity its own copy of the waldo config with its own
@@ -209,6 +250,7 @@ func (joiner *Joiner) sync(ctx context.Context) error {
 func (joiner *Joiner) git(ctx context.Context, directory string, args ...string) (string, error) {
 	command := exec.CommandContext(ctx, "git", args...)
 	command.Dir = directory
+	command.Env = joiner.environment()
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, bytes.TrimSpace(output))
