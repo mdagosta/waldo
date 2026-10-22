@@ -9,8 +9,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"sort"
 	"time"
+
+	"github.com/openwaldo/waldo/internal/model"
 )
 
 // Round is what the repo records for one round: its verified submissions by unit, and its merge once closed.
@@ -43,7 +47,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 				return State{}, err
 			}
 			// A bad merge record would fork the run, so nobody builds on it.
-			if !ok || record.Round != number {
+			if !ok || record.Round != number || !validMerge(record, plan, number) {
 				return State{}, fmt.Errorf("%s is not a valid merge record; the run needs a fix before anyone continues", mergePath)
 			}
 			round.Merge = &record
@@ -59,8 +63,8 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 			if err != nil {
 				return State{}, err
 			}
-			// A record must match the file it is in, so none can be replayed elsewhere.
-			if ok && record.Round == number && filepath.Base(path) == record.Unit+"-"+record.Identity+".yaml" {
+			// A record must match the file and run it is in, so none can be replayed elsewhere.
+			if ok && record.Round == number && filepath.Base(path) == record.Unit+"-"+record.Identity+".yaml" && validSubmission(record, plan, number) {
 				round.Submissions[record.Unit] = append(round.Submissions[record.Unit], record)
 			}
 		}
@@ -70,6 +74,47 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 		}
 	}
 	return state, nil
+}
+
+// Names and hashes in records become paths, model names, and URLs, so a record
+// counts only if every one of them is well formed.
+var (
+	fileName    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	sha256Value = regexp.MustCompile(`^[0-9a-f]{64}$`)
+)
+
+// validFiles requires plain file names, SHA-256 values, and model.safetensors pinned to the record's model hash.
+func validFiles(files map[string]string, modelSHA256 string) bool {
+	if !sha256Value.MatchString(modelSHA256) || files["model.safetensors"] != modelSHA256 {
+		return false
+	}
+	for name, digest := range files {
+		if !fileName.MatchString(name) || !sha256Value.MatchString(digest) {
+			return false
+		}
+	}
+	return true
+}
+
+func validSubmission(record Submission, plan Plan, number int) bool {
+	stage := plan.Stages()[number]
+	return record.Kind == SubmissionKind && record.Run == plan.Name && record.Stage == stage &&
+		slices.Contains(plan.RoundUnits(stage), record.Unit) && model.ValidateName(record.Model) == nil &&
+		validFiles(record.Files, record.ModelSHA256)
+}
+
+func validMerge(record MergeRecord, plan Plan, number int) bool {
+	stage := plan.Stages()[number]
+	if record.Kind != MergeKind || record.Run != plan.Name || record.Stage != stage ||
+		model.ValidateName(record.Model) != nil || !validFiles(record.Files, record.ModelSHA256) {
+		return false
+	}
+	for _, unit := range record.Accepted {
+		if !slices.Contains(plan.RoundUnits(stage), unit.Unit) || model.ValidateName(unit.Model) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // Action is the next thing one identity should do in a run.

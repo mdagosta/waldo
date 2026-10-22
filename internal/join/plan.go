@@ -11,8 +11,10 @@ package join
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
+	"github.com/openwaldo/waldo/internal/model"
 	"gopkg.in/yaml.v3"
 )
 
@@ -90,10 +92,21 @@ func LoadPlan(path string) (Plan, error) {
 	if plan.Store != "huggingface" && !strings.HasPrefix(plan.Store, "file://") {
 		return Plan{}, fmt.Errorf("%s: store %q: expected huggingface or file:///path", path, plan.Store)
 	}
+	// Run, unit, and identity names become directory, model, and branch names.
+	names := append([]string{plan.Name}, plan.Units...)
 	for name, identity := range plan.Identities {
 		if identity.Key == "" {
 			return Plan{}, fmt.Errorf("%s: identity %s has no signing key", path, name)
 		}
+		names = append(names, name)
+	}
+	for _, name := range names {
+		if model.ValidateName(name) != nil {
+			return Plan{}, fmt.Errorf("%s: %q must use lowercase letters, digits, '.', '_', and '-'", path, name)
+		}
+	}
+	if slices.Contains(plan.Units, "all") || len(slices.Compact(slices.Sorted(slices.Values(plan.Units)))) != len(plan.Units) {
+		return Plan{}, fmt.Errorf("%s: units must be distinct and not named all, the bootstrap's unit", path)
 	}
 	return plan, nil
 }

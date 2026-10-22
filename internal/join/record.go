@@ -20,6 +20,11 @@ import (
 // signature made for anything else never verifies as a record.
 const SigningNamespace = "waldo-join"
 
+const (
+	SubmissionKind = "waldo-join-submission"
+	MergeKind      = "waldo-join-merge"
+)
+
 // Submission is one identity's trained unit for a round.
 type Submission struct {
 	Kind        string            `json:"kind"`
