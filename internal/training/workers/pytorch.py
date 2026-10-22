@@ -45,6 +45,63 @@ def emit(kind, **payload):
     print(json.dumps(frame, separators=(",", ":")), flush=True)
 
 
+# WALDO_PROGRESS_HEARTBEAT_SECONDS is how long a run may go without a progress line before the
+# worker prints one anyway, so a long 1% interval does not look like a hang. Default 300; 0 turns
+# the heartbeat off.
+DEFAULT_PROGRESS_HEARTBEAT_SECONDS = 300
+
+
+def read_progress_heartbeat():
+    raw = os.environ.get("WALDO_PROGRESS_HEARTBEAT_SECONDS")
+    if raw is None or not raw.strip():
+        return DEFAULT_PROGRESS_HEARTBEAT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = math.nan
+    if not math.isfinite(value) or value < 0:
+        emit("event", event={"kind": "log", "message": f"WALDO_PROGRESS_HEARTBEAT_SECONDS must be a non-negative number of seconds; using {DEFAULT_PROGRESS_HEARTBEAT_SECONDS}"})
+        return DEFAULT_PROGRESS_HEARTBEAT_SECONDS
+    return value
+
+
+def progress_due(step, target_steps, last_report, now, heartbeat_seconds):
+    report_every = max(1, target_steps // 100)
+    if step == 1 or step == target_steps or step % report_every == 0:
+        return True
+    return heartbeat_seconds > 0 and now - last_report >= heartbeat_seconds
+
+
+# Rates cover the window since training (re)started, not the whole run: a resume restores absolute
+# step and token counts while the clock restarts, so dividing them by time since launch overstates both.
+def progress_estimate(step, target_steps, window_steps, window_tokens, window_seconds):
+    seconds = max(window_seconds, 1e-9)
+    throughput = window_tokens / seconds
+    if window_steps <= 0:
+        return throughput, 0
+    return throughput, int(max(0.0, (target_steps - step) * seconds / window_steps))
+
+
+class RateWindow:
+    """The window progress_estimate measures. A fresh run measures from launch. After a resume it opens once
+    the first step after replay has finished, so that step's one-time start-up cost stays out of the rate."""
+
+    def __init__(self, now):
+        self.started = now
+        self.step = 0
+        self.tokens = 0
+        self.pending = False
+
+    def restart(self):
+        self.pending = True
+
+    def estimate(self, step, target_steps, tokens, now):
+        if self.pending:
+            self.pending = False
+            self.started, self.step, self.tokens = now, step, tokens
+        return progress_estimate(step, target_steps, step - self.step, tokens - self.tokens, now - self.started)
+
+
 def artifact(path, logical_path):
     digest = hashlib.sha256()
     size = 0
@@ -448,6 +505,9 @@ class Trainer:
         self.accumulated_tokens = 0
         self.accumulated_consumption = {}
         self.accumulated_compute_seconds = 0.0
+        self.last_report = self.started
+        self.heartbeat_seconds = read_progress_heartbeat()
+        self.rate_window = RateWindow(self.started)
 
         tokenizer = begin["tokenizer"]
         architecture_tokenizer = self.architecture["tokenizer"]
@@ -756,6 +816,9 @@ class Trainer:
                         "message": message,
                     },
                 )
+            if self.replay_micro_batches == 0:
+                # Replay only fast-forwards the data stream. Speed is measured from the next trained step.
+                self.rate_window.restart()
             return
         step_started = time.perf_counter()
         self.data_wait_seconds += max(0.0, step_started - self.last_step_finished)
@@ -852,10 +915,23 @@ class Trainer:
             self.consumed_by_corpus[corpus] = self.consumed_by_corpus.get(corpus, 0) + count
         self.final_loss = loss_value
         self.accumulation_number = 0
-        elapsed = max(time.perf_counter() - self.started, 1e-9)
-        throughput = self.consumed_tokens / elapsed
-        eta = int(max(0.0, (self.target_steps - self.step_number) * elapsed / self.step_number))
+        now = time.perf_counter()
+        throughput, eta = self.rate_window.estimate(
+            self.step_number, self.target_steps, self.consumed_tokens, now
+        )
+        heartbeat_due = progress_due(
+            self.step_number, self.target_steps, self.last_report, now, self.heartbeat_seconds
+        )
+        if self.distributed:
+            # Every rank must make the same reporting decision because the
+            # reporting block contains telemetry collectives. Synchronize the
+            # local-clock heartbeat decision before entering that block.
+            heartbeat_flag = torch.tensor(int(heartbeat_due), dtype=torch.int64, device=self.device)
+            torch.distributed.all_reduce(heartbeat_flag, op=torch.distributed.ReduceOp.MAX)
+            heartbeat_due = bool(heartbeat_flag.cpu().item())
+        should_report = should_report or heartbeat_due
         if should_report:
+            self.last_report = now
             peak_memory = torch.cuda.max_memory_allocated(self.device) if self.device.type == "cuda" else 0
             data_wait_seconds = self.data_wait_seconds
             if self.distributed:

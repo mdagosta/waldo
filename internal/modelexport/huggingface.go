@@ -101,6 +101,9 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
 	if err := validateStandardLlamaArchitecture(record.Architecture, format); err != nil {
 		return "", err
 	}
+	if err := validateByteTokenizerExport(record.Architecture, format); err != nil {
+		return "", err
+	}
 	artifacts, err := inference.ResolveArtifacts(inspection)
 	if err != nil {
 		return "", err
@@ -238,16 +241,23 @@ func validateStandardLlamaArchitecture(architecture model.Architecture, format s
 	return nil
 }
 
+func validateByteTokenizerExport(architecture model.Architecture, format string) error {
+	if architecture.Tokenizer.Name != "byte" || architecture.Tokenizer.Revision != "builtin-byte-schema-1" || architecture.VocabularySize != 259 {
+		return fmt.Errorf("%s export currently requires byte@builtin-byte-schema-1 with vocabulary_size 259", format)
+	}
+	return nil
+}
+
 func huggingFaceTokenizerConfiguration(record model.ModelRecord) (map[string]any, string, error) {
 	interactionTemplate, err := jinjaInteractionTemplate(record.Interaction)
 	if err != nil {
 		return nil, "", err
 	}
 	configuration := map[string]any{
-		"auto_map":  map[string]any{"AutoTokenizer": []any{"tokenization_openwaldo.OpenWALDOTokenizer", nil}},
+		"auto_map":  map[string]any{"AutoTokenizer": []any{"tokenization_openwaldo." + model.HuggingFaceTokenizerClass, nil}},
 		"bos_token": "<bos>", "eos_token": "<eos>", "pad_token": "<pad>",
 		"model_max_length": record.Architecture.ContextTokens,
-		"tokenizer_class":  "OpenWALDOTokenizer",
+		"tokenizer_class":  model.HuggingFaceTokenizerClass,
 	}
 	if interactionTemplate != "" {
 		configuration["chat_template"] = interactionTemplate

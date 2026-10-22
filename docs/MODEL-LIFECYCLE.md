@@ -97,10 +97,12 @@ acquired files; it does not retain a redundant copy of the source weights.
 new current weights.
 
 Schema 1 initially accepts standard bias-free Llama weights with
-`OpenWALDOByteTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors.
-That is the format produced by WALDO's Hugging Face export. Other tokenizers or
-architectural variants fail before publication rather than being numerically
-converted or silently retokenized.
+`OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors. Pull
+also accepts the legacy `OpenWALDOByteTokenizer` class name used by older WALDO
+exports; both names identify the same byte tokenizer. That is the format
+produced by WALDO's Hugging Face export. Other tokenizers or architectural
+variants fail before publication rather than being numerically converted or
+silently retokenized.
 
 A compose can use this same verified importer without first creating a visible
 base model:
@@ -690,6 +692,18 @@ bytes, an end frame, then typed progress,
 checkpoint, evaluation, completion, or error output frames.
 Human-readable training progress includes a remaining-time ETA after the
 startup sample; JSON progress exposes the underlying `eta_seconds` value.
+Workers report progress at the first step, the last step, and every 1% of
+planned steps. When a long run goes more than 300 seconds without a report,
+the worker also sends a heartbeat: an ordinary progress event with the same
+fields. `WALDO_PROGRESS_HEARTBEAT_SECONDS` sets that interval, and `0` turns
+the heartbeat off. `waldo model advisor` treats more than ten minutes without
+telemetry on a running model as a reason to inspect it, so keep the interval
+under 600 seconds. A resume first replays the steps it already trained without
+reporting, so the first progress line follows the end of that replay.
+After a resume, `tokens_per_second` and `eta_seconds` are measured from the end of
+the first trained step, so neither replaying the record stream up to the checkpoint
+nor that step's one-time start-up cost distorts them. A progress row that lands on
+that first step reports 0 tokens/s and no ETA.
 
 The MLX, PyTorch, and TorchTitan adapters embed their worker source in the
 WALDO binary while using the machine's explicit Python framework runtime. They
