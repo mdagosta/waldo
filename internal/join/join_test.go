@@ -193,7 +193,7 @@ func TestPosttrainComposeTakesItsUnitsSlice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text, err := joiner.compose("posttrain", "base-model", 7, values["budget"], values, false)
+	text, err := joiner.compose("posttrain", "base-model", 7, values["budget"], values)
 	if err != nil {
 		t.Fatal(err)
 	}

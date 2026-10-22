@@ -66,13 +66,17 @@ until git --git-dir="$work/runs.git" cat-file -e "main:$final" 2>/dev/null; do
   done
 done
 
-# Every round merged both units, and each merge pins the parents its BOM.json names.
+# Every round merged both units, pins its BOM.json, and records the probe evidence behind each verdict.
 for round in $(seq 1 "$last"); do
   git --git-dir="$work/runs.git" show "main:runs/$run/rounds/round-$(printf %04d "$round")/merge.yaml" | python3 -c '
 import json, sys
 merge = json.load(sys.stdin)
 assert sorted(unit["unit"] for unit in merge["accepted"]) == ["u0", "u1"], merge["accepted"]
-assert merge["method"] == "token-weighted-mean" and "BOM.json" in merge["files"], merge'
+assert merge["method"] == "token-weighted-mean" and "BOM.json" in merge["files"], merge
+assert sorted(unit["unit"] for unit in merge["evidence"]) == ["u0", "u1"], merge.get("evidence")
+for unit in merge["evidence"]:
+    assert len(unit["replicas"]) == 2 and len(unit["evaluation_set_sha256"]) == 64, unit
+    print(unit["unit"], "start", round(unit["start_loss"], 4), "replicas", [round(r["heldout_loss"], 4) for r in unit["replicas"]], "on", unit["evaluation_set_sha256"][:12])'
 done
 git --git-dir="$work/runs.git" log --format='%an %s' main
 echo "model-join: ok"

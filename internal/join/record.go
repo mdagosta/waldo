@@ -52,6 +52,7 @@ type MergeRecord struct {
 	BaseSHA256  *string           `json:"base_sha256"`
 	Accepted    []AcceptedUnit    `json:"accepted"`
 	Dropped     []DroppedUnit     `json:"dropped"`
+	Evidence    []UnitEvidence    `json:"evidence,omitempty"`
 	Model       string            `json:"model"`
 	ModelSHA256 string            `json:"model_sha256"`
 	Files       map[string]string `json:"files"`
@@ -65,6 +66,21 @@ type AcceptedUnit struct {
 	Model       string `json:"model"`
 	ModelSHA256 string `json:"model_sha256"`
 	Tokens      int64  `json:"tokens"`
+}
+
+// UnitEvidence is what the closer measured to judge one unit's replicas: the
+// round's starting loss and each replica's held-out loss on the same records.
+type UnitEvidence struct {
+	Unit                string            `json:"unit"`
+	StartLoss           float64           `json:"start_loss"`
+	EvaluationSetSHA256 string            `json:"evaluation_set_sha256"`
+	Replicas            []ReplicaEvidence `json:"replicas"`
+}
+
+type ReplicaEvidence struct {
+	Identity    string  `json:"identity"`
+	ModelSHA256 string  `json:"model_sha256"`
+	HeldoutLoss float64 `json:"heldout_loss"`
 }
 
 type DroppedUnit struct {
