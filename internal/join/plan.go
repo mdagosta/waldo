@@ -16,8 +16,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Plan is a run's plan.yaml. Its layout is shared with waldito, so both can
-// contribute to the same run.
+// Plan is a run's plan.yaml, the one file every contributor reads to know
+// the run's units, rounds, identities, and store.
 type Plan struct {
 	Name             string              `yaml:"name"`
 	Units            []string            `yaml:"units"`

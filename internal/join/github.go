@@ -70,7 +70,7 @@ func (joiner *Joiner) headRemote(ctx context.Context) (string, string, error) {
 // branch keeps each identity's record branches apart, so two closers' merge records never collide.
 func (joiner *Joiner) branch(path string) string {
 	relative, _ := filepath.Rel(filepath.Join(joiner.runDir, "rounds"), path)
-	return "waldito/" + joiner.plan.Name + "/" + joiner.Identity + "/" + strings.TrimSuffix(filepath.ToSlash(relative), ".yaml")
+	return "waldo-join/" + joiner.plan.Name + "/" + joiner.Identity + "/" + strings.TrimSuffix(filepath.ToSlash(relative), ".yaml")
 }
 
 // propose pushes the record branch and opens a pull request; true once the

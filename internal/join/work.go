@@ -33,7 +33,7 @@ var mergeSharedFiles = []string{"config.json", "generation_config.json", "tokeni
 
 var templateVariable = regexp.MustCompile(`\$(?:\$|([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})`)
 
-// fillTemplate substitutes $name and ${name} like Python's string.Template, so plans are shared with waldito.
+// fillTemplate substitutes $name and ${name}, with $$ for a literal $, in a run's compose templates.
 func fillTemplate(text string, values map[string]string) (string, error) {
 	var missing []string
 	filled := templateVariable.ReplaceAllStringFunc(text, func(match string) string {
@@ -77,7 +77,7 @@ func (joiner *Joiner) values(stage, unit string) (map[string]string, error) {
 			sources = append(sources, pretrain.Shards[name]...)
 		}
 		encoded, _ := json.Marshal(sources)
-		return map[string]string{"budget": fmt.Sprintf("tokens: %d", pretrain.BootstrapTokens), "sources": jsonList(encoded)}, nil
+		return map[string]string{"budget": fmt.Sprintf("tokens: %d", pretrain.BootstrapTokens), "sources": string(encoded)}, nil
 	case "pretrain":
 		template, err := os.ReadFile(joiner.planFile(pretrain.Compose))
 		if err != nil {
@@ -89,7 +89,7 @@ func (joiner *Joiner) values(stage, unit string) (map[string]string, error) {
 		}
 		steps := (pretrain.TokensPerRound + int64(batch*sequence) - 1) / int64(batch*sequence)
 		encoded, _ := json.Marshal(pretrain.Shards[unit])
-		return map[string]string{"budget": fmt.Sprintf("steps: %d\n      epochs: 1000", steps), "sources": jsonList(encoded)}, nil
+		return map[string]string{"budget": fmt.Sprintf("steps: %d\n      epochs: 1000", steps), "sources": string(encoded)}, nil
 	}
 	posttrain := joiner.plan.Posttrain
 	if posttrain.Corpus == "" {
@@ -112,11 +112,6 @@ func (joiner *Joiner) values(stage, unit string) (map[string]string, error) {
 	indent := string(line[1]) + "  "
 	corpus := fmt.Sprintf("%s\n%sfilter:\n%s  slice: {index: %d, count: %d}", posttrain.Corpus, indent, indent, index, len(joiner.plan.Units))
 	return map[string]string{"budget": fmt.Sprintf("epochs: %d", posttrain.EpochsPerRound), "corpus": corpus}, nil
-}
-
-// jsonList spaces a JSON list the way Python's json.dumps does, keeping composes byte-identical to waldito's.
-func jsonList(encoded []byte) string {
-	return strings.ReplaceAll(string(encoded), `","`, `", "`)
 }
 
 func templateInt(template []byte, key string) int {
@@ -470,7 +465,7 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 		return err
 	}
 	record := Submission{
-		Kind: "waldito-submission", Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Unit: action.Unit,
+		Kind: "waldo-join-submission", Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Unit: action.Unit,
 		Identity: joiner.Identity, Model: name, ModelSHA256: files["model.safetensors"], Files: files, Tokens: int64(tokens),
 		URL: url, CreatedAt: joiner.timestamp(),
 	}
@@ -773,7 +768,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		return err
 	}
 	record := MergeRecord{
-		Kind: "waldito-merge", Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
+		Kind: "waldo-join-merge", Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
 		Method: method, Dropped: dropped, Evidence: evidence, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(),
 	}
 	if base != nil {

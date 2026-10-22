@@ -16,8 +16,9 @@ import (
 	"strings"
 )
 
-// SigningNamespace is shared with waldito, so either can verify the other's records.
-const SigningNamespace = "waldito"
+// SigningNamespace scopes record signatures to waldo model join, so a
+// signature made for anything else never verifies as a record.
+const SigningNamespace = "waldo-join"
 
 // Submission is one identity's trained unit for a round.
 type Submission struct {

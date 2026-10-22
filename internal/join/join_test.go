@@ -40,7 +40,7 @@ func writePlan(t *testing.T, text string) string {
 	return path
 }
 
-func TestLoadPlanReadsWalditoPlans(t *testing.T) {
+func TestLoadPlanReadsRunPlans(t *testing.T) {
 	plan, err := LoadPlan(writePlan(t, `name: smoke
 units: [u0, u1]
 replicas: 2
@@ -160,8 +160,8 @@ func TestNextAction(t *testing.T) {
 	}
 }
 
-func TestComposeInputsMatchWaldito(t *testing.T) {
-	// Reference values from waldito's piece_seed, string.Template, and json.dumps.
+func TestComposeInputsAreDeterministic(t *testing.T) {
+	// Every replica of a unit must train, and every verifier probe, with the same seed.
 	if got := pieceSeed("mixed-v1", 0, "all"); got != 7855955 {
 		t.Fatalf("pieceSeed = %d", got)
 	}
@@ -173,9 +173,6 @@ func TestComposeInputsMatchWaldito(t *testing.T) {
 	}
 	if _, err := fillTemplate("$missing", nil); err == nil {
 		t.Fatal("unknown template variable accepted")
-	}
-	if got := jsonList([]byte(`["a/b","c"]`)); got != `["a/b", "c"]` {
-		t.Fatalf("jsonList = %s", got)
 	}
 }
 
