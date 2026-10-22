@@ -22,17 +22,29 @@ var githubURL = regexp.MustCompile(`^(?:https://github\.com/|git@github\.com:)([
 
 var credentials = []string{"-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"}
 
+// gh runs the gh command, waiting out GitHub's API rate limit, which every
+// identity sharing one GitHub account shares, for up to an hour.
 func (joiner *Joiner) gh(ctx context.Context, args ...string) (string, error) {
-	command := exec.CommandContext(ctx, "gh", args...)
-	command.Dir = joiner.clone
-	command.Env = joiner.environment()
-	var stderr bytes.Buffer
-	command.Stderr = &stderr
-	output, err := command.Output()
-	if err != nil {
-		return "", fmt.Errorf("gh %s: %w: %s", strings.Join(args, " "), err, bytes.TrimSpace(stderr.Bytes()))
+	for attempt := 1; ; attempt++ {
+		command := exec.CommandContext(ctx, "gh", args...)
+		command.Dir = joiner.clone
+		command.Env = joiner.environment()
+		var stderr bytes.Buffer
+		command.Stderr = &stderr
+		output, err := command.Output()
+		if err == nil {
+			return strings.TrimSpace(string(output)), nil
+		}
+		if !strings.Contains(strings.ToLower(stderr.String()), "rate limit") || attempt == 60 {
+			return "", fmt.Errorf("gh %s: %w: %s", strings.Join(args, " "), err, bytes.TrimSpace(stderr.Bytes()))
+		}
+		fmt.Fprintf(joiner.Log, "   GitHub API rate limit reached; waiting a minute\n")
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(time.Minute):
+		}
 	}
-	return strings.TrimSpace(string(output)), nil
 }
 
 // headRemote is where record branches go: the runs repo itself when this account can push to it, else its fork.
@@ -40,12 +52,30 @@ func (joiner *Joiner) headRemote(ctx context.Context) (string, string, error) {
 	if joiner.remote != "" {
 		return joiner.remote, joiner.owner, nil
 	}
+	// Remembered in the clone, so a restarted pass costs no API calls to find it again.
+	if remembered, err := joiner.git(ctx, joiner.clone, "config", "--get", "waldo-join.head"); err == nil {
+		if remote, owner, ok := strings.Cut(strings.TrimSpace(remembered), " "); ok {
+			joiner.remote, joiner.owner = remote, owner
+			return joiner.remote, joiner.owner, nil
+		}
+	}
+	remote, owner, err := joiner.findHeadRemote(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if _, err := joiner.git(ctx, joiner.clone, "config", "waldo-join.head", remote+" "+owner); err != nil {
+		return "", "", err
+	}
+	joiner.remote, joiner.owner = remote, owner
+	return remote, owner, nil
+}
+
+func (joiner *Joiner) findHeadRemote(ctx context.Context) (string, string, error) {
 	owner, repo := joiner.github[1], joiner.github[2]
 	if push, err := joiner.gh(ctx, "api", "repos/"+owner+"/"+repo, "--jq", ".permissions.push"); err != nil {
 		return "", "", err
 	} else if push == "true" {
-		joiner.remote, joiner.owner = "origin", owner
-		return joiner.remote, joiner.owner, nil
+		return "origin", owner, nil
 	}
 	login, err := joiner.gh(ctx, "api", "user", "--jq", ".login")
 	if err != nil {
@@ -63,8 +93,7 @@ func (joiner *Joiner) headRemote(ctx context.Context) (string, string, error) {
 			return "", "", err
 		}
 	}
-	joiner.remote, joiner.owner = "fork", login
-	return joiner.remote, joiner.owner, nil
+	return "fork", login, nil
 }
 
 // branch keeps each identity's record branches apart, so two closers' merge records never collide.
@@ -74,8 +103,9 @@ func (joiner *Joiner) branch(path string) string {
 }
 
 // propose pushes the record branch and opens a pull request; true once the
-// verifier merges it, false if the verifier closes it.
-func (joiner *Joiner) propose(ctx context.Context, branch, message string) (bool, error) {
+// verifier merges it, false if the verifier closes it or another record for
+// the same file lands first.
+func (joiner *Joiner) propose(ctx context.Context, branch, path, message string) (bool, error) {
 	remote, owner, err := joiner.headRemote(ctx)
 	if err != nil {
 		return false, err
@@ -107,18 +137,40 @@ func (joiner *Joiner) propose(ctx context.Context, branch, message string) (bool
 		return false, err
 	}
 	fmt.Fprintf(joiner.Log, "   %s: waiting for the verifier\n", url)
+	relative, err := filepath.Rel(joiner.clone, path)
+	if err != nil {
+		return false, err
+	}
+	record := filepath.ToSlash(relative)
+	ours, err := joiner.git(ctx, joiner.clone, "rev-parse", branch+":"+record)
+	if err != nil {
+		return false, err
+	}
 	state := "OPEN"
-	for range 180 {
-		output, err := joiner.gh(ctx, "pr", "view", url, "--json", "state")
-		if err != nil {
-			return false, err
+	for poll := range 180 {
+		// Watch main with git, which GitHub does not rate limit; the API is asked only every
+		// five minutes, for a pull request the verifier closed for a reason other than a lost race.
+		if _, err := joiner.git(ctx, joiner.clone, "fetch", "-q", "origin"); err == nil {
+			if landed, err := joiner.git(ctx, joiner.clone, "rev-parse", "origin/main:"+record); err == nil {
+				state = "MERGED"
+				if landed != ours {
+					state = "CLOSED"
+				}
+				break
+			}
 		}
-		var view struct{ State string }
-		if err := json.Unmarshal([]byte(output), &view); err != nil {
-			return false, err
-		}
-		if state = view.State; state != "OPEN" {
-			break
+		if poll%30 == 29 {
+			output, err := joiner.gh(ctx, "pr", "view", url, "--json", "state")
+			if err != nil {
+				return false, err
+			}
+			var view struct{ State string }
+			if err := json.Unmarshal([]byte(output), &view); err != nil {
+				return false, err
+			}
+			if state = view.State; state != "OPEN" {
+				break
+			}
 		}
 		select {
 		case <-ctx.Done():

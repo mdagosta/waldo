@@ -301,6 +301,14 @@ identity directories with mode 700. It passes the token only to its own `gh`
 and `git` calls.
 Without that file, join uses the caller's `GH_TOKEN` or `gh` login.
 
+Join spends little of the account's GitHub API rate limit, which every
+identity using one account shares: one call to open each record's pull
+request, and a check of the pull request only every five minutes while it
+waits, since it watches the default branch for its record with `git fetch`,
+which is not rate limited. Waiting for others uses git alone, and where records
+are pushed is found once and remembered in the clone. If the limit is reached,
+join waits for it to reset rather than failing.
+
 ## Testing
 
 `testing/e2e/model-join.sh` runs three identities through a local bare runs
@@ -312,3 +320,12 @@ unit on measured evidence, merge the honest units by token-weighted mean, and
 record the evidence, and that their majority outvotes the dishonest closer. Set
 `JOIN_POSTTRAIN_CORPUS` to an index path to add a post-training round over
 `filter.slice` shares of it.
+
+`testing/join/run-identities.sh` burns in a run on a real GitHub runs repository:
+it runs several identities at once, and with `FAULTS`, runs them through
+`testing/join/burnin.py`, which injects protocol faults as they join: lazy,
+copied, and stale-base submissions, claims left to expire, dishonest merges,
+and forged or future-dated claims, at random or as scripted. `burnin.py report
+runs/<run>` then checks every fault against what the run did with it. A fault
+that got through is a problem, and one that was caught at too high a cost is a
+kink. When a run finds a new one, it is added to the burn-in as a fault.
