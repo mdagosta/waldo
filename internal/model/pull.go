@@ -58,6 +58,7 @@ type hubModel struct {
 
 var huggingFaceRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
 var huggingFaceCommit = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
+var lineageDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
 var huggingFaceShard = regexp.MustCompile(`^model-[0-9]{5}-of-[0-9]{5}\.safetensors$`)
 
 // Probe resolves only the portable architecture and tokenizer contract. It is
@@ -272,20 +273,11 @@ func (puller Puller) importSource(name, temporary, sourceDirectory string, names
 	if err := validateDownloadedTensors(architecture, descriptors); err != nil {
 		return err
 	}
-	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "config.json"), map[string]any{
-		"kind": "waldo-downloaded-model-config", "schema": 1,
-		"architecture_sha256": architectureHash, "architecture": architecture,
-		"backend": map[string]any{"name": "portable-safetensors", "revision": "huggingface-schema-1"},
-	}); err != nil {
+	artifacts, err := writeOriginRuntime(temporary, architecture, architectureHash)
+	if err != nil {
 		return err
 	}
-	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "tokenizer.json"), map[string]any{
-		"kind": "waldo-byte-tokenizer", "schema": 1, "name": "byte", "revision": "builtin-byte-schema-1",
-		"pad_id": 0, "bos_id": 1, "eos_id": 2, "byte_offset": 3, "vocabulary_size": 259,
-	}); err != nil {
-		return err
-	}
-	artifacts, err := inventoryOriginArtifacts(temporary, []string{"origin/artifacts/model.safetensors", "origin/artifacts/config.json", "origin/artifacts/tokenizer.json"})
+	lineage, err := releaseLineage(filepath.Join(sourceDirectory, "BOM.json"))
 	if err != nil {
 		return err
 	}
@@ -293,49 +285,16 @@ func (puller Puller) importSource(name, temporary, sourceDirectory string, names
 		Kind: "openwaldo-bom", Schema: 1, Subject: "model-origin",
 		Source:             source,
 		ArchitectureSHA256: architectureHash, SourceArtifacts: sourceArtifacts, Artifacts: artifacts,
+		Lineage: lineage,
 	}
-	originHash, err := hashJSON(origin)
-	if err != nil {
-		return err
-	}
-	plan, err := composePlan(name, Compose{Architecture: architecture})
-	if err != nil {
-		return err
-	}
-	plan.OriginBOMSHA256 = originHash
-	planHash, err := hashJSON(plan)
-	if err != nil {
+	if err := os.RemoveAll(sourceDirectory); err != nil {
 		return err
 	}
 	now := time.Now
 	if puller.Now != nil {
 		now = puller.Now
 	}
-	created := formatTime(now())
-	record := ModelRecord{
-		Kind: "waldo-model", Schema: 1, ID: planHash, Name: name, PlanSHA256: planHash,
-		ArchitectureSHA256: architectureHash, Architecture: architecture, Forecast: plan.Forecast,
-		Created: created, Updated: created, Runs: []RunPin{}, OriginBOMSHA256: originHash, OriginArtifacts: artifacts,
-	}
-	if err := os.RemoveAll(sourceDirectory); err != nil {
-		return err
-	}
-	if err := writeJSONAtomic(filepath.Join(temporary, "ORIGIN-BOM.json"), origin); err != nil {
-		return err
-	}
-	if err := writeJSONAtomic(filepath.Join(temporary, "PLAN.json"), plan); err != nil {
-		return err
-	}
-	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL.json"), record); err != nil {
-		return err
-	}
-	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL-BOM.json"), modelBOM(record)); err != nil {
-		return err
-	}
-	if err := os.Rename(temporary, filepath.Join(puller.Root, name)); err != nil {
-		return fmt.Errorf("publish pulled model %q: %w", name, err)
-	}
-	return nil
+	return publishOrigin(puller.Root, name, temporary, origin, architecture, now())
 }
 
 func (puller Puller) resolveHub(ctx context.Context, source string) (hubModel, string, string, string, string, *http.Client, error) {
@@ -710,4 +669,91 @@ func huggingFaceToken() string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// writeOriginRuntime writes the runtime configuration and byte tokenizer
+// beside origin/artifacts/model.safetensors and inventories all three.
+func writeOriginRuntime(temporary string, architecture Architecture, architectureHash string) ([]OriginArtifact, error) {
+	artifactDirectory := filepath.Join(temporary, "origin", "artifacts")
+	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "config.json"), map[string]any{
+		"kind": "waldo-downloaded-model-config", "schema": 1,
+		"architecture_sha256": architectureHash, "architecture": architecture,
+		"backend": map[string]any{"name": "portable-safetensors", "revision": "huggingface-schema-1"},
+	}); err != nil {
+		return nil, err
+	}
+	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "tokenizer.json"), map[string]any{
+		"kind": "waldo-byte-tokenizer", "schema": 1, "name": "byte", "revision": "builtin-byte-schema-1",
+		"pad_id": 0, "bos_id": 1, "eos_id": 2, "byte_offset": 3, "vocabulary_size": 259,
+	}); err != nil {
+		return nil, err
+	}
+	return inventoryOriginArtifacts(temporary, []string{"origin/artifacts/model.safetensors", "origin/artifacts/config.json", "origin/artifacts/tokenizer.json"})
+}
+
+// publishOrigin writes the origin BOM, plan, record, and model BOM into
+// temporary and renames it into place as model name under root.
+func publishOrigin(root, name, temporary string, origin OriginBOM, architecture Architecture, now time.Time) error {
+	originHash, err := hashJSON(origin)
+	if err != nil {
+		return err
+	}
+	plan, err := composePlan(name, Compose{Architecture: architecture})
+	if err != nil {
+		return err
+	}
+	plan.OriginBOMSHA256 = originHash
+	planHash, err := hashJSON(plan)
+	if err != nil {
+		return err
+	}
+	created := formatTime(now)
+	record := ModelRecord{
+		Kind: "waldo-model", Schema: 1, ID: planHash, Name: name, PlanSHA256: planHash,
+		ArchitectureSHA256: origin.ArchitectureSHA256, Architecture: architecture, Forecast: plan.Forecast,
+		Created: created, Updated: created, Runs: []RunPin{}, OriginBOMSHA256: originHash, OriginArtifacts: origin.Artifacts,
+	}
+	if err := writeJSONAtomic(filepath.Join(temporary, "ORIGIN-BOM.json"), origin); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(filepath.Join(temporary, "PLAN.json"), plan); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL.json"), record); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL-BOM.json"), modelBOM(record)); err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, filepath.Join(root, name)); err != nil {
+		return fmt.Errorf("publish model %q: %w", name, err)
+	}
+	return nil
+}
+
+// releaseLineage is the lineage a WALDO release's BOM.json records, if the
+// package has one; the file itself is pinned among the source artifacts.
+func releaseLineage(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	var release struct {
+		Kind    string   `json:"kind"`
+		Subject string   `json:"subject"`
+		Lineage []string `json:"lineage"`
+	}
+	if json.Unmarshal(data, &release) != nil || release.Kind != "openwaldo-bom" || release.Subject != "model-release" {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	for _, digest := range release.Lineage {
+		if !lineageDigest.MatchString(digest) {
+			return nil, fmt.Errorf("release BOM.json lineage entry %q is not a SHA-256", digest)
+		}
+		seen[digest] = true
+	}
+	return sortedKeys(seen), nil
 }

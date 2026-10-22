@@ -1419,7 +1419,24 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		compose.Base.Source = "huggingface://" + repository + "@" + strings.ToLower(revision)
 	}
 	var base Inspection
-	if compose.Base.Model != "" {
+	if len(compose.Base.Merge) > 0 {
+		if !acquire {
+			parents, err := builder.mergeParents(*compose.Base)
+			if err != nil {
+				return Compose{}, nil, err
+			}
+			if compose.Architecture != (Architecture{}) && !reflect.DeepEqual(compose.Architecture, parents[0].inspection.Model.Architecture) {
+				return Compose{}, nil, fmt.Errorf("compose architecture does not match the base.merge parents")
+			}
+			compose.Architecture = parents[0].inspection.Model.Architecture
+			return compose, nil, compose.Validate()
+		}
+		merged, err := builder.mergeOrigin(*compose.Base)
+		if err != nil {
+			return Compose{}, nil, err
+		}
+		base = merged
+	} else if compose.Base.Model != "" {
 		resolved, err := Inspect(builder.Root, compose.Base.Model)
 		if err != nil {
 			return Compose{}, nil, fmt.Errorf("resolve compose base model %q: %w", compose.Base.Model, err)
@@ -1499,6 +1516,11 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		if compose.Base.ArtifactBytes != 0 && compose.Base.ArtifactBytes != initialization.Artifact.Bytes {
 			return Compose{}, nil, fmt.Errorf("compose base artifact has %d bytes, not requested %d", initialization.Artifact.Bytes, compose.Base.ArtifactBytes)
 		}
+		lineage := Ancestry(base)
+		if len(compose.Base.Lineage) > 0 && !reflect.DeepEqual(compose.Base.Lineage, lineage) {
+			return Compose{}, nil, fmt.Errorf("compose base lineage does not match the base model's recorded ancestry")
+		}
+		compose.Base.Lineage = lineage
 		compose.Base.RunID = initialization.SourceRunID
 		compose.Base.RunBOMSHA256 = pin.BOMSHA256
 		compose.Base.ArtifactSHA256 = initialization.Artifact.SHA256
@@ -1875,6 +1897,7 @@ func composeParent(compose Compose) *ModelParent {
 		Model: compose.Base.Model, ModelID: compose.Base.ModelID,
 		RunID: compose.Base.RunID, RunBOMSHA256: compose.Base.RunBOMSHA256,
 		Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
+		Lineage:  compose.Base.Lineage,
 	}
 }
 
