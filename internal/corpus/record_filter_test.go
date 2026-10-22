@@ -7,6 +7,7 @@ package corpus
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -189,5 +190,43 @@ func TestContentAssessmentExclusionsCombineGlobalAndCorpusPolicy(t *testing.T) {
 	}
 	if got := policy.ContentAssessmentExclusions("science"); !reflect.DeepEqual(got, []string{"boilerplate_content"}) {
 		t.Fatalf("science assessment exclusions = %v", got)
+	}
+}
+
+func TestShardFilterSplitsRecordsDisjointly(t *testing.T) {
+	filters := make([]RecordFilter, 3)
+	for index := range filters {
+		filters[index] = RecordFilter{Shard: &ShardFilter{Count: 3, Index: index}}
+		if err := filters[index].Validate(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	counts := make([]int, 3)
+	for number := range 300 {
+		record := shard.RecordView{ID: fmt.Sprintf("record-%d", number)}
+		matched := 0
+		for index, filter := range filters {
+			if filter.Allows(record) {
+				counts[index]++
+				matched++
+			}
+		}
+		if matched != 1 {
+			t.Fatalf("%s matched %d shards", record.ID, matched)
+		}
+	}
+	for index, count := range counts {
+		if count < 60 {
+			t.Fatalf("shard %d holds only %d of 300 records", index, count)
+		}
+	}
+	// waldito splits post-training data by the same rule: sha256(id)[0] % count.
+	if !(RecordFilter{Shard: &ShardFilter{Count: 3, Index: 1}}).Allows(shard.RecordView{ID: "hello-name-0000"}) {
+		t.Fatal("hello-name-0000 is not in shard 1 of 3")
+	}
+	for _, bad := range []ShardFilter{{Count: 0}, {Count: 3, Index: 3}, {Count: 2, Index: -1}, {Count: 257}} {
+		if err := (RecordFilter{Shard: &bad}).Validate(); err == nil {
+			t.Fatalf("shard %+v accepted", bad)
+		}
 	}
 }

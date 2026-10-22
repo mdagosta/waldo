@@ -6,6 +6,7 @@
 package corpus
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -42,6 +43,7 @@ type RecordFilter struct {
 	Sources     *ValueFilter           `json:"sources,omitempty" yaml:"sources,omitempty"`
 	Metadata    map[string]ValueFilter `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 	Date        *DateFilter            `json:"date,omitempty" yaml:"date,omitempty"`
+	Shard       *ShardFilter           `json:"shard,omitempty" yaml:"shard,omitempty"`
 }
 
 // ExclusionFilter is the canonical deny-list form. A record is excluded when
@@ -56,6 +58,14 @@ type ValueFilter struct {
 	Include      []string `json:"include,omitempty" yaml:"include,omitempty"`
 	Exclude      []string `json:"exclude,omitempty" yaml:"exclude,omitempty"`
 	IncludeUnset bool     `json:"include_unset,omitempty" yaml:"include_unset,omitempty"`
+}
+
+// ShardFilter keeps one of Count deterministic slices of the records, chosen
+// by the first byte of each record ID's SHA-256, so several parties can train
+// disjoint shares of one corpus and record exactly which share each used.
+type ShardFilter struct {
+	Count int `json:"count" yaml:"count"`
+	Index int `json:"index" yaml:"index"`
 }
 
 type DateFilter struct {
@@ -125,6 +135,9 @@ func (filter RecordFilter) Validate() error {
 			return err
 		}
 	}
+	if filter.Shard != nil && (filter.Shard.Count < 1 || filter.Shard.Count > 256 || filter.Shard.Index < 0 || filter.Shard.Index >= filter.Shard.Count) {
+		return fmt.Errorf("shard needs 1 <= count <= 256 and 0 <= index < count")
+	}
 	if filter.empty() {
 		return fmt.Errorf("record filter must declare at least one condition")
 	}
@@ -132,7 +145,7 @@ func (filter RecordFilter) Validate() error {
 }
 
 func (filter RecordFilter) empty() bool {
-	return filter.MainContent == nil && filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && len(filter.Metadata) == 0 && filter.Date == nil
+	return filter.MainContent == nil && filter.Exclude == nil && filter.Licenses == nil && filter.Languages == nil && filter.Sources == nil && len(filter.Metadata) == 0 && filter.Date == nil && filter.Shard == nil
 }
 
 func (filter ExclusionFilter) Validate() error {
@@ -249,6 +262,12 @@ func (filter RecordFilter) Allows(record shard.RecordView) bool {
 	}
 	if !filter.allowsMetadata(record.Metadata) {
 		return false
+	}
+	if filter.Shard != nil {
+		digest := sha256.Sum256([]byte(record.ID))
+		if int(digest[0])%filter.Shard.Count != filter.Shard.Index {
+			return false
+		}
 	}
 	return filter.Date == nil || filter.Date.Allows(record.Date)
 }
