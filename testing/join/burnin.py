@@ -27,7 +27,9 @@ RUNS_REPO names the runs repository, JOIN_EMAIL the commits' author, and WALDO t
 (default: the one built at this checkout's root). run-identities.sh launches it.
 
 Records are signed with the identity's own key and proposed from its own fork with its own
-token, exactly as join does. Every fault is logged to <logs>/faults.jsonl for the report.
+token, exactly as join does. Every fault is logged to <logs>/faults.jsonl, and every error state
+met along the way (rate limits, failed passes, verifier refusals of honest records) to
+<logs>/events.jsonl, for the report.
 FAULT_RATE (default 0.15) is the chance, per pass, that a random identity injects its round's fault.
 """
 import collections
@@ -69,6 +71,7 @@ class Run:
     def __init__(self, clone, run_dir, env):
         self.clone, self.run_dir, self.env = clone, run_dir, env
         self.name = pathlib.PurePosixPath(run_dir).name
+        self.settled = {}  # decided rounds: records are only ever added, so a decision stands
 
     def git(self, *args, check=True):
         return subprocess.run(["git", *args], cwd=self.clone, env=self.env, capture_output=True, text=True, check=check).stdout
@@ -102,7 +105,12 @@ class Run:
     def decided(self, number, plan):
         if number < 0:
             return None
-        return next((m[0] for m in self.votes(number).values() if len(m) >= plan["closers"] // 2 + 1), None)
+        if number not in self.settled:
+            decision = next((m[0] for m in self.votes(number).values() if len(m) >= plan["closers"] // 2 + 1), None)
+            if decision is None:
+                return None
+            self.settled[number] = decision
+        return self.settled[number]
 
     def current(self, plan):
         """The first undecided round, or None when the run is complete."""
@@ -138,7 +146,8 @@ class Identity:
                 return result.stdout.strip()
             if "rate limit" not in result.stderr.lower():
                 break
-            self.log("GitHub API rate limit reached; waiting a minute")
+            if attempt == 0:
+                self.event("rate-limit", source="burnin", command=f"gh {args[0]} {args[1] if len(args) > 1 else ''}".strip())
             time.sleep(60)
         raise RuntimeError(f"gh {' '.join(args)}: {result.stderr.strip()}")
 
@@ -146,6 +155,14 @@ class Identity:
         if not hasattr(self, "_login"):
             self._login = self.gh("api", "user", "--jq", ".login")
         return self._login
+
+    def event(self, kind, **details):
+        """Records an error state the run met, as a warning in the log and an entry for the report."""
+        entry = {"time": now(), "identity": self.name, "run": self.run.name, "event": kind, **details}
+        self.logs.mkdir(parents=True, exist_ok=True)
+        with open(self.logs / "events.jsonl", "a") as out:
+            out.write(json.dumps(entry) + "\n")
+        self.log(f"WARNING {kind}: {details}")
 
     def note(self, fault, number, **details):
         entry = {"time": now(), "identity": self.name, "run": self.run.name, "round": number, "fault": fault, **details}
@@ -291,13 +308,19 @@ class Identity:
         """One honest pass of join; returns its last line."""
         process = subprocess.Popen([WALDO, "model", "join", REPO, self.run.run_dir, "--identity", self.name, "--email", self.email, "--once"],
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        last = ""
+        last, tail, limited = "", collections.deque(maxlen=5), False
         for line in process.stdout:
             print(line, end="", flush=True)
             last = line.strip() or last
+            tail.append(line.rstrip())
+            if "rate limit reached" in line and not limited:
+                limited = True
+                self.event("rate-limit", source="join")
+            if "was closed by the verifier" in line or "did not accept" in line:
+                self.event("verifier-refused", source="join", line=line.strip())
         if process.wait():
-            # Logged and retried, as an operator would restart join.
-            self.log(f"join pass failed (exit {process.returncode}); retrying in a minute")
+            # Recorded and retried, as an operator would restart join.
+            self.event("join-failed", exit=process.returncode, tail=list(tail))
             time.sleep(60)
         return last
 
@@ -377,6 +400,14 @@ def report(run_dir):
     print(f"\n{len(faults)} faults injected: {len(problems)} problems, {len(kinks)} kinks")
     for line in problems + kinks:
         print("  " + line)
+    events = [json.loads(line) for line in open(logs / "events.jsonl")] if (logs / "events.jsonl").exists() else []
+    counts = collections.Counter((e["event"], e["identity"]) for e in events)
+    print(f"\n{len(events)} error states met")
+    for (kind, identity), count in sorted(counts.items()):
+        print(f"  {kind:18} {identity:20} {count}")
+    for e in events:
+        if e["event"] == "join-failed":
+            print(f"  {e['time']} {e['identity']} join failed: {(e.get('tail') or [''])[-1]}")
     return 1 if problems else 0
 
 
