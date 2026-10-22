@@ -44,8 +44,10 @@ runs/<run>/
   pretrain.yaml.tmpl             # compose template filled for each unit
   sft.yaml.tmpl                  # optional post-training template
   rounds/round-NNNN/
+    claims/<unit>-<n>.yaml(.sig)           # replica slot n of a unit; a retaken slot is <unit>-<n>.<attempt>.yaml
+    claims/close-<n>.yaml(.sig)            # closing slot n
     submissions/<unit>-<identity>.yaml(.sig)
-    merge.yaml(.sig)
+    merges/<identity>.yaml(.sig)           # one closer's merge of the round
 ```
 
 ### Plan
@@ -71,6 +73,8 @@ runs/<run>/
 | `replica_floor` | Absolute gap below which replicas always agree, for converged rounds. Default 0.001. |
 | `min_steps_per_round` | Refuse a unit that trained fewer optimizer steps. |
 | `round_minutes` | Optional deadline after which a round may close with the units it has. |
+| `closers` | How many identities close each round independently; a majority of them must sign the same merge. Default 3, or every identity if the plan has fewer. |
+| `claim_minutes` | How long a claim holds its slot before another identity may retake it. Default 60; set it above a unit's training time. |
 
 Templates are WALDO composes with `$name` placeholders: `base_block`, `seed`,
 `budget`, `sources`, `corpus`, `learning_rate`, `weight_decay`, and `extra`
@@ -83,10 +87,34 @@ post-training rounds. Each round starts from the previous round's merged weights
 Every pass picks its work from the records on the default branch:
 
 1. When every unit has its replicas, or the round is past its deadline with at
-   least one full unit, close the round.
-2. Otherwise train the lowest unit that is short of replicas and that this
-   identity has not submitted.
-3. Otherwise wait for others.
+   least one full unit, claim a closing slot and close the round.
+2. Otherwise train the unit this identity has claimed, if any.
+3. Otherwise claim a free replica slot of the lowest unit that this identity
+   has not claimed, and train it.
+4. Otherwise wait for others.
+
+### Claims
+
+Work is claimed before it is done, so identities divide a round instead of all
+training the same unit. A claim is a small signed record in a fixed slot:
+`claims/<unit>-<n>.yaml` for replica `n` of a unit, `claims/close-<n>.yaml`
+for closer `n`. Two claims on one slot are two additions of the same file, so
+the second always conflicts: on GitHub the verifier merges the first and closes
+the rest, and on a plain git repository the second push loses its rebase. A
+pass that loses a claim picks the next free slot; one that wins goes straight
+on to the work.
+
+- **Records need claims.** A submission counts only from an identity holding a
+  claim on its unit, and a merge only from one holding a closing slot. One
+  identity holds at most one slot per unit, so nobody fills two replicas.
+- **Claims expire.** A slot whose holder has not landed its record within
+  `claim_minutes` of the claim may be retaken as the slot's next attempt,
+  `<slot>.<attempt>.yaml`. The verifier judges expiry by its own clock and
+  rejects a claim dated ahead of it, so nobody holds a slot longer by dating a
+  claim forward. A late record from the earlier holder still counts.
+- **Closers judge the same replicas.** A unit's replicas are taken in slot
+  order, one per slot from its earliest holder who submitted, so a late extra
+  submission never changes the set a closer judges.
 
 A unit's seed is a hash of the run, round, and unit, so all of its replicas
 train the same data the same way.
@@ -140,12 +168,37 @@ The merged model is a WALDO merged origin whose records pin every parent, the
 lineage they share, every accepted unit's run BOMs, and the union of their
 training closures; WALDO refuses to merge parents without a recorded
 common ancestor (see [Model compose](MODEL-COMPOSE.md#merged-base)). Its export
-is published, and `merge.yaml` records the accepted and dropped units and why,
-the merged weights' hashes and URL, and, for every unit whose replicas were
-compared, the evidence: the starting loss, the held-out set's SHA-256, and
-every replica's measured loss.
-The merge is deterministic, so independent closers of one round compute the
-same hash; the first `merge.yaml` on the default branch stands.
+is published, and the closer's `merges/<identity>.yaml` records the accepted and
+dropped units and why, the merged weights' hashes and URL, and, for every unit
+whose replicas were compared, the evidence: the starting loss, the held-out
+set's SHA-256, and every replica's measured loss.
+
+### Replicated closing
+
+A round is closed by `closers` identities, each judging and merging it on its
+own; none is trusted to judge alone. The merge is deterministic, so honest
+closers compute the same hash, and the round is decided once a majority of
+`closers` sign the same decision: the round's starting weights, the accepted
+units and their weights, the method, and the merged weights. Their measured
+losses may differ slightly across hardware; they are evidence, not the
+decision. No record is the round's merge and nobody finalizes it: every
+identity reads the majority from the records.
+
+- **The next round starts from the majority's weights,** fetched from the store
+  of any closer who signed them and checked against the agreed hash, so a
+  closer who signs the right hash but publishes other weights changes nothing.
+- **Disagreement opens another slot.** When every closing slot has its merge
+  and no majority has formed, `close-<closers+1>` opens, and so on, until one
+  does. A closing slot past the plan's closers counts only if it was claimed
+  after every earlier slot had its merge.
+- **Dissent stays on the record.** A merge that disagrees with the majority,
+  or lands after it, is kept, signed, with its evidence, and reported when the
+  run completes.
+
+This defends against one closer accepting its own free-riding replica,
+dropping an honest one, inventing evidence, or publishing other weights. It
+does not defend against a majority of closers colluding, the same limit as
+replica voting, and like it rests on the plan's fixed list of identities.
 
 ### Training provenance across rounds
 
@@ -205,9 +258,11 @@ replication stopped verifying.
 Records are JSON (valid YAML) signed with `ssh-keygen -Y sign` in the
 `waldo-join` namespace by the identity they name, and committed with `-s` with
 that identity as author. A reader ignores a record that does not verify against
-the plan's key for the identity it names, or that sits in a file other than
-`<unit>-<identity>.yaml` for its round. A merge record that does not verify
-stops the run, since nobody may build on it.
+the plan's key for the identity it names, that sits in a file other than the
+one its fields name (`claims/<slot>[.<attempt>].yaml`,
+`submissions/<unit>-<identity>.yaml`, `merges/<identity>.yaml`), or whose
+identity holds no claim for it. A merge that does not verify is simply not a
+vote; the round is decided by the closers whose merges do.
 
 ## Stores
 
@@ -227,9 +282,12 @@ identity's account can push to it, or otherwise on the account's fork. Join
 opens a pull request and waits for the repository's verifier to merge or close
 it. The verifier is the repository's own Action: it merges a pull request only
 if it adds nothing but record files under an existing run's `rounds/`, each
-signature verifies against the plan's key for its identity, and the round has
-no merge yet. It reads files and runs `ssh-keygen`, never code from the pull
-request.
+signature verifies against the plan's key for its identity, and each record
+keeps the claim rules: a claim's slot is free or its last attempt expired
+unfilled, its identity holds no other slot of the unit, and it is not dated
+ahead of the verifier's clock; a submission or merge comes from an identity
+holding a claim for it. It reads files and runs `ssh-keygen`, never code from
+the pull request.
 
 GitHub's fine-grained tokens can push to a fork but cannot open a pull request
 on a repository their owner does not control, so record pull requests need a
@@ -245,10 +303,12 @@ Without that file, join uses the caller's `GH_TOKEN` or `gh` login.
 
 ## Testing
 
-`testing/e2e/model-join.sh` runs two identities through a local bare runs
+`testing/e2e/model-join.sh` runs three identities through a local bare runs
 repository with a `file://` store and real MLX training: a bootstrap and a
-pretraining round over three units, with one identity free-riding on one unit.
-It asserts that the closer drops that unit on measured evidence, merges the
-honest units by token-weighted mean, and records the evidence. Set
+pretraining round over three units, with one identity free-riding on one unit
+and another closing that round dishonestly, accepting the free-rider and
+publishing its weights. It asserts that the honest closers drop the free-rider's
+unit on measured evidence, merge the honest units by token-weighted mean, and
+record the evidence, and that their majority outvotes the dishonest closer. Set
 `JOIN_POSTTRAIN_CORPUS` to an index path to add a post-training round over
 `filter.slice` shares of it.

@@ -399,16 +399,23 @@ func (joiner *Joiner) ensure(name, directory string) error {
 	return err
 }
 
+// base fetches and imports the round's starting weights: the previous round's
+// majority merge, from the store of any closer who signed it.
 func (joiner *Joiner) base(ctx context.Context, state State, number int) (*MergeRecord, error) {
 	if number == 0 {
 		return nil, nil
 	}
-	record := state.Rounds[number-1].Merge
-	directory, err := joiner.fetch(ctx, record.Model, record.Identity, record.ModelSHA256, record.Files, record.URL)
-	if err != nil {
-		return nil, err
+	agreeing, _ := state.Rounds[number-1].Agreeing()
+	var err error
+	for _, record := range agreeing {
+		var directory string
+		if directory, err = joiner.fetch(ctx, record.Model, record.Identity, record.ModelSHA256, record.Files, record.URL); err != nil {
+			fmt.Fprintf(joiner.Log, "   %v\n", err)
+			continue
+		}
+		return &record, joiner.ensure(record.Model, directory)
 	}
-	return record, joiner.ensure(record.Model, directory)
+	return nil, fmt.Errorf("round %d's merged weights could not be fetched from any closer who signed them: %w", number-1, err)
 }
 
 func (joiner *Joiner) contribute(ctx context.Context, state State, action Action) error {
@@ -475,10 +482,15 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 	}
 	path := filepath.Join(roundDir(joiner.runDir, action.Round), "submissions", action.Unit+"-"+joiner.Identity+".yaml")
 	won, err := joiner.commit(ctx, path, record, fmt.Sprintf("%s round %d: %s by %s", joiner.plan.Name, action.Round, action.Unit, joiner.Identity))
-	if err == nil && !won {
-		err = fmt.Errorf("round %d unit %s: the runs repo did not accept this submission; on GitHub, the verifier's comment on its pull request says why", action.Round, action.Unit)
+	if err != nil || won {
+		return err
 	}
-	return err
+	// The round can still close without this unit, once it is past its deadline.
+	if current, err := joiner.load(); err == nil && action.Round < len(current.Rounds) && current.Rounds[action.Round].Merge != nil {
+		fmt.Fprintf(joiner.Log, "   round %d closed while %s trained %s; moving on\n", action.Round, joiner.Identity, action.Unit)
+		return nil
+	}
+	return fmt.Errorf("round %d unit %s: the runs repo did not accept this submission; on GitHub, the verifier's comment on its pull request says why", action.Round, action.Unit)
 }
 
 func (joiner *Joiner) timestamp() string {
@@ -603,7 +615,7 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 }
 
 func (joiner *Joiner) close(ctx context.Context, state State, action Action) error {
-	fmt.Fprintf(joiner.Log, "\n== Round %d (%s): %s closes it ==\n", action.Round, action.Stage, joiner.Identity)
+	fmt.Fprintf(joiner.Log, "\n== Round %d (%s): %s closes it, one of %d closers ==\n", action.Round, action.Stage, joiner.Identity, joiner.plan.Closing())
 	base, err := joiner.base(ctx, state, action.Round)
 	if err != nil {
 		return err
@@ -612,12 +624,12 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	if stage == "bootstrap" {
 		stage = "pretrain"
 	}
-	submitted := state.Rounds[action.Round].Submissions
+	round := state.Rounds[action.Round]
 	var accepted []Submission
 	var evidence []UnitEvidence
 	dropped := []DroppedUnit{}
 	for _, unit := range joiner.plan.RoundUnits(action.Stage) {
-		records := submitted[unit]
+		records := round.replicas(unit, joiner.plan.Replicas)
 		var identities []string
 		for _, record := range records {
 			identities = append(identities, record.Identity)
@@ -732,21 +744,14 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	for _, submission := range accepted {
 		record.Accepted = append(record.Accepted, AcceptedUnit{Unit: submission.Unit, Identity: submission.Identity, Model: submission.Model, ModelSHA256: submission.ModelSHA256, Tokens: submission.Tokens})
 	}
-	path := filepath.Join(roundDir(joiner.runDir, action.Round), "merge.yaml")
+	path := filepath.Join(roundDir(joiner.runDir, action.Round), "merges", joiner.Identity+".yaml")
 	won, err := joiner.commit(ctx, path, record, fmt.Sprintf("%s round %d: merge by %s", joiner.plan.Name, action.Round, joiner.Identity))
-	if err != nil || won {
+	if err != nil {
 		return err
 	}
-	var theirs MergeRecord
-	data, err := os.ReadFile(path)
-	if err != nil || json.Unmarshal(data, &theirs) != nil {
-		return fmt.Errorf("round %d was merged by someone else, and their record could not be read", action.Round)
+	if !won {
+		return fmt.Errorf("round %d: the runs repo did not accept this merge; on GitHub, the verifier's comment on its pull request says why", action.Round)
 	}
-	verdict := "DIFFERS from"
-	if theirs.ModelSHA256 == record.ModelSHA256 {
-		verdict = "matches"
-	}
-	fmt.Fprintf(joiner.Log, "   %s merged round %d first; their hash %s this one\n", theirs.Identity, action.Round, verdict)
 	return nil
 }
 

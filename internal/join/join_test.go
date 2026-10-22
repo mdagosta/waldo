@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -73,7 +74,7 @@ replica_tolerance: 0.5
 	if got := strings.Join(plan.Stages(), ","); got != "bootstrap,pretrain,posttrain,posttrain" {
 		t.Fatalf("stages = %s", got)
 	}
-	if plan.Tolerance() != 0.5 || plan.Floor() != 0.001 || len(plan.Pretrain.Shards["u1"]) != 2 {
+	if plan.Tolerance() != 0.5 || plan.Floor() != 0.001 || len(plan.Pretrain.Shards["u1"]) != 2 || plan.Closers != 3 || plan.ClaimMinutes != 60 || plan.Quorum() != 2 || plan.Closing() != 2 {
 		t.Fatalf("plan = %+v", plan)
 	}
 }
@@ -88,6 +89,7 @@ func TestLoadPlanRejectsUnsupportedPlans(t *testing.T) {
 		"identity":       "name: x\nunits: [u0]\nstore: huggingface\nidentities: {Alice/x: k}\npretrain: {compose: p.tmpl}\n",
 		"run name":       "name: X Run\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
 		"all unit":       "name: x\nunits: [all]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"close unit":     "name: x\nunits: [close]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
 		"duplicate":      "name: x\nunits: [u0, u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
 		"unknown":        "name: x\nunits: [u0]\nstore: huggingface\ntamper: {round: 1}\npretrain: {compose: p.tmpl}\n",
 		"identity field": "name: x\nunits: [u0]\nstore: huggingface\nidentities: {alice: {key: k, email: a}}\npretrain: {compose: p.tmpl}\n",
@@ -107,39 +109,90 @@ func submissionFixture(unit, identity string) Submission {
 	}
 }
 
+func claimFixture(slot string, attempt int, identity string) Claim {
+	return Claim{Kind: ClaimKind, Schema: RecordSchema, Run: "run", Round: 0, Stage: "bootstrap", Slot: slot, Attempt: attempt, Identity: identity, CreatedAt: "2026-10-21T10:00:00+00:00"}
+}
+
+func mergeFixture(identity, digest string) MergeRecord {
+	return MergeRecord{Kind: MergeKind, Schema: RecordSchema, Run: "run", Round: 0, Stage: "bootstrap", Identity: identity, Method: "single",
+		Accepted: []AcceptedUnit{{Unit: "all", Identity: "alice", Model: "waldo-run-r0000-all-alice", ModelSHA256: strings.Repeat("a", 64)}},
+		Model:    "waldo-run-r0000-merge", ModelSHA256: digest, Files: map[string]string{"model.safetensors": digest}, ClosedAt: "2026-10-21T11:00:00+00:00"}
+}
+
+// signer writes signed records into one round of a run directory.
+func signer(t *testing.T, runDir string) func(string, any, string) {
+	return func(file string, record any, key string) {
+		t.Helper()
+		if err := writeSigned(filepath.Join(roundDir(runDir, 0), file), record, key); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestReadStateVerifiesSignatures(t *testing.T) {
 	aliceKey, alicePublic := signingKey(t, "alice")
 	malloryKey, _ := signingKey(t, "mallory")
-	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Identities: map[string]Identity{"alice": {Key: alicePublic}, "bob": {Key: alicePublic}}}
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 2, Closers: 1, Identities: map[string]Identity{"alice": {Key: alicePublic}, "bob": {Key: alicePublic}}}
 	runDir := t.TempDir()
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
 	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
 		t.Fatal(err)
 	}
-	submissions := filepath.Join(roundDir(runDir, 0), "submissions")
-	write := func(file string, record any, key string) {
-		t.Helper()
-		if err := writeSigned(filepath.Join(submissions, file), record, key); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write("all-alice.yaml", submissionFixture("all", "alice"), aliceKey)
+	write := signer(t, runDir)
+	write("claims/all-1.yaml", claimFixture("all-1", 1, "alice"), aliceKey)
+	write("submissions/all-alice.yaml", submissionFixture("all", "alice"), aliceKey)
 	// Forged: claims bob but signed by another key. Misplaced: a valid record in the wrong file.
-	write("all-bob.yaml", submissionFixture("all", "bob"), malloryKey)
-	write("u9-alice.yaml", submissionFixture("all", "alice"), aliceKey)
+	write("claims/all-2.yaml", claimFixture("all-2", 1, "bob"), malloryKey)
+	write("submissions/all-bob.yaml", submissionFixture("all", "bob"), malloryKey)
+	write("submissions/u9-alice.yaml", submissionFixture("all", "alice"), aliceKey)
 	state, err := ReadState(runDir, plan, allowed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := state.Rounds[0].Submissions["all"]; len(got) != 1 || got[0].Identity != "alice" {
-		t.Fatalf("submissions = %+v", state.Rounds[0].Submissions)
+	if got := state.Rounds[0].Submissions["all"]; len(got) != 1 || got[0].Identity != "alice" || len(state.Rounds[0].Claims) != 1 {
+		t.Fatalf("round = %+v", state.Rounds[0])
 	}
-	merge := MergeRecord{Kind: MergeKind, Schema: RecordSchema, Run: "run", Round: 0, Stage: "bootstrap", Identity: "bob", Model: "waldo-run-r0000-merge", ModelSHA256: strings.Repeat("c", 64), Files: map[string]string{"model.safetensors": strings.Repeat("c", 64)}}
-	if err := writeSigned(filepath.Join(roundDir(runDir, 0), "merge.yaml"), merge, malloryKey); err != nil {
+	// A forged merge is no merge: it never closes the round.
+	write("claims/close-1.yaml", claimFixture("close-1", 1, "bob"), malloryKey)
+	write("merges/bob.yaml", mergeFixture("bob", strings.Repeat("c", 64)), malloryKey)
+	if state, err = ReadState(runDir, plan, allowed); err != nil || state.Rounds[0].Merge != nil || len(state.Rounds[0].Merges) != 0 {
+		t.Fatalf("forged merge counted: %+v, %v", state.Rounds[0], err)
+	}
+}
+
+func TestReadStateCountsOnlyClaimedWork(t *testing.T) {
+	key, public := signingKey(t, "alice")
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 2, Closers: 1, Identities: map[string]Identity{"alice": {Key: public}}}
+	runDir := t.TempDir()
+	allowed := filepath.Join(t.TempDir(), "allowed_signers")
+	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadState(runDir, plan, allowed); err == nil || !strings.Contains(err.Error(), "not a valid merge record") {
-		t.Fatalf("forged merge error = %v", err)
+	write := signer(t, runDir)
+	write("submissions/all-alice.yaml", submissionFixture("all", "alice"), key)
+	write("merges/alice.yaml", mergeFixture("alice", strings.Repeat("c", 64)), key)
+	// Out of place: a second attempt with no first, and a slot beyond the plan's replicas.
+	write("claims/all-1.2.yaml", claimFixture("all-1", 2, "alice"), key)
+	write("claims/all-3.yaml", claimFixture("all-3", 1, "alice"), key)
+	write("claims/all-1.yaml", claimFixture("all-2", 1, "alice"), key)
+	state, err := ReadState(runDir, plan, allowed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if round := state.Rounds[0]; len(round.Claims) != 0 || len(round.Submissions) != 0 || len(round.Merges) != 0 {
+		t.Fatalf("unclaimed work counted: %+v", round)
+	}
+	// One identity holds one replica slot of a unit, however many it claims.
+	if err := os.Remove(filepath.Join(roundDir(runDir, 0), "claims", "all-1.2.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	write("claims/all-1.yaml", claimFixture("all-1", 1, "alice"), key)
+	write("claims/all-2.yaml", claimFixture("all-2", 1, "alice"), key)
+	if state, err = ReadState(runDir, plan, allowed); err != nil {
+		t.Fatal(err)
+	}
+	if round := state.Rounds[0]; len(round.Claims) != 1 || len(round.Claims["all-1"]) != 1 || len(round.Submissions["all"]) != 1 || len(round.replicas("all", 2)) != 1 {
+		t.Fatalf("round = %+v", round)
 	}
 }
 
@@ -162,9 +215,9 @@ func TestReadStateIgnoresMalformedRecords(t *testing.T) {
 		runDir := t.TempDir()
 		record := submissionFixture("all", "bob")
 		mutate(&record)
-		if err := writeSigned(filepath.Join(roundDir(runDir, 0), "submissions", "all-bob.yaml"), record, key); err != nil {
-			t.Fatal(err)
-		}
+		write := signer(t, runDir)
+		write("claims/all-1.yaml", claimFixture("all-1", 1, "bob"), key)
+		write("submissions/all-bob.yaml", record, key)
 		state, err := ReadState(runDir, plan, allowed)
 		if err != nil {
 			t.Fatal(err)
@@ -175,16 +228,98 @@ func TestReadStateIgnoresMalformedRecords(t *testing.T) {
 	}
 }
 
-func TestNextAction(t *testing.T) {
-	plan := Plan{Units: []string{"u0", "u1"}, Replicas: 2, Pretrain: PretrainPlan{Rounds: 1}}
-	merged := Round{Merge: &MergeRecord{ClosedAt: "2026-10-21T10:00:00+00:00"}}
-	submitted := func(pairs ...string) Round {
-		round := Round{Submissions: map[string][]Submission{}}
-		for index := 0; index < len(pairs); index += 2 {
-			round.Submissions[pairs[index]] = append(round.Submissions[pairs[index]], Submission{Unit: pairs[index], Identity: pairs[index+1]})
-		}
-		return round
+func TestMajorityOfClosersDecidesRound(t *testing.T) {
+	keys, identities := map[string]string{}, map[string]Identity{}
+	for _, name := range []string{"alice", "bob", "carol", "dave"} {
+		key, public := signingKey(t, name)
+		keys[name], identities[name] = key, Identity{Key: public}
 	}
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Pretrain: PretrainPlan{Rounds: 1}, Identities: identities}
+	runDir := t.TempDir()
+	allowed := filepath.Join(t.TempDir(), "allowed_signers")
+	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
+		t.Fatal(err)
+	}
+	write := signer(t, runDir)
+	write("claims/all-1.yaml", claimFixture("all-1", 1, "alice"), keys["alice"])
+	write("submissions/all-alice.yaml", submissionFixture("all", "alice"), keys["alice"])
+	honest, cheat := strings.Repeat("c", 64), strings.Repeat("f", 64)
+	for position, name := range []string{"alice", "bob", "carol"} {
+		write("claims/close-"+strconv.Itoa(position+1)+".yaml", claimFixture("close-"+strconv.Itoa(position+1), 1, name), keys[name])
+	}
+	read := func() Round {
+		t.Helper()
+		state, err := ReadState(runDir, plan, allowed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return state.Rounds[0]
+	}
+	now := time.Date(2026, 10, 21, 10, 30, 0, 0, time.UTC)
+	// One honest merge and one cheat: no majority yet, and the third closer's slot is still held.
+	write("merges/alice.yaml", mergeFixture("alice", honest), keys["alice"])
+	write("merges/bob.yaml", mergeFixture("bob", cheat), keys["bob"])
+	if round := read(); round.Merge != nil || len(round.Merges) != 2 {
+		t.Fatalf("round decided without a majority: %+v", round)
+	}
+	if got := (State{Plan: plan, Rounds: []Round{read()}}).Next("dave", now); got.Kind != "idle" {
+		t.Fatalf("dave = %+v, want idle while close-3 is held", got)
+	}
+	// A fourth closer claimed before the vote split does not count.
+	early := claimFixture("close-4", 1, "dave")
+	early.CreatedAt = "2026-10-21T10:30:00+00:00"
+	write("claims/close-4.yaml", early, keys["dave"])
+	write("merges/dave.yaml", mergeFixture("dave", honest), keys["dave"])
+	if round := read(); round.Merge != nil || len(round.Merges) != 2 {
+		t.Fatalf("an early fourth closer counted: %+v", round.Merges)
+	}
+	for _, file := range []string{"claims/close-4.yaml", "claims/close-4.yaml.sig", "merges/dave.yaml", "merges/dave.yaml.sig"} {
+		if err := os.Remove(filepath.Join(roundDir(runDir, 0), file)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The third closer splits the vote three ways, which opens a fourth slot.
+	write("merges/carol.yaml", mergeFixture("carol", strings.Repeat("e", 64)), keys["carol"])
+	if got := (State{Plan: plan, Rounds: []Round{read()}}).Next("dave", now); got.Kind != "claim" || got.Slot != "close-4" {
+		t.Fatalf("dave = %+v, want a claim on close-4", got)
+	}
+	late := claimFixture("close-4", 1, "dave")
+	late.CreatedAt = "2026-10-21T11:05:00+00:00"
+	write("claims/close-4.yaml", late, keys["dave"])
+	write("merges/dave.yaml", mergeFixture("dave", honest), keys["dave"])
+	round := read()
+	if round.Merge == nil || round.Merge.ModelSHA256 != honest {
+		t.Fatalf("merge = %+v, want the honest majority", round.Merge)
+	}
+	agreeing, dissenting := round.Agreeing()
+	if len(agreeing) != 2 || len(dissenting) != 2 {
+		t.Fatalf("agreeing %d, dissenting %d", len(agreeing), len(dissenting))
+	}
+}
+
+func TestNextAction(t *testing.T) {
+	plan := Plan{Units: []string{"u0", "u1"}, Replicas: 2, Closers: 1, ClaimMinutes: 60, Pretrain: PretrainPlan{Rounds: 1}}
+	merged := Round{Merge: &MergeRecord{}, ClosedAt: time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)}
+	// round builds a round from "slot identity" claims, "unit identity" submissions, and "merge identity" merges.
+	round := func(entries ...string) Round {
+		result := Round{Claims: map[string][]Claim{}, Submissions: map[string][]Submission{}}
+		for _, entry := range entries {
+			kind, rest, _ := strings.Cut(entry, ":")
+			first, identity, _ := strings.Cut(rest, " ")
+			switch kind {
+			case "claim":
+				result.Claims[first] = append(result.Claims[first], Claim{Slot: first, Attempt: len(result.Claims[first]) + 1, Identity: identity, CreatedAt: "2026-10-21T10:10:00+00:00"})
+			case "late":
+				result.Claims[first] = append(result.Claims[first], Claim{Slot: first, Attempt: len(result.Claims[first]) + 1, Identity: identity, CreatedAt: "2026-10-21T09:00:00+00:00"})
+			case "submit":
+				result.Submissions[first] = append(result.Submissions[first], Submission{Unit: first, Identity: identity})
+			case "merge":
+				result.Merges = append(result.Merges, MergeRecord{Identity: identity})
+			}
+		}
+		return result
+	}
+	full := []string{"claim:all-1 alice", "claim:all-2 bob", "submit:all alice", "submit:all bob"}
 	now := time.Date(2026, 10, 21, 10, 30, 0, 0, time.UTC)
 	for name, test := range map[string]struct {
 		rounds   []Round
@@ -192,14 +327,19 @@ func TestNextAction(t *testing.T) {
 		minutes  float64
 		want     Action
 	}{
-		"bootstrap":       {nil, "alice", 0, Action{Kind: "contribute", Round: 0, Stage: "bootstrap", Unit: "all"}},
-		"second replica":  {[]Round{submitted("all", "alice")}, "bob", 0, Action{Kind: "contribute", Round: 0, Stage: "bootstrap", Unit: "all"}},
-		"waits on others": {[]Round{submitted("all", "alice")}, "alice", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
-		"closes full":     {[]Round{submitted("all", "alice", "all", "bob")}, "carol", 0, Action{Kind: "close", Round: 0, Stage: "bootstrap"}},
-		"lowest unit":     {[]Round{merged, submitted("u0", "alice")}, "alice", 0, Action{Kind: "contribute", Round: 1, Stage: "pretrain", Unit: "u1"}},
-		"late round":      {[]Round{merged, submitted("u0", "alice", "u0", "bob")}, "alice", 20, Action{Kind: "close", Round: 1, Stage: "pretrain"}},
-		"not yet late":    {[]Round{merged, submitted("u0", "alice", "u0", "bob")}, "alice", 60, Action{Kind: "contribute", Round: 1, Stage: "pretrain", Unit: "u1"}},
-		"done":            {[]Round{merged, merged}, "alice", 0, Action{Kind: "done", Round: 1}},
+		"claims first slot": {nil, "alice", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-1", Attempt: 1}},
+		"claims next slot":  {[]Round{round("claim:all-1 alice")}, "bob", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 1}},
+		"trains its claim":  {[]Round{round("claim:all-1 alice")}, "alice", 0, Action{Kind: "contribute", Round: 0, Stage: "bootstrap", Unit: "all"}},
+		"slots all held":    {[]Round{round("claim:all-1 alice", "claim:all-2 bob")}, "carol", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
+		"retakes expired":   {[]Round{round("claim:all-1 alice", "late:all-2 bob")}, "carol", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 2}},
+		"waits on others":   {[]Round{round("claim:all-1 alice", "claim:all-2 bob", "submit:all alice")}, "alice", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
+		"claims close":      {[]Round{round(full...)}, "carol", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "close", Slot: "close-1", Attempt: 1}},
+		"closes its claim":  {[]Round{round(append(full, "claim:close-1 carol")...)}, "carol", 0, Action{Kind: "close", Round: 0, Stage: "bootstrap", Unit: "close"}},
+		"waits on closer":   {[]Round{round(append(full, "claim:close-1 carol")...)}, "alice", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
+		"lowest free unit":  {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob")}, "carol", 0, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: "u1-1", Attempt: 1}},
+		"late round":        {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 20, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "close", Slot: "close-1", Attempt: 1}},
+		"not yet late":      {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 60, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: "u1-1", Attempt: 1}},
+		"done":              {[]Round{merged, merged}, "alice", 0, Action{Kind: "done", Round: 1}},
 	} {
 		plan.RoundMinutes = test.minutes
 		if got := (State{Plan: plan, Rounds: test.rounds}).Next(test.identity, now); got != test.want {

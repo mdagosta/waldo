@@ -85,7 +85,8 @@ func (joiner *Joiner) propose(ctx context.Context, branch, message string) (bool
 		return false, err
 	}
 	for attempt := 1; ; attempt++ {
-		if _, err := joiner.git(ctx, joiner.clone, append(credentials, "push", "-q", "--force", remote, branch)...); err == nil {
+		_, pushErr := joiner.git(ctx, joiner.clone, append(credentials, "push", "-q", "--force", remote, branch)...)
+		if pushErr == nil {
 			break
 		}
 		// A push can land even when git reports it failed (seen as "cannot lock ref" from GitHub).
@@ -93,7 +94,7 @@ func (joiner *Joiner) propose(ctx context.Context, branch, message string) (bool
 			break
 		}
 		if attempt == 3 {
-			return false, fmt.Errorf("push of %s failed 3 times; nothing was proposed", branch)
+			return false, fmt.Errorf("push of %s failed 3 times; nothing was proposed: %w", branch, pushErr)
 		}
 		time.Sleep(time.Duration(15*attempt) * time.Second)
 	}

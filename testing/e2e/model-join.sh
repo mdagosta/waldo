@@ -4,9 +4,10 @@
 # Copyright (c) 2026 Gregory M. Kurtzer
 # SPDX-License-Identifier: Apache-2.0
 
-# End-to-end `waldo model join`: a local bare runs repo, a tiny plan, alice and
-# bob alternating --once until the run is merged, with bob free-riding on one
-# unit in round 1. It trains for real with MLX on the configured index's
+# End-to-end `waldo model join`: a local bare runs repo, a tiny plan, alice,
+# bob, and carol taking turns --once until the run is merged, with bob
+# free-riding on one unit in round 1 and carol closing round 1 dishonestly, to
+# be outvoted by the other two closers. It trains for real with MLX on the configured index's
 # code/permissive corpus and keeps its identities in ~/.waldo/join/e2e-*, so it
 # is opt-in: WALDO_E2E_JOIN=1. Set JOIN_POSTTRAIN_CORPUS to an index path to add
 # a post-training round whose units each train a filter.slice of it.
@@ -33,9 +34,10 @@ run=join-e2e
 work=${TMPDIR:-/tmp}/waldo-model-join-e2e
 posttrain_corpus=${JOIN_POSTTRAIN_CORPUS:-}
 
-rm -rf "$work" "$HOME/.waldo/join/e2e-alice" "$HOME/.waldo/join/e2e-bob"
+identities="e2e-alice e2e-bob e2e-carol"
+rm -rf "$work" "$HOME/.waldo/join/e2e-alice" "$HOME/.waldo/join/e2e-bob" "$HOME/.waldo/join/e2e-carol"
 mkdir -p "$work/keys" "$work/store"
-for identity in e2e-alice e2e-bob; do
+for identity in $identities; do
   ssh-keygen -q -t ed25519 -N "" -C "$identity" -f "$work/keys/$identity"
 done
 
@@ -49,11 +51,13 @@ schema: 1
 name: $run
 units: [u0, u1, u2]
 replicas: 2
+closers: 3
 merge: mean
 store: file://$work/store
 identities:
   e2e-alice: $(cut -d' ' -f1,2 "$work/keys/e2e-alice.pub")
   e2e-bob: $(cut -d' ' -f1,2 "$work/keys/e2e-bob.pub")
+  e2e-carol: $(cut -d' ' -f1,2 "$work/keys/e2e-carol.pub")
 pretrain:
   compose: pretrain.yaml.tmpl
   bootstrap_tokens: 2000000
@@ -78,71 +82,134 @@ git -C "$work/seed" add -A
 git -C "$work/seed" -c user.name=e2e -c user.email=e2e@waldo.invalid commit -q -m "runs/$run: plan"
 git -C "$work/seed" push -q origin main
 
-# A free-rider: bob submits round 1's starting weights for u2 without training, with
-# the round's token count, so only the closer's held-out measurement can catch it.
-submit_lazy_u2() {
-  rounds="runs/$run/rounds"
-  git -C "$work/seed" pull -q
-  python3 - "$work/seed" "$work/store/$run" "$rounds" <<'PYTHON'
-import hashlib, json, pathlib, shutil, sys
-seed, store, rounds = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
-base = json.loads((seed / rounds / "round-0000" / "merge.yaml").read_text())
-# Every unit trains the same fixed steps, so any honest round-1 record has the right tokens.
-honest = json.loads(sorted((seed / rounds / "round-0001" / "submissions").glob("*.yaml"))[0].read_text())
-model = "waldo-join-e2e-r0001-u2-e2e-bob"
-shutil.copytree(store / base["model"], store / model)
-files = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((store / model).iterdir())}
-record = {
-    "kind": "waldo-join-submission", "schema": 1, "run": honest["run"], "round": 1, "stage": "pretrain",
-    "unit": "u2", "identity": "e2e-bob", "base": base["model"], "base_sha256": base["model_sha256"],
-    "model": model, "model_sha256": files["model.safetensors"], "bom_sha256": files.get("BOM.json"),
-    "files": files, "tokens": honest["tokens"], "url": f"file://{store / model}", "created_at": honest["created_at"],
-}
-(seed / rounds / "round-0001" / "submissions" / "u2-e2e-bob.yaml").write_text(json.dumps(record, indent=2) + "\n")
+# rounds.py reads the runs repo's main branch as data: whether a round is decided,
+# its majority merge, and what the cheaters need to forge records that are well formed.
+cat > "$work/rounds.py" <<'PYTHON'
+import collections, hashlib, json, pathlib, shutil, subprocess, sys
+git, run, command, number = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+rounds = f"runs/{run}/rounds"
+
+def files(round_number, kind):
+    listing = subprocess.run(["git", f"--git-dir={git}", "ls-tree", "--name-only", f"main:{rounds}/round-{round_number:04d}/{kind}/"],
+                             capture_output=True, text=True).stdout.split()
+    return {name: json.loads(subprocess.run(["git", f"--git-dir={git}", "show", f"main:{rounds}/round-{round_number:04d}/{kind}/{name}"],
+                                            capture_output=True, text=True, check=True).stdout) for name in listing if name.endswith(".yaml")}
+
+def decided(round_number):
+    merges = list(files(round_number, "merges").values())
+    votes = collections.Counter((m["model_sha256"], json.dumps(m["accepted"], sort_keys=True)) for m in merges)
+    best = votes.most_common(1)
+    if not best or best[0][1] < 2:
+        return None, merges
+    return next(m for m in merges if (m["model_sha256"], json.dumps(m["accepted"], sort_keys=True)) == best[0][0]), merges
+
+def free_slot(round_number, unit, count):
+    claims = files(round_number, "claims")
+    return next(f"{unit}-{n}" for n in range(1, count + 1) if f"{unit}-{n}.yaml" not in claims)
+
+if command == "decided":
+    merge, _ = decided(number)
+    sys.exit(0 if merge else 1)
+if command == "merge":
+    merge, merges = decided(number)
+    print(json.dumps({"merge": merge, "merges": merges}))
+if command in ("lazy-u2", "cheat-close"):
+    seed, store, signer = pathlib.Path(sys.argv[5]), pathlib.Path(sys.argv[6]), sys.argv[7]
+    base, _ = decided(number - 1)
+    submissions = files(number, "submissions")
+    claims = files(number, "claims")
+    if command == "lazy-u2":
+        # Not yet: round 1 has started, and bob has not taken part in u2.
+        if not claims or any(c["identity"] == signer and c["slot"].startswith("u2-") for c in claims.values()):
+            sys.exit(1)
+        model = f"waldo-{run}-r{number:04d}-u2-{signer}"
+        shutil.copytree(store / base["model"], store / model)
+        pinned = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((store / model).iterdir())}
+        # Every unit trains the same fixed steps, so any honest record has the right tokens; one exists by now
+        # or the free-rider waits a turn.
+        honest = next(iter(submissions.values()), None)
+        if honest is None:
+            sys.exit(1)
+        slot = free_slot(number, "u2", 2)
+        out = {f"claims/{slot}.yaml": {"kind": "waldo-join-claim", "schema": 1, "run": run, "round": number, "stage": "pretrain",
+                                      "slot": slot, "attempt": 1, "identity": signer, "created_at": honest["created_at"]},
+               "submissions/u2-" + signer + ".yaml": {
+                   "kind": "waldo-join-submission", "schema": 1, "run": run, "round": number, "stage": "pretrain", "unit": "u2",
+                   "identity": signer, "base": base["model"], "base_sha256": base["model_sha256"], "model": model,
+                   "model_sha256": pinned["model.safetensors"], "bom_sha256": pinned.get("BOM.json"), "files": pinned,
+                   "tokens": honest["tokens"], "url": f"file://{store / model}", "created_at": honest["created_at"]}}
+    else:
+        # Not yet: every unit of the round has both replicas, and carol has not closed it.
+        units = collections.Counter(s["unit"] for s in submissions.values())
+        if sorted(units.values()) != [2, 2, 2] or any(c["identity"] == signer and c["slot"].startswith("close-") for c in claims.values()):
+            sys.exit(1)
+        # The cheat: a merge that accepts every unit, the free-rider's included, and publishes the free-rider's weights.
+        lazy = submissions["u2-e2e-bob.yaml"]
+        slot = free_slot(number, "close", 3)
+        accepted = [{"unit": s["unit"], "identity": s["identity"], "model": s["model"], "model_sha256": s["model_sha256"], "tokens": s["tokens"]}
+                    for name, s in sorted(submissions.items()) if s["identity"] == "e2e-bob"]
+        out = {f"claims/{slot}.yaml": {"kind": "waldo-join-claim", "schema": 1, "run": run, "round": number, "stage": "pretrain",
+                                      "slot": slot, "attempt": 1, "identity": signer, "created_at": lazy["created_at"]},
+               f"merges/{signer}.yaml": {
+                   "kind": "waldo-join-merge", "schema": 1, "run": run, "round": number, "stage": "pretrain", "identity": signer,
+                   "method": "weighted-mean-f32-v1", "base": base["model"], "base_sha256": base["model_sha256"], "accepted": accepted,
+                   "dropped": [], "model": lazy["model"], "model_sha256": lazy["model_sha256"], "files": lazy["files"], "url": lazy["url"],
+                   "closed_at": lazy["created_at"]}}
+    directory = seed / rounds / f"round-{number:04d}"
+    for name, record in out.items():
+        (directory / name).parent.mkdir(parents=True, exist_ok=True)
+        (directory / name).write_text(json.dumps(record, indent=2) + "\n")
+        print(directory / name)
 PYTHON
-  record="$work/seed/$rounds/round-0001/submissions/u2-e2e-bob.yaml"
-  ssh-keygen -Y sign -f "$work/keys/e2e-bob" -n waldo-join "$record" 2>/dev/null
-  git -C "$work/seed" add "$rounds"
-  git -C "$work/seed" -c user.name=e2e-bob -c user.email=e2e-bob@waldo.invalid commit -q -s -m "$run round 1: u2 by e2e-bob (free-rider)"
+
+rounds() {
+  python3 "$work/rounds.py" "$work/runs.git" "$run" "$@"
+}
+
+# The cheaters write their records by hand and sign them with their own keys, so only
+# the closers' measurements and the closers' majority can catch them.
+cheat() {
+  identity=$1 command=$2
+  git -C "$work/seed" pull -q
+  records=$(rounds "$command" 1 "$work/seed" "$work/store/$run" "$identity") || return 1
+  for record in $records; do
+    ssh-keygen -Y sign -f "$work/keys/$identity" -n waldo-join "$record" 2>/dev/null
+  done
+  git -C "$work/seed" add "runs/$run/rounds"
+  git -C "$work/seed" -c user.name="$identity" -c user.email="$identity@waldo.invalid" commit -q -s -m "$run round 1: $command by $identity"
   git -C "$work/seed" push -q origin main
-  echo "!! e2e-bob submitted round 1's starting weights for u2 without training"
-}
-
-on_main() {
-  git --git-dir="$work/runs.git" cat-file -e "main:runs/$run/rounds/$1" 2>/dev/null
-}
-
-# Join takes the lowest unit this identity has not submitted, so with two identities u2
-# is bob's next unit in round 1 once he has submitted u0 and u1.
-bob_turns_to_u2() {
-  on_main round-0000/merge.yaml && ! on_main round-0001/submissions/u2-e2e-bob.yaml &&
-    on_main round-0001/submissions/u0-e2e-bob.yaml && on_main round-0001/submissions/u1-e2e-bob.yaml
+  echo "!! $identity: $command"
 }
 
 last=$(grep -c '^  rounds: 1' "$work/seed/runs/$run/plan.yaml")
-final="round-$(printf %04d "$last")/merge.yaml"
 passes=0
-until on_main "$final"; do
+until rounds decided "$last"; do
   passes=$((passes + 1))
   [ "$passes" -le 20 ] || { echo "model-join: run not merged after 20 passes" >&2; exit 1; }
-  for identity in e2e-alice e2e-bob; do
-    if [ "$identity" = e2e-bob ] && bob_turns_to_u2; then
-      submit_lazy_u2
-      continue
+  for identity in $identities; do
+    if rounds decided 0 && ! rounds decided 1; then
+      [ "$identity" = e2e-bob ] && cheat e2e-bob lazy-u2 && continue
+      [ "$identity" = e2e-carol ] && cheat e2e-carol cheat-close && continue
     fi
     "$waldo" model join "$work/runs.git" "runs/$run" --identity "$identity" --key "$work/keys/$identity" --once
   done
 done
 
-# Round 1 dropped the free-rider's unit on measured evidence and merged the honest units;
-# later rounds merged every unit. Each merge pins its BOM.json and records its evidence.
+# Round 1 dropped the free-rider's unit on measured evidence and merged the honest units,
+# outvoting carol's merge that took it; later rounds merged every unit. Each merge pins
+# its BOM.json and records its evidence.
 for round in $(seq 1 "$last"); do
-  git --git-dir="$work/runs.git" show "main:runs/$run/rounds/round-$(printf %04d "$round")/merge.yaml" | python3 -c '
+  rounds merge "$round" | python3 -c '
 import json, sys
-merge, round_number = json.load(sys.stdin), int(sys.argv[1])
+decided, round_number = json.load(sys.stdin), int(sys.argv[1])
+merge = decided["merge"]
 honest = ["u0", "u1"] if round_number == 1 else ["u0", "u1", "u2"]
 assert sorted(unit["unit"] for unit in merge["accepted"]) == honest, merge["accepted"]
 assert merge["method"] == "weighted-mean-f32-v1" and "BOM.json" in merge["files"], merge
+if round_number == 1:
+    dissent = [m for m in decided["merges"] if m["model_sha256"] != merge["model_sha256"]]
+    assert [m["identity"] for m in dissent] == ["e2e-carol"], [m["identity"] for m in decided["merges"]]
+    print(f"round 1: e2e-carol'"'"'s merge was outvoted by", sorted(m["identity"] for m in decided["merges"] if m not in dissent))
 assert sorted(unit["unit"] for unit in merge["evidence"]) == ["u0", "u1", "u2"], merge.get("evidence")
 for unit in merge["evidence"]:
     assert len(unit["replicas"]) == 2 and len(unit["evaluation_set_sha256"]) == 64, unit
@@ -151,8 +218,9 @@ if round_number == 1:
     assert [(unit["unit"], unit["reason"]) for unit in merge["dropped"]] == [("u2", "replicas disagree")], merge["dropped"]
     lazy = next(unit for unit in merge["evidence"] if unit["unit"] == "u2")
     losses = {r["identity"]: r["heldout_loss"] for r in lazy["replicas"]}
+    honest_loss = [loss for identity, loss in losses.items() if identity != "e2e-bob"][0]
     # The free-rider scores the round start; honest training improved on it.
-    assert abs(losses["e2e-bob"] - lazy["start_loss"]) < 1e-6 and losses["e2e-alice"] < lazy["start_loss"], lazy
+    assert abs(losses["e2e-bob"] - lazy["start_loss"]) < 1e-6 and honest_loss < lazy["start_loss"], lazy
 # The merge publishes its round'"'"'s run BOMs and its whole training history, and discloses it.
 package = merge["url"][len("file://"):]
 provenance = [name for name in merge["files"] if name.startswith("provenance-")]

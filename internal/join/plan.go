@@ -41,6 +41,8 @@ type Plan struct {
 	ReplicaTolerance *float64            `yaml:"replica_tolerance"`
 	ReplicaFloor     *float64            `yaml:"replica_floor"`
 	RoundMinutes     float64             `yaml:"round_minutes"`
+	Closers          int                 `yaml:"closers"`
+	ClaimMinutes     float64             `yaml:"claim_minutes"`
 }
 
 // Identity is a plan contributor: an ssh signing key and, for Hugging Face
@@ -102,7 +104,13 @@ func LoadPlan(path string) (Plan, error) {
 	if plan.Merge == "" {
 		plan.Merge = "mean"
 	}
-	if plan.Name == "" || len(plan.Units) == 0 || plan.Replicas < 1 || plan.Pretrain.Compose == "" {
+	if plan.Closers == 0 {
+		plan.Closers = 3
+	}
+	if plan.ClaimMinutes == 0 {
+		plan.ClaimMinutes = 60
+	}
+	if plan.Name == "" || len(plan.Units) == 0 || plan.Replicas < 1 || plan.Closers < 1 || plan.ClaimMinutes < 0 || plan.Pretrain.Compose == "" {
 		return Plan{}, fmt.Errorf("%s: a plan needs a name, units, replicas, and a pretrain compose", path)
 	}
 	if plan.Merge != "mean" {
@@ -124,8 +132,8 @@ func LoadPlan(path string) (Plan, error) {
 			return Plan{}, fmt.Errorf("%s: %q must use lowercase letters, digits, '.', '_', and '-'", path, name)
 		}
 	}
-	if slices.Contains(plan.Units, "all") || len(slices.Compact(slices.Sorted(slices.Values(plan.Units)))) != len(plan.Units) {
-		return Plan{}, fmt.Errorf("%s: units must be distinct and not named all, the bootstrap's unit", path)
+	if slices.Contains(plan.Units, "all") || slices.Contains(plan.Units, "close") || len(slices.Compact(slices.Sorted(slices.Values(plan.Units)))) != len(plan.Units) {
+		return Plan{}, fmt.Errorf("%s: units must be distinct and not named all, the bootstrap's unit, or close, the closing slots' name", path)
 	}
 	return plan, nil
 }
@@ -166,4 +174,23 @@ func (plan Plan) Floor() float64 {
 		return 0.001
 	}
 	return *plan.ReplicaFloor
+}
+
+// Quorum is how many closers must sign the same merge for a round to close:
+// a majority of the plan's closers, or of its identities if it has fewer.
+func (plan Plan) Quorum() int {
+	closers := plan.Closers
+	if count := len(plan.Identities); count > 0 && count < closers {
+		closers = count
+	}
+	return closers/2 + 1
+}
+
+// Closing is how many closing slots are open before any disagreement: the
+// plan's closers, or every identity if it has fewer.
+func (plan Plan) Closing() int {
+	if count := len(plan.Identities); count > 0 && count < plan.Closers {
+		return count
+	}
+	return plan.Closers
 }
