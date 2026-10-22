@@ -153,12 +153,15 @@ after execution.
 ### `ATTRIBUTION.md`
 
 Every model export includes a deterministic training-data attribution notice.
-It is generated only from the immutable corpus BOMs of completed runs and
-lists their declared licenses, recorded preservation obligations, source URLs,
-versions or source digests, upstream license declarations, and license-evidence
-URLs. Export fails if any recorded training corpus no longer passes WALDO's
-distributable policy. Imported models with no WALDO training runs instead point
-the reader to their origin BOM.
+It is generated only from the immutable corpus BOMs of completed runs, the
+model's own and every one its lineage inherited through its training closure,
+and lists their declared licenses, recorded preservation obligations, source
+URLs, versions or source digests, upstream license declarations, and
+license-evidence URLs. Export fails if any recorded training corpus, own or
+inherited, no longer passes WALDO's distributable policy: a merge of a model
+trained on non-distributable data is itself not distributable. Imported models
+whose lineage records no WALDO training instead point the reader to their
+origin BOM.
 
 ### Managed `MODEL-BOM.json`
 
@@ -195,7 +198,8 @@ inventory. Its schema-1 shape is:
     "weights_sha256": "<released weights' managed artifact hash>",
     "parents": [
       {"weights_sha256": "<starting weights hash>", "lineage_sha256": "<parent lineage node hash>"}
-    ]
+    ],
+    "runs": ["<run BOM hash of training that produced these weights>"]
   },
   "artifacts": [
     {
@@ -224,19 +228,36 @@ continues across publication. Each artifact path is relative to the package
 root. This makes a release relocatable without embedding a machine-specific
 model directory.
 
-The derived package currently records the source model BOM by hash rather than
-embedding the full `MODEL-BOM.json` and run tree. The hash makes substitution
-detectable when the source BOM is retained or published, but it cannot recreate
-that missing document by itself. Keep or publish the native WALDO package when
-a self-contained, inspectable provenance archive is required. `EU-BOM.json`
-contains the regulatory projection of training evidence, but is not a
-replacement for the full technical run provenance.
+The derived package records the source model BOM by hash rather than embedding
+the full `MODEL-BOM.json` and run tree, but it does publish the training
+evidence behind its weights ([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)):
+
+- `provenance-<sha256>.json` (role `training-provenance`): one file per run BOM
+  that produced the released weights, named by the hash of the run BOM's
+  canonical JSON, the same hash `MODEL.json` pins the run by. Each run BOM
+  embeds its corpus BOM: the index commit, every shard by hash, and the record
+  filter. A trained model publishes its own runs; a merged model publishes the
+  runs of the models it merged; a model pulled from a release republishes that
+  release's runs. Older runs stay published by the releases they came from, so
+  a package never grows with its history.
+- `TRAINING-CLOSURE.json` (role `training-closure`): every distinct corpus BOM
+  the weights' whole lineage trained on, with use counts, and `complete`, which
+  is false when part of that history is not recorded. Keyed by corpus BOM, it
+  grows with the corpora a lineage uses, not with its length.
+
+Pulling a release keeps both with the origin. Each run BOM is checked against
+the hash it is named by, and a malformed closure is refused, so models built
+from a release inherit its evidence. Run BOMs record their Python runtime by
+name and version only, without local paths. Keep or publish the native WALDO
+package when a self-contained archive of the full model tree is required.
 
 ### `EU-BOM.json`
 
 `EU-BOM.json` is not a second weight inventory. It is the model-specific
 regulatory disclosure mapping assembled from provider configuration, model and
-run lineage, and the training corpus BOMs. It pins the supported Commission
+run lineage, and the training corpus BOMs, including every corpus the model's
+lineage inherited from its starting weights (stages `inherited`; a lineage with
+unrecorded history is reported as a gap). It pins the supported Commission
 template and reports missing facts. WALDO does not claim that generating it
 alone establishes legal compliance, and official editable Word-template
 rendering remains separate work.

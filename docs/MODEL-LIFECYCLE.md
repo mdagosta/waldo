@@ -94,10 +94,13 @@ managed artifact has been verified. `ORIGIN-BOM.json` retains the repository,
 requested reference, resolved commit, license when declared, and hashes of all
 acquired files; it does not retain a redundant copy of the source weights.
 When the source is a WALDO release, the origin also keeps the release's
-lineage node. Origins can also come from an exported package in a local
+lineage node, its published run BOMs, and its training closure (see
+[model exports](MODEL-EXPORTS.md)), so a model trained from it inherits the
+release's whole training history. Origins can also come from an exported package in a local
 directory (provider `file`), which `waldo model join` uses, or from a merge
 (provider `merge`): a merged origin records its method, its parents in merge
-order with their weights and lineage nodes, and its own lineage node. Merged
+order with their weights and lineage nodes, and its own lineage node, and
+keeps its parents' run BOMs and the union of their training closures. Merged
 origins live under `<model.root>/.merges`, named by their parents and weights,
 so the same merge is built once.
 `MODEL-BOM.json` selects the origin until a complete real training run produces
@@ -462,7 +465,7 @@ weights, and records no run, so the model is unchanged. Because selection
 depends on the corpus, filters, objective, evaluation parameters, and seed, but
 not on the training budget, two machines scoring different weights with the
 same compose and seed score the same records. `waldo model join` verifiers use
-it to compare replicas.
+it to compare replicas ([ADR 0087](adr/0087-score-weights-without-training.md)).
 
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
