@@ -11,7 +11,8 @@ back to the corpora it was trained on.
 `model join` is the asynchronous, untrusted-contributor counterpart to
 [multi-host training](MULTI-NODE-TRAINING.md): contributors train separate
 units and the run merges them every round, instead of nodes stepping together
-through all-reduce.
+through all-reduce. The design is recorded in
+[ADR 0088](adr/0088-distributed-training-through-signed-records.md).
 
 ## Command
 
@@ -135,8 +136,9 @@ base:
       weight: <tokens trained>
 ```
 
-The merged model is a WALDO merged origin whose records pin every parent and
-the lineage they share; WALDO refuses to merge parents without a recorded
+The merged model is a WALDO merged origin whose records pin every parent, the
+lineage they share, every accepted unit's run BOMs, and the union of their
+training closures; WALDO refuses to merge parents without a recorded
 common ancestor (see [Model compose](MODEL-COMPOSE.md#merged-base)). Its export
 is published, and `merge.yaml` records the accepted and dropped units and why,
 the merged weights' hashes and URL, and, for every unit whose replicas were
@@ -144,6 +146,24 @@ compared, the evidence: the starting loss, the held-out set's SHA-256, and
 every replica's measured loss.
 The merge is deterministic, so independent closers of one round compute the
 same hash; the first `merge.yaml` on the default branch stands.
+
+### Training provenance across rounds
+
+Each round starts from the previous round's merge, so a run's data history
+spans every round. Releases carry it forward:
+
+- A submission's package publishes its run BOM (`provenance-<sha256>.json`),
+  which pins the unit's index commit, shards, and record filter, and its
+  training closure, every corpus its lineage trained on.
+- A merge's package republishes every accepted unit's run BOM and the union of
+  their closures. Submission repositories can therefore be pruned after a round
+  closes without losing evidence: the merges hold it, round by round.
+- The final model's `EU-BOM.json` and `ATTRIBUTION.md` cover every round's
+  corpora, and its distributable review covers every round's licenses.
+
+The runs repository pins each package's files by hash in its records, so a
+package that later changes is detected; the evidence itself lives with the
+weights, which must be hosted anyway.
 
 ## Choosing replicas
 
