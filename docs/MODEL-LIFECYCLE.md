@@ -93,6 +93,13 @@ file. Source downloads live only in private staging and are removed after the
 managed artifact has been verified. `ORIGIN-BOM.json` retains the repository,
 requested reference, resolved commit, license when declared, and hashes of all
 acquired files; it does not retain a redundant copy of the source weights.
+When the source is a WALDO release, the origin also keeps the release's
+lineage node. Origins can also come from an exported package in a local
+directory (provider `file`), which `waldo model join` uses, or from a merge
+(provider `merge`): a merged origin records its method, its parents in merge
+order with their weights and lineage nodes, and its own lineage node. Merged
+origins live under `<model.root>/.merges`, named by their parents and weights,
+so the same merge is built once.
 `MODEL-BOM.json` selects the origin until a complete real training run produces
 new current weights.
 
@@ -506,7 +513,8 @@ attempt without one remains terminal and is restarted as a new run.
 - `PLAN.json` content-identifies the immutable architecture and local model
   name plus either an external origin BOM or a trained-parent pin. The parent
   pin names the model and run and hashes both the run BOM and copied weight
-  artifact. `MODEL.json` and `MODEL-BOM.json` repeat that lineage. Adding
+  artifact, and, for parents recorded since lineage nodes, the parent's
+  lineage node. `MODEL.json` and `MODEL-BOM.json` repeat that lineage. Adding
   training does not change model identity.
 - `RUN-BOM.json` embeds the hash-pinned corpus OpenWALDO BOM and pins
   architecture, backend, objective, parameters, and execution environment

@@ -140,6 +140,9 @@ func (builder Builder) Evaluate(ctx context.Context, name string, prepared Prepa
 	if err != nil {
 		return Evaluation{}, err
 	}
+	if observation.Simulated {
+		return Evaluation{}, fmt.Errorf("backend %s only simulates; evaluation needs real weights scored by a real backend", selection.Execution.Backend.Name)
+	}
 	if len(observation.Evaluations) != 1 {
 		return Evaluation{}, fmt.Errorf("evaluation of %s returned %d results, not one", name, len(observation.Evaluations))
 	}

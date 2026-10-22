@@ -51,7 +51,8 @@ runs/<run>/
 
 | Key | Meaning |
 | --- | --- |
-| `name` | Run name, used in record and model names. |
+| `kind`, `schema` | `waldo-join-plan` and `1`. Unknown fields are rejected. |
+| `name` | Run name, used in record and model names. Run, unit, and identity names use lowercase letters, digits, `.`, `_`, and `-`. |
 | `units` | Named units of data. Every round trains each unit. |
 | `replicas` | How many identities train each unit per round. `2` is the smallest verifying plan. |
 | `merge` | `mean`. Accepted units are merged by token-weighted mean. |
@@ -215,8 +216,11 @@ on a repository their owner does not control, so record pull requests need a
 classic token with `public_repo`. Give that token to a GitHub machine account
 rather than a personal one: it then reaches only the machine account's forks,
 and the records stay off the person's contribution graph. Store it in
-`~/.waldo/join/<identity>/github-token` with mode 600; join passes it only
-to its own `gh` and `git` calls and refuses a token file others can read.
+`~/.waldo/join/<identity>/github-token`. As for WALDO's other credentials
+(ADR 0035), join refuses a token that is a symlink or not a regular file, is
+readable by group or others, or sits in a directory others can read; it creates
+identity directories with mode 700. It passes the token only to its own `gh`
+and `git` calls.
 Without that file, join uses the caller's `GH_TOKEN` or `gh` login.
 
 ## Testing

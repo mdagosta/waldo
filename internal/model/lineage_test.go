@@ -55,7 +55,7 @@ func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	origin := merged.Origin
-	if origin == nil || origin.Source.Provider != "merge" || origin.Merge == nil || origin.Merge.Method != "weighted-mean" || len(origin.Merge.Parents) != 2 || origin.Merge.Parents[1].Weight != 3 {
+	if origin == nil || origin.Source.Provider != "merge" || origin.Merge == nil || origin.Merge.Method != "weighted-mean-f32-v1" || len(origin.Merge.Parents) != 2 || origin.Merge.Parents[1].Weight != 3 {
 		t.Fatalf("origin = %+v", origin)
 	}
 	// Like a git merge commit, the merged node names each parent's node and nothing older.

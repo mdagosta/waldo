@@ -9,6 +9,7 @@
 package join
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"slices"
@@ -18,9 +19,16 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	PlanKind   = "waldo-join-plan"
+	PlanSchema = 1
+)
+
 // Plan is a run's plan.yaml, the one file every contributor reads to know
 // the run's units, rounds, identities, and store.
 type Plan struct {
+	Kind             string              `yaml:"kind"`
+	Schema           int                 `yaml:"schema"`
 	Name             string              `yaml:"name"`
 	Units            []string            `yaml:"units"`
 	Replicas         int                 `yaml:"replicas"`
@@ -53,8 +61,6 @@ type PretrainPlan struct {
 type PosttrainPlan struct {
 	Compose        string `yaml:"compose"`
 	Corpus         string `yaml:"corpus"` // index path; each unit trains its own slice of it
-	Data           string `yaml:"data"`
-	Fetcher        string `yaml:"fetcher"`
 	Rounds         int    `yaml:"rounds"`
 	EpochsPerRound int    `yaml:"epochs_per_round"`
 }
@@ -63,6 +69,14 @@ func (identity *Identity) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		identity.Key = node.Value
 		return nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("identity must be a signing key or a {key, hf} mapping")
+	}
+	for index := 0; index < len(node.Content); index += 2 {
+		if key := node.Content[index].Value; key != "key" && key != "hf" {
+			return fmt.Errorf("identity has unknown field %q", key)
+		}
 	}
 	type plain Identity
 	return node.Decode((*plain)(identity))
@@ -74,8 +88,13 @@ func LoadPlan(path string) (Plan, error) {
 		return Plan{}, err
 	}
 	var plan Plan
-	if err := yaml.Unmarshal(data, &plan); err != nil {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&plan); err != nil {
 		return Plan{}, fmt.Errorf("%s: %w", path, err)
+	}
+	if plan.Kind != PlanKind || plan.Schema != PlanSchema {
+		return Plan{}, fmt.Errorf("%s: unsupported plan identity %q schema %d; expected kind %s, schema %d", path, plan.Kind, plan.Schema, PlanKind, PlanSchema)
 	}
 	if plan.Replicas == 0 {
 		plan.Replicas = 1

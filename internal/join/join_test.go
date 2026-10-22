@@ -34,7 +34,7 @@ func signingKey(t *testing.T, name string) (string, string) {
 func writePlan(t *testing.T, text string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "plan.yaml")
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("kind: waldo-join-plan\nschema: 1\n"+text), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return path
@@ -50,7 +50,6 @@ identities:
   bob:
     key: ssh-ed25519 BBBB
     hf: bob
-tamper: {round: 1, unit: u1, identity: bob, kind: lazy}
 pretrain:
   compose: pretrain.yaml.tmpl
   bootstrap_tokens: 2000000
@@ -81,15 +80,17 @@ replica_tolerance: 0.5
 
 func TestLoadPlanRejectsUnsupportedPlans(t *testing.T) {
 	for name, text := range map[string]string{
-		"store":     "name: x\nunits: [u0]\nstore: s3://bucket\npretrain: {compose: p.tmpl}\n",
-		"merge":     "name: x\nunits: [u0]\nmerge: diloco\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"units":     "name: x\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"signer":    "name: x\nunits: [u0]\nstore: huggingface\nidentities: {alice: {hf: alice}}\npretrain: {compose: p.tmpl}\n",
-		"unit name": "name: x\nunits: [../u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"identity":  "name: x\nunits: [u0]\nstore: huggingface\nidentities: {Alice/x: k}\npretrain: {compose: p.tmpl}\n",
-		"run name":  "name: X Run\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"all unit":  "name: x\nunits: [all]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"duplicate": "name: x\nunits: [u0, u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"store":          "name: x\nunits: [u0]\nstore: s3://bucket\npretrain: {compose: p.tmpl}\n",
+		"merge":          "name: x\nunits: [u0]\nmerge: diloco\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"units":          "name: x\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"signer":         "name: x\nunits: [u0]\nstore: huggingface\nidentities: {alice: {hf: alice}}\npretrain: {compose: p.tmpl}\n",
+		"unit name":      "name: x\nunits: [../u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"identity":       "name: x\nunits: [u0]\nstore: huggingface\nidentities: {Alice/x: k}\npretrain: {compose: p.tmpl}\n",
+		"run name":       "name: X Run\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"all unit":       "name: x\nunits: [all]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"duplicate":      "name: x\nunits: [u0, u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
+		"unknown":        "name: x\nunits: [u0]\nstore: huggingface\ntamper: {round: 1}\npretrain: {compose: p.tmpl}\n",
+		"identity field": "name: x\nunits: [u0]\nstore: huggingface\nidentities: {alice: {key: k, email: a}}\npretrain: {compose: p.tmpl}\n",
 	} {
 		if _, err := LoadPlan(writePlan(t, text)); err == nil {
 			t.Fatalf("%s: plan accepted", name)
@@ -100,7 +101,7 @@ func TestLoadPlanRejectsUnsupportedPlans(t *testing.T) {
 func submissionFixture(unit, identity string) Submission {
 	digest := strings.Repeat("a", 64)
 	return Submission{
-		Kind: SubmissionKind, Schema: 1, Run: "run", Round: 0, Stage: "bootstrap", Unit: unit, Identity: identity,
+		Kind: SubmissionKind, Schema: RecordSchema, Run: "run", Round: 0, Stage: "bootstrap", Unit: unit, Identity: identity,
 		Model: "waldo-run-r0000-" + unit + "-" + identity, ModelSHA256: digest,
 		Files: map[string]string{"model.safetensors": digest, "config.json": strings.Repeat("b", 64)},
 	}
@@ -133,7 +134,7 @@ func TestReadStateVerifiesSignatures(t *testing.T) {
 	if got := state.Rounds[0].Submissions["all"]; len(got) != 1 || got[0].Identity != "alice" {
 		t.Fatalf("submissions = %+v", state.Rounds[0].Submissions)
 	}
-	merge := MergeRecord{Kind: MergeKind, Run: "run", Round: 0, Stage: "bootstrap", Identity: "bob", Model: "waldo-run-r0000-merge", ModelSHA256: strings.Repeat("c", 64), Files: map[string]string{"model.safetensors": strings.Repeat("c", 64)}}
+	merge := MergeRecord{Kind: MergeKind, Schema: RecordSchema, Run: "run", Round: 0, Stage: "bootstrap", Identity: "bob", Model: "waldo-run-r0000-merge", ModelSHA256: strings.Repeat("c", 64), Files: map[string]string{"model.safetensors": strings.Repeat("c", 64)}}
 	if err := writeSigned(filepath.Join(roundDir(runDir, 0), "merge.yaml"), merge, malloryKey); err != nil {
 		t.Fatal(err)
 	}
@@ -251,5 +252,60 @@ func TestPosttrainComposeTakesItsUnitsSlice(t *testing.T) {
 	}
 	if compose.Base == nil || compose.Base.Model != "base-model" || compose.Stages[0].Parameters.Epochs != 4 {
 		t.Fatalf("compose = %+v", compose)
+	}
+}
+
+func TestLoadPlanRequiresItsKindAndSchema(t *testing.T) {
+	for name, header := range map[string]string{"missing": "", "kind": "kind: waldo-plan\nschema: 1\n", "schema": "kind: waldo-join-plan\nschema: 2\n"} {
+		path := filepath.Join(t.TempDir(), "plan.yaml")
+		if err := os.WriteFile(path, []byte(header+"name: x\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadPlan(path); err == nil || !strings.Contains(err.Error(), "unsupported plan identity") {
+			t.Fatalf("%s: error = %v", name, err)
+		}
+	}
+}
+
+func TestLoadTokenAcceptsOnlyAPrivateRegularFile(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "identity")
+	if err := os.Mkdir(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	token := filepath.Join(home, "github-token")
+	if err := os.WriteFile(token, []byte("secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	joiner := &Joiner{Home: home}
+	if err := joiner.loadToken(); err != nil || joiner.token != "secret" {
+		t.Fatalf("token = %q, %v", joiner.token, err)
+	}
+	if err := os.Chmod(token, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.loadToken(); err == nil || !strings.Contains(err.Error(), "readable by others") {
+		t.Fatalf("readable token error = %v", err)
+	}
+	if err := os.Chmod(token, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := joiner.loadToken(); err == nil || !strings.Contains(err.Error(), "chmod 700") {
+		t.Fatalf("readable directory error = %v", err)
+	}
+	if err := os.Chmod(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(t.TempDir(), "linked")
+	if err := os.Mkdir(linked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(token, filepath.Join(linked, "github-token")); err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Joiner{Home: linked}).loadToken(); err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("symlinked token error = %v", err)
 	}
 }

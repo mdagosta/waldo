@@ -239,7 +239,9 @@ func (builder Builder) mergeOrigin(base ComposeBase) (Inspection, error) {
 	if err != nil {
 		return Inspection{}, err
 	}
-	merge := &OriginMerge{Method: "mean"}
+	// Method names version the exact arithmetic: float32 accumulation in parent
+	// order, rounded to nearest-even, so the same parents always merge to the same bytes.
+	merge := &OriginMerge{Method: "mean-f32-v1"}
 	var paths []string
 	var weights []float64
 	var links []LineageLink
@@ -250,7 +252,7 @@ func (builder Builder) mergeOrigin(base ComposeBase) (Inspection, error) {
 		links = append(links, parent.link)
 	}
 	if parents[0].weight > 0 {
-		merge.Method = "weighted-mean"
+		merge.Method = "weighted-mean-f32-v1"
 	} else {
 		weights = nil
 	}

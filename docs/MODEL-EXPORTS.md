@@ -191,6 +191,12 @@ inventory. Its schema-1 shape is:
   "source_id": "<selected run or origin identity>",
   "run_id": "<selected real run; omitted for an origin>",
   "source_bom_sha256": "<managed model BOM hash>",
+  "lineage": {
+    "weights_sha256": "<released weights' managed artifact hash>",
+    "parents": [
+      {"weights_sha256": "<starting weights hash>", "lineage_sha256": "<parent lineage node hash>"}
+    ]
+  },
   "artifacts": [
     {
       "role": "weights",
@@ -210,7 +216,11 @@ inventory. Its schema-1 shape is:
 ```
 
 `source_bom_sha256` connects the derived representation to the managed model
-BOM from which it was produced. Each artifact path is relative to the package
+BOM from which it was produced. `lineage` is the model's lineage node: its
+weights and the weights they came from, each named by weights hash and parent
+node hash, as described for [merged bases](MODEL-COMPOSE.md#merged-base).
+Pulling the release keeps the node in the pulled model's origin, so ancestry
+continues across publication. Each artifact path is relative to the package
 root. This makes a release relocatable without embedding a machine-specific
 model directory.
 

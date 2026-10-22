@@ -463,7 +463,7 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 		return err
 	}
 	record := Submission{
-		Kind: SubmissionKind, Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Unit: action.Unit,
+		Kind: SubmissionKind, Schema: RecordSchema, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Unit: action.Unit,
 		Identity: joiner.Identity, Model: name, ModelSHA256: files["model.safetensors"], Files: files, Tokens: int64(tokens),
 		URL: url, CreatedAt: joiner.timestamp(),
 	}
@@ -708,7 +708,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		}
 	}
 	if len(accepted) > 1 {
-		method = "token-weighted-mean"
+		method = "weighted-mean-f32-v1"
 	}
 	if err := joiner.ensure(name, target); err != nil {
 		return err
@@ -723,7 +723,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		return err
 	}
 	record := MergeRecord{
-		Kind: MergeKind, Schema: 1, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
+		Kind: MergeKind, Schema: RecordSchema, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
 		Method: method, Dropped: dropped, Evidence: evidence, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(),
 	}
 	if base != nil {

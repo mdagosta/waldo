@@ -58,7 +58,7 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 	name := strings.TrimSuffix(filepath.Base(strings.TrimRight(url, "/")), ".git")
 	joiner.clone = filepath.Join(joiner.Home, name)
 	joiner.runDir = filepath.Join(joiner.clone, filepath.FromSlash(runDir))
-	if err := os.MkdirAll(joiner.Home, 0o755); err != nil {
+	if err := os.MkdirAll(joiner.Home, 0o700); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(joiner.clone, ".git")); os.IsNotExist(err) {
@@ -89,14 +89,23 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 // it refuses a token file that others can read.
 func (joiner *Joiner) loadToken() error {
 	path := filepath.Join(joiner.Home, "github-token")
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return nil
 	} else if err != nil {
 		return err
 	}
+	// As for WALDO's other credentials (ADR 0035): a private regular file in a private directory.
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s must be a regular file, not a symlink or other file type", path)
+	}
 	if info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("%s is readable by others; run chmod 600 %s", path, path)
+	}
+	if directory, err := os.Stat(joiner.Home); err != nil {
+		return err
+	} else if directory.Mode().Perm()&0o077 != 0 {
+		return fmt.Errorf("%s holds a credential and is readable by others; run chmod 700 %s", joiner.Home, joiner.Home)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {

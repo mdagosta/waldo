@@ -24,7 +24,7 @@ from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r16"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r17"
 TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r27"
 IS_PRIMARY = True
 

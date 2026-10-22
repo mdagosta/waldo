@@ -98,14 +98,14 @@ func validFiles(files map[string]string, modelSHA256 string) bool {
 
 func validSubmission(record Submission, plan Plan, number int) bool {
 	stage := plan.Stages()[number]
-	return record.Kind == SubmissionKind && record.Run == plan.Name && record.Stage == stage &&
+	return record.Kind == SubmissionKind && record.Schema == RecordSchema && record.Run == plan.Name && record.Stage == stage &&
 		slices.Contains(plan.RoundUnits(stage), record.Unit) && model.ValidateName(record.Model) == nil &&
 		validFiles(record.Files, record.ModelSHA256)
 }
 
 func validMerge(record MergeRecord, plan Plan, number int) bool {
 	stage := plan.Stages()[number]
-	if record.Kind != MergeKind || record.Run != plan.Name || record.Stage != stage ||
+	if record.Kind != MergeKind || record.Schema != RecordSchema || record.Run != plan.Name || record.Stage != stage ||
 		model.ValidateName(record.Model) != nil || !validFiles(record.Files, record.ModelSHA256) {
 		return false
 	}

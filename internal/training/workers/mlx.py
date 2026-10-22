@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r16"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r17"
 
 
 class ArtifactIntegrityError(ValueError):

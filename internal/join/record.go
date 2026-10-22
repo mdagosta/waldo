@@ -23,6 +23,7 @@ const SigningNamespace = "waldo-join"
 const (
 	SubmissionKind = "waldo-join-submission"
 	MergeKind      = "waldo-join-merge"
+	RecordSchema   = 1
 )
 
 // Submission is one identity's trained unit for a round.
