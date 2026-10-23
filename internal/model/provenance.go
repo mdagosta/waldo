@@ -135,3 +135,74 @@ func writeClosure(temporary string, closure TrainingClosure) ([]OriginArtifact, 
 	}
 	return artifacts, err
 }
+
+// PublishedRunBOMs reads the run BOMs a model carries: its own runs, or a pulled
+// release's, which the pull checked against the canonical hashes they are named by.
+func PublishedRunBOMs(inspection Inspection) ([]RunBOM, error) {
+	paths, err := ProvenanceRecords(inspection)
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(paths))
+	for key := range paths {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var runs []RunBOM
+	for _, key := range keys {
+		var run RunBOM
+		data, err := os.ReadFile(paths[key])
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &run); err != nil {
+			return nil, fmt.Errorf("run BOM %s: %w", key[:12], err)
+		}
+		runs = append(runs, run)
+	}
+	return runs, nil
+}
+
+// CheckClosure verifies a model's recorded training history against what it
+// must be: the closure of the weights it started from (none for weights
+// initialized at random), plus the corpora of its own run BOMs, complete. A
+// release whose closure leaves out or adds a corpus, or whose history is not
+// recorded, fails.
+func CheckClosure(inspection Inspection, parent *Inspection) error {
+	runs, err := PublishedRunBOMs(inspection)
+	if err != nil {
+		return err
+	}
+	if len(runs) == 0 {
+		return fmt.Errorf("model %s carries no run BOM", inspection.Model.Name)
+	}
+	expected := emptyClosure(true)
+	if parent != nil {
+		if expected, err = ModelClosure(*parent); err != nil {
+			return err
+		}
+	}
+	own := emptyClosure(true)
+	for _, run := range runs {
+		own.Corpora = append(own.Corpora, ClosureCorpus{CorpusBOMSHA256: run.CorpusBOMSHA256, Uses: 1, CorpusBOM: run.CorpusBOM})
+	}
+	expected = unionClosures(expected, unionClosures(own))
+	claimed, err := ModelClosure(inspection)
+	if err != nil {
+		return err
+	}
+	if !expected.Complete || !claimed.Complete {
+		return fmt.Errorf("model %s's training history is not completely recorded", inspection.Model.Name)
+	}
+	summary := func(closure TrainingClosure) string {
+		var parts []string
+		for _, entry := range closure.Corpora {
+			parts = append(parts, fmt.Sprintf("%s×%d", entry.CorpusBOMSHA256[:12], entry.Uses))
+		}
+		return fmt.Sprint(parts)
+	}
+	if summary(claimed) != summary(expected) {
+		return fmt.Errorf("model %s's training closure %s does not match its run BOMs and starting weights %s", inspection.Model.Name, summary(claimed), summary(expected))
+	}
+	return nil
+}

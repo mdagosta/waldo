@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -390,6 +391,14 @@ func (joiner *Joiner) fetch(ctx context.Context, name, identity, sha string, fil
 	return target, nil
 }
 
+// published is the local name of a model taken from the network: its record's
+// name and weights. It never resolves to a model this identity trained or merged
+// itself, so every identity imports the same published package and records the
+// same lineage for it.
+func published(name, sha256 string) string {
+	return name + "-" + sha256[:12]
+}
+
 // ensure imports a fetched package as a local model so composes can name it as a base.
 func (joiner *Joiner) ensure(name, directory string) error {
 	if joiner.complete(name) {
@@ -413,7 +422,7 @@ func (joiner *Joiner) base(ctx context.Context, state State, number int) (*Merge
 			fmt.Fprintf(joiner.Log, "   %v\n", err)
 			continue
 		}
-		return &record, joiner.ensure(record.Model, directory)
+		return &record, joiner.ensure(published(record.Model, record.ModelSHA256), directory)
 	}
 	return nil, fmt.Errorf("round %d's merged weights could not be fetched from any closer who signed them: %w", number-1, err)
 }
@@ -435,7 +444,7 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 	}
 	baseName := ""
 	if base != nil {
-		baseName = base.Model
+		baseName = published(base.Model, base.ModelSHA256)
 	}
 	text, err := joiner.compose(stage, baseName, pieceSeed(joiner.plan.Name, action.Round, action.Unit), values["budget"], values)
 	if err != nil {
@@ -536,28 +545,25 @@ func (joiner *Joiner) probe(ctx context.Context, stage, export string, seed int,
 // verify returns the index of the replica most others agree with, among
 // those agreeing with at least half of the others, or -1 without a majority. Honest replicas improve alike from the round's start; a
 // free-rider does not, so gaps are judged against each round's progress.
-func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports []string, records []Submission, values map[string]string, base *MergeRecord, round int, unit string) (int, *UnitEvidence, error) {
+func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports []string, records []Submission, corpora []string, values map[string]string, base *MergeRecord, round int, unit string) (int, []int, []int, *UnitEvidence, error) {
 	seed := pieceSeed(joiner.plan.Name, round, unit)
-	if len(exports) == 1 {
-		return 0, nil, nil
-	}
 	evidence := &UnitEvidence{Unit: unit}
 	var start float64
 	if base != nil {
 		measured, err := joiner.probe(ctx, stage, filepath.Join(joiner.workDir(), "exports", base.Model), seed, values)
 		if err != nil {
-			return -1, nil, err
+			return -1, nil, nil, nil, err
 		}
 		start = measured.Loss
 	} else {
 		// A bootstrap starts from random weights, whose loss is about uniform over the vocabulary.
 		template, err := os.ReadFile(joiner.planFile(joiner.plan.Pretrain.Compose))
 		if err != nil {
-			return -1, nil, err
+			return -1, nil, nil, nil, err
 		}
 		vocabulary := templateInt(template, "vocabulary_size")
 		if vocabulary < 2 {
-			return -1, nil, fmt.Errorf("%s needs vocabulary_size to judge bootstrap replicas", joiner.plan.Pretrain.Compose)
+			return -1, nil, nil, nil, fmt.Errorf("%s needs vocabulary_size to judge bootstrap replicas", joiner.plan.Pretrain.Compose)
 		}
 		start = math.Log(float64(vocabulary))
 	}
@@ -566,16 +572,29 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 	for index, export := range exports {
 		measured, err := joiner.probe(ctx, stage, export, seed, values)
 		if err != nil {
-			return -1, nil, err
+			return -1, nil, nil, nil, err
 		}
 		losses[index] = measured.Loss
-		evidence.EvaluationSetSHA256 = measured.Set.SHA256
+		evidence.EvaluationSetSHA256, evidence.CorpusBOMSHA256 = measured.Set.SHA256, measured.CorpusBOMSHA256
 		evidence.Replicas = append(evidence.Replicas, ReplicaEvidence{Identity: records[index].Identity, ModelSHA256: records[index].ModelSHA256, HeldoutLoss: measured.Loss})
 	}
 	fmt.Fprintf(joiner.Log, "   round start probe loss %.4f on this unit's data\n", start)
+	// A replica whose run BOM records another corpus selection did not train this unit.
+	var elsewhere []int
+	eligible := len(exports)
+	for index := range exports {
+		if corpora[index] != evidence.CorpusBOMSHA256 {
+			elsewhere = append(elsewhere, index)
+			eligible--
+			fmt.Fprintf(joiner.Log, "   replica %d trained on corpus %.12s, not this unit's %.12s\n", index+1, corpora[index], evidence.CorpusBOMSHA256)
+		}
+	}
 	agree := make([]int, len(exports))
 	for first := range exports {
 		for second := first + 1; second < len(exports); second++ {
+			if slices.Contains(elsewhere, first) || slices.Contains(elsewhere, second) {
+				continue
+			}
 			progress := math.Max(math.Max(start-losses[first], start-losses[second]), 1e-9)
 			gap := math.Abs(losses[first]-losses[second]) / progress
 			close := gap <= joiner.plan.Tolerance() || math.Abs(losses[first]-losses[second]) <= joiner.plan.Floor()
@@ -590,9 +609,13 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 		}
 	}
 	var accepted, rejected []string
+	var disagreeing []int
 	winner := -1
 	for index, count := range agree {
-		if count >= len(exports)/2 {
+		if slices.Contains(elsewhere, index) {
+			continue
+		}
+		if count >= eligible/2 {
 			// The most widely agreed replica wins, so one that some peers dispute never beats one none dispute.
 			if winner < 0 || count > agree[winner] {
 				winner = index
@@ -600,18 +623,84 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 			accepted = append(accepted, strconv.Itoa(index+1))
 		} else {
 			rejected = append(rejected, strconv.Itoa(index+1))
+			disagreeing = append(disagreeing, index)
 		}
 	}
-	if len(accepted) <= len(exports)/2 {
+	if len(accepted) <= eligible/2 || eligible < joiner.plan.Replicas/2+1 {
 		fmt.Fprintf(joiner.Log, "%s: no majority of replicas agree within %.0f%% of the round's progress; not merging\n", label, joiner.plan.Tolerance()*100)
-		return -1, evidence, nil
+		return -1, nil, elsewhere, evidence, nil
 	}
 	message := fmt.Sprintf("   %s: accepted replica %d", label, winner+1)
 	if len(rejected) > 0 {
 		message += ", rejected replica " + strings.Join(rejected, ", ")
 	}
 	fmt.Fprintln(joiner.Log, message)
-	return winner, evidence, nil
+	return winner, disagreeing, elsewhere, evidence, nil
+}
+
+// checkProvenance imports a submission's published package and verifies its
+// training closure is exactly the round base's plus its own run BOMs, so no
+// replica can drop or invent a corpus from the history every later round inherits.
+// It returns the corpus selection the submission's one run trained on.
+func (joiner *Joiner) checkProvenance(record Submission, directory string, base *MergeRecord) (string, error) {
+	name := published(record.Model, record.ModelSHA256)
+	if err := joiner.ensure(name, directory); err != nil {
+		return "", err
+	}
+	inspection, err := model.Inspect(joiner.models(), name)
+	if err != nil {
+		return "", err
+	}
+	var parent *model.Inspection
+	if base != nil {
+		inspected, err := model.Inspect(joiner.models(), published(base.Model, base.ModelSHA256))
+		if err != nil {
+			return "", err
+		}
+		parent = &inspected
+	}
+	if err := model.CheckClosure(inspection, parent); err != nil {
+		return "", err
+	}
+	runs, err := model.PublishedRunBOMs(inspection)
+	if err != nil {
+		return "", err
+	}
+	if len(runs) != 1 {
+		return "", fmt.Errorf("a unit trains in one run, and %s carries %d run BOMs", record.Model, len(runs))
+	}
+	return runs[0].CorpusBOMSHA256, nil
+}
+
+// screen sets aside the replicas that cannot be judged on their loss: one that
+// did not start from the round's merged weights, every one of a group with
+// identical weights (GPU training is not bit-reproducible, so one copied
+// another, and which is the copy cannot be told), and one whose tokens trained
+// differ from a majority's.
+func screen(records []Submission, base *MergeRecord) ([]Submission, []DroppedUnit) {
+	var kept []Submission
+	var refused []DroppedUnit
+	refuse := func(record Submission, reason string) {
+		refused = append(refused, DroppedUnit{Unit: record.Unit, Reason: reason, Identities: []string{record.Identity}})
+	}
+	weights, tokens := map[string]int{}, map[int64]int{}
+	for _, record := range records {
+		weights[record.ModelSHA256]++
+		tokens[record.Tokens]++
+	}
+	for _, record := range records {
+		switch {
+		case (base == nil) != (record.BaseSHA256 == nil) || (base != nil && *record.BaseSHA256 != base.ModelSHA256):
+			refuse(record, "it did not start from the round's merged weights")
+		case weights[record.ModelSHA256] > 1:
+			refuse(record, "its weights are identical to another replica's")
+		case tokens[record.Tokens]*2 <= len(records):
+			refuse(record, "its tokens trained differ from a majority of replicas'")
+		default:
+			kept = append(kept, record)
+		}
+	}
+	return kept, refused
 }
 
 func (joiner *Joiner) close(ctx context.Context, state State, action Action) error {
@@ -627,6 +716,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	round := state.Rounds[action.Round]
 	var accepted []Submission
 	var evidence []UnitEvidence
+	var rejected []DroppedUnit
 	dropped := []DroppedUnit{}
 	for _, unit := range joiner.plan.RoundUnits(action.Stage) {
 		records := round.replicas(unit, joiner.plan.Replicas)
@@ -638,62 +728,53 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: fmt.Sprintf("%d of %d replicas by the deadline", len(records), joiner.plan.Replicas)})
 			continue
 		}
-		wrongBase := false
-		for _, record := range records {
-			if (base == nil) != (record.BaseSHA256 == nil) || (base != nil && *record.BaseSHA256 != base.ModelSHA256) {
-				wrongBase = true
-			}
-		}
-		if wrongBase {
-			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: "a replica did not start from the round's merged weights", Identities: identities})
-			continue
-		}
-		// GPU training is not bit-reproducible, so identical weights mean one replica copied another.
-		weights := map[string]bool{}
-		for _, record := range records {
-			weights[record.ModelSHA256] = true
-		}
-		if len(weights) < len(records) {
-			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: "replicas submitted identical weights", Identities: identities})
-			continue
-		}
-		tokens := map[int64]bool{}
-		for _, record := range records {
-			tokens[record.Tokens] = true
-		}
-		if len(tokens) > 1 {
-			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: "replicas report different tokens trained", Identities: identities})
-			continue
-		}
-		var exports []string
+		// Each bad replica costs only itself; the rest still decide the unit.
+		kept, refused := screen(records, base)
+		var exports, corpora []string
 		var present []Submission
-		for _, record := range records {
+		for _, record := range kept {
 			directory, err := joiner.fetch(ctx, record.Model, record.Identity, record.ModelSHA256, record.Files, record.URL)
 			if err != nil {
 				fmt.Fprintf(joiner.Log, "   %v\n", err)
+				refused = append(refused, DroppedUnit{Unit: unit, Reason: "its files could not be fetched and checked", Identities: []string{record.Identity}})
+				continue
+			}
+			corpus, err := joiner.checkProvenance(record, directory, base)
+			if err != nil {
+				fmt.Fprintf(joiner.Log, "   %s's %s: %v\n", record.Identity, unit, err)
+				refused = append(refused, DroppedUnit{Unit: unit, Reason: "its training provenance does not check: " + err.Error(), Identities: []string{record.Identity}})
 				continue
 			}
 			exports = append(exports, directory)
 			present = append(present, record)
+			corpora = append(corpora, corpus)
 		}
-		winner := -1
-		if len(present) >= joiner.plan.Replicas {
-			values, err := joiner.values(action.Stage, unit)
-			if err != nil {
-				return err
-			}
-			var unitEvidence *UnitEvidence
-			winner, unitEvidence, err = joiner.verify(ctx, stage, "unit "+unit, exports, present, values, base, action.Round, unit)
-			if unitEvidence != nil {
-				evidence = append(evidence, *unitEvidence)
-			}
-			if err != nil {
-				return err
-			}
+		rejected = append(rejected, refused...)
+		// A unit needs a majority of its planned replicas left to compare.
+		if len(present) < joiner.plan.Replicas/2+1 {
+			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: fmt.Sprintf("%d of %d replicas left after rejections", len(present), joiner.plan.Replicas), Identities: identities})
+			continue
+		}
+		values, err := joiner.values(action.Stage, unit)
+		if err != nil {
+			return err
+		}
+		winner, disagreeing, elsewhere, unitEvidence, err := joiner.verify(ctx, stage, "unit "+unit, exports, present, corpora, values, base, action.Round, unit)
+		if unitEvidence != nil {
+			evidence = append(evidence, *unitEvidence)
+		}
+		if err != nil {
+			return err
+		}
+		for _, index := range elsewhere {
+			rejected = append(rejected, DroppedUnit{Unit: unit, Reason: "its run BOM records a corpus selection other than its unit's", Identities: []string{present[index].Identity}})
 		}
 		if winner < 0 {
 			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: "replicas disagree", Identities: identities})
 			continue
+		}
+		for _, index := range disagreeing {
+			rejected = append(rejected, DroppedUnit{Unit: unit, Reason: "its held-out loss disagrees with the other replicas", Identities: []string{present[index].Identity}})
 		}
 		accepted = append(accepted, present[winner])
 	}
@@ -736,7 +817,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	}
 	record := MergeRecord{
 		Kind: MergeKind, Schema: RecordSchema, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
-		Method: method, Dropped: dropped, Evidence: evidence, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(),
+		Method: method, Dropped: dropped, Rejected: rejected, Evidence: evidence, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(),
 	}
 	if base != nil {
 		record.Base, record.BaseSHA256 = &base.Model, &base.ModelSHA256
@@ -765,10 +846,11 @@ func (joiner *Joiner) merge(ctx context.Context, name string, accepted []Submiss
 	}
 	text := "kind: waldo-model-compose\nschema: 1\n" + interaction + "base:\n  merge:\n"
 	for _, submission := range accepted {
-		if err := joiner.ensure(submission.Model, filepath.Join(joiner.workDir(), "exports", submission.Model)); err != nil {
+		name := published(submission.Model, submission.ModelSHA256)
+		if err := joiner.ensure(name, filepath.Join(joiner.workDir(), "exports", submission.Model)); err != nil {
 			return err
 		}
-		text += fmt.Sprintf("    - model: %s\n      weight: %d\n", submission.Model, submission.Tokens)
+		text += fmt.Sprintf("    - model: %s\n      weight: %d\n", name, submission.Tokens)
 	}
 	if err := joiner.train(ctx, name, text); err != nil {
 		return err

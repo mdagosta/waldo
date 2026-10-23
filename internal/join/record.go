@@ -85,6 +85,7 @@ type MergeRecord struct {
 	BaseSHA256  *string           `json:"base_sha256"`
 	Accepted    []AcceptedUnit    `json:"accepted"`
 	Dropped     []DroppedUnit     `json:"dropped"`
+	Rejected    []DroppedUnit     `json:"rejected,omitempty"` // replicas set aside in units that were still judged
 	Evidence    []UnitEvidence    `json:"evidence,omitempty"`
 	Model       string            `json:"model"`
 	ModelSHA256 string            `json:"model_sha256"`
@@ -107,6 +108,7 @@ type UnitEvidence struct {
 	Unit                string            `json:"unit"`
 	StartLoss           float64           `json:"start_loss"`
 	EvaluationSetSHA256 string            `json:"evaluation_set_sha256"`
+	CorpusBOMSHA256     string            `json:"corpus_bom_sha256,omitempty"` // the unit's corpus selection, as every replica's run BOM must record it
 	Replicas            []ReplicaEvidence `json:"replicas"`
 }
 

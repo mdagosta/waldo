@@ -284,33 +284,21 @@ base:
       weight: 477616
 ```
 
-Averaging weights is meaningful only for models trained from common weights,
-so WALDO fails closed unless the parents share an ancestor
-([ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md); lineage nodes are
-[ADR 0083](adr/0083-record-lineage-and-training-provenance.md)). Ancestry is
-recorded the way git records history: every model has a lineage node naming
-its current weights and the weights they came from, each by weights hash and by
-the hash of that parent's own node. A fine-tune's parent pin, a pulled model's
-origin, and a merge's origin each record a node, and a release's `BOM.json`
-carries the released model's node, so nodes stay the same size however long
-the history behind them. WALDO walks each parent's chain through every node
-the model store holds, like `git merge-base`, and requires a weights hash that
-every parent reaches. Where a chain leaves the store, the walk stops there.
-Parents trained from random weights, or pulled from releases that record no
-lineage, cannot be merged. Merges accept byte-tokenizer models with `bfloat16`
-or `float32` parameters.
+Averaging weights is meaningful only between models trained from common
+weights, so WALDO fails closed unless the parents share an ancestor
+([ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)). Ancestry is
+recorded git-style ([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)):
+each model has a lineage node naming its weights and its parents' nodes, by
+hash. WALDO walks the parents' chains through the model store, like
+`git merge-base`, and requires a common weights hash; parents from random
+weights or from releases without lineage cannot be merged. Merges accept
+byte-tokenizer models with `bfloat16` or `float32` parameters.
 
-WALDO writes the merge as an origin under the model store's `.merges`
-directory, keyed by its parents and weights, so the same merge is built once.
-Its origin BOM records the method, each parent's model ID, weights hash, and
-lineage node hash in merge order, and the weights; its lineage node names every
-parent's node, like a git merge commit. Anyone holding the parents can
-recompute the merged weights and compare hashes. A compose with
-`base.merge` may have no stages: the destination is then the merged model
-itself, usable for chat, export, or as another compose's base. With stages, the
-merge initializes training like any origin. Exports record the model's lineage node in
-their release `BOM.json`, and pulls keep it in the origin, so the chain
-continues across publication.
+The merge is written once, as an origin under the store's `.merges` directory,
+recording the method, each parent's model ID, weights hash, and node, in order;
+anyone holding the parents can recompute it and compare hashes. With no stages,
+the destination is the merged model itself; with stages, the merge initializes
+training. Exports carry the lineage node in their `BOM.json`, and pulls keep it.
 
 ### Direct external base
 

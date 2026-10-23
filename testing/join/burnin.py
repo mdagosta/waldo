@@ -96,21 +96,39 @@ class Run:
         names = self.git("ls-tree", "--name-only", f"origin/main:{base}", check=False).split()
         return {name: json.loads(self.git("show", f"origin/main:{base}{name}")) for name in names if name.endswith(".yaml")}
 
-    def votes(self, number):
-        votes = collections.defaultdict(list)
-        for merge in self.records(number, "merges").values():
-            votes[(merge.get("base_sha256"), merge["model_sha256"], json.dumps(merge["accepted"], sort_keys=True))].append(merge)
-        return votes
+    @staticmethod
+    def decision(merge):
+        """What closers must agree on, as join decides it: weights, units, and published provenance."""
+        provenance = sorted(f"{n} {d}" for n, d in merge.get("files", {}).items() if n == "TRAINING-CLOSURE.json" or n.startswith("provenance-"))
+        accepted = [f"{a['unit']} {a['identity']} {a['model_sha256']}" for a in merge.get("accepted", [])]
+        return "\n".join([str(merge.get("base_sha256") or ""), str(merge.get("method")), str(merge.get("model_sha256"))] + accepted + provenance)
+
+    def votes(self, number, plan):
+        """One merge per closing slot, from its earliest holder to land one, in slot order, as join counts them."""
+        claims, merges = self.records(number, "claims"), self.records(number, "merges")
+        result, every = [], True
+        for position in range(1, 1000):
+            slot = f"close-{position}"
+            attempts = sorted((c["attempt"], c["identity"]) for c in claims.values() if c.get("slot") == slot)
+            if not attempts or (position > plan["closers"] and not every):
+                return result
+            vote = next((merges[f"{identity}.yaml"] for _, identity in attempts if f"{identity}.yaml" in merges), None)
+            if vote:
+                result.append(vote)
+            every = every and vote is not None
+        return result
 
     def decided(self, number, plan):
         if number < 0:
             return None
         if number not in self.settled:
-            decision = next((m[0] for m in self.votes(number).values() if len(m) >= plan["closers"] // 2 + 1), None)
-            if decision is None:
-                return None
-            self.settled[number] = decision
-        return self.settled[number]
+            agreeing = collections.defaultdict(list)
+            for vote in self.votes(number, plan):
+                agreeing[self.decision(vote)].append(vote)
+                if len(agreeing[self.decision(vote)]) == plan["closers"] // 2 + 1:
+                    self.settled[number] = agreeing[self.decision(vote)][0]
+                    break
+        return self.settled.get(number)
 
     def current(self, plan):
         """The first undecided round, or None when the run is complete."""
@@ -363,11 +381,11 @@ def report(run_dir):
     faults = [json.loads(line) for line in open(logs / "faults.jsonl")] if (logs / "faults.jsonl").exists() else []
     problems, kinks = [], []
     for number in range(plan["rounds"]):
-        decided, votes = run.decided(number, plan), run.votes(number)
+        decided, merges = run.decided(number, plan), list(run.records(number, "merges").values())
         if decided is None:
-            print(f"round {number}: not decided yet ({sum(len(v) for v in votes.values())} merges)")
+            print(f"round {number}: not decided yet ({len(merges)} merges)")
             break
-        dissent = sum(len(v) for v in votes.values()) - max(len(v) for v in votes.values())
+        dissent = sum(run.decision(m) != run.decision(decided) for m in merges)
         print(f"round {number}: decided {decided['model_sha256'][:12]}: {len(decided['accepted'])} accepted, "
               f"{len(decided['dropped'])} dropped, {dissent} dissenting")
         accepted = {(a["unit"], a["identity"]) for a in decided["accepted"]}
@@ -381,7 +399,8 @@ def report(run_dir):
                     problems.append(f"round {number} {what}: ACCEPTED into the merge")
                 else:
                     reasons = [d["reason"] for d in decided["dropped"] if d["unit"] == unit]
-                    print(f"  ok   {what}: not accepted" + (f"; unit dropped: {reasons[0]}" if reasons else ""))
+                    why = [r["reason"] for r in decided.get("rejected", []) if r["unit"] == unit and fault["identity"] in r["identities"]]
+                    print(f"  ok   {what}: not accepted" + (f" ({why[0]})" if why else "") + (f"; unit dropped: {reasons[0]}" if reasons else ""))
                     if reasons:
                         kinks.append(f"round {number} {what}: one bad replica dropped the whole unit ({reasons[0]})")
             elif fault["fault"] == "close":

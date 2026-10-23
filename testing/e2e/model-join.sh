@@ -195,7 +195,7 @@ until rounds decided "$last"; do
   done
 done
 
-# Round 1 dropped the free-rider's unit on measured evidence and merged the honest units,
+# Round 1 refused the free-rider's unit on its provenance and merged the honest units,
 # outvoting carol's merge that took it; later rounds merged every unit. Each merge pins
 # its BOM.json and records its evidence.
 for round in $(seq 1 "$last"); do
@@ -210,17 +210,17 @@ if round_number == 1:
     dissent = [m for m in decided["merges"] if m["model_sha256"] != merge["model_sha256"]]
     assert [m["identity"] for m in dissent] == ["e2e-carol"], [m["identity"] for m in decided["merges"]]
     print(f"round 1: e2e-carol'"'"'s merge was outvoted by", sorted(m["identity"] for m in decided["merges"] if m not in dissent))
-assert sorted(unit["unit"] for unit in merge["evidence"]) == ["u0", "u1", "u2"], merge.get("evidence")
+assert sorted(unit["unit"] for unit in merge["evidence"]) == honest, merge.get("evidence")
 for unit in merge["evidence"]:
-    assert len(unit["replicas"]) == 2 and len(unit["evaluation_set_sha256"]) == 64, unit
+    assert len(unit["replicas"]) == 2 and len(unit["evaluation_set_sha256"]) == 64 and len(unit["corpus_bom_sha256"]) == 64, unit
     print(f"round {round_number}", unit["unit"], "start", round(unit["start_loss"], 4), "replicas", [(r["identity"], round(r["heldout_loss"], 4)) for r in unit["replicas"]])
 if round_number == 1:
-    assert [(unit["unit"], unit["reason"]) for unit in merge["dropped"]] == [("u2", "replicas disagree")], merge["dropped"]
-    lazy = next(unit for unit in merge["evidence"] if unit["unit"] == "u2")
-    losses = {r["identity"]: r["heldout_loss"] for r in lazy["replicas"]}
-    honest_loss = [loss for identity, loss in losses.items() if identity != "e2e-bob"][0]
-    # The free-rider scores the round start; honest training improved on it.
-    assert abs(losses["e2e-bob"] - lazy["start_loss"]) < 1e-6 and honest_loss < lazy["start_loss"], lazy
+    # The free-rider republished the starting package of the round, which records no training run of its
+    # own, so the closers refuse it on provenance before measuring it, and u2 has too few replicas left.
+    assert [unit["unit"] for unit in merge["dropped"]] == ["u2"], merge["dropped"]
+    refused = [(r["unit"], r["identities"], r["reason"]) for r in merge.get("rejected", [])]
+    assert [(u, i) for u, i, _ in refused] == [("u2", ["e2e-bob"])] and "provenance" in refused[0][2], refused
+    print("round 1: e2e-bob u2 refused:", refused[0][2])
 # The merge publishes its round'"'"'s run BOMs and its whole training history, and discloses it.
 package = merge["url"][len("file://"):]
 provenance = [name for name in merge["files"] if name.startswith("provenance-")]

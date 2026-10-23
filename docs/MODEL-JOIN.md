@@ -1,331 +1,161 @@
 # Distributed training with `waldo model join`
 
-`waldo model join` lets many machines train one model together without a
-coordinator. A training run lives in a git repository: its plan names the data,
-rounds, and contributors, and every unit of work lands as a signed record. Each
-contributor runs the same command; each pass reads the repository, does the
-next unit the plan calls for, and commits its record. The repository's history
-is the record of how the model was built, and every model it produces traces
-back to the corpora it was trained on.
-
-`model join` is the asynchronous, untrusted-contributor counterpart to
-[multi-host training](MULTI-NODE-TRAINING.md): contributors train separate
-units and the run merges them every round, instead of nodes stepping together
-through all-reduce. The design is recorded in
+`waldo model join` lets many machines train one model with no coordinator. A
+run lives in a git repository: a plan, plus signed records of every unit of
+work. Each contributor runs the same command; each pass reads the repository,
+does the next piece of work, and commits its record. Every model a run produces
+traces back to the corpora it was trained on. Design:
 [ADR 0088](adr/0088-distributed-training-through-signed-records.md).
-
-## Command
 
 ```bash
 waldo model join <runs-repo> <run-dir> --identity <name> [--once] [--email <address>] [--key <path>] [--wait <seconds>]
 ```
 
-| Flag | Meaning |
-| --- | --- |
-| `--identity` | The contributor's name under the plan's `identities`. Required. |
-| `--once` | Do one unit of work and exit. Without it, join loops until the run is merged, waiting `--wait` seconds (default 60) between checks while others work. |
-| `--email` | Commit author email for records. Default `<identity>@waldo.invalid`. |
-| `--key` | SSH signing key. Default `~/.waldo/join/<identity>/signing-key`, created on first use. |
-
-`<runs-repo>` is any git URL or local path; `<run-dir>` is the run's directory
-in it, such as `runs/python-basics-v1`. An identity not yet in the plan gets a
-signing key and the exact `identities` entry to add.
-
-Each identity keeps everything in `~/.waldo/join/<identity>/`: its signing
-key, an optional `github-token`, its clone of the runs repository, its own model
-store and WALDO configuration, and its exports. Several identities can share
-one machine, and retiring one removes one directory.
+`--once` does one piece of work and exits; otherwise join loops until the run is
+complete, waiting `--wait` seconds (default 60) while others work. An identity
+keeps its signing key, optional `github-token`, clone, models, and exports in
+`~/.waldo/join/<identity>/`; a new identity is given its key and the
+`identities` entry to add to the plan.
 
 ## Runs repository
 
 ```
 runs/<run>/
-  plan.yaml                      # data, units, rounds, identities, store
-  pretrain.yaml.tmpl             # compose template filled for each unit
-  sft.yaml.tmpl                  # optional post-training template
+  plan.yaml, *.yaml.tmpl                 # the plan and its compose templates
   rounds/round-NNNN/
-    claims/<unit>-<n>.yaml(.sig)           # replica slot n of a unit; a retaken slot is <unit>-<n>.<attempt>.yaml
-    claims/close-<n>.yaml(.sig)            # closing slot n
+    claims/<slot>[.<attempt>].yaml(.sig) # slot: <unit>-<n> or close-<n>
     submissions/<unit>-<identity>.yaml(.sig)
-    merges/<identity>.yaml(.sig)           # one closer's merge of the round
+    merges/<identity>.yaml(.sig)
 ```
 
-### Plan
-
-| Key | Meaning |
+| Plan key | Meaning |
 | --- | --- |
-| `kind`, `schema` | `waldo-join-plan` and `1`. Unknown fields are rejected. |
-| `name` | Run name, used in record and model names. Run, unit, and identity names use lowercase letters, digits, `.`, `_`, and `-`. |
-| `units` | Named units of data. Every round trains each unit. |
-| `replicas` | How many identities train each unit per round. `2` is the smallest verifying plan. |
-| `merge` | `mean`. Accepted units are merged by token-weighted mean. |
-| `store` | `huggingface` (each identity's own account) or `file:///path` (one machine, tests). |
-| `identities` | Name to `{key: <ssh public key>, hf: <Hugging Face user>}`; a bare string is just the key. |
-| `pretrain.compose` | Template for the bootstrap and pretraining rounds. |
-| `pretrain.bootstrap_tokens` | Token budget of round 0, which trains one shared unit, `all`, on every unit's sources. |
-| `pretrain.rounds` | Pretraining rounds after the bootstrap. |
-| `pretrain.tokens_per_round` | Each unit's per-round budget, converted to fixed steps with repetition allowed. |
-| `pretrain.shards` | Unit to source names; each unit's compose includes only its sources. |
-| `posttrain.compose` | Optional post-training template. |
-| `posttrain.corpus` | Index path that post-training units divide: each trains its own `filter.slice` of it. |
-| `posttrain.rounds`, `posttrain.epochs_per_round` | Post-training rounds and each unit's per-round budget. |
-| `replica_tolerance` | Largest replica loss gap, as a share of the round's progress, still counted as agreement. Default 0.25. |
-| `replica_floor` | Absolute gap below which replicas always agree, for converged rounds. Default 0.001. |
-| `min_steps_per_round` | Refuse a unit that trained fewer optimizer steps. |
-| `round_minutes` | Optional deadline after which a round may close with the units it has. |
-| `closers` | How many identities close each round independently; a majority of them must sign the same merge. Default 3, or every identity if the plan has fewer. |
-| `claim_minutes` | How long a claim holds its slot before another identity may retake it. Default 60; set it above a unit's training time. |
+| `kind`, `schema` | `waldo-join-plan`, `1`. Unknown keys are rejected. |
+| `name`, `units` | Run and unit names: lowercase letters, digits, `.`, `_`, `-`. |
+| `replicas` | Identities that train each unit per round. |
+| `closers` | Identities that close each round; a majority must agree. Default 3. |
+| `claim_minutes` | How long a claim holds its slot. Default 60. |
+| `merge`, `store` | `mean`; `huggingface` or `file:///path`. |
+| `identities` | Name to `{key: <ssh public key>, hf: <Hugging Face user>}`. |
+| `pretrain` | `compose`, `bootstrap_tokens`, `rounds`, `tokens_per_round`, and `shards` (unit to sources). |
+| `posttrain` | `compose`, `corpus` (an index path each unit takes a `filter.slice` of), `rounds`, `epochs_per_round`. |
+| `replica_tolerance`, `replica_floor` | Agreement thresholds; defaults 0.25 and 0.001. |
+| `min_steps_per_round`, `round_minutes` | Minimum steps per unit; optional round deadline. |
 
-Templates are WALDO composes with `$name` placeholders: `base_block`, `seed`,
-`budget`, `sources`, `corpus`, `learning_rate`, `weight_decay`, and `extra`
-(`$$` is a literal `$`).
+Templates are composes with `$base_block`, `$seed`, `$budget`, `$sources`,
+`$corpus`, `$learning_rate`, `$weight_decay`, and `$extra` placeholders.
 
 ## Rounds
 
-Round 0 is the bootstrap; then come the pretraining rounds, then the
-post-training rounds. Each round starts from the previous round's merged weights.
-Every pass picks its work from the records on the default branch:
+Round 0 trains one shared unit, `all`, on every unit's sources; pretraining and
+post-training rounds follow, each starting from the previous round's merge. A
+unit's seed hashes the run, round, and unit, so its replicas train identically.
+Each pass, an identity:
 
-1. When every unit has its replicas, or the round is past its deadline with at
-   least one full unit, claim a closing slot and close the round.
-2. Otherwise train the unit this identity has claimed, if any.
-3. Otherwise claim a free replica slot of the lowest unit that this identity
-   has not claimed, and train it.
-4. Otherwise wait for others.
+1. **Claims a slot**, then does its work. A claim is a fixed file, so two claims
+   on one slot conflict in git and the first stands. A claim not followed by its
+   record within `claim_minutes` may be retaken as the slot's next attempt.
+2. **Trains** a claimed unit: exports it, publishes it, and records every file's
+   SHA-256, the tokens trained, and the round's starting weights.
+3. **Closes** a full round (or a late one, past `round_minutes`) from a claimed
+   closing slot: judges every unit's replicas, merges the accepted units by
+   token-weighted mean (`base.merge`, [ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)),
+   publishes the merge, and signs it.
 
-### Claims
+Records count only from identities holding a claim, one slot per identity per
+unit. Each unit's replicas are taken one per slot, so every closer judges the
+same set.
 
-Work is claimed before it is done, so identities divide a round instead of all
-training the same unit. A claim is a small signed record in a fixed slot:
-`claims/<unit>-<n>.yaml` for replica `n` of a unit, `claims/close-<n>.yaml`
-for closer `n`. Two claims on one slot are two additions of the same file, so
-the second always conflicts: on GitHub the verifier merges the first and closes
-the rest, and on a plain git repository the second push loses its rebase. A
-pass that loses a claim picks the next free slot; one that wins goes straight
-on to the work.
+### Judging replicas
 
-- **Records need claims.** A submission counts only from an identity holding a
-  claim on its unit, and a merge only from one holding a closing slot. One
-  identity holds at most one slot per unit, so nobody fills two replicas.
-- **Claims expire.** A slot whose holder has not landed its record within
-  `claim_minutes` of the claim may be retaken as the slot's next attempt,
-  `<slot>.<attempt>.yaml`. The verifier judges expiry by its own clock and
-  rejects a claim dated ahead of it, so nobody holds a slot longer by dating a
-  claim forward. A late record from the earlier holder still counts.
-- **Closers judge the same replicas.** A unit's replicas are taken in slot
-  order, one per slot from its earliest holder who submitted, so a late extra
-  submission never changes the set a closer judges.
+A closer fetches every replica and checks each against its record's hashes, then
+sets aside, one replica at a time:
 
-A unit's seed is a hash of the run, round, and unit, so all of its replicas
-train the same data the same way.
+- one that did not start from the round's merged weights;
+- every replica in a group with identical weights (one copied another);
+- one whose tokens trained differ from the majority's;
+- one whose training provenance does not check out (below);
+- one whose run BOM records a corpus selection other than its unit's.
 
-### Submissions
+The rest are measured by the closer itself, with `--evaluate-only` on the
+records the unit's training held out
+([ADR 0087](adr/0087-score-weights-without-training.md)). Honest replicas improve
+alike from the round's starting loss, and a free-rider does not; two agree when
+their gap is within `replica_tolerance` of the round's progress, or under
+`replica_floor`. The replica most others agree with is accepted. A unit needs a
+majority of its planned replicas left to be judged at all.
 
-Training a unit exports the model in Hugging Face format, publishes it to the
-store, and records `model_sha256`, every published file's SHA-256, the tokens
-trained, the round's starting weights (`base_sha256`), and the published URL.
-The release `BOM.json` carries the weights' lineage.
+The merge record lists accepted units, dropped units and rejected replicas with
+reasons, the evidence (starting loss, held-out set, corpus selection, every
+replica's loss), and the merged package's hashes.
 
-### Closing a round
+### Majority closing
 
-The closer fetches each submission and checks it against the hashes its record
-commits to. Then, for each unit:
+Each of `closers` identities judges and merges the round on its own. The round
+is decided by the first decision, in slot order, that a majority of closing
+slots sign: the starting weights, accepted units, method, merged weights, and
+published provenance files. One slot is one vote, however often it is retaken.
+Measured losses can differ across hardware; they are evidence, not the decision.
+If every slot has voted without a majority, another closing slot opens. A
+decided round never changes, and each merge must start from the decision before
+it. Dissenting merges stay on record and are reported when the run completes.
 
-- **Starting weights.** Every replica must record the round's merged weights as
-  its `base_sha256`. A unit with a replica that started anywhere else is dropped.
-- **Tokens.** Replicas must report the same tokens trained.
-- **Distinct weights.** GPU training is not bit-reproducible, so replicas with
-  identical weights mean one copied another; the unit is dropped as a
-  duplicate. This catches an exact copy, not a copy perturbed slightly: the
-  complete defense is commit-reveal, where each replica commits its weights'
-  hash before any replica publishes, so nobody can copy weights they have not
-  yet seen (not built).
-- **Held-out loss.** The closer measures each replica itself, never trusting a
-  contributor's own report, with `waldo model train <model> <compose>
-  --evaluate-only` (see [Model lifecycle](MODEL-LIFECYCLE.md)) and the unit's
-  training seed. The probe therefore scores exactly the records that the unit's
-  training held out, and every closer scores the same records.
-- **Agreement.** GPU training is not bit-reproducible, so replicas are judged by
-  their progress from the round's starting loss: honest replicas improve alike,
-  and a free-rider that submits the starting weights does not improve at all.
-  Two replicas agree when their loss gap is within `replica_tolerance` of the
-  round's progress or below `replica_floor`. A replica that agrees with a
-  majority of the others is accepted; a unit without such a majority is
-  dropped.
+### Provenance
 
-A round with one accepted unit, always so for the bootstrap, takes that unit's
-weights as its merge. Two or more accepted units are merged with a merge-only
-compose:
+Each submission publishes its run BOM (`provenance-<sha256>.json`: index commit,
+shards, record filter) and its `TRAINING-CLOSURE.json`, every corpus its whole
+lineage trained on ([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)).
+Closers rebuild what that closure must be (the round base's closure plus the
+submission's own run BOMs) and reject a submission whose closure leaves out or
+adds a corpus, or whose history is incomplete. A merge republishes every
+accepted unit's run BOM and the union of their closures, and the majority's
+decision covers those files, so the final model's `EU-BOM.json` and
+`ATTRIBUTION.md` cover every round's corpora. Every node imports network models
+from their published packages, so all record the same lineage.
 
-```yaml
-base:
-  merge:
-    - model: <unit submission>
-      weight: <tokens trained>
-```
+### Choosing replicas
 
-The merged model is a WALDO merged origin whose records pin every parent, the
-lineage they share, every accepted unit's run BOMs, and the union of their
-training closures; WALDO refuses to merge parents without a recorded
-common ancestor (see [Model compose](MODEL-COMPOSE.md#merged-base)). Its export
-is published, and the closer's `merges/<identity>.yaml` records the accepted and
-dropped units and why, the merged weights' hashes and URL, and, for every unit
-whose replicas were compared, the evidence: the starting loss, the held-out
-set's SHA-256, and every replica's measured loss.
-
-### Replicated closing
-
-A round is closed by `closers` identities, each judging and merging it on its
-own; none is trusted to judge alone. The merge is deterministic, so honest
-closers compute the same hash, and the round is decided once a majority of
-`closers` sign the same decision: the round's starting weights, the accepted
-units and their weights, the method, and the merged weights. Their measured
-losses may differ slightly across hardware; they are evidence, not the
-decision. No record is the round's merge and nobody finalizes it: every
-identity reads the majority from the records.
-
-- **The next round starts from the majority's weights,** fetched from the store
-  of any closer who signed them and checked against the agreed hash, so a
-  closer who signs the right hash but publishes other weights changes nothing.
-- **Disagreement opens another slot.** When every closing slot has its merge
-  and no majority has formed, `close-<closers+1>` opens, and so on, until one
-  does. A closing slot past the plan's closers counts only if it was claimed
-  after every earlier slot had its merge.
-- **Dissent stays on the record.** A merge that disagrees with the majority,
-  or lands after it, is kept, signed, with its evidence, and reported when the
-  run completes.
-
-This defends against one closer accepting its own free-riding replica,
-dropping an honest one, inventing evidence, or publishing other weights. It
-does not defend against a majority of closers colluding, the same limit as
-replica voting, and like it rests on the plan's fixed list of identities.
-
-### Training provenance across rounds
-
-Each round starts from the previous round's merge, so a run's data history
-spans every round. Releases carry it forward:
-
-- A submission's package publishes its run BOM (`provenance-<sha256>.json`),
-  which pins the unit's index commit, shards, and record filter, and its
-  training closure, every corpus its lineage trained on.
-- A merge's package republishes every accepted unit's run BOM and the union of
-  their closures. Submission repositories can therefore be pruned after a round
-  closes without losing evidence: the merges hold it, round by round.
-- The final model's `EU-BOM.json` and `ATTRIBUTION.md` cover every round's
-  corpora, and its distributable review covers every round's licenses.
-
-The runs repository pins each package's files by hash in its records, so a
-package that later changes is detected; the evidence itself lives with the
-weights, which must be hosted anyway.
-
-## Choosing replicas
-
-Replicas trade compute for verification: two replicas cost twice the compute of
-one, and three cost three times. Verification works by measuring each replica's
-progress from the round's starting loss, so its power depends on how far a
-round moves the loss. The numbers below come from the runs recorded so far and
-are guidance, not enforced rules.
-
-| Round | Progress (starting minus replica loss) | Honest replica gap | Free-rider gap |
-| --- | --- | --- | --- |
-| Early pretraining | about 0.3 to 2 | 0 to 3% of progress | 100% of progress |
-| Late post-training | about 0.0001 | below `replica_floor` | also below `replica_floor` |
-
-- **Replicate while rounds make clear progress.** While each round's progress is
-  well above `replica_floor` (roughly ten times it, about 0.01 with the
-  default), honest replicas sit far inside `replica_tolerance` and a free-rider
-  sits far outside it, so `replicas: 2` catches free-riders reliably.
-- **Below that, replicas stop verifying.** Once a round's progress falls under
-  `replica_floor`, a free-rider who submits the starting weights is
-  indistinguishable from honest work and passes. Further replicas only
-  duplicate compute; spend it on new data instead, which restores measurable
-  progress and with it the check's power.
-- **Use three replicas for high stakes.** Two disagreeing replicas are both
-  dropped; three can outvote one bad submission, at three times the compute.
-  Reserve them for rounds whose loss would be costly, or for identities not yet
-  trusted.
-- **Spot-check at scale (not built).** Replicating a random share of units,
-  chosen after submissions arrive, and removing an identity caught free-riding
-  would deter cheating at a fraction of full replication's cost: a contributor
-  risks their whole standing on every unit.
-
-Each merge record's evidence holds the starting loss and every replica's
-measured loss, so every run measures its own progress curve and shows where
-replication stopped verifying.
-
-## Records and signatures
-
-Records are JSON (valid YAML) signed with `ssh-keygen -Y sign` in the
-`waldo-join` namespace by the identity they name, and committed with `-s` with
-that identity as author. A reader ignores a record that does not verify against
-the plan's key for the identity it names, that sits in a file other than the
-one its fields name (`claims/<slot>[.<attempt>].yaml`,
-`submissions/<unit>-<identity>.yaml`, `merges/<identity>.yaml`), or whose
-identity holds no claim for it. A merge that does not verify is simply not a
-vote; the round is decided by the closers whose merges do.
+Two replicas catch a free-rider while a round's progress is well above
+`replica_floor`; below it, a free-rider is indistinguishable from honest work,
+so spend compute on new data instead. Three replicas outvote one bad
+submission. Each merge's evidence shows where replication stopped verifying.
 
 ## Stores
 
-`file:///path` stores keep `<path>/<run>/<model>/` on one machine. With
-`huggingface`, each identity uploads to its own namespace
-(`<hf>/waldo-<run>-r<round>-<unit>-<identity>`, one repository per submission
-or merge) through the `hf` command of `huggingface_hub`, and records pin the
-uploaded commit, `huggingface://<hf>/<model>@<commit>`. Readers download exactly
-the recorded files at that commit and check every hash before using any of them;
-a URL outside the named identity's own account is refused.
+`file:///path` keeps `<path>/<run>/<model>/` on one machine. `huggingface`
+uploads each submission or merge to the identity's own account, pinned in its
+record as `huggingface://<hf>/<model>@<commit>`; readers fetch exactly those
+files, check every hash, and refuse a URL outside the identity's account.
 
-## GitHub runs repositories
+## GitHub
 
-For a GitHub runs repository, each record goes to its own branch,
-`waldo-join/<run>/<identity>/<round path>`, on the runs repository when the
-identity's account can push to it, or otherwise on the account's fork. Join
-opens a pull request and waits for the repository's verifier to merge or close
-it. The verifier is the repository's own Action: it merges a pull request only
-if it adds nothing but record files under an existing run's `rounds/`, each
-signature verifies against the plan's key for its identity, and each record
-keeps the claim rules: a claim's slot is free or its last attempt expired
-unfilled, its identity holds no other slot of the unit, and it is not dated
-ahead of the verifier's clock; a submission or merge comes from an identity
-holding a claim for it. It reads files and runs `ssh-keygen`, never code from
-the pull request.
+On GitHub, each record goes to its own branch, on the runs repository or the
+identity's fork, as a pull request merged by the repository's own verifier
+Action. The verifier merges only record files under an existing run's
+`rounds/`, applies the same validity and claim rules join does, rejects a claim
+dated ahead of its clock, and never runs code from a pull request.
 
-GitHub's fine-grained tokens can push to a fork but cannot open a pull request
-on a repository their owner does not control, so record pull requests need a
-classic token with `public_repo`. Give that token to a GitHub machine account
-rather than a personal one: it then reaches only the machine account's forks,
-and the records stay off the person's contribution graph. Store it in
-`~/.waldo/join/<identity>/github-token`. As for WALDO's other credentials
-(ADR 0035), join refuses a token that is a symlink or not a regular file, is
-readable by group or others, or sits in a directory others can read; it creates
-identity directories with mode 700. It passes the token only to its own `gh`
-and `git` calls.
-Without that file, join uses the caller's `GH_TOKEN` or `gh` login.
-
-Join spends little of the account's GitHub API rate limit, which every
-identity using one account shares: one call to open each record's pull
-request, and a check of the pull request only every five minutes while it
-waits, since it watches the default branch for its record with `git fetch`,
-which is not rate limited. Waiting for others uses git alone, and where records
-are pushed is found once and remembered in the clone. If the limit is reached,
-join waits for it to reset rather than failing.
+Fine-grained tokens cannot open pull requests on repositories their owner does
+not control, so contributors need a classic `public_repo` token, best held by a
+machine account, in `~/.waldo/join/<identity>/github-token` (private file,
+private directory; [ADR 0035](adr/0035-local-s3-credentials.md)). Join uses about
+one API call per record: it watches for its record with `git fetch`, checks the
+pull request only every five minutes, and waits out a rate limit rather than
+failing.
 
 ## Testing
 
-`testing/e2e/model-join.sh` runs three identities through a local bare runs
-repository with a `file://` store and real MLX training: a bootstrap and a
-pretraining round over three units, with one identity free-riding on one unit
-and another closing that round dishonestly, accepting the free-rider and
-publishing its weights. It asserts that the honest closers drop the free-rider's
-unit on measured evidence, merge the honest units by token-weighted mean, and
-record the evidence, and that their majority outvotes the dishonest closer. Set
-`JOIN_POSTTRAIN_CORPUS` to an index path to add a post-training round over
-`filter.slice` shares of it.
+`testing/e2e/model-join.sh` (opt-in, `WALDO_E2E_JOIN=1`) trains three identities
+for real through a local runs repository: one free-rides, another closes
+dishonestly, and the test asserts both are caught. `testing/join/run-identities.sh`
+burns in a GitHub run, and with `FAULTS`, `testing/join/burnin.py` injects
+protocol faults; `burnin.py report runs/<run>` checks what the run did with each.
+A new bug becomes a new fault.
 
-`testing/join/run-identities.sh` burns in a run on a real GitHub runs repository:
-it runs several identities at once, and with `FAULTS`, runs them through
-`testing/join/burnin.py`, which injects protocol faults as they join: lazy,
-copied, and stale-base submissions, claims left to expire, dishonest merges,
-and forged or future-dated claims, at random or as scripted. `burnin.py report
-runs/<run>` then checks every fault against what the run did with it. A fault
-that got through is a problem, and one that was caught at too high a cost is a
-kink. When a run finds a new one, it is added to the burn-in as a fault.
+## Limits
+
+- A majority of colluding closers, or of a unit's replicas, is not defended
+  against; the plan's identity list bounds who can vote.
+- A lightly perturbed copy of another replica passes; commit-reveal would stop it.
+- The plan's author is trusted, and plan edits apply to every round.
+- A runs repository not on GitHub has no verifier; join's own checks still apply.

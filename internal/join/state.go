@@ -6,7 +6,9 @@
 package join
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -22,11 +24,32 @@ import (
 // submissions and merges of identities holding claims, and, once a majority
 // of closers sign the same merge, that merge.
 type Round struct {
-	Claims      map[string][]Claim // by slot, attempts in order
+	Claims      map[string][]Claim // valid claims by slot, attempts in order
+	Latest      map[string]Attempt // each slot's latest claim file, valid or not
 	Submissions map[string][]Submission
-	Merges      []MergeRecord // every closer's merge, agreeing or not
-	Merge       *MergeRecord  // the majority's merge, once the round is decided
-	ClosedAt    time.Time     // when the majority formed
+	Merges      []MergeRecord   // every valid merge from a closing slot's holder, agreeing or not
+	Votes       []MergeRecord   // one merge per closing slot, in slot order
+	Merged      map[string]bool // identities with any merge file, valid or not
+	Merge       *MergeRecord    // the majority's merge, once the round is decided
+	ClosedAt    time.Time       // when the majority formed, by its signers' own clocks
+}
+
+// Attempt is a slot's latest claim file as written, so a malformed claim still
+// holds its attempt number and expires like any other.
+type Attempt struct {
+	Number    int
+	CreatedAt string `json:"created_at"`
+}
+
+var retakenClaim = regexp.MustCompile(`^(.+-[1-9][0-9]*)\.([2-9]|[1-9][0-9]+)\.yaml$`)
+
+// claimAttempt is the slot and attempt a claim file's name holds.
+func claimAttempt(file string) (string, int) {
+	if match := retakenClaim.FindStringSubmatch(file); match != nil {
+		number, _ := strconv.Atoi(match[2])
+		return match[1], number
+	}
+	return strings.TrimSuffix(file, ".yaml"), 1
 }
 
 // State is a run as its signed records describe it; unsigned or misplaced records are ignored.
@@ -57,13 +80,24 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 	state := State{Plan: plan}
 	for number := range plan.Stages() {
 		directory := roundDir(runDir, number)
-		round := Round{Claims: map[string][]Claim{}, Submissions: map[string][]Submission{}}
+		round := Round{Claims: map[string][]Claim{}, Latest: map[string]Attempt{}, Submissions: map[string][]Submission{}, Merged: map[string]bool{}}
 		paths, err := filepath.Glob(filepath.Join(directory, "claims", "*.yaml"))
 		if err != nil {
 			return State{}, err
 		}
+		present := map[string]bool{} // slot and attempt of every claim file
 		var claims []Claim
 		for _, path := range paths {
+			slot, attempt := claimAttempt(filepath.Base(path))
+			present[fmt.Sprintf("%s %d", slot, attempt)] = true
+			if attempt > round.Latest[slot].Number {
+				latest := Attempt{Number: attempt}
+				if data, err := os.ReadFile(path); err == nil {
+					_ = json.Unmarshal(data, &latest)
+				}
+				latest.Number = attempt
+				round.Latest[slot] = latest
+			}
 			var record Claim
 			ok, err := readSigned(path, allowedSigners, plan.Identities, &record, func() string { return record.Identity })
 			if err != nil {
@@ -73,7 +107,8 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 				claims = append(claims, record)
 			}
 		}
-		// Attempts in order, each only after the one before it, and one slot per identity per unit.
+		// Attempts in order, each only after the one before it was claimed, valid or not,
+		// and one slot per identity per unit.
 		sort.Slice(claims, func(i, j int) bool {
 			if claims[i].Slot != claims[j].Slot {
 				return claims[i].Slot < claims[j].Slot
@@ -83,7 +118,11 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 		holds := map[string]string{} // identity and unit to the slot it holds
 		for _, record := range claims {
 			key := record.Identity + " " + slotUnit(record.Slot)
-			if held, ok := holds[key]; (ok && held != record.Slot) || len(round.Claims[record.Slot]) != record.Attempt-1 {
+			chained := true
+			for earlier := 1; earlier < record.Attempt; earlier++ {
+				chained = chained && present[fmt.Sprintf("%s %d", record.Slot, earlier)]
+			}
+			if held, ok := holds[key]; (ok && held != record.Slot) || !chained {
 				continue
 			}
 			holds[key] = record.Slot
@@ -112,19 +151,24 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 			return State{}, err
 		}
 		sort.Strings(paths)
+		var previous *MergeRecord
+		if number > 0 {
+			previous = state.Rounds[number-1].Merge
+		}
 		for _, path := range paths {
+			round.Merged[strings.TrimSuffix(filepath.Base(path), ".yaml")] = true
 			var record MergeRecord
 			ok, err := readSigned(path, allowedSigners, plan.Identities, &record, func() string { return record.Identity })
 			if err != nil {
 				return State{}, err
 			}
 			if _, claimed := holds[record.Identity+" close"]; ok && claimed && record.Round == number &&
-				filepath.Base(path) == record.Identity+".yaml" && validMerge(record, plan, number) {
+				filepath.Base(path) == record.Identity+".yaml" && validMerge(record, plan, number, previous) {
 				round.Merges = append(round.Merges, record)
 			}
 		}
-		round.Merges = extraClosers(round, plan)
-		round.Merge, round.ClosedAt = decide(round.Merges, plan.Quorum())
+		round.Votes = votes(round, plan)
+		round.Merge, round.ClosedAt = decide(round.Votes, plan.Quorum())
 		state.Rounds = append(state.Rounds, round)
 		if round.Merge == nil {
 			break
@@ -133,53 +177,39 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 	return state, nil
 }
 
-// extraClosers drops the merges of closers past the plan's own whose claim
-// came before every earlier closing slot had its merge, since a slot past the
-// plan's closers opens only when those closers disagree.
-func extraClosers(round Round, plan Plan) []MergeRecord {
-	closedAt := func(slot string) (time.Time, bool) {
-		for _, claim := range round.Claims[slot] {
-			for _, record := range round.Merges {
-				if record.Identity == claim.Identity {
-					closed, err := time.Parse(time.RFC3339, record.ClosedAt)
-					return closed, err == nil
-				}
-			}
-		}
-		return time.Time{}, false
-	}
-	valid := map[string]bool{}
-	for position := 1; ; position++ {
-		claims, ok := round.Claims[fmt.Sprintf("close-%d", position)]
-		if !ok {
-			break
-		}
-		for _, claim := range claims {
-			created, _ := time.Parse(time.RFC3339, claim.CreatedAt)
-			opened := position <= plan.Closing()
-			if !opened {
-				opened = true
-				for earlier := 1; earlier < position; earlier++ {
-					if closed, ok := closedAt(fmt.Sprintf("close-%d", earlier)); !ok || created.Before(closed) {
-						opened = false
-					}
-				}
-			}
-			valid[claim.Identity] = valid[claim.Identity] || opened
-		}
-	}
-	var kept []MergeRecord
+// votes are the round's merges counted toward its decision, one per closing
+// slot from the earliest of its holders to land a merge, in slot order. A slot
+// past the plan's closers votes only once every slot before it has voted, since
+// it opens only when those closers have not agreed.
+func votes(round Round, plan Plan) []MergeRecord {
+	byIdentity := map[string]MergeRecord{}
 	for _, record := range round.Merges {
-		if valid[record.Identity] {
-			kept = append(kept, record)
-		}
+		byIdentity[record.Identity] = record
 	}
-	return kept
+	var result []MergeRecord
+	everyVoted := true
+	for position := 1; ; position++ {
+		slot := fmt.Sprintf("close-%d", position)
+		if round.Latest[slot].Number == 0 || (position > plan.Closing() && !everyVoted) {
+			return result
+		}
+		voted := false
+		for _, claim := range round.Claims[slot] {
+			if record, ok := byIdentity[claim.Identity]; ok {
+				result, voted = append(result, record), true
+				break
+			}
+		}
+		everyVoted = everyVoted && voted
+	}
 }
 
 // decision is what closers must agree on: the round's starting weights, the
-// units accepted, the method, and the merged weights. Their measured losses
-// may differ slightly across hardware and are evidence, not the decision.
+// units accepted, the method, the merged weights, and the training provenance
+// published with them, so no closer in a majority can publish the agreed
+// weights with a different history. Measured losses may differ slightly across
+// hardware, and release metadata carries each closer's own timestamps; both
+// are evidence, not the decision.
 func (record MergeRecord) decision() string {
 	base := ""
 	if record.BaseSHA256 != nil {
@@ -189,34 +219,37 @@ func (record MergeRecord) decision() string {
 	for _, unit := range record.Accepted {
 		parts = append(parts, unit.Unit+" "+unit.Identity+" "+unit.ModelSHA256)
 	}
-	return strings.Join(parts, "\n")
+	var provenance []string
+	for name, digest := range record.Files {
+		if name == model.ClosureFile || strings.HasPrefix(name, "provenance-") {
+			provenance = append(provenance, name+" "+digest)
+		}
+	}
+	slices.Sort(provenance)
+	return strings.Join(append(parts, provenance...), "\n")
 }
 
-// decide returns the merge a quorum of closers signed, and when that quorum
-// formed; if more than one decision reaches quorum, the first to do so stands.
-func decide(merges []MergeRecord, quorum int) (*MergeRecord, time.Time) {
+// decide returns the first decision, in slot order, that a quorum of votes
+// signs. Votes are only ever added, so once a round is decided no later record
+// changes its decision. ClosedAt is the latest clock among those votes, so a
+// signer can only make the round's deadline later.
+func decide(votes []MergeRecord, quorum int) (*MergeRecord, time.Time) {
 	byDecision := map[string][]MergeRecord{}
-	for _, record := range merges {
-		byDecision[record.decision()] = append(byDecision[record.decision()], record)
-	}
-	var chosen *MergeRecord
-	var closedAt time.Time
-	for _, agreeing := range byDecision {
-		if len(agreeing) < quorum {
-			continue
-		}
-		times := make([]time.Time, len(agreeing))
-		for index, record := range agreeing {
-			times[index], _ = time.Parse(time.RFC3339, record.ClosedAt)
-		}
-		slices.SortFunc(times, func(a, b time.Time) int { return a.Compare(b) })
-		formed := times[quorum-1]
-		if chosen == nil || formed.Before(closedAt) || (formed.Equal(closedAt) && agreeing[0].Identity < chosen.Identity) {
-			record := agreeing[0]
-			chosen, closedAt = &record, formed
+	for _, record := range votes {
+		agreeing := append(byDecision[record.decision()], record)
+		byDecision[record.decision()] = agreeing
+		if len(agreeing) == quorum {
+			var closedAt time.Time
+			for _, vote := range agreeing {
+				if closed, err := time.Parse(time.RFC3339, vote.ClosedAt); err == nil && closed.After(closedAt) {
+					closedAt = closed
+				}
+			}
+			chosen := agreeing[0]
+			return &chosen, closedAt
 		}
 	}
-	return chosen, closedAt
+	return nil, time.Time{}
 }
 
 // Agreeing is every merge that signed the round's decision, so its weights can
@@ -273,8 +306,12 @@ func validClaim(record Claim, plan Plan, number int) bool {
 	return err == nil && record.Kind == ClaimKind && record.Schema == RecordSchema && record.Run == plan.Name && record.Stage == stage
 }
 
-func validMerge(record MergeRecord, plan Plan, number int) bool {
+func validMerge(record MergeRecord, plan Plan, number int, previous *MergeRecord) bool {
 	stage := plan.Stages()[number]
+	// Every round starts from the one before's decision, so the chain between rounds holds.
+	if (previous == nil) != (record.BaseSHA256 == nil) || (previous != nil && *record.BaseSHA256 != previous.ModelSHA256) {
+		return false
+	}
 	if record.Kind != MergeKind || record.Schema != RecordSchema || record.Run != plan.Name || record.Stage != stage ||
 		model.ValidateName(record.Model) != nil || !validFiles(record.Files, record.ModelSHA256) {
 		return false
@@ -334,6 +371,16 @@ func (round Round) replicas(unit string, count int) []Submission {
 	return result
 }
 
+// allFilled is whether closing slots 1..count all have their merges.
+func (round Round) allFilled(count int) bool {
+	for position := 1; position <= count; position++ {
+		if !round.filled(fmt.Sprintf("close-%d", position)) {
+			return false
+		}
+	}
+	return true
+}
+
 // holds is whether identity holds a claim on a slot of unit.
 func (round Round) holds(identity, unit string) bool {
 	for slot, claims := range round.Claims {
@@ -347,14 +394,25 @@ func (round Round) holds(identity, unit string) bool {
 // open is the slot's next attempt if it can be claimed now: never claimed,
 // or its latest holder let the claim expire without landing a record.
 func (state State) open(round Round, slot string, now time.Time) (int, bool) {
-	claims := round.Claims[slot]
-	if len(claims) == 0 {
+	latest, ok := round.Latest[slot]
+	if !ok {
 		return 1, true
 	}
-	if round.filled(slot) || !state.expired(claims[len(claims)-1], now) {
+	if round.filled(slot) || !state.expired(Claim{CreatedAt: latest.CreatedAt}, now) {
 		return 0, false
 	}
-	return len(claims) + 1, true
+	return latest.Number + 1, true
+}
+
+// positions are slots 1..count starting at an offset of identity's own, so
+// identities looking for a free slot at the same moment mostly try different ones.
+func positions(identity string, round, count int) []int {
+	result := make([]int, count)
+	offset := pieceSeed(identity, round)
+	for index := range result {
+		result[index] = (offset+index)%count + 1
+	}
+	return result
 }
 
 // Next picks this pass's work. A full (or late) round is closed by its claimed
@@ -389,23 +447,25 @@ func (state State) Next(identity string, now time.Time) Action {
 		late = now.After(state.Rounds[number-1].ClosedAt.Add(time.Duration(state.Plan.RoundMinutes * float64(time.Minute))))
 	}
 	if full == len(units) || (late && full > 0) {
-		if slices.ContainsFunc(round.Merges, func(record MergeRecord) bool { return record.Identity == identity }) {
+		if round.Merged[identity] {
 			return Action{Kind: "idle", Round: number, Stage: stage}
 		}
 		if round.holds(identity, "close") {
 			return Action{Kind: "close", Round: number, Stage: stage, Unit: "close"}
 		}
 		// Past the plan's closers, a slot opens only once every one before it has a merge and none has a majority.
-		everyFilled := true
-		for position := 1; position <= state.Plan.Closing()+len(state.Plan.Identities); position++ {
+		order := positions(identity, number, state.Plan.Closing())
+		for position := state.Plan.Closing() + 1; position <= state.Plan.Closing()+len(state.Plan.Identities); position++ {
+			order = append(order, position)
+		}
+		for _, position := range order {
 			slot := fmt.Sprintf("close-%d", position)
-			if position > state.Plan.Closing() && !everyFilled {
+			if position > state.Plan.Closing() && !round.allFilled(position-1) {
 				break
 			}
 			if attempt, ok := state.open(round, slot, now); ok {
 				return Action{Kind: "claim", Round: number, Stage: stage, Unit: "close", Slot: slot, Attempt: attempt}
 			}
-			everyFilled = everyFilled && round.filled(slot)
 		}
 		return Action{Kind: "idle", Round: number, Stage: stage}
 	}
@@ -421,7 +481,7 @@ func (state State) Next(identity string, now time.Time) Action {
 		if submitted(unit) || round.holds(identity, unit) || len(round.replicas(unit, state.Plan.Replicas)) >= state.Plan.Replicas {
 			continue
 		}
-		for position := 1; position <= state.Plan.Replicas; position++ {
+		for _, position := range positions(identity, number, state.Plan.Replicas) {
 			slot := fmt.Sprintf("%s-%d", unit, position)
 			if attempt, ok := state.open(round, slot, now); ok {
 				return Action{Kind: "claim", Round: number, Stage: stage, Unit: unit, Slot: slot, Attempt: attempt}
