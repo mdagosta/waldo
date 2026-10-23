@@ -331,6 +331,31 @@ func (puller Puller) importSource(name, temporary, sourceDirectory string, names
 	} else if !os.IsNotExist(err) {
 		return err
 	}
+	// Keep a distributed run's round record, the weights' link back to the records that produced them.
+	if data, err := os.ReadFile(filepath.Join(sourceDirectory, RoundFile)); err == nil {
+		var round struct {
+			Kind    string `json:"kind"`
+			Subject string `json:"subject"`
+			Schema  int    `json:"schema"`
+		}
+		if err := json.Unmarshal(data, &round); err != nil || round.Kind != "openwaldo-bom" || round.Subject != "join-round" || round.Schema != 1 {
+			return fmt.Errorf("%s is not a schema-1 join round record", RoundFile)
+		}
+		logical := "origin/" + RoundFile
+		if err := copyArtifactFile(filepath.Join(sourceDirectory, RoundFile), filepath.Join(temporary, filepath.FromSlash(logical))); err != nil {
+			return err
+		}
+		kept, err := inventoryOriginArtifacts(temporary, []string{logical})
+		if err != nil {
+			return err
+		}
+		for index := range kept {
+			kept[index].Role = RoundRole
+		}
+		artifacts = append(artifacts, kept...)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	lineage, err := releaseLineage(filepath.Join(sourceDirectory, "BOM.json"))
 	if err != nil {
 		return err
@@ -424,8 +449,10 @@ func selectModelFiles(metadata hubModel) ([]string, error) {
 			selected = append(selected, name)
 		}
 	}
-	if available[ClosureFile] {
-		selected = append(selected, ClosureFile)
+	for _, name := range []string{ClosureFile, RoundFile} {
+		if available[name] {
+			selected = append(selected, name)
+		}
 	}
 	// A WALDO release publishes its training run BOMs beside its weights.
 	for name := range available {

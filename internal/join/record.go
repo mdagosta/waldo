@@ -16,6 +16,10 @@ import (
 	"strings"
 )
 
+// Every record pins the plan.yaml it was made under by its SHA-256; a record
+// counts only under that exact plan, so editing a plan starts the run afresh
+// rather than rereading its history under other rules.
+
 // SigningNamespace scopes record signatures to waldo model join, so a
 // signature made for anything else never verifies as a record.
 const SigningNamespace = "waldo-join"
@@ -45,6 +49,7 @@ type Submission struct {
 	Tokens      int64             `json:"tokens"`
 	URL         string            `json:"url"`
 	CreatedAt   string            `json:"created_at"`
+	Plan        string            `json:"plan_sha256"`
 }
 
 // Claim reserves one slot of a round for one identity before it does the
@@ -62,6 +67,7 @@ type Claim struct {
 	Attempt   int    `json:"attempt"`
 	Identity  string `json:"identity"`
 	CreatedAt string `json:"created_at"`
+	Plan      string `json:"plan_sha256"`
 }
 
 // claimFile is a slot's first attempt as <slot>.yaml and later ones as <slot>.<attempt>.yaml.
@@ -92,6 +98,7 @@ type MergeRecord struct {
 	Files       map[string]string `json:"files"`
 	URL         string            `json:"url"`
 	ClosedAt    string            `json:"closed_at"`
+	Plan        string            `json:"plan_sha256"`
 }
 
 type AcceptedUnit struct {
@@ -122,6 +129,32 @@ type DroppedUnit struct {
 	Unit       string   `json:"unit"`
 	Reason     string   `json:"reason"`
 	Identities []string `json:"identities,omitempty"`
+}
+
+// RoundRecord is a merge package's link back to the run that produced it: the
+// runs repository, run, round, and plan, and every accepted submission's signed
+// record by hash. Every honest closer writes the same one, so the majority's
+// decision covers it, and pulls and exports keep it with the weights.
+type RoundRecord struct {
+	Kind           string            `json:"kind"`
+	Schema         int               `json:"schema"`
+	Subject        string            `json:"subject"`
+	RunsRepository string            `json:"runs_repository"`
+	Run            string            `json:"run"`
+	Round          int               `json:"round"`
+	Stage          string            `json:"stage"`
+	PlanSHA256     string            `json:"plan_sha256"`
+	BaseSHA256     *string           `json:"base_sha256"`
+	Method         string            `json:"method"`
+	Accepted       []RoundSubmission `json:"accepted"`
+}
+
+type RoundSubmission struct {
+	Unit         string `json:"unit"`
+	Identity     string `json:"identity"`
+	ModelSHA256  string `json:"model_sha256"`
+	Record       string `json:"record"` // its path in the runs repository
+	RecordSHA256 string `json:"record_sha256"`
 }
 
 // writeAllowedSigners lists every plan identity's key for ssh-keygen -Y verify.

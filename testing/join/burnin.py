@@ -34,6 +34,7 @@ FAULT_RATE (default 0.15) is the chance, per pass, that a random identity inject
 """
 import collections
 import datetime
+import hashlib
 import json
 import os
 import pathlib
@@ -82,6 +83,12 @@ class Run:
             subprocess.run(["git", "clone", "-q", REPO, str(self.clone)], env=self.env, check=True)
         self.git("fetch", "-q", "origin")
 
+    def plan_sha256(self):
+        """The pin every record carries: the SHA-256 of plan.yaml's bytes on main."""
+        data = subprocess.run(["git", "show", f"origin/main:{self.run_dir}/plan.yaml"], cwd=self.clone, env=self.env,
+                              capture_output=True, check=True).stdout
+        return hashlib.sha256(data).hexdigest()
+
     def plan(self):
         text = self.git("show", f"origin/main:{self.run_dir}/plan.yaml")
         number = lambda key, default: int(m.group(1)) if (m := re.search(rf"^{key}: (\d+)", text, re.M)) else default
@@ -99,7 +106,7 @@ class Run:
     @staticmethod
     def decision(merge):
         """What closers must agree on, as join decides it: weights, units, and published provenance."""
-        provenance = sorted(f"{n} {d}" for n, d in merge.get("files", {}).items() if n == "TRAINING-CLOSURE.json" or n.startswith("provenance-"))
+        provenance = sorted(f"{n} {d}" for n, d in merge.get("files", {}).items() if n in ("TRAINING-CLOSURE.json", "JOIN-ROUND.json") or n.startswith("provenance-"))
         accepted = [f"{a['unit']} {a['identity']} {a['model_sha256']}" for a in merge.get("accepted", [])]
         return "\n".join([str(merge.get("base_sha256") or ""), str(merge.get("method")), str(merge.get("model_sha256"))] + accepted + provenance)
 
@@ -228,7 +235,7 @@ class Identity:
 
     def claim_record(self, number, slot, created=None):
         return {"kind": "waldo-join-claim", "schema": 1, "run": self.run.name, "round": number, "stage": stage(number),
-                "slot": slot, "attempt": 1, "identity": self.name, "created_at": created or now()}
+                "slot": slot, "attempt": 1, "identity": self.name, "created_at": created or now(), "plan_sha256": self.run.plan_sha256()}
 
     def claim(self, number, slot):
         path = f"{self.run.run_dir}/rounds/round-{number:04d}/claims/{slot}.yaml"
@@ -246,7 +253,7 @@ class Identity:
         return {"kind": "waldo-join-submission", "schema": 1, "run": self.run.name, "round": number, "stage": stage(number),
                 "unit": unit, "identity": self.name, "base": base and base["model"], "base_sha256": base and base["model_sha256"],
                 "model": weights["model"], "model_sha256": weights["model_sha256"], "bom_sha256": weights["files"].get("BOM.json"),
-                "files": weights["files"], "tokens": tokens, "url": weights["url"], "created_at": now()}
+                "files": weights["files"], "tokens": tokens, "url": weights["url"], "created_at": now(), "plan_sha256": self.run.plan_sha256()}
 
     def inject(self, fault, number, plan):
         """Injects one fault in round number; False if its conditions do not hold yet."""
@@ -301,7 +308,7 @@ class Identity:
             record = {"kind": "waldo-join-merge", "schema": 1, "run": run.name, "round": number, "stage": stage(number),
                       "identity": self.name, "method": "weighted-mean-f32-v1", "base": base and base["model"], "base_sha256": start,
                       "accepted": accepted, "dropped": [], "model": first["model"], "model_sha256": first["model_sha256"],
-                      "files": first["files"], "url": first["url"], "closed_at": now()}
+                      "files": first["files"], "url": first["url"], "closed_at": now(), "plan_sha256": run.plan_sha256()}
             path = f"{run.run_dir}/rounds/round-{number:04d}/merges/{self.name}.yaml"
             pr, merged = self.propose({path: record}, f"{run.name} round {number}: merge by {self.name}")
             self.note(fault, number, slot=slot, claim=claim, pr=pr, merged=merged, model_sha256=first["model_sha256"])

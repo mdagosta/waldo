@@ -155,8 +155,11 @@ if command in ("lazy-u2", "cheat-close"):
                    "method": "weighted-mean-f32-v1", "base": base["model"], "base_sha256": base["model_sha256"], "accepted": accepted,
                    "dropped": [], "model": lazy["model"], "model_sha256": lazy["model_sha256"], "files": lazy["files"], "url": lazy["url"],
                    "closed_at": lazy["created_at"]}}
+    # Every record pins the plan it was made under.
+    pin = hashlib.sha256((seed / f"runs/{run}/plan.yaml").read_bytes()).hexdigest()
     directory = seed / rounds / f"round-{number:04d}"
     for name, record in out.items():
+        record["plan_sha256"] = pin
         (directory / name).parent.mkdir(parents=True, exist_ok=True)
         (directory / name).write_text(json.dumps(record, indent=2) + "\n")
         print(directory / name)
@@ -200,7 +203,7 @@ done
 # its BOM.json and records its evidence.
 for round in $(seq 1 "$last"); do
   rounds merge "$round" | python3 -c '
-import json, sys
+import hashlib, json, subprocess, sys
 decided, round_number = json.load(sys.stdin), int(sys.argv[1])
 merge = decided["merge"]
 honest = ["u0", "u1"] if round_number == 1 else ["u0", "u1", "u2"]
@@ -230,7 +233,14 @@ assert closure["complete"] and len(closure["corpora"]) >= 3, [(c["corpus_bom_sha
 disclosure = json.load(open(package + "/EU-BOM.json"))
 inherited = [c for c in disclosure["training"]["unique_corpora"] if "inherited" in c["stages"]]
 assert len(inherited) >= 3, disclosure["training"]
-print(f"round {round_number} merge publishes {len(provenance)} run BOMs and a complete history of {len(closure['"'"'corpora'"'"'])} corpora")' "$round"
+# The merge links back to the signed records it was made from, each pinned by hash.
+link = json.load(open(package + "/JOIN-ROUND.json"))
+assert link["run"] == "join-e2e" and link["round"] == round_number and len(link["plan_sha256"]) == 64, link
+assert sorted(entry["unit"] for entry in link["accepted"]) == honest, link["accepted"]
+for entry in link["accepted"]:
+    record = subprocess.run(["git", "--git-dir=" + sys.argv[2], "show", "main:" + entry["record"]], capture_output=True, check=True).stdout
+    assert hashlib.sha256(record).hexdigest() == entry["record_sha256"], entry
+print(f"round {round_number} merge publishes {len(provenance)} run BOMs and a complete history of {len(closure['"'"'corpora'"'"'])} corpora")' "$round" "$work/runs.git"
 done
 git --git-dir="$work/runs.git" log --format='%an %s' main
 echo "model-join: ok"

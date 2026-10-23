@@ -54,8 +54,9 @@ func claimAttempt(file string) (string, int) {
 
 // State is a run as its signed records describe it; unsigned or misplaced records are ignored.
 type State struct {
-	Plan   Plan
-	Rounds []Round
+	Plan       Plan
+	PlanSHA256 string // the plan.yaml every counted record pins
+	Rounds     []Round
 }
 
 func roundDir(runDir string, number int) string {
@@ -77,7 +78,11 @@ func cutLast(text, separator string) (string, string, bool) {
 
 // ReadState reads every round's records under runDir, verifying each signature against the plan's keys.
 func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
-	state := State{Plan: plan}
+	pin, err := hashFile(filepath.Join(runDir, "plan.yaml"))
+	if err != nil {
+		return State{}, err
+	}
+	state := State{Plan: plan, PlanSHA256: pin}
 	for number := range plan.Stages() {
 		directory := roundDir(runDir, number)
 		round := Round{Claims: map[string][]Claim{}, Latest: map[string]Attempt{}, Submissions: map[string][]Submission{}, Merged: map[string]bool{}}
@@ -103,7 +108,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 			if err != nil {
 				return State{}, err
 			}
-			if ok && record.Round == number && record.Attempt >= 1 && filepath.Base(path) == claimFile(record.Slot, record.Attempt) && validClaim(record, plan, number) {
+			if ok && record.Round == number && record.Attempt >= 1 && record.Plan == pin && filepath.Base(path) == claimFile(record.Slot, record.Attempt) && validClaim(record, plan, number) {
 				claims = append(claims, record)
 			}
 		}
@@ -141,7 +146,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 			}
 			// A record must match the file and run it is in, so none can be replayed elsewhere,
 			// and its identity must have claimed the unit, so none trains a unit unasked.
-			if _, claimed := holds[record.Identity+" "+record.Unit]; ok && claimed && record.Round == number &&
+			if _, claimed := holds[record.Identity+" "+record.Unit]; ok && claimed && record.Round == number && record.Plan == pin &&
 				filepath.Base(path) == record.Unit+"-"+record.Identity+".yaml" && validSubmission(record, plan, number) {
 				round.Submissions[record.Unit] = append(round.Submissions[record.Unit], record)
 			}
@@ -162,7 +167,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 			if err != nil {
 				return State{}, err
 			}
-			if _, claimed := holds[record.Identity+" close"]; ok && claimed && record.Round == number &&
+			if _, claimed := holds[record.Identity+" close"]; ok && claimed && record.Round == number && record.Plan == pin &&
 				filepath.Base(path) == record.Identity+".yaml" && validMerge(record, plan, number, previous) {
 				round.Merges = append(round.Merges, record)
 			}
@@ -206,7 +211,7 @@ func votes(round Round, plan Plan) []MergeRecord {
 
 // decision is what closers must agree on: the round's starting weights, the
 // units accepted, the method, the merged weights, and the training provenance
-// published with them, so no closer in a majority can publish the agreed
+// and round record published with them, so no closer in a majority can publish the agreed
 // weights with a different history. Measured losses may differ slightly across
 // hardware, and release metadata carries each closer's own timestamps; both
 // are evidence, not the decision.
@@ -221,7 +226,7 @@ func (record MergeRecord) decision() string {
 	}
 	var provenance []string
 	for name, digest := range record.Files {
-		if name == model.ClosureFile || strings.HasPrefix(name, "provenance-") {
+		if name == model.ClosureFile || name == model.RoundFile || strings.HasPrefix(name, "provenance-") {
 			provenance = append(provenance, name+" "+digest)
 		}
 	}
