@@ -16,9 +16,9 @@ import (
 	"strings"
 )
 
-// Every record pins the plan.yaml it was made under by its SHA-256; a record
-// counts only under that exact plan, so editing a plan starts the run afresh
-// rather than rereading its history under other rules.
+// Every record carries the Pin of the plan and templates it was made under; a
+// record counts only under that exact plan, so editing either starts the run
+// afresh rather than rereading its history under other rules.
 
 // SigningNamespace scopes record signatures to waldo model join, so a
 // signature made for anything else never verifies as a record.

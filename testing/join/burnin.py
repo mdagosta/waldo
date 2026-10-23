@@ -88,11 +88,16 @@ class Run:
             subprocess.run(["git", "clone", "-q", REPO, str(self.clone)], env=self.env, check=True)
         self.git("fetch", "-q", "origin")
 
-    def plan_sha256(self):
-        """The pin every record carries: the SHA-256 of plan.yaml's bytes on main."""
-        data = subprocess.run(["git", "show", f"origin/main:{self.run_dir}/plan.yaml"], cwd=self.clone, env=self.env,
+    def show(self, path):
+        return subprocess.run(["git", "show", f"origin/main:{self.run_dir}/{path}"], cwd=self.clone, env=self.env,
                               capture_output=True, check=True).stdout
-        return hashlib.sha256(data).hexdigest()
+
+    def plan_sha256(self):
+        """The pin every record carries, as join computes it: plan.yaml and each compose template it names."""
+        plan = self.show("plan.yaml")
+        files = ["plan.yaml"] + re.findall(r"^  compose: (\S+)", plan.decode(), re.M)
+        manifest = "".join(f"{f} {hashlib.sha256(self.show(f)).hexdigest()}\n" for f in files)
+        return hashlib.sha256(manifest.encode()).hexdigest()
 
     def plan(self):
         text = self.git("show", f"origin/main:{self.run_dir}/plan.yaml")

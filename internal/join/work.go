@@ -123,15 +123,7 @@ func templateInt(template []byte, key string) int {
 }
 
 func (joiner *Joiner) planFile(value string) string {
-	if strings.HasPrefix(value, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, value[2:])
-		}
-	}
-	if filepath.IsAbs(value) {
-		return value
-	}
-	return filepath.Join(joiner.runDir, value)
+	return runFile(joiner.runDir, value)
 }
 
 // compose fills a stage template for one unit.
@@ -194,11 +186,26 @@ func (joiner *Joiner) complete(name string) bool {
 	return err == nil && (inspection.BOM.CurrentRunID != "" || inspection.BOM.CurrentOriginSHA256 != "")
 }
 
+// built is whether an earlier pass already built name: a completed training run,
+// or a merged origin. A run that failed leaves a model holding only its starting
+// weights, which must be trained again, not taken as the result.
+func (joiner *Joiner) built(name string) bool {
+	inspection, err := model.Inspect(joiner.models(), name)
+	return err == nil && (inspection.BOM.CurrentRunID != "" || (inspection.Origin != nil && inspection.Origin.Merge != nil))
+}
+
 // train trains name from the compose text unless an earlier pass already did.
 func (joiner *Joiner) train(ctx context.Context, name, text string) error {
-	if joiner.complete(name) {
+	if joiner.built(name) {
 		fmt.Fprintf(joiner.Log, "   %s already trained\n", name)
 		return nil
+	}
+	// A failed pass leaves the model behind with only its starting weights; start it over.
+	if _, err := model.Inspect(joiner.models(), name); err == nil {
+		fmt.Fprintf(joiner.Log, "   %s did not finish training; starting it over\n", name)
+		if err := joiner.waldo(ctx, "model", "rm", name); err != nil {
+			return err
+		}
 	}
 	path := filepath.Join(joiner.workDir(), "composes", name+".yaml")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -329,6 +336,12 @@ func (joiner *Joiner) publish(ctx context.Context, directory string) (string, er
 	return "file://" + target, nil
 }
 
+// fetched is where a record's package is kept once fetched: by publisher, since
+// closers of one round publish packages of one name that differ in their metadata.
+func (joiner *Joiner) fetched(identity, name string) string {
+	return filepath.Join(joiner.workDir(), "fetched", identity, name)
+}
+
 // fetch copies a record's files from the store and checks them against the hashes it commits to.
 func (joiner *Joiner) fetch(ctx context.Context, name, identity, sha string, files map[string]string, url string) (string, error) {
 	if files == nil {
@@ -350,7 +363,7 @@ func (joiner *Joiner) fetch(ctx context.Context, name, identity, sha string, fil
 	} else if !strings.HasPrefix(url, "file://") {
 		return "", fmt.Errorf("%s: %s is not in a supported store", name, url)
 	}
-	target := filepath.Join(joiner.workDir(), "exports", name)
+	target := joiner.fetched(identity, name)
 	if _, err := os.Stat(filepath.Join(target, "model.safetensors")); os.IsNotExist(err) {
 		partial := target + ".partial"
 		_ = os.RemoveAll(partial)
@@ -551,7 +564,7 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 	evidence := &UnitEvidence{Unit: unit}
 	var start float64
 	if base != nil {
-		measured, err := joiner.probe(ctx, stage, filepath.Join(joiner.workDir(), "exports", base.Model), seed, values)
+		measured, err := joiner.probe(ctx, stage, joiner.fetched(base.Identity, base.Model), seed, values)
 		if err != nil {
 			return -1, nil, nil, nil, err
 		}
@@ -836,7 +849,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		_ = os.RemoveAll(target)
 		if len(accepted) == 1 {
 			// One accepted unit (always so for the bootstrap) is the merge.
-			if err := copyDirectory(filepath.Join(joiner.workDir(), "exports", accepted[0].Model), target); err != nil {
+			if err := copyDirectory(joiner.fetched(accepted[0].Identity, accepted[0].Model), target); err != nil {
 				return err
 			}
 		} else if err := joiner.merge(ctx, name, accepted, target); err != nil {
@@ -920,7 +933,7 @@ func (joiner *Joiner) merge(ctx context.Context, name string, accepted []Submiss
 	text := "kind: waldo-model-compose\nschema: 1\n" + interaction + "base:\n  merge:\n"
 	for _, submission := range accepted {
 		name := published(submission.Model, submission.ModelSHA256)
-		if err := joiner.ensure(name, filepath.Join(joiner.workDir(), "exports", submission.Model)); err != nil {
+		if err := joiner.ensure(name, joiner.fetched(submission.Identity, submission.Model)); err != nil {
 			return err
 		}
 		text += fmt.Sprintf("    - model: %s\n      weight: %d\n", name, submission.Tokens)

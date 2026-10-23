@@ -220,7 +220,7 @@ func (joiner *Joiner) load() (State, error) {
 		return State{}, fmt.Errorf("%s is not in %s with this key; add under identities:\n  %s:\n    key: %s", joiner.Identity, filepath.Join(joiner.runDir, "plan.yaml"), joiner.Identity, key)
 	}
 	joiner.plan = plan
-	if joiner.planSHA256, err = hashFile(filepath.Join(joiner.runDir, "plan.yaml")); err != nil {
+	if joiner.planSHA256, err = Pin(joiner.runDir, plan); err != nil {
 		return State{}, err
 	}
 	allowed := filepath.Join(joiner.workDir(), "allowed_signers")

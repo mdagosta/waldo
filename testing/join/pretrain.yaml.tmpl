@@ -35,6 +35,7 @@ stages:
       sequence_length: 512
       learning_rate: 0.0006
       seed: $seed
+      evaluation_selection: lowest-sha256-v1  # scans every record the unit's filters keep, so narrow units always find held-out records
       shuffle_buffer_records: 1000000
       shuffle_buffer_bytes: 4294967296
 $extra

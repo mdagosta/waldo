@@ -42,6 +42,9 @@ runs/<run>/
 | `replica_tolerance`, `replica_floor` | Agreement thresholds; defaults 0.25 and 0.001. |
 | `min_steps_per_round`, `round_minutes` | Minimum steps per unit; optional round deadline. |
 
+Units that train a narrow slice of a corpus should set
+`evaluation_selection: lowest-sha256-v1`, which scans every record the unit's
+filters keep for held-out records rather than probing a sample of rows.
 Templates are composes with `$base_block`, `$seed`, `$budget`, `$sources`,
 `$corpus`, `$learning_rate`, `$weight_decay`, and `$extra` placeholders.
 
@@ -62,8 +65,9 @@ Each pass, an identity:
    token-weighted mean (`base.merge`, [ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)),
    publishes the merge, and signs it.
 
-Every record pins the `plan.yaml` it was made under by SHA-256 and counts only
-under that plan, so editing a plan starts the run afresh. Records count only
+Every record pins the plan it was made under, a SHA-256 over `plan.yaml` and
+the compose templates it names, and counts only under that plan, so editing
+either starts the run afresh. Records count only
 from identities holding a claim, one slot per identity per unit. Each unit's replicas are taken one per slot, so every closer judges the
 same set.
 
