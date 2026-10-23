@@ -246,8 +246,9 @@ evidence behind its weights ([ADR 0083](adr/0083-record-lineage-and-training-pro
   grows with the corpora a lineage uses, not with its length.
 
 Pulling a release keeps both with the origin. Each run BOM is checked against
-the hash it is named by, and a malformed closure is refused, so models built
-from a release inherit its evidence. Run BOMs record their Python runtime by
+the hash it is named by and its embedded corpus BOM against the hash it
+records, and a closure that is malformed or leaves out the release's own runs is
+refused, so models built from a release inherit its evidence. Run BOMs record their Python runtime by
 name and version only, without local paths. Keep or publish the native WALDO
 package when a self-contained archive of the full model tree is required.
 

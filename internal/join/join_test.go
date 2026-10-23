@@ -6,9 +6,11 @@
 package join
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -174,7 +176,7 @@ func TestReadStateCountsOnlyClaimedWork(t *testing.T) {
 	// Out of place: a second attempt with no first, and a slot beyond the plan's replicas.
 	write("claims/all-1.2.yaml", claimFixture("all-1", 2, "alice"), key)
 	write("claims/all-3.yaml", claimFixture("all-3", 1, "alice"), key)
-	write("claims/all-1.yaml", claimFixture("all-2", 1, "alice"), key)
+	write("claims/all-2.yaml", claimFixture("all-1", 1, "alice"), key)
 	state, err := ReadState(runDir, plan, allowed)
 	if err != nil {
 		t.Fatal(err)
@@ -183,8 +185,10 @@ func TestReadStateCountsOnlyClaimedWork(t *testing.T) {
 		t.Fatalf("unclaimed work counted: %+v", round)
 	}
 	// One identity holds one replica slot of a unit, however many it claims.
-	if err := os.Remove(filepath.Join(roundDir(runDir, 0), "claims", "all-1.2.yaml")); err != nil {
-		t.Fatal(err)
+	for _, file := range []string{"all-1.2.yaml", "all-2.yaml"} {
+		if err := os.Remove(filepath.Join(roundDir(runDir, 0), "claims", file)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	write("claims/all-1.yaml", claimFixture("all-1", 1, "alice"), key)
 	write("claims/all-2.yaml", claimFixture("all-2", 1, "alice"), key)
@@ -270,8 +274,8 @@ func TestMajorityOfClosersDecidesRound(t *testing.T) {
 	early.CreatedAt = "2026-10-21T10:30:00+00:00"
 	write("claims/close-4.yaml", early, keys["dave"])
 	write("merges/dave.yaml", mergeFixture("dave", honest), keys["dave"])
-	if round := read(); round.Merge != nil || len(round.Merges) != 2 {
-		t.Fatalf("an early fourth closer counted: %+v", round.Merges)
+	if round := read(); round.Merge != nil || len(round.Votes) != 2 {
+		t.Fatalf("an early fourth closer counted: %+v", round.Votes)
 	}
 	for _, file := range []string{"claims/close-4.yaml", "claims/close-4.yaml.sig", "merges/dave.yaml", "merges/dave.yaml.sig"} {
 		if err := os.Remove(filepath.Join(roundDir(runDir, 0), file)); err != nil {
@@ -302,22 +306,36 @@ func TestNextAction(t *testing.T) {
 	merged := Round{Merge: &MergeRecord{}, ClosedAt: time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)}
 	// round builds a round from "slot identity" claims, "unit identity" submissions, and "merge identity" merges.
 	round := func(entries ...string) Round {
-		result := Round{Claims: map[string][]Claim{}, Submissions: map[string][]Submission{}}
+		result := Round{Claims: map[string][]Claim{}, Latest: map[string]Attempt{}, Submissions: map[string][]Submission{}, Merged: map[string]bool{}}
 		for _, entry := range entries {
 			kind, rest, _ := strings.Cut(entry, ":")
 			first, identity, _ := strings.Cut(rest, " ")
 			switch kind {
-			case "claim":
-				result.Claims[first] = append(result.Claims[first], Claim{Slot: first, Attempt: len(result.Claims[first]) + 1, Identity: identity, CreatedAt: "2026-10-21T10:10:00+00:00"})
-			case "late":
-				result.Claims[first] = append(result.Claims[first], Claim{Slot: first, Attempt: len(result.Claims[first]) + 1, Identity: identity, CreatedAt: "2026-10-21T09:00:00+00:00"})
+			case "claim", "late":
+				created := "2026-10-21T10:10:00+00:00"
+				if kind == "late" {
+					created = "2026-10-21T09:00:00+00:00"
+				}
+				attempt := len(result.Claims[first]) + 1
+				result.Claims[first] = append(result.Claims[first], Claim{Slot: first, Attempt: attempt, Identity: identity, CreatedAt: created})
+				result.Latest[first] = Attempt{Number: attempt, CreatedAt: created}
 			case "submit":
 				result.Submissions[first] = append(result.Submissions[first], Submission{Unit: first, Identity: identity})
 			case "merge":
 				result.Merges = append(result.Merges, MergeRecord{Identity: identity})
+				result.Merged[identity] = true
 			}
 		}
 		return result
+	}
+	// slot is identity's first free slot of unit, in its own order of positions.
+	slot := func(identity, unit string, number, count int, taken ...int) string {
+		for _, position := range positions(identity, number, count) {
+			if !slices.Contains(taken, position) {
+				return fmt.Sprintf("%s-%d", unit, position)
+			}
+		}
+		return ""
 	}
 	full := []string{"claim:all-1 alice", "claim:all-2 bob", "submit:all alice", "submit:all bob"}
 	now := time.Date(2026, 10, 21, 10, 30, 0, 0, time.UTC)
@@ -327,18 +345,18 @@ func TestNextAction(t *testing.T) {
 		minutes  float64
 		want     Action
 	}{
-		"claims first slot": {nil, "alice", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-1", Attempt: 1}},
+		"claims first slot": {nil, "alice", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: slot("alice", "all", 0, 2), Attempt: 1}},
 		"claims next slot":  {[]Round{round("claim:all-1 alice")}, "bob", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 1}},
 		"trains its claim":  {[]Round{round("claim:all-1 alice")}, "alice", 0, Action{Kind: "contribute", Round: 0, Stage: "bootstrap", Unit: "all"}},
 		"slots all held":    {[]Round{round("claim:all-1 alice", "claim:all-2 bob")}, "carol", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
 		"retakes expired":   {[]Round{round("claim:all-1 alice", "late:all-2 bob")}, "carol", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 2}},
 		"waits on others":   {[]Round{round("claim:all-1 alice", "claim:all-2 bob", "submit:all alice")}, "alice", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
-		"claims close":      {[]Round{round(full...)}, "carol", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "close", Slot: "close-1", Attempt: 1}},
+		"claims close":      {[]Round{round(full...)}, "carol", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "close", Slot: slot("carol", "close", 0, 1), Attempt: 1}},
 		"closes its claim":  {[]Round{round(append(full, "claim:close-1 carol")...)}, "carol", 0, Action{Kind: "close", Round: 0, Stage: "bootstrap", Unit: "close"}},
 		"waits on closer":   {[]Round{round(append(full, "claim:close-1 carol")...)}, "alice", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
-		"lowest free unit":  {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob")}, "carol", 0, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: "u1-1", Attempt: 1}},
-		"late round":        {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 20, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "close", Slot: "close-1", Attempt: 1}},
-		"not yet late":      {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 60, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: "u1-1", Attempt: 1}},
+		"lowest free unit":  {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob")}, "carol", 0, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("carol", "u1", 1, 2), Attempt: 1}},
+		"late round":        {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 20, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "close", Slot: slot("alice", "close", 1, 1), Attempt: 1}},
+		"not yet late":      {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 60, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("alice", "u1", 1, 2), Attempt: 1}},
 		"done":              {[]Round{merged, merged}, "alice", 0, Action{Kind: "done", Round: 1}},
 	} {
 		plan.RoundMinutes = test.minutes
@@ -447,5 +465,83 @@ func TestLoadTokenAcceptsOnlyAPrivateRegularFile(t *testing.T) {
 	}
 	if err := (&Joiner{Home: linked}).loadToken(); err == nil || !strings.Contains(err.Error(), "regular file") {
 		t.Fatalf("symlinked token error = %v", err)
+	}
+}
+
+func TestScreenSetsAsideOnlyBadReplicas(t *testing.T) {
+	start := strings.Repeat("0", 64)
+	base := &MergeRecord{ModelSHA256: start}
+	replica := func(identity, weights string, tokens int64, from string) Submission {
+		return Submission{Unit: "u0", Identity: identity, ModelSHA256: strings.Repeat(weights, 64), Tokens: tokens, BaseSHA256: &from}
+	}
+	stale := strings.Repeat("9", 64)
+	for name, test := range map[string]struct {
+		records []Submission
+		kept    []string
+	}{
+		"honest":       {[]Submission{replica("a", "1", 100, start), replica("b", "2", 100, start), replica("c", "3", 100, start)}, []string{"a", "b", "c"}},
+		"stale base":   {[]Submission{replica("a", "1", 100, start), replica("b", "2", 100, stale), replica("c", "3", 100, start)}, []string{"a", "c"}},
+		"copied":       {[]Submission{replica("a", "1", 100, start), replica("b", "1", 100, start), replica("c", "3", 100, start)}, []string{"c"}},
+		"odd tokens":   {[]Submission{replica("a", "1", 100, start), replica("b", "2", 999, start), replica("c", "3", 100, start)}, []string{"a", "c"}},
+		"split tokens": {[]Submission{replica("a", "1", 100, start), replica("b", "2", 999, start)}, nil},
+	} {
+		kept, refused := screen(test.records, base)
+		var names []string
+		for _, record := range kept {
+			names = append(names, record.Identity)
+		}
+		if strings.Join(names, ",") != strings.Join(test.kept, ",") || len(kept)+len(refused) != len(test.records) {
+			t.Fatalf("%s: kept %v, refused %+v", name, names, refused)
+		}
+	}
+}
+
+func TestDecidedRoundStaysDecided(t *testing.T) {
+	keys, identities := map[string]string{}, map[string]Identity{}
+	for _, name := range []string{"alice", "bob", "mallory", "trent"} {
+		key, public := signingKey(t, name)
+		keys[name], identities[name] = key, Identity{Key: public}
+	}
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Pretrain: PretrainPlan{Rounds: 1}, Identities: identities}
+	runDir := t.TempDir()
+	allowed := filepath.Join(t.TempDir(), "allowed_signers")
+	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
+		t.Fatal(err)
+	}
+	write := signer(t, runDir)
+	write("claims/all-1.yaml", claimFixture("all-1", 1, "alice"), keys["alice"])
+	write("submissions/all-alice.yaml", submissionFixture("all", "alice"), keys["alice"])
+	honest, other := strings.Repeat("c", 64), strings.Repeat("f", 64)
+	write("claims/close-1.yaml", claimFixture("close-1", 1, "alice"), keys["alice"])
+	write("claims/close-2.yaml", claimFixture("close-2", 1, "bob"), keys["bob"])
+	write("merges/alice.yaml", mergeFixture("alice", honest), keys["alice"])
+	write("merges/bob.yaml", mergeFixture("bob", honest), keys["bob"])
+	// Two identities share close-3 by attempts and sign another merge with no clock: one slot is one vote.
+	write("claims/close-3.yaml", claimFixture("close-3", 1, "mallory"), keys["mallory"])
+	write("claims/close-3.2.yaml", claimFixture("close-3", 2, "trent"), keys["trent"])
+	for _, name := range []string{"mallory", "trent"} {
+		record := mergeFixture(name, other)
+		record.ClosedAt = ""
+		write("merges/"+name+".yaml", record, keys[name])
+	}
+	state, err := ReadState(runDir, plan, allowed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if round := state.Rounds[0]; round.Merge == nil || round.Merge.ModelSHA256 != honest || len(round.Votes) != 3 {
+		t.Fatalf("decision = %+v, votes %d", round.Merge, len(round.Votes))
+	}
+	// A merge that does not start from the decided round is no vote in the next.
+	next := mergeFixture("alice", other)
+	next.Round, next.Stage = 1, "pretrain"
+	next.Accepted[0].Unit = "u0"
+	next.BaseSHA256 = &honest
+	if !validMerge(next, plan, 1, state.Rounds[0].Merge) {
+		t.Fatal("a merge from the decided base did not count")
+	}
+	wrong := strings.Repeat("e", 64)
+	next.BaseSHA256 = &wrong
+	if validMerge(next, plan, 1, state.Rounds[0].Merge) {
+		t.Fatal("a merge from the wrong base counted")
 	}
 }

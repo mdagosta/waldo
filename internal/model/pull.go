@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -280,6 +281,7 @@ func (puller Puller) importSource(name, temporary, sourceDirectory string, names
 	}
 	// Keep the release's run BOMs with the origin, each verified against the hash it is named by.
 	records := map[string]string{}
+	var corpora []string
 	for _, name := range names {
 		match := provenanceFile.FindStringSubmatch(name)
 		if match == nil {
@@ -298,7 +300,11 @@ func (puller Puller) importSource(name, temporary, sourceDirectory string, names
 		if digest, err := hashJSON(runBOM); err != nil || digest != match[1] {
 			return fmt.Errorf("%s does not hash to the run BOM it names", name)
 		}
+		if digest, err := hashJSON(runBOM.CorpusBOM); err != nil || digest != runBOM.CorpusBOMSHA256 {
+			return fmt.Errorf("%s does not hash to the corpus BOM it records", name)
+		}
 		records[match[1]] = path
+		corpora = append(corpora, runBOM.CorpusBOMSHA256)
 	}
 	provenance, err := copyProvenance(temporary, records)
 	if err != nil {
@@ -310,6 +316,12 @@ func (puller Puller) importSource(name, temporary, sourceDirectory string, names
 		var closure TrainingClosure
 		if err := json.Unmarshal(data, &closure); err != nil || closure.Kind != "openwaldo-bom" || closure.Subject != "training-closure" || closure.Schema != 1 {
 			return fmt.Errorf("%s is not a schema-1 training closure", ClosureFile)
+		}
+		// A closure that leaves out the release's own runs misstates its history.
+		for _, digest := range corpora {
+			if !slices.ContainsFunc(closure.Corpora, func(entry ClosureCorpus) bool { return entry.CorpusBOMSHA256 == digest }) {
+				return fmt.Errorf("%s leaves out corpus %s that the release's own run BOMs trained on", ClosureFile, digest[:12])
+			}
 		}
 		kept, err := writeClosure(temporary, closure)
 		if err != nil {

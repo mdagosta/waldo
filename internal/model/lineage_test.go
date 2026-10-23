@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/openwaldo/waldo/internal/corpus"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -30,7 +31,13 @@ func releasePackage(t *testing.T, parent string, salt byte) string {
 	weights := files["model.safetensors"]
 	weights[len(weights)-1] ^= salt
 	// Published run BOMs are pinned, like a model's runs, by the hash of their canonical JSON.
-	runBOM := RunBOM{Kind: "openwaldo-bom", Subject: "training-run", ID: fmt.Sprintf("run-%d", salt)}
+	runBOM := RunBOM{Kind: "openwaldo-bom", Subject: "training-run", ID: fmt.Sprintf("run-%d", salt),
+		CorpusBOM: corpus.BOM{Kind: "openwaldo-bom", Schema: 1, Subject: "corpus", Paths: []string{fmt.Sprintf("code/run-%d", salt)}}}
+	corpusDigest, err := hashJSON(runBOM.CorpusBOM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runBOM.CorpusBOMSHA256 = corpusDigest
 	runDigest, err := hashJSON(runBOM)
 	if err != nil {
 		t.Fatal(err)

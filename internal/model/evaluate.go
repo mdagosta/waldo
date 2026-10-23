@@ -17,9 +17,10 @@ import (
 // Evaluation is a model's held-out loss on a stage's held-out records: a
 // measurement of its current weights, not a run in its history.
 type Evaluation struct {
-	Loss          float64                `json:"heldout_loss"`
-	Set           training.EvaluationSet `json:"evaluation_set"`
-	WeightsSHA256 string                 `json:"weights_sha256"`
+	Loss            float64                `json:"heldout_loss"`
+	Set             training.EvaluationSet `json:"evaluation_set"`
+	WeightsSHA256   string                 `json:"weights_sha256"`
+	CorpusBOMSHA256 string                 `json:"corpus_bom_sha256"` // the corpus selection scored, as a training run's BOM records it
 }
 
 // Evaluate scores the named model's current weights on the held-out records
@@ -150,5 +151,5 @@ func (builder Builder) Evaluate(ctx context.Context, name string, prepared Prepa
 	if !ok {
 		return Evaluation{}, fmt.Errorf("evaluation of %s returned no held-out loss", name)
 	}
-	return Evaluation{Loss: loss, Set: partition.Evaluation, WeightsSHA256: initialization.Artifact.SHA256}, nil
+	return Evaluation{Loss: loss, Set: partition.Evaluation, WeightsSHA256: initialization.Artifact.SHA256, CorpusBOMSHA256: bomHash}, nil
 }
