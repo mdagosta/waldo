@@ -504,7 +504,7 @@ func TestScreenSetsAsideOnlyBadReplicas(t *testing.T) {
 	}{
 		"honest":       {[]Submission{replica("a", "1", 100, start), replica("b", "2", 100, start), replica("c", "3", 100, start)}, []string{"a", "b", "c"}},
 		"stale base":   {[]Submission{replica("a", "1", 100, start), replica("b", "2", 100, stale), replica("c", "3", 100, start)}, []string{"a", "c"}},
-		"copied":       {[]Submission{replica("a", "1", 100, start), replica("b", "1", 100, start), replica("c", "3", 100, start)}, []string{"c"}},
+		"identical":    {[]Submission{replica("a", "1", 100, start), replica("b", "1", 100, start), replica("c", "3", 100, start)}, []string{"a", "b", "c"}},
 		"odd tokens":   {[]Submission{replica("a", "1", 100, start), replica("b", "2", 999, start), replica("c", "3", 100, start)}, []string{"a", "c"}},
 		"split tokens": {[]Submission{replica("a", "1", 100, start), replica("b", "2", 999, start)}, nil},
 	} {
@@ -599,5 +599,36 @@ func TestPinCoversTheTemplates(t *testing.T) {
 	}
 	if after, err := Pin(directory, plan); err != nil || after == before {
 		t.Fatalf("an edited template kept the pin: %s, %v", after, err)
+	}
+}
+
+func TestPlanBaseStartsTheRun(t *testing.T) {
+	digest := strings.Repeat("a", 64)
+	base := "base:\n  model: python-base\n  url: huggingface://someone/python-base@" + strings.Repeat("0", 40) + "\n  model_sha256: " + digest + "\n  files:\n    model.safetensors: " + digest + "\n"
+	plan, err := LoadPlan(writePlan(t, "name: x\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl, rounds: 2}\n"+base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No bootstrap: round 0 is the first pretraining round, from the base.
+	if got := strings.Join(plan.Stages(), ","); got != "pretrain,pretrain" || plan.start().ModelSHA256 != digest {
+		t.Fatalf("stages %s, start %+v", got, plan.start())
+	}
+	merge := MergeRecord{Kind: MergeKind, Schema: RecordSchema, Run: "x", Stage: "pretrain", Model: "m", ModelSHA256: strings.Repeat("c", 64),
+		Files: map[string]string{"model.safetensors": strings.Repeat("c", 64)}, Accepted: []AcceptedUnit{{Unit: "u0", Model: "u"}}}
+	if validMerge(merge, plan, 0, plan.start()) {
+		t.Fatal("a round-0 merge that did not start from the base counted")
+	}
+	merge.BaseSHA256 = &digest
+	if !validMerge(merge, plan, 0, plan.start()) {
+		t.Fatal("a round-0 merge from the base did not count")
+	}
+	for name, bad := range map[string]string{
+		"unpinned url":  strings.Replace(base, "@"+strings.Repeat("0", 40), "", 1),
+		"unpinned file": strings.Replace(base, "model.safetensors: "+digest, "model.safetensors: "+strings.Repeat("b", 64), 1),
+		"bad name":      strings.Replace(base, "model: python-base", "model: ../x", 1),
+	} {
+		if _, err := LoadPlan(writePlan(t, "name: x\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl, rounds: 2}\n"+bad)); err == nil {
+			t.Fatalf("%s: base accepted", name)
+		}
 	}
 }

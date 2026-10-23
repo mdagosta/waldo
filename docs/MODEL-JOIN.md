@@ -36,6 +36,7 @@ runs/<run>/
 | `closers` | Identities that close each round; a majority must agree. Default 3. |
 | `claim_minutes` | How long a claim holds its slot. Default 60. |
 | `merge`, `store` | `mean`; `huggingface` or `file:///path`. |
+| `base` | Optional model to start from instead of a bootstrap: `model`, `url` (`huggingface://<user>/<model>@<commit>` in any account, or `file://`), `model_sha256`, and `files` (every file's SHA-256). |
 | `identities` | Name to `{key: <ssh public key>, hf: <Hugging Face user>}`. |
 | `pretrain` | `compose`, `bootstrap_tokens`, `rounds`, `tokens_per_round`, and `shards` (unit to sources). |
 | `posttrain` | `compose`, `corpus` (an index path each unit takes a `filter.slice` of), `rounds`, `epochs_per_round`. |
@@ -50,7 +51,10 @@ Templates are composes with `$base_block`, `$seed`, `$budget`, `$sources`,
 
 ## Rounds
 
-Round 0 trains one shared unit, `all`, on every unit's sources; pretraining and
+Round 0 trains one shared unit, `all`, on every unit's sources, unless the plan
+names a `base`: then round 0 starts from that model, whose files every
+contributor checks against the plan's pins and whose recorded history the run
+inherits (an incompletely recorded one is refused). Pretraining and
 post-training rounds follow, each starting from the previous round's merge. A
 unit's seed hashes the run, round, and unit, so its replicas train identically.
 Each pass, an identity:
@@ -77,7 +81,6 @@ A closer fetches every replica and checks each against its record's hashes, then
 sets aside, one replica at a time:
 
 - one that did not start from the round's merged weights;
-- every replica in a group with identical weights (one copied another);
 - one whose tokens trained differ from the majority's;
 - one whose training provenance does not check out (below);
 - one whose run BOM records a corpus selection other than its unit's;
@@ -166,9 +169,11 @@ A new bug becomes a new fault.
 
 - A majority of colluding closers, or of a unit's replicas, is not defended
   against; the plan's identity list bounds who can vote.
-- A lightly perturbed copy of another replica passes, since replicas publish
-  weights as they submit; it earns credit without work and makes the replicas'
-  agreement less independent. Commit-reveal would stop it (each replica commits
+- A copy of another replica passes, exact or lightly perturbed, since replicas
+  publish weights as they submit; it earns credit without work and makes the
+  replicas' agreement less independent. Identical weights cannot be told from
+  honest work, since training on the same hardware and software can reproduce
+  weights bit for bit, so they count as agreement. Commit-reveal would stop it (each replica commits
   its weights' hash, and all reveal once a unit's replicas have committed); it is
   a known gap, not built while runs are proofs of concept.
 - The plan's author is trusted to write the plan; records pin it.

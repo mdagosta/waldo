@@ -14,6 +14,7 @@ and injects protocol faults along the way, to find what the protocol does not ye
 Faults (add one here whenever a run finds a new kink):
   lazy        claim a unit slot and submit the round's starting weights untrained
   copy        claim a unit slot and resubmit another identity's weights for that unit
+              (accepted: identical weights count as agreement; commit-reveal is the open fix)
   stale-base  claim a unit slot and submit the round's starting weights as trained from the
               round before's, as a contributor a round behind would
   silent      claim a unit slot and never submit (the claim must expire and be retaken)
@@ -63,8 +64,12 @@ def now(ahead=datetime.timedelta()):
     return (datetime.datetime.now(datetime.timezone.utc) + ahead).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
-def stage(number):
-    return "bootstrap" if number == 0 else "pretrain"
+def stages(text):
+    """Each round's stage, as join orders them: a bootstrap unless the plan has a base, pretraining, post-training."""
+    pretrain = re.search(r"^pretrain:\n(?:  .*\n|\s*\n)*?  rounds: (\d+)", text, re.M)
+    posttrain = re.search(r"^posttrain:\n(?:  .*\n|\s*\n)*?  rounds: (\d+)", text, re.M)
+    return ([] if re.search(r"^base:", text, re.M) else ["bootstrap"]) + ["pretrain"] * int(pretrain.group(1) if pretrain else 0) + \
+        ["posttrain"] * int(posttrain.group(1) if posttrain else 0)
 
 
 def unit_of(slot):
@@ -106,7 +111,8 @@ class Run:
         count = len(re.findall(r"^  [^\s#][^:]*:", identities, re.M))
         return {"units": [u.strip() for u in re.search(r"^units: \[(.*)\]", text, re.M).group(1).split(",")],
                 "replicas": number("replicas", 1), "closers": min(number("closers", 3), count), "claim_minutes": number("claim_minutes", 60),
-                "rounds": 1 + sum(int(r) for r in re.findall(r"^  rounds: (\d+)", text, re.M))}
+                "rounds": (0 if re.search(r"^base:", text, re.M) else 1) + sum(int(r) for r in re.findall(r"^  rounds: (\d+)", text, re.M)),
+                "stages": stages(text)}
 
     def records(self, number, kind):
         base = f"{self.run_dir}/rounds/round-{number:04d}/{kind}/"
@@ -267,7 +273,7 @@ class Identity:
         return url, state == "MERGED"
 
     def claim_record(self, number, slot, created=None):
-        return {"kind": "waldo-join-claim", "schema": 1, "run": self.run.name, "round": number, "stage": stage(number),
+        return {"kind": "waldo-join-claim", "schema": 1, "run": self.run.name, "round": number, "stage": self.run.plan()["stages"][number],
                 "slot": slot, "attempt": 1, "identity": self.name, "created_at": created or now(), "plan_sha256": self.run.plan_sha256()}
 
     def claim(self, number, slot):
@@ -283,7 +289,7 @@ class Identity:
 
     def submission(self, number, unit, base, weights, tokens):
         """A submission of this identity's claiming weights as its training of unit from base."""
-        return {"kind": "waldo-join-submission", "schema": 1, "run": self.run.name, "round": number, "stage": stage(number),
+        return {"kind": "waldo-join-submission", "schema": 1, "run": self.run.name, "round": number, "stage": self.run.plan()["stages"][number],
                 "unit": unit, "identity": self.name, "base": base and base["model"], "base_sha256": base and base["model_sha256"],
                 "model": weights["model"], "model_sha256": weights["model_sha256"], "bom_sha256": weights["files"].get("BOM.json"),
                 "files": weights["files"], "tokens": tokens, "url": weights["url"], "created_at": now(), "plan_sha256": self.run.plan_sha256()}
@@ -295,7 +301,7 @@ class Identity:
         start = base and base["model_sha256"]
         # Honest work: trained from the round's start, and not the start itself.
         honest = [s for s in run.records(number, "submissions").values() if s.get("base_sha256") == start and s["model_sha256"] != start]
-        units = plan["units"] if number > 0 else ["all"]
+        units = ["all"] if plan["stages"][number] == "bootstrap" else plan["units"]
         if fault in UNIT_FAULTS:
             if fault in ("lazy", "stale-base") and (base is None or not honest or (fault == "stale-base" and number < 2)):
                 return False
@@ -340,7 +346,7 @@ class Identity:
             accepted = [{"unit": s["unit"], "identity": s["identity"], "model": s["model"], "model_sha256": s["model_sha256"],
                          "tokens": s["tokens"]} for u in units for s in replicas[u]]
             first = replicas[units[0]][0]
-            record = {"kind": "waldo-join-merge", "schema": 1, "run": run.name, "round": number, "stage": stage(number),
+            record = {"kind": "waldo-join-merge", "schema": 1, "run": run.name, "round": number, "stage": plan["stages"][number],
                       "identity": self.name, "method": "weighted-mean-f32-v1", "base": base and base["model"], "base_sha256": start,
                       "accepted": accepted, "dropped": [], "model": first["model"], "model_sha256": first["model_sha256"],
                       "files": first["files"], "url": first["url"], "closed_at": now(), "plan_sha256": run.plan_sha256()}
@@ -441,6 +447,8 @@ def report(run_dir):
             if fault["fault"] in ("lazy", "copy", "stale-base"):
                 if not fault.get("merged"):
                     print(f"  --   {what}: verifier refused the submission")
+                elif (unit, fault["identity"]) in accepted and fault["fault"] == "copy":
+                    print(f"  gap  {what}: accepted; a copy agrees with its original (known gap: commit-reveal)")
                 elif (unit, fault["identity"]) in accepted:
                     problems.append(f"round {number} {what}: ACCEPTED into the merge")
                 else:

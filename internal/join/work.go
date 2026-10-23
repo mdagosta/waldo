@@ -339,6 +339,9 @@ func (joiner *Joiner) publish(ctx context.Context, directory string) (string, er
 // fetched is where a record's package is kept once fetched: by publisher, since
 // closers of one round publish packages of one name that differ in their metadata.
 func (joiner *Joiner) fetched(identity, name string) string {
+	if identity == "" {
+		identity = "_plan" // the plan's own base; no identity name starts with _
+	}
 	return filepath.Join(joiner.workDir(), "fetched", identity, name)
 }
 
@@ -357,7 +360,8 @@ func (joiner *Joiner) fetch(ctx context.Context, name, identity, sha string, fil
 			return "", fmt.Errorf("%s: %s pins no revision", name, url)
 		}
 		repository, revision = url[len("huggingface://"):at], url[at+1:]
-		if owner, _, _ := strings.Cut(repository, "/"); owner != joiner.plan.Identities[identity].HuggingFace {
+		// A plan's base may be in any account; it is pinned by the plan itself.
+		if owner, _, _ := strings.Cut(repository, "/"); identity != "" && owner != joiner.plan.Identities[identity].HuggingFace {
 			return "", fmt.Errorf("%s: %s is not in %s's Hugging Face account", name, url, identity)
 		}
 	} else if !strings.HasPrefix(url, "file://") {
@@ -426,7 +430,7 @@ func (joiner *Joiner) ensure(name, directory string) error {
 // majority merge, from the store of any closer who signed it.
 func (joiner *Joiner) base(ctx context.Context, state State, number int) (*MergeRecord, error) {
 	if number == 0 {
-		return nil, nil
+		return joiner.planBase(ctx)
 	}
 	agreeing, _ := state.Rounds[number-1].Agreeing()
 	var err error
@@ -439,6 +443,36 @@ func (joiner *Joiner) base(ctx context.Context, state State, number int) (*Merge
 		return &record, joiner.ensure(published(record.Model, record.ModelSHA256), directory)
 	}
 	return nil, fmt.Errorf("round %d's merged weights could not be fetched from any closer who signed them: %w", number-1, err)
+}
+
+// planBase fetches and imports the model a run starts from, checking its files
+// against the plan's pins; nil when the run bootstraps from random weights. Its
+// training history must be completely recorded, since every round inherits it.
+func (joiner *Joiner) planBase(ctx context.Context) (*MergeRecord, error) {
+	start := joiner.plan.start()
+	if start == nil {
+		return nil, nil
+	}
+	directory, err := joiner.fetch(ctx, start.Model, "", start.ModelSHA256, start.Files, start.URL)
+	if err != nil {
+		return nil, fmt.Errorf("the plan's base: %w", err)
+	}
+	name := published(start.Model, start.ModelSHA256)
+	if err := joiner.ensure(name, directory); err != nil {
+		return nil, err
+	}
+	inspection, err := model.Inspect(joiner.models(), name)
+	if err != nil {
+		return nil, err
+	}
+	closure, err := model.ModelClosure(inspection)
+	if err != nil {
+		return nil, err
+	}
+	if !closure.Complete {
+		return nil, fmt.Errorf("the plan's base %s has an incompletely recorded training history; a run inherits it, so it must be complete", start.Model)
+	}
+	return start, nil
 }
 
 func (joiner *Joiner) contribute(ctx context.Context, state State, action Action) error {
@@ -723,27 +757,23 @@ func (joiner *Joiner) budgets(stage, unit string, exports []string, present []Su
 }
 
 // screen sets aside the replicas that cannot be judged on their loss: one that
-// did not start from the round's merged weights, every one of a group with
-// identical weights (GPU training is not bit-reproducible, so one copied
-// another, and which is the copy cannot be told), and one whose tokens trained
-// differ from a majority's.
+// did not start from the round's merged weights, and one whose tokens trained
+// differ from a majority's. Identical weights are agreement, not copying:
+// training on the same hardware and software can reproduce weights bit for bit.
 func screen(records []Submission, base *MergeRecord) ([]Submission, []DroppedUnit) {
 	var kept []Submission
 	var refused []DroppedUnit
 	refuse := func(record Submission, reason string) {
 		refused = append(refused, DroppedUnit{Unit: record.Unit, Reason: reason, Identities: []string{record.Identity}})
 	}
-	weights, tokens := map[string]int{}, map[int64]int{}
+	tokens := map[int64]int{}
 	for _, record := range records {
-		weights[record.ModelSHA256]++
 		tokens[record.Tokens]++
 	}
 	for _, record := range records {
 		switch {
 		case (base == nil) != (record.BaseSHA256 == nil) || (base != nil && *record.BaseSHA256 != base.ModelSHA256):
 			refuse(record, "it did not start from the round's merged weights")
-		case weights[record.ModelSHA256] > 1:
-			refuse(record, "its weights are identical to another replica's")
 		case tokens[record.Tokens]*2 <= len(records):
 			refuse(record, "its tokens trained differ from a majority of replicas'")
 		default:

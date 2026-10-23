@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -46,6 +47,17 @@ type Plan struct {
 	RoundMinutes     float64             `yaml:"round_minutes"`
 	Closers          int                 `yaml:"closers"`
 	ClaimMinutes     float64             `yaml:"claim_minutes"`
+	Base             *PlanBase           `yaml:"base"`
+}
+
+// PlanBase is an existing model a run starts from instead of random weights: a
+// published package pinned by its weights and every file's SHA-256. It may live
+// in any Hugging Face account, at a pinned commit, or in a file store.
+type PlanBase struct {
+	Model       string            `yaml:"model"`
+	URL         string            `yaml:"url"`
+	ModelSHA256 string            `yaml:"model_sha256"`
+	Files       map[string]string `yaml:"files"`
 }
 
 // Identity is a plan contributor: an ssh signing key and, for Hugging Face
@@ -135,15 +147,25 @@ func LoadPlan(path string) (Plan, error) {
 			return Plan{}, fmt.Errorf("%s: %q must use lowercase letters, digits, '.', '_', and '-'", path, name)
 		}
 	}
+	if base := plan.Base; base != nil {
+		pinned := strings.HasPrefix(base.URL, "file://") || huggingFacePin.MatchString(base.URL)
+		if model.ValidateName(base.Model) != nil || !pinned || !validFiles(base.Files, base.ModelSHA256) {
+			return Plan{}, fmt.Errorf("%s: base needs a model name, a file:// or huggingface://<user>/<model>@<commit> url, its model_sha256, and every file's sha256, model.safetensors included", path)
+		}
+	}
 	if slices.Contains(plan.Units, "all") || slices.Contains(plan.Units, "close") || len(slices.Compact(slices.Sorted(slices.Values(plan.Units)))) != len(plan.Units) {
 		return Plan{}, fmt.Errorf("%s: units must be distinct and not named all, the bootstrap's unit, or close, the closing slots' name", path)
 	}
 	return plan, nil
 }
 
-// Stages lists every round in order: the bootstrap, pretraining, then post-training.
+// Stages lists every round in order: the bootstrap, unless the run starts from
+// a base, then pretraining, then post-training.
 func (plan Plan) Stages() []string {
-	stages := []string{"bootstrap"}
+	var stages []string
+	if plan.Base == nil {
+		stages = append(stages, "bootstrap")
+	}
 	for range plan.Pretrain.Rounds {
 		stages = append(stages, "pretrain")
 	}
@@ -234,4 +256,14 @@ func Pin(runDir string, plan Plan) (string, error) {
 	}
 	digest := sha256.Sum256([]byte(manifest.String()))
 	return hex.EncodeToString(digest[:]), nil
+}
+
+var huggingFacePin = regexp.MustCompile(`^huggingface://[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[0-9a-f]{40}$`)
+
+// start is the plan's base as the record round 0 starts from, or nil for a bootstrap.
+func (plan Plan) start() *MergeRecord {
+	if plan.Base == nil {
+		return nil
+	}
+	return &MergeRecord{Model: plan.Base.Model, ModelSHA256: plan.Base.ModelSHA256, Files: plan.Base.Files, URL: plan.Base.URL}
 }
