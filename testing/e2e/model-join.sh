@@ -123,8 +123,10 @@ if command in ("lazy-u2", "cheat-close"):
         if not claims or any(c["identity"] == signer and c["slot"].startswith("u2-") for c in claims.values()):
             sys.exit(1)
         model = f"waldo-{run}-r{number:04d}-u2-{signer}"
-        shutil.copytree(store / base["model"], store / model)
-        pinned = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((store / model).iterdir())}
+        # Stores keep each identity's packages apart, so the free-rider publishes under its own name.
+        package = store / signer / model
+        shutil.copytree(base["url"].removeprefix("file://"), package)
+        pinned = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(package.iterdir())}
         # Every unit trains the same fixed steps, so any honest record has the right tokens; one exists by now
         # or the free-rider waits a turn.
         honest = next(iter(submissions.values()), None)
@@ -137,7 +139,7 @@ if command in ("lazy-u2", "cheat-close"):
                    "kind": "waldo-join-submission", "schema": 1, "run": run, "round": number, "stage": "pretrain", "unit": "u2",
                    "identity": signer, "base": base["model"], "base_sha256": base["model_sha256"], "model": model,
                    "model_sha256": pinned["model.safetensors"], "bom_sha256": pinned.get("BOM.json"), "files": pinned,
-                   "tokens": honest["tokens"], "url": f"file://{store / model}", "created_at": honest["created_at"]}}
+                   "tokens": honest["tokens"], "url": f"file://{package}", "created_at": honest["created_at"]}}
     else:
         # Not yet: every unit of the round has both replicas, and carol has not closed it.
         units = collections.Counter(s["unit"] for s in submissions.values())

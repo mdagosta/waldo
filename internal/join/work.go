@@ -318,7 +318,8 @@ func (joiner *Joiner) publish(ctx context.Context, directory string) (string, er
 	if err != nil {
 		return "", err
 	}
-	target := filepath.Join(store, filepath.Base(directory))
+	// Each identity's packages live apart, as on Hugging Face, so closers of one round never share a directory.
+	target := filepath.Join(store, joiner.Identity, filepath.Base(directory))
 	if _, err := os.Stat(target); os.IsNotExist(err) {
 		fmt.Fprintf(joiner.Log, "   publishing %s to %s\n", filepath.Base(directory), target)
 		if err := copyDirectory(directory, target); err != nil {
