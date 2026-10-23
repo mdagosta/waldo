@@ -55,7 +55,7 @@ func claimAttempt(file string) (string, int) {
 // State is a run as its signed records describe it; unsigned or misplaced records are ignored.
 type State struct {
 	Plan       Plan
-	PlanSHA256 string // the plan.yaml every counted record pins
+	PlanSHA256 string // the Pin every counted record carries
 	Rounds     []Round
 }
 
@@ -78,7 +78,7 @@ func cutLast(text, separator string) (string, string, bool) {
 
 // ReadState reads every round's records under runDir, verifying each signature against the plan's keys.
 func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
-	pin, err := hashFile(filepath.Join(runDir, "plan.yaml"))
+	pin, err := Pin(runDir, plan)
 	if err != nil {
 		return State{}, err
 	}

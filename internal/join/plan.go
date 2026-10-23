@@ -10,8 +10,11 @@ package join
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -193,4 +196,42 @@ func (plan Plan) Closing() int {
 		return count
 	}
 	return plan.Closers
+}
+
+// runFile resolves a path a plan names: relative to the run directory, or
+// absolute, or under the home directory with ~/.
+func runFile(runDir, value string) string {
+	if strings.HasPrefix(value, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, value[2:])
+		}
+	}
+	if filepath.IsAbs(value) {
+		return value
+	}
+	return filepath.Join(runDir, value)
+}
+
+// Pin is what every record pins: the SHA-256 of a manifest listing plan.yaml
+// and each compose template it names, one "<path> <sha256>" line per file, so a
+// changed template changes the run as surely as a changed plan.
+func Pin(runDir string, plan Plan) (string, error) {
+	files := []string{"plan.yaml", plan.Pretrain.Compose}
+	if plan.Posttrain != nil {
+		files = append(files, plan.Posttrain.Compose)
+	}
+	var manifest strings.Builder
+	for _, file := range files {
+		if file == "" {
+			continue // LoadPlan requires a pretrain compose; only hand-built plans lack one
+		}
+		data, err := os.ReadFile(runFile(runDir, file))
+		if err != nil {
+			return "", err
+		}
+		digest := sha256.Sum256(data)
+		fmt.Fprintf(&manifest, "%s %s\n", file, hex.EncodeToString(digest[:]))
+	}
+	digest := sha256.Sum256([]byte(manifest.String()))
+	return hex.EncodeToString(digest[:]), nil
 }

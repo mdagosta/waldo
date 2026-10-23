@@ -107,9 +107,11 @@ func TestLoadPlanRejectsUnsupportedPlans(t *testing.T) {
 // testPlan is the plan.yaml runDirectory writes, which fixtures pin.
 const testPlan = "kind: waldo-join-plan\n"
 
+// testPlanSHA256 is the Pin of a run directory holding only testPlan.
 var testPlanSHA256 = func() string {
 	digest := sha256.Sum256([]byte(testPlan))
-	return hex.EncodeToString(digest[:])
+	manifest := sha256.Sum256([]byte("plan.yaml " + hex.EncodeToString(digest[:]) + "\n"))
+	return hex.EncodeToString(manifest[:])
 }()
 
 // runDirectory is a run directory holding the plan fixtures pin.
@@ -579,5 +581,23 @@ func TestBudgetsSetAsideShortRuns(t *testing.T) {
 	_, kept, _, refused := joiner.budgets("bootstrap", "all", exports, present, []model.RunBOM{run(250), run(1), run(250)}, nil)
 	if len(kept) != 2 || kept[0].Identity != "a" || kept[1].Identity != "c" || len(refused) != 1 || refused[0].Identities[0] != "b" {
 		t.Fatalf("kept %+v, refused %+v", kept, refused)
+	}
+}
+
+func TestPinCoversTheTemplates(t *testing.T) {
+	directory := runDirectory(t)
+	plan := Plan{Pretrain: PretrainPlan{Compose: "pretrain.yaml.tmpl"}}
+	if err := os.WriteFile(filepath.Join(directory, "pretrain.yaml.tmpl"), []byte("seed: $seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := Pin(directory, plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "pretrain.yaml.tmpl"), []byte("seed: 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if after, err := Pin(directory, plan); err != nil || after == before {
+		t.Fatalf("an edited template kept the pin: %s, %v", after, err)
 	}
 }

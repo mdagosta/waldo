@@ -85,7 +85,7 @@ git -C "$work/seed" push -q origin main
 # rounds.py reads the runs repo's main branch as data: whether a round is decided,
 # its majority merge, and what the cheaters need to forge records that are well formed.
 cat > "$work/rounds.py" <<'PYTHON'
-import collections, hashlib, json, pathlib, shutil, subprocess, sys
+import collections, hashlib, json, pathlib, re, shutil, subprocess, sys
 git, run, command, number = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
 rounds = f"runs/{run}/rounds"
 
@@ -158,7 +158,9 @@ if command in ("lazy-u2", "cheat-close"):
                    "dropped": [], "model": lazy["model"], "model_sha256": lazy["model_sha256"], "files": lazy["files"], "url": lazy["url"],
                    "closed_at": lazy["created_at"]}}
     # Every record pins the plan it was made under.
-    pin = hashlib.sha256((seed / f"runs/{run}/plan.yaml").read_bytes()).hexdigest()
+    run_files = seed / f"runs/{run}"
+    named = ["plan.yaml"] + re.findall(r"^  compose: (\S+)", (run_files / "plan.yaml").read_text(), re.M)
+    pin = hashlib.sha256("".join(f"{f} {hashlib.sha256((run_files / f).read_bytes()).hexdigest()}\n" for f in named).encode()).hexdigest()
     directory = seed / rounds / f"round-{number:04d}"
     for name, record in out.items():
         record["plan_sha256"] = pin
