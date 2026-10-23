@@ -47,11 +47,16 @@ import time
 
 REPO = os.environ.get("RUNS_REPO", "")
 OWNER_REPO = REPO.removeprefix("https://github.com/").removesuffix(".git")
+# On GitHub, records go through pull requests the runs repository's verifier merges; anywhere
+# else they are pushed, as join pushes them, and only join's own checks apply.
+GITHUB = REPO.startswith("https://github.com/")
 WALDO = os.environ.get("WALDO", str(pathlib.Path(__file__).resolve().parents[2] / "waldo"))
 JOIN = pathlib.Path.home() / ".waldo" / "join"
 CREDENTIALS = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]
 UNIT_FAULTS = ["lazy", "copy", "stale-base", "silent"]
 FAULTS = UNIT_FAULTS + ["close", "forge", "future"]
+# Forged and future-dated claims test the GitHub verifier, which a pushed runs repository lacks.
+LOCAL_FAULTS = UNIT_FAULTS + ["close"]
 
 
 def now(ahead=datetime.timedelta()):
@@ -95,7 +100,7 @@ class Run:
         identities = re.search(r"^identities:\n((?:  .*\n|\s*\n)*)", text, re.M).group(1)
         count = len(re.findall(r"^  [^\s#][^:]*:", identities, re.M))
         return {"units": [u.strip() for u in re.search(r"^units: \[(.*)\]", text, re.M).group(1).split(",")],
-                "replicas": number("replicas", 1), "closers": min(number("closers", 3), count),
+                "replicas": number("replicas", 1), "closers": min(number("closers", 3), count), "claim_minutes": number("claim_minutes", 60),
                 "rounds": 1 + sum(int(r) for r in re.findall(r"^  rounds: (\d+)", text, re.M))}
 
     def records(self, number, kind):
@@ -156,8 +161,9 @@ class Identity:
     def __init__(self, name, run_dir):
         self.name, self.home = name, JOIN / name
         self.email = os.environ.get("JOIN_EMAIL", f"{name}@waldo.invalid")
-        self.env = {**os.environ, "GH_TOKEN": (self.home / "github-token").read_text().strip()}
-        self.run = Run(self.home / "burnin" / "waldo-builds", run_dir, self.env)
+        token = self.home / "github-token"
+        self.env = {**os.environ, "GH_TOKEN": token.read_text().strip()} if GITHUB and token.exists() else dict(os.environ)
+        self.run = Run(self.home / "burnin" / pathlib.PurePosixPath(REPO.rstrip("/")).name.removesuffix(".git"), run_dir, self.env)
         self.logs = pathlib.Path(os.environ.get("JOIN_LOGS", JOIN / "logs" / self.run.name))
 
     def log(self, message):
@@ -196,14 +202,8 @@ class Identity:
             out.write(json.dumps(entry) + "\n")
         self.log(f"round {number}: {fault} {details}")
 
-    def propose(self, files, message, key=None):
-        """Signs files as one record pull request from this identity's fork; returns (url, merged)."""
+    def sign(self, files, key=None):
         run = self.run
-        if "fork" not in run.git("remote").split():
-            run.git("remote", "add", "fork", f"https://github.com/{self.login()}/{OWNER_REPO.split('/')[1]}.git")
-        branch = f"waldo-join/{run.name}/{self.name}/burnin-{int(time.time())}"
-        run.git(*CREDENTIALS, "fetch", "-q", "fork", "main")
-        run.git("checkout", "-q", "-B", branch, "fork/main")
         for path, record in files.items():
             target = run.clone / path
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +212,34 @@ class Identity:
             subprocess.run(["ssh-keygen", "-Y", "sign", "-f", str(key or self.home / "signing-key"), "-n", "waldo-join", str(target)],
                            capture_output=True, check=True)
             run.git("add", path, path + ".sig")
+
+    def push(self, files, message, key=None):
+        """Signs files as one commit pushed to main; returns ("push", landed), False if a record for the same file landed first."""
+        run = self.run
+        for _ in range(5):
+            run.git("fetch", "-q", "origin")
+            run.git("checkout", "-q", "--detach", "origin/main")
+            if any(subprocess.run(["git", "cat-file", "-e", f"origin/main:{path}"], cwd=run.clone, capture_output=True).returncode == 0
+                   for path in files):
+                return "push", False
+            self.sign(files, key)
+            run.git("-c", f"user.name={self.name}", "-c", f"user.email={self.email}", "commit", "-q", "-s", "-m", message)
+            if subprocess.run(["git", "push", "-q", "origin", "HEAD:main"], cwd=run.clone, capture_output=True).returncode == 0:
+                run.sync()
+                return "push", True
+        raise RuntimeError("push kept being rejected")
+
+    def propose(self, files, message, key=None):
+        """Signs files as one record pull request from this identity's fork; returns (url, merged)."""
+        if not GITHUB:
+            return self.push(files, message, key)
+        run = self.run
+        if "fork" not in run.git("remote").split():
+            run.git("remote", "add", "fork", f"https://github.com/{self.login()}/{OWNER_REPO.split('/')[1]}.git")
+        branch = f"waldo-join/{run.name}/{self.name}/burnin-{int(time.time())}"
+        run.git(*CREDENTIALS, "fetch", "-q", "fork", "main")
+        run.git("checkout", "-q", "-B", branch, "fork/main")
+        self.sign(files, key)
         run.git("-c", f"user.name={self.name}", "-c", f"user.email={self.email}", "commit", "-q", "-s", "-m", message)
         ours = {path: run.git("rev-parse", f"{branch}:{path}") for path in files}
         run.git(*CREDENTIALS, "push", "-q", "--force", "fork", branch)
@@ -277,6 +305,8 @@ class Identity:
             if not won:
                 return False
             if fault == "silent":
+                # A crashed contributor: offline until its claim expires, or join would resume the unit.
+                self.offline = time.time() + 60 * (plan["claim_minutes"] + 1)
                 self.note(fault, number, slot=slot, claim=claim)
                 return True
             if fault == "lazy":
@@ -353,7 +383,11 @@ class Identity:
         scripted = [m for m in modes if m != "random"]
         rate = float(os.environ.get("FAULT_RATE", "0.15"))
         faulted = set()
+        self.offline = 0
         while True:
+            if time.time() < self.offline:
+                time.sleep(30)
+                continue
             self.run.sync()
             plan = self.run.plan()
             number = self.run.current(plan)
@@ -369,7 +403,7 @@ class Identity:
                     time.sleep(15)
                     continue
             elif "random" in modes and number not in faulted and random.random() < rate:
-                if self.inject(random.choice(FAULTS), number, plan):
+                if self.inject(random.choice(FAULTS if GITHUB else LOCAL_FAULTS), number, plan):
                     faulted.add(number)
                     continue
             last = self.join_once()
@@ -381,7 +415,7 @@ class Identity:
 
 def report(run_dir):
     """Checks each injected fault against what the run did with it."""
-    run = Run(JOIN / "burnin-report" / "waldo-builds", run_dir, dict(os.environ))
+    run = Run(JOIN / "burnin-report" / pathlib.PurePosixPath(REPO.rstrip("/")).name.removesuffix(".git"), run_dir, dict(os.environ))
     run.sync()
     plan = run.plan()
     logs = pathlib.Path(os.environ.get("JOIN_LOGS", JOIN / "logs" / run.name))
@@ -411,7 +445,8 @@ def report(run_dir):
                     if reasons:
                         kinks.append(f"round {number} {what}: one bad replica dropped the whole unit ({reasons[0]})")
             elif fault["fault"] == "close":
-                if fault.get("merged") and fault["model_sha256"] == decided["model_sha256"]:
+                theirs = next((m for m in merges if m["identity"] == fault["identity"]), None)
+                if fault.get("merged") and theirs and run.decision(theirs) == run.decision(decided):
                     problems.append(f"round {number} {what}: the dishonest merge DECIDED the round")
                 else:
                     print(f"  ok   {what}: outvoted")
@@ -438,8 +473,8 @@ def report(run_dir):
 
 
 if __name__ == "__main__":
-    if not OWNER_REPO.count("/") == 1:
-        sys.exit("set RUNS_REPO to the runs repository, as in https://github.com/<owner>/<runs>")
+    if not REPO:
+        sys.exit("set RUNS_REPO to the runs repository: https://github.com/<owner>/<runs>, or any git URL or path")
     if sys.argv[1] == "report":
         sys.exit(report(sys.argv[2].rstrip("/")))
     Identity(sys.argv[1], sys.argv[2].rstrip("/")).burn(sys.argv[3:] or ["random"])
