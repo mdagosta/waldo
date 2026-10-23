@@ -417,9 +417,13 @@ func recordFilterPolicy(global *corpus.RecordFilter, selections []CorpusSelectio
 
 func resolveSelectedPath(declared string, paths []string) (string, error) {
 	var resolved string
+	// A corpus named by its path on disk resolves to its logical path in that index, which the path ends with.
+	explicit := filepath.IsAbs(declared) || strings.HasPrefix(declared, "./") || strings.HasPrefix(declared, "../") || strings.HasPrefix(declared, "~/")
+	cleaned := filepath.ToSlash(filepath.Clean(declared))
 	for _, actual := range paths {
 		logical := strings.TrimSuffix(strings.TrimSuffix(actual, ".yaml"), ".json")
-		if declared != actual && declared != logical {
+		onDisk := explicit && (strings.HasSuffix(cleaned, "/"+logical) || strings.HasSuffix(cleaned, "/"+actual))
+		if declared != actual && declared != logical && !onDisk {
 			continue
 		}
 		if resolved != "" {
