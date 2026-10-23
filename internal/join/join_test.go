@@ -6,6 +6,8 @@
 package join
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -102,23 +104,41 @@ func TestLoadPlanRejectsUnsupportedPlans(t *testing.T) {
 	}
 }
 
+// testPlan is the plan.yaml runDirectory writes, which fixtures pin.
+const testPlan = "kind: waldo-join-plan\n"
+
+var testPlanSHA256 = func() string {
+	digest := sha256.Sum256([]byte(testPlan))
+	return hex.EncodeToString(digest[:])
+}()
+
+// runDirectory is a run directory holding the plan fixtures pin.
+func runDirectory(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	if err := os.WriteFile(filepath.Join(directory, "plan.yaml"), []byte(testPlan), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return directory
+}
+
 func submissionFixture(unit, identity string) Submission {
 	digest := strings.Repeat("a", 64)
 	return Submission{
 		Kind: SubmissionKind, Schema: RecordSchema, Run: "run", Round: 0, Stage: "bootstrap", Unit: unit, Identity: identity,
 		Model: "waldo-run-r0000-" + unit + "-" + identity, ModelSHA256: digest,
-		Files: map[string]string{"model.safetensors": digest, "config.json": strings.Repeat("b", 64)},
+		Files: map[string]string{"model.safetensors": digest, "config.json": strings.Repeat("b", 64)}, Plan: testPlanSHA256,
 	}
 }
 
 func claimFixture(slot string, attempt int, identity string) Claim {
-	return Claim{Kind: ClaimKind, Schema: RecordSchema, Run: "run", Round: 0, Stage: "bootstrap", Slot: slot, Attempt: attempt, Identity: identity, CreatedAt: "2026-10-21T10:00:00+00:00"}
+	return Claim{Kind: ClaimKind, Schema: RecordSchema, Run: "run", Round: 0, Stage: "bootstrap", Slot: slot, Attempt: attempt, Identity: identity, CreatedAt: "2026-10-21T10:00:00+00:00", Plan: testPlanSHA256}
 }
 
 func mergeFixture(identity, digest string) MergeRecord {
 	return MergeRecord{Kind: MergeKind, Schema: RecordSchema, Run: "run", Round: 0, Stage: "bootstrap", Identity: identity, Method: "single",
 		Accepted: []AcceptedUnit{{Unit: "all", Identity: "alice", Model: "waldo-run-r0000-all-alice", ModelSHA256: strings.Repeat("a", 64)}},
-		Model:    "waldo-run-r0000-merge", ModelSHA256: digest, Files: map[string]string{"model.safetensors": digest}, ClosedAt: "2026-10-21T11:00:00+00:00"}
+		Model:    "waldo-run-r0000-merge", ModelSHA256: digest, Files: map[string]string{"model.safetensors": digest}, ClosedAt: "2026-10-21T11:00:00+00:00", Plan: testPlanSHA256}
 }
 
 // signer writes signed records into one round of a run directory.
@@ -135,7 +155,7 @@ func TestReadStateVerifiesSignatures(t *testing.T) {
 	aliceKey, alicePublic := signingKey(t, "alice")
 	malloryKey, _ := signingKey(t, "mallory")
 	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 2, Closers: 1, Identities: map[string]Identity{"alice": {Key: alicePublic}, "bob": {Key: alicePublic}}}
-	runDir := t.TempDir()
+	runDir := runDirectory(t)
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
 	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
 		t.Fatal(err)
@@ -165,7 +185,7 @@ func TestReadStateVerifiesSignatures(t *testing.T) {
 func TestReadStateCountsOnlyClaimedWork(t *testing.T) {
 	key, public := signingKey(t, "alice")
 	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 2, Closers: 1, Identities: map[string]Identity{"alice": {Key: public}}}
-	runDir := t.TempDir()
+	runDir := runDirectory(t)
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
 	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
 		t.Fatal(err)
@@ -215,8 +235,9 @@ func TestReadStateIgnoresMalformedRecords(t *testing.T) {
 		"wrong kind":    func(record *Submission) { record.Kind = MergeKind },
 		"wrong stage":   func(record *Submission) { record.Stage = "pretrain" },
 		"unpinned file": func(record *Submission) { record.Files["model.safetensors"] = strings.Repeat("e", 64) },
+		"other plan":    func(record *Submission) { record.Plan = strings.Repeat("f", 64) },
 	} {
-		runDir := t.TempDir()
+		runDir := runDirectory(t)
 		record := submissionFixture("all", "bob")
 		mutate(&record)
 		write := signer(t, runDir)
@@ -239,7 +260,7 @@ func TestMajorityOfClosersDecidesRound(t *testing.T) {
 		keys[name], identities[name] = key, Identity{Key: public}
 	}
 	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Pretrain: PretrainPlan{Rounds: 1}, Identities: identities}
-	runDir := t.TempDir()
+	runDir := runDirectory(t)
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
 	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
 		t.Fatal(err)
@@ -383,7 +404,7 @@ func TestComposeInputsAreDeterministic(t *testing.T) {
 }
 
 func TestPosttrainComposeTakesItsUnitsSlice(t *testing.T) {
-	runDir := t.TempDir()
+	runDir := runDirectory(t)
 	template, err := os.ReadFile("../../testing/join/sft.yaml.tmpl")
 	if err != nil {
 		t.Fatal(err)
@@ -503,7 +524,7 @@ func TestDecidedRoundStaysDecided(t *testing.T) {
 		keys[name], identities[name] = key, Identity{Key: public}
 	}
 	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Pretrain: PretrainPlan{Rounds: 1}, Identities: identities}
-	runDir := t.TempDir()
+	runDir := runDirectory(t)
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
 	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
 		t.Fatal(err)
@@ -543,5 +564,20 @@ func TestDecidedRoundStaysDecided(t *testing.T) {
 	next.BaseSHA256 = &wrong
 	if validMerge(next, plan, 1, state.Rounds[0].Merge) {
 		t.Fatal("a merge from the wrong base counted")
+	}
+}
+
+func TestBudgetsSetAsideShortRuns(t *testing.T) {
+	joiner := &Joiner{}
+	run := func(steps int64) model.RunBOM {
+		var bom model.RunBOM
+		bom.Parameters.Steps = steps
+		return bom
+	}
+	present := []Submission{{Identity: "a"}, {Identity: "b"}, {Identity: "c"}}
+	exports := []string{"a", "b", "c"}
+	_, kept, _, refused := joiner.budgets("bootstrap", "all", exports, present, []model.RunBOM{run(250), run(1), run(250)}, nil)
+	if len(kept) != 2 || kept[0].Identity != "a" || kept[1].Identity != "c" || len(refused) != 1 || refused[0].Identities[0] != "b" {
+		t.Fatalf("kept %+v, refused %+v", kept, refused)
 	}
 }

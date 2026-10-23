@@ -481,7 +481,7 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 	record := Submission{
 		Kind: SubmissionKind, Schema: RecordSchema, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Unit: action.Unit,
 		Identity: joiner.Identity, Model: name, ModelSHA256: files["model.safetensors"], Files: files, Tokens: int64(tokens),
-		URL: url, CreatedAt: joiner.timestamp(),
+		URL: url, CreatedAt: joiner.timestamp(), Plan: joiner.planSHA256,
 	}
 	if base != nil {
 		record.Base, record.BaseSHA256 = &base.Model, &base.ModelSHA256
@@ -641,35 +641,71 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 // checkProvenance imports a submission's published package and verifies its
 // training closure is exactly the round base's plus its own run BOMs, so no
 // replica can drop or invent a corpus from the history every later round inherits.
-// It returns the corpus selection the submission's one run trained on.
-func (joiner *Joiner) checkProvenance(record Submission, directory string, base *MergeRecord) (string, error) {
+// It returns the submission's one training run.
+func (joiner *Joiner) checkProvenance(record Submission, directory string, base *MergeRecord) (model.RunBOM, error) {
 	name := published(record.Model, record.ModelSHA256)
 	if err := joiner.ensure(name, directory); err != nil {
-		return "", err
+		return model.RunBOM{}, err
 	}
 	inspection, err := model.Inspect(joiner.models(), name)
 	if err != nil {
-		return "", err
+		return model.RunBOM{}, err
 	}
 	var parent *model.Inspection
 	if base != nil {
 		inspected, err := model.Inspect(joiner.models(), published(base.Model, base.ModelSHA256))
 		if err != nil {
-			return "", err
+			return model.RunBOM{}, err
 		}
 		parent = &inspected
 	}
 	if err := model.CheckClosure(inspection, parent); err != nil {
-		return "", err
+		return model.RunBOM{}, err
 	}
 	runs, err := model.PublishedRunBOMs(inspection)
 	if err != nil {
-		return "", err
+		return model.RunBOM{}, err
 	}
 	if len(runs) != 1 {
-		return "", fmt.Errorf("a unit trains in one run, and %s carries %d run BOMs", record.Model, len(runs))
+		return model.RunBOM{}, fmt.Errorf("a unit trains in one run, and %s carries %d run BOMs", record.Model, len(runs))
 	}
-	return runs[0].CorpusBOMSHA256, nil
+	return runs[0], nil
+}
+
+// budgets sets aside replicas whose run trained with other parameters than a
+// majority of replicas, or another step count than the plan gives the unit: a
+// replica that trained a fraction of the budget and claims all of it.
+func (joiner *Joiner) budgets(stage, unit string, exports []string, present []Submission, runs []model.RunBOM, refused []DroppedUnit) ([]string, []Submission, []model.RunBOM, []DroppedUnit) {
+	steps := int64(0)
+	if stage == "pretrain" {
+		if values, err := joiner.values(stage, unit); err == nil {
+			fmt.Sscanf(values["budget"], "steps: %d", &steps)
+		}
+	}
+	counts := map[string]int{}
+	keys := make([]string, len(runs))
+	for index, run := range runs {
+		data, _ := json.Marshal(run.Parameters)
+		keys[index] = string(data)
+		counts[keys[index]]++
+	}
+	var keptExports []string
+	var keptPresent []Submission
+	var keptRuns []model.RunBOM
+	for index, run := range runs {
+		reason := ""
+		if counts[keys[index]]*2 <= len(runs) {
+			reason = "its run's training parameters differ from a majority of replicas'"
+		} else if steps > 0 && run.Parameters.Steps != steps {
+			reason = fmt.Sprintf("its run trained %d steps; the plan gives this unit %d", run.Parameters.Steps, steps)
+		}
+		if reason != "" {
+			refused = append(refused, DroppedUnit{Unit: unit, Reason: reason, Identities: []string{present[index].Identity}})
+			continue
+		}
+		keptExports, keptPresent, keptRuns = append(keptExports, exports[index]), append(keptPresent, present[index]), append(keptRuns, run)
+	}
+	return keptExports, keptPresent, keptRuns, refused
 }
 
 // screen sets aside the replicas that cannot be judged on their loss: one that
@@ -730,8 +766,9 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		}
 		// Each bad replica costs only itself; the rest still decide the unit.
 		kept, refused := screen(records, base)
-		var exports, corpora []string
+		var exports []string
 		var present []Submission
+		var runs []model.RunBOM
 		for _, record := range kept {
 			directory, err := joiner.fetch(ctx, record.Model, record.Identity, record.ModelSHA256, record.Files, record.URL)
 			if err != nil {
@@ -739,7 +776,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 				refused = append(refused, DroppedUnit{Unit: unit, Reason: "its files could not be fetched and checked", Identities: []string{record.Identity}})
 				continue
 			}
-			corpus, err := joiner.checkProvenance(record, directory, base)
+			run, err := joiner.checkProvenance(record, directory, base)
 			if err != nil {
 				fmt.Fprintf(joiner.Log, "   %s's %s: %v\n", record.Identity, unit, err)
 				refused = append(refused, DroppedUnit{Unit: unit, Reason: "its training provenance does not check: " + err.Error(), Identities: []string{record.Identity}})
@@ -747,7 +784,12 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 			}
 			exports = append(exports, directory)
 			present = append(present, record)
-			corpora = append(corpora, corpus)
+			runs = append(runs, run)
+		}
+		exports, present, runs, refused = joiner.budgets(action.Stage, unit, exports, present, runs, refused)
+		var corpora []string
+		for _, run := range runs {
+			corpora = append(corpora, run.CorpusBOMSHA256)
 		}
 		rejected = append(rejected, refused...)
 		// A unit needs a majority of its planned replicas left to compare.
@@ -807,6 +849,9 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		return err
 	}
 	fmt.Fprintf(joiner.Log, "-- Merge round %d: %d units accepted, %d dropped\n", action.Round, len(accepted), len(dropped))
+	if err := joiner.writeRound(target, action, base, method, accepted); err != nil {
+		return err
+	}
 	files, err := fileHashes(target)
 	if err != nil {
 		return err
@@ -817,7 +862,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	}
 	record := MergeRecord{
 		Kind: MergeKind, Schema: RecordSchema, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
-		Method: method, Dropped: dropped, Rejected: rejected, Evidence: evidence, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(),
+		Method: method, Dropped: dropped, Rejected: rejected, Evidence: evidence, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(), Plan: joiner.planSHA256,
 	}
 	if base != nil {
 		record.Base, record.BaseSHA256 = &base.Model, &base.ModelSHA256
@@ -834,6 +879,33 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		return fmt.Errorf("round %d: the runs repo did not accept this merge; on GitHub, the verifier's comment on its pull request says why", action.Round)
 	}
 	return nil
+}
+
+// writeRound writes the merge package's RoundRecord.
+func (joiner *Joiner) writeRound(target string, action Action, base *MergeRecord, method string, accepted []Submission) error {
+	round := RoundRecord{Kind: "openwaldo-bom", Schema: 1, Subject: "join-round", RunsRepository: joiner.url,
+		Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, PlanSHA256: joiner.planSHA256, Method: method}
+	if base != nil {
+		round.BaseSHA256 = &base.ModelSHA256
+	}
+	for _, submission := range accepted {
+		path := filepath.Join(roundDir(joiner.runDir, action.Round), "submissions", submission.Unit+"-"+submission.Identity+".yaml")
+		digest, err := hashFile(path)
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(joiner.clone, path)
+		if err != nil {
+			return err
+		}
+		round.Accepted = append(round.Accepted, RoundSubmission{Unit: submission.Unit, Identity: submission.Identity,
+			ModelSHA256: submission.ModelSHA256, Record: filepath.ToSlash(relative), RecordSHA256: digest})
+	}
+	data, err := json.MarshalIndent(round, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(target, model.RoundFile), append(data, '\n'), 0o644)
 }
 
 // merge imports the accepted exports and composes their token-weighted

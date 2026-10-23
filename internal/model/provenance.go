@@ -21,6 +21,14 @@ const ClosureRole = "training-closure"
 // ClosureFile is the training closure's name in a release package.
 const ClosureFile = "TRAINING-CLOSURE.json"
 
+// RoundRole marks a distributed run's round record, which a release made by
+// `waldo model join` publishes and a pulled origin keeps: the link from the
+// weights back to the runs repository and the signed records that produced them.
+const RoundRole = "join-round"
+
+// RoundFile is the round record's name in a release package.
+const RoundFile = "JOIN-ROUND.json"
+
 // TrainingClosure is every distinct corpus a model's weights were trained on,
 // across its whole lineage: its own runs, its parents', theirs, and so on.
 // Keyed by corpus BOM, it grows with the corpora a history uses, not with its

@@ -62,8 +62,9 @@ Each pass, an identity:
    token-weighted mean (`base.merge`, [ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)),
    publishes the merge, and signs it.
 
-Records count only from identities holding a claim, one slot per identity per
-unit. Each unit's replicas are taken one per slot, so every closer judges the
+Every record pins the `plan.yaml` it was made under by SHA-256 and counts only
+under that plan, so editing a plan starts the run afresh. Records count only
+from identities holding a claim, one slot per identity per unit. Each unit's replicas are taken one per slot, so every closer judges the
 same set.
 
 ### Judging replicas
@@ -75,7 +76,9 @@ sets aside, one replica at a time:
 - every replica in a group with identical weights (one copied another);
 - one whose tokens trained differ from the majority's;
 - one whose training provenance does not check out (below);
-- one whose run BOM records a corpus selection other than its unit's.
+- one whose run BOM records a corpus selection other than its unit's;
+- one whose run trained with other parameters than the majority's, or another
+  step count than the plan gives the unit.
 
 The rest are measured by the closer itself, with `--evaluate-only` on the
 records the unit's training held out
@@ -110,7 +113,10 @@ submission's own run BOMs) and reject a submission whose closure leaves out or
 adds a corpus, or whose history is incomplete. A merge republishes every
 accepted unit's run BOM and the union of their closures, and the majority's
 decision covers those files, so the final model's `EU-BOM.json` and
-`ATTRIBUTION.md` cover every round's corpora. Every node imports network models
+`ATTRIBUTION.md` cover every round's corpora. Each merge also publishes
+`JOIN-ROUND.json`, its link back to the run: the runs repository, run, round,
+plan hash, and every accepted submission's signed record by path and hash;
+pulls keep it, and exporting unchanged weights republishes it. Every node imports network models
 from their published packages, so all record the same lineage.
 
 ### Choosing replicas
@@ -156,6 +162,10 @@ A new bug becomes a new fault.
 
 - A majority of colluding closers, or of a unit's replicas, is not defended
   against; the plan's identity list bounds who can vote.
-- A lightly perturbed copy of another replica passes; commit-reveal would stop it.
-- The plan's author is trusted, and plan edits apply to every round.
+- A lightly perturbed copy of another replica passes, since replicas publish
+  weights as they submit; it earns credit without work and makes the replicas'
+  agreement less independent. Commit-reveal would stop it (each replica commits
+  its weights' hash, and all reveal once a unit's replicas have committed); it is
+  a known gap, not built while runs are proofs of concept.
+- The plan's author is trusted to write the plan; records pin it.
 - A runs repository not on GitHub has no verifier; join's own checks still apply.

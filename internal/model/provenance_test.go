@@ -131,3 +131,33 @@ func TestReleaseClosuresMustCoverTheirRuns(t *testing.T) {
 		}
 	}
 }
+
+func TestPullKeepsTheRoundRecord(t *testing.T) {
+	for name, content := range map[string]string{
+		"kept":      `{"kind":"openwaldo-bom","schema":1,"subject":"join-round","run":"r","round":1}`,
+		"malformed": `{"kind":"something-else"}`,
+	} {
+		directory := releasePackage(t, strings.Repeat("a", 64), 0)
+		withClosure(t, directory)
+		if err := os.WriteFile(filepath.Join(directory, RoundFile), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pulled, err := (Puller{Root: t.TempDir()}).PullDirectory(name, directory)
+		if name == "malformed" {
+			if err == nil || !strings.Contains(err.Error(), RoundFile) {
+				t.Fatalf("malformed round record error = %v", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		kept := false
+		for _, artifact := range pulled.Origin.Artifacts {
+			kept = kept || artifact.Role == RoundRole
+		}
+		if !kept {
+			t.Fatalf("round record not kept: %+v", pulled.Origin.Artifacts)
+		}
+	}
+}

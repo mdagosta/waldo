@@ -248,7 +248,10 @@ evidence behind its weights ([ADR 0083](adr/0083-record-lineage-and-training-pro
 Pulling a release keeps both with the origin. Each run BOM is checked against
 the hash it is named by and its embedded corpus BOM against the hash it
 records, and a closure that is malformed or leaves out the release's own runs is
-refused, so models built from a release inherit its evidence. Run BOMs record their Python runtime by
+refused, so models built from a release inherit its evidence. A release made by
+`waldo model join` also carries `JOIN-ROUND.json` (role `join-round`), its link
+back to the run's signed records ([Model join](MODEL-JOIN.md)); pulls keep it,
+and exporting the same weights again republishes it. Run BOMs record their Python runtime by
 name and version only, without local paths. Keep or publish the native WALDO
 package when a self-contained archive of the full model tree is required.
 

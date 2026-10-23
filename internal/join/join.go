@@ -32,13 +32,15 @@ type Joiner struct {
 	Log      io.Writer
 	Now      func() time.Time
 
-	clone  string
-	runDir string
-	plan   Plan
-	github []string // owner and repo when the runs repo is on GitHub
-	token  string   // GitHub token for this identity's gh and git calls
-	remote string   // where record branches are pushed, once known
-	owner  string
+	clone      string
+	url        string // the runs repository, as round records name it
+	planSHA256 string // the plan.yaml this pass's records pin
+	runDir     string
+	plan       Plan
+	github     []string // owner and repo when the runs repo is on GitHub
+	token      string   // GitHub token for this identity's gh and git calls
+	remote     string   // where record branches are pushed, once known
+	owner      string
 }
 
 // Open clones the runs repo when needed and makes sure the signing key exists.
@@ -55,6 +57,10 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 		}
 	}
 	joiner.github = githubURL.FindStringSubmatch(url)
+	joiner.url = url
+	if joiner.github != nil {
+		joiner.url = "https://github.com/" + joiner.github[1] + "/" + joiner.github[2]
+	}
 	name := strings.TrimSuffix(filepath.Base(strings.TrimRight(url, "/")), ".git")
 	joiner.clone = filepath.Join(joiner.Home, name)
 	joiner.runDir = filepath.Join(joiner.clone, filepath.FromSlash(runDir))
@@ -189,7 +195,7 @@ func (joiner *Joiner) Step(ctx context.Context) (string, error) {
 func (joiner *Joiner) claim(ctx context.Context, action Action) (bool, error) {
 	record := Claim{
 		Kind: ClaimKind, Schema: RecordSchema, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage,
-		Slot: action.Slot, Attempt: action.Attempt, Identity: joiner.Identity, CreatedAt: joiner.timestamp(),
+		Slot: action.Slot, Attempt: action.Attempt, Identity: joiner.Identity, CreatedAt: joiner.timestamp(), Plan: joiner.planSHA256,
 	}
 	path := filepath.Join(roundDir(joiner.runDir, action.Round), "claims", claimFile(action.Slot, action.Attempt))
 	won, err := joiner.commit(ctx, path, record, fmt.Sprintf("%s round %d: %s claims %s", joiner.plan.Name, action.Round, joiner.Identity, action.Slot))
@@ -214,6 +220,9 @@ func (joiner *Joiner) load() (State, error) {
 		return State{}, fmt.Errorf("%s is not in %s with this key; add under identities:\n  %s:\n    key: %s", joiner.Identity, filepath.Join(joiner.runDir, "plan.yaml"), joiner.Identity, key)
 	}
 	joiner.plan = plan
+	if joiner.planSHA256, err = hashFile(filepath.Join(joiner.runDir, "plan.yaml")); err != nil {
+		return State{}, err
+	}
 	allowed := filepath.Join(joiner.workDir(), "allowed_signers")
 	if err := os.MkdirAll(joiner.workDir(), 0o755); err != nil {
 		return State{}, err
