@@ -156,7 +156,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 			return State{}, err
 		}
 		sort.Strings(paths)
-		var previous *MergeRecord
+		previous := plan.start()
 		if number > 0 {
 			previous = state.Rounds[number-1].Merge
 		}
