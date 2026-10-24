@@ -2,7 +2,7 @@
 
 This directory is a catalog of reproducible models that passed every declared
 gate. It is not a roadmap and it is not an experiment log. At present the
-validated ladder ends at rung 0004.
+validated ladder ends at rung 0006.
 
 Only a passed recipe may have a numbered rung directory. Candidate composes
 belong on an experiment branch or in a temporary workspace. A failed candidate
@@ -17,6 +17,8 @@ Git and the persisted model artifact.
 | [0002](0002-tinystories-bpe/) | Narrow simple-story language model | 30.7M core parameters, 4K byte BPE | Entity/causal retention, bounded repetition, and 8/8 long-horizon EOS | Passed |
 | [0003](0003-narrow-grounded-responder/) | Narrow grounded responder inside the TinyStories language domain | Same 30.7M core model plus bounded assistant-response training | 20/20 bounded EOS, 14/15 exact grounded answers, zero interaction loops, and retained story behavior | Passed |
 | [0004](0004-small-simple-english/) | Small base model spanning simple narrative, description, dialogue, and elementary explanation | 59.5M core parameters, 8K byte BPE | Significant broad-form BPB gain over rung 0002, strong prompt/continuation discrimination, complete-sentence generation, and zero loops | Passed |
+| [0005](0005-general-base/) | Small general-language base model | 106.2M core parameters, 32K byte BPE | 16/20 locally relevant two-sentence continuations, bounded repetition, and exact reload | Passed |
+| [0006](0006-compact-general-base/) | Compact general-language base model with longer coherent continuation | 314.6M core parameters, 32K byte BPE | BPB 0.8009, 18/20 locally relevant three-sentence continuations, bounded repetition, and exact reload | Passed |
 
 A cell-biology candidate previously occupying rung 0003 failed every
 behavioral promotion gate and was removed. The promoted rung instead adds a
@@ -43,7 +45,7 @@ expected to be a reliable open-domain factual system.
 | 0003 | same 30.7M core | Inherit rung 0002 exactly; add only a supervised interaction stage | Respond to simple, grounded prompts inside the TinyStories language domain | Passed |
 | 0004 | 64.7M total / 59.5M core | 12 layers, width 640, SwiGLU 1,728, 10/10 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Passed |
 | 0005 | 124.6M total / about 106.2M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Grammatical, locally relevant general-language continuation without assistant claims | Passed |
-| 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | 5- and 10-TPP phases passed advancement checks; 20-TPP phase authorized |
+| 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | Passed at 20 core TPP |
 | 0007 | inherit passed 0006 | No architecture change; supervised post-training only | Constrained assistant for extraction, classification, rewriting, and grounded QA | Defined, not authorized |
 
 The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
@@ -247,6 +249,14 @@ sampled outputs grammatical and on topic for three sentences, no more than one
 sampled or two greedy loops, and exact reload. EOS and public benchmark results
 remain diagnostics. Beyond 20 TPP requires a new evidence review, not an
 automatic extension.
+
+The controlled 20-core-TPP phase passed and is the promoted rung. It consumed
+6.292B tokens and selected step 382,000 of 384,034. Selected held-out BPB
+improved from 0.8178 at 10 TPP to 0.8009, and the artifact reloaded exactly.
+All 20 sampled outputs contained two complete sentences; manual review found
+18/20 grammatical and on topic through three sentences. The sampled/greedy
+suites contained zero/one loops, and sampled EOS was 17/20. Only exposure
+changed across the 5-, 10-, and 20-TPP phases.
 
 ### Rung 0007: constrained compact assistant
 

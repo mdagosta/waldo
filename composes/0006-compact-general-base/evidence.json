@@ -1,0 +1,38 @@
+{
+  "kind": "openwaldo-training-rung-evidence",
+  "schema": 1,
+  "rung": "0006-compact-general-base",
+  "model": {
+    "name": "general-base-350m-20tpp-01",
+    "id": "e724bd198b94a53b6985d64155aaced87b87ccb57c489cf48f198a62abfab5d5",
+    "run_id": "126406ff4349f479",
+    "parameters": 345355200,
+    "core_parameters": 314635200,
+    "selected_step": 382000,
+    "planned_steps": 384034,
+    "consumed_tokens": 6292013056,
+    "heldout_loss_initial": 10.519488181571354,
+    "heldout_loss_selected": 2.199398464460933,
+    "heldout_loss_final": 2.20002173698325,
+    "heldout_loss_reloaded": 2.199398464460933,
+    "heldout_bpb_selected": 0.8008697872947221
+  },
+  "data": {
+    "heldout_selection": "stratified-lowest-sha256-v1",
+    "heldout_sha256": "94e5e9d33e1e4d2ca66858a276a05796f33674626a67a691bd4831de05e78a79",
+    "heldout_records": 1024,
+    "stackexchange_target_tokens": 944102344,
+    "wikimedia_target_tokens": 2832244162,
+    "cosmopedia_filtered_target_tokens": 1886323045,
+    "tinystories_gpt4_target_tokens": 629343505
+  },
+  "generation": {
+    "sampled_responses": 20,
+    "grammatical_and_on_topic_for_three_sentences": 18,
+    "two_complete_sentences": 20,
+    "sampled_eos_within_512": 17,
+    "sampled_loops": 0,
+    "greedy_loops": 1
+  },
+  "passed": true
+}
