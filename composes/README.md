@@ -17,8 +17,8 @@ Git and the persisted model artifact.
 | [0002](0002-tinystories-bpe/) | Narrow simple-story language model | 30.7M core parameters, 4K byte BPE | Entity/causal retention, bounded repetition, and 8/8 long-horizon EOS | Passed |
 | [0003](0003-narrow-grounded-responder/) | Narrow grounded responder inside the TinyStories language domain | Same 30.7M core model plus bounded assistant-response training | 20/20 bounded EOS, 14/15 exact grounded answers, zero interaction loops, and retained story behavior | Passed |
 | [0004](0004-small-simple-english/) | Small base model spanning simple narrative, description, dialogue, and elementary explanation | 59.5M core parameters, 8K byte BPE | Significant broad-form BPB gain over rung 0002, strong prompt/continuation discrimination, complete-sentence generation, and zero loops | Passed |
-| [0005](0005-general-base/) | Small general-language base model | 106.2M core parameters, 32K byte BPE | 16/20 locally relevant two-sentence continuations, bounded repetition, and exact reload | Passed |
-| [0006](0006-compact-general-base/) | Compact general-language base model with longer coherent continuation | 314.6M core parameters, 32K byte BPE | BPB 0.8009, 18/20 locally relevant three-sentence continuations, bounded repetition, and exact reload | Passed |
+| [0005](0005-general-base-125m/) | 125M general-language base model | 106.2M core parameters, 32K byte BPE | 16/20 locally relevant two-sentence continuations, bounded repetition, and exact reload | Passed |
+| [0006](0006-general-base-350m/) | 350M general-language base model with longer coherent continuation | 314.6M core parameters, 32K byte BPE | BPB 0.8009, 18/20 locally relevant three-sentence continuations, bounded repetition, and exact reload | Passed |
 
 A cell-biology candidate previously occupying rung 0003 failed every
 behavioral promotion gate and was removed. The promoted rung instead adds a
@@ -190,7 +190,7 @@ on topic for both sentences, with zero sampled loops and two greedy loops.
 Supplementary public-task results are retained in the rung evidence packet,
 but they do not replace the ladder's native `model chat` evaluation.
 
-### Rung 0006: 350M compact general base
+### Rung 0006: 350M general-language base
 
 Purpose: test whether increased capacity improves general-language distribution
 fit and supports longer coherent continuation. It remains a raw base model.

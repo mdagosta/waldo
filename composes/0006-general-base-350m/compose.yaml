@@ -1,4 +1,4 @@
-# Promoted rung-0006 compact general-language base at 20 core TPP.
+# Promoted rung-0006 350M general-language base at 20 core TPP.
 kind: waldo-model-compose
 schema: 1
 architecture:

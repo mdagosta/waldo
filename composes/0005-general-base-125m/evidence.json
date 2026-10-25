@@ -1,7 +1,7 @@
 {
   "kind": "openwaldo-training-rung-evidence",
   "schema": 1,
-  "rung": "0005-general-base",
+  "rung": "0005-general-base-125m",
   "model": {
     "name": "general-base-125m-20tpp-01",
     "id": "2d21eb00a261c58e1514cae674b8251ae97f6e74f6cbeab781339bf5fa8c0248",

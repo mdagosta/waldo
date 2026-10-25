@@ -1,6 +1,6 @@
-# Rung 0006: 350M compact general-language base
+# Rung 0006: 350M general-language base
 
-This is the promoted compact general-language base. It proves that WALDO can
+This is the promoted 350M general-language base. It proves that WALDO can
 train a 345.4M-parameter decoder on the frozen rung-0005 mixture and sustain
 longer coherent continuation. It remains a raw base model, not an assistant or
 a reliable factual system.
@@ -52,15 +52,15 @@ From the repository root:
 
 ```console
 go run ./cmd/waldo/ model forecast \
-  composes/0006-compact-general-base/compose.yaml
+  composes/0006-general-base-350m/compose.yaml
 go run ./cmd/waldo/ model train general-base-350m-20tpp-01 \
-  composes/0006-compact-general-base/compose.yaml
+  composes/0006-general-base-350m/compose.yaml
 
-./composes/0006-compact-general-base/evaluate.sh \
+./composes/0006-general-base-350m/evaluate.sh \
   general-base-350m-20tpp-01 /tmp/rung0006-sampled.jsonl 0.8 42 512
-./composes/0006-compact-general-base/evaluate.sh \
+./composes/0006-general-base-350m/evaluate.sh \
   general-base-350m-20tpp-01 /tmp/rung0006-greedy.jsonl 0 42 512
-python3 composes/0006-compact-general-base/score.py \
+python3 composes/0006-general-base-350m/score.py \
   /tmp/rung0006-sampled.jsonl /tmp/rung0006-greedy.jsonl
 ```
 
