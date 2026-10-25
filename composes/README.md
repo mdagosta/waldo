@@ -46,7 +46,7 @@ expected to be a reliable open-domain factual system.
 | 0004 | 64.7M total / 59.5M core | 12 layers, width 640, SwiGLU 1,728, 10/10 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Passed |
 | 0005 | 124.6M total / about 106.2M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Grammatical, locally relevant general-language continuation without assistant claims | Passed |
 | 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | Passed at 20 core TPP |
-| 0007 | inherit passed 0006 | No architecture change; supervised post-training only | Constrained assistant for extraction, classification, rewriting, and grounded QA | Defined, not authorized |
+| 0007 | inherit passed 0006 | No architecture change; one supervised post-training epoch | Bounded assistant behavior across the frozen interaction contract | Candidate validation in progress |
 
 The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
 query direction validated by MobileLLM at those scales. Rung 0004 is an
@@ -258,25 +258,42 @@ All 20 sampled outputs contained two complete sentences; manual review found
 suites contained zero/one loops, and sampled EOS was 17/20. Only exposure
 changed across the 5-, 10-, and 20-TPP phases.
 
-### Rung 0007: constrained compact assistant
+### Rung 0007: interaction-contract assistant
 
-Purpose: post-train a passed rung 0006 for tasks that a sub-billion model can
-reasonably perform when the answer is in the prompt or the output space is
-bounded. The foundation architecture and tokenizer do not change.
+Purpose: post-train the passed rung 0006 so it can recognize a user request,
+respond directly, respect elementary operating boundaries, and stop. This is
+not a new foundation run: the frozen rung-0006 architecture, tokenizer, and
+weights are the exact parent, followed by one supervised epoch.
 
-Allowed tasks are extraction, classification, structured formatting, short
-rewriting, summarization of supplied text, and grounded question answering.
-Open-domain expertise, dependable coding, and multi-step mathematical reasoning
-remain out of scope.
+The training contract contains 45,000 examples across 21 bounded behaviors:
+directness, constraints, clarification, assumptions, corrections, context,
+uncertainty, evidence, tool boundaries, tool success and failure,
+authorization, memory, safety, narrow refusal, planning, status communication,
+error recovery, user control, instruction priority, and formatting. It does
+not grant tools or external authority. Open-domain expertise, dependable
+coding, and multi-step mathematical reasoning remain out of scope.
 
-Promotion criteria:
+Promotion is decided against a frozen 42-item suite containing two held-out,
+deterministically selected examples from each behavior, plus the unchanged
+rung-0006 native generation suite. The criteria are:
 
-- at least 90% interaction-contract and EOS compliance;
-- at least 80% exact accuracy on extraction and bounded classification;
-- at least 75% grounded-QA accuracy when the answer is explicit in the prompt;
-- at least 80% schema validity on constrained JSON outputs;
-- no more than 1/20 repetition loops or role-boundary leaks; and
-- no statistically material regression on the rung-0006 foundation suite.
+- finite metrics, exact reload, and a selected checkpoint in the final 20% of
+  the supervised run;
+- at least 38/42 responses emit EOS without a role-boundary leak;
+- at least 34/42 satisfy the requested interaction contract on manual review;
+- both formatting cases produce valid output in the requested format;
+- no more than one interaction response contains a repetition loop or
+  role-boundary leak;
+- at least 16/20 sampled raw continuations remain grammatical and on topic for
+  two sentences, and at least 18/20 contain two complete sentences; and
+- no more than two sampled or three greedy raw continuations enter an obvious
+  loop.
+
+Exact match and token F1 against the reference response are reported as
+diagnostics, not universal gates: many contract cases allow multiple correct
+wordings. The frozen base suite is run in raw mode because it measures
+foundation preservation, while the interaction suite uses the inherited
+`user-assistant-v1` interface.
 
 No assistant rung can be proposed until its base rung passes. Post-training is
 not permitted to conceal a failed foundation model.
