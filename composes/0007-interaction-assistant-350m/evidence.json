@@ -1,0 +1,57 @@
+{
+  "kind": "openwaldo-training-rung-evidence",
+  "schema": 1,
+  "rung": "0007-interaction-assistant-350m",
+  "model": {
+    "name": "interaction-assistant-350m-rung7-01",
+    "id": "d35954500ac365f77d5c00ee80347b77a879db08bb22c8785f263281655ecfc2",
+    "parent_model": "general-base-350m-20tpp-01",
+    "parent_model_id": "e724bd198b94a53b6985d64155aaced87b87ccb57c489cf48f198a62abfab5d5"
+  },
+  "interaction_stage": {
+    "run_id": "43cde646a4674519",
+    "run_bom_sha256": "0999bc7c025e692a76142d1eb79c95df5c29b102570b014199e237cfa95c36b1",
+    "artifact_sha256": "3e99cfe75980b4773bbe106e7eacc2b510a7675be0c6a875e9afc91da2b0321a",
+    "steps": 75,
+    "consumed_tokens": 136013,
+    "selected_step": 75,
+    "heldout_loss": 0.045987931946868905,
+    "serialization_loss_delta": 0
+  },
+  "formatting_stage": {
+    "run_id": "cd8b76a7d9d958ff",
+    "run_bom_sha256": "1e4710e13a1582ac202afeb9820eb615e8f96a65b8279f3839e9818d02bbc44c",
+    "artifact_sha256": "98d37f48e5d3dbdd9a85e232895467d37cbaaa51223db28d47312180868896dc",
+    "steps": 5,
+    "consumed_tokens": 6075,
+    "selected_step": 5,
+    "heldout_loss": 0.39304656338774496,
+    "serialization_loss_delta": 0
+  },
+  "interaction_evaluation": {
+    "responses": 42,
+    "eos": 42,
+    "exact": 37,
+    "mean_token_f1": 0.9753730041576523,
+    "manual_contract_passes_conservative": 37,
+    "valid_json": true,
+    "valid_yaml": true,
+    "role_leaks": 0,
+    "loops": 0
+  },
+  "foundation_retention": {
+    "responses": 20,
+    "two_complete_sentences": 18,
+    "grammatical_and_on_topic_for_two_sentences_conservative": 16,
+    "sampled_eos_diagnostic": 17,
+    "sampled_loops": 1,
+    "greedy_loops": 0
+  },
+  "reproduction": {
+    "validated_split_model_id": "a71740e724c55c9fddcef550d0ad03876352e68017e40bbee920e8df25c7edb8",
+    "stage_one_tensor_mismatches": 0,
+    "final_tensor_mismatches": 0,
+    "container_hash_difference": "Only run_id metadata differs between split and combined safetensors containers."
+  },
+  "passed": true
+}

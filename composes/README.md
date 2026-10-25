@@ -2,7 +2,7 @@
 
 This directory is a catalog of reproducible models that passed every declared
 gate. It is not a roadmap and it is not an experiment log. At present the
-validated ladder ends at rung 0006.
+validated ladder ends at rung 0007.
 
 Only a passed recipe may have a numbered rung directory. Candidate composes
 belong on an experiment branch or in a temporary workspace. A failed candidate
@@ -19,6 +19,7 @@ Git and the persisted model artifact.
 | [0004](0004-small-simple-english/) | Small base model spanning simple narrative, description, dialogue, and elementary explanation | 59.5M core parameters, 8K byte BPE | Significant broad-form BPB gain over rung 0002, strong prompt/continuation discrimination, complete-sentence generation, and zero loops | Passed |
 | [0005](0005-general-base-125m/) | 125M general-language base model | 106.2M core parameters, 32K byte BPE | 16/20 locally relevant two-sentence continuations, bounded repetition, and exact reload | Passed |
 | [0006](0006-general-base-350m/) | 350M general-language base model with longer coherent continuation | 314.6M core parameters, 32K byte BPE | BPB 0.8009, 18/20 locally relevant three-sentence continuations, bounded repetition, and exact reload | Passed |
+| [0007](0007-interaction-assistant-350m/) | Bounded interaction-contract assistant derived from rung 0006 | Same 350M model plus 75-step contract SFT and 5-step formatting correction | 42/42 EOS, 37/42 exact, valid JSON/YAML, zero interaction loops/leaks, and retained raw generation | Passed |
 
 A cell-biology candidate previously occupying rung 0003 failed every
 behavioral promotion gate and was removed. The promoted rung instead adds a
@@ -46,7 +47,7 @@ expected to be a reliable open-domain factual system.
 | 0004 | 64.7M total / 59.5M core | 12 layers, width 640, SwiGLU 1,728, 10/10 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Passed |
 | 0005 | 124.6M total / about 106.2M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Grammatical, locally relevant general-language continuation without assistant claims | Passed |
 | 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | Passed at 20 core TPP |
-| 0007 | inherit passed 0006 | No architecture change; supervised post-training with explicit foundation retention | Bounded assistant behavior across the frozen interaction contract | Defined; first candidate rejected |
+| 0007 | inherit passed 0006 | No architecture change; 75-step supervised contract stage plus 5-step formatting-only correction | Bounded assistant behavior across the frozen interaction contract | Passed |
 
 The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
 query direction validated by MobileLLM at those scales. Rung 0004 is an
@@ -308,6 +309,18 @@ stories and elementary explanations. The behavior was therefore narrow
 template acquisition with material catastrophic forgetting, not a promotable
 assistant. Rung 0006 remains the frozen parent; any next candidate must add an
 explicit retention strategy and must use the same two frozen suites.
+
+The promoted recipe found that retention boundary without changing the parent,
+corpus scope, or gates. A 75-step contract stage preserved rung-0006 behavior
+and passed every interaction check except YAML. A five-step, `5e-6`
+formatting-only correction then passed the complete frozen suite: 42/42 EOS,
+37/42 exact reference responses, at least 37/42 conservative manual contract
+passes, valid JSON and YAML, zero interaction loops or role leaks, 18/20 raw
+outputs with two complete sentences, 16/20 conservative grammatical/on-topic
+passes, one sampled loop, and zero greedy loops. Both selected artifacts
+reloaded exactly. Ten formatting steps were rejected because retention fell to
+17/20 two-sentence outputs; the promoted five-step stage is therefore the
+smallest tested correction that passed both objectives.
 
 ## What the failed expansion proved
 

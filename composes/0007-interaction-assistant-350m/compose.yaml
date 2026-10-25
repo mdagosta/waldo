@@ -1,0 +1,80 @@
+# Promoted rung 0007. Start from the immutable rung-0006 artifact, learn the
+# broad interaction contract for 75 steps, then apply the minimum validated
+# formatting-only booster without changing the foundation model.
+kind: waldo-model-compose
+schema: 1
+base:
+  model: general-base-350m-20tpp-01
+  model_id: e724bd198b94a53b6985d64155aaced87b87ccb57c489cf48f198a62abfab5d5
+  run_id: 126406ff4349f479
+  run_bom_sha256: 5157f4db160107c26f689be1551e7b1ebacb9cb107247f4ae80acc4a3fbc6d6d
+  artifact_sha256: 5a2d31dbc5b5efd0feb1b6865cc5b7fb89d315e12acffd1eb63d1fe202a3d541
+  artifact_bytes: 1381451752
+interaction:
+  template: user-assistant-v1
+  tools: true
+stages:
+  - name: interaction-assistant-sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    corpora:
+      - post-train/sft/interaction-contract-v1
+    parameters:
+      profile: causal-pretrain-shuffled
+      parallelism: auto
+      steps: 75
+      batch_size: 8
+      gradient_accumulation_steps: 4
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 512
+      learning_rate: 0.00002
+      optimizer: adamw
+      schedule: cosine
+      seed: 47
+      weight_decay: 0.01
+      warmup_steps: 2
+      checkpoint_every: 25
+      evaluate_every: 25
+      shuffle_buffer_records: 32768
+      shuffle_buffer_bytes: 1073741824
+      evaluation_selection: indexed-sample-v1
+      evaluation_fraction: 0.01
+      evaluation_max_records: 512
+      evaluation_max_bytes: 16777216
+  - name: formatting-booster-sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    corpora:
+      - post-train/sft/interaction-formatting-v1
+    parameters:
+      profile: causal-pretrain-shuffled
+      parallelism: auto
+      steps: 5
+      batch_size: 8
+      gradient_accumulation_steps: 4
+      compute_precision: bfloat16
+      activation_checkpointing: false
+      compile: false
+      sequence_length: 512
+      learning_rate: 0.000005
+      optimizer: adamw
+      schedule: cosine
+      seed: 53
+      weight_decay: 0.01
+      warmup_steps: 1
+      checkpoint_every: 5
+      evaluate_every: 5
+      shuffle_buffer_records: 4096
+      shuffle_buffer_bytes: 134217728
+      evaluation_selection: indexed-sample-v1
+      evaluation_fraction: 0.01
+      evaluation_max_records: 128
+      evaluation_max_bytes: 4194304
