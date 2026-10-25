@@ -46,7 +46,7 @@ expected to be a reliable open-domain factual system.
 | 0004 | 64.7M total / 59.5M core | 12 layers, width 640, SwiGLU 1,728, 10/10 heads, 8K tied vocabulary, 1,024 context | Short coherent simple-English prose across several everyday forms | Passed |
 | 0005 | 124.6M total / about 106.2M core | 30 layers, width 576, SwiGLU 1,536, 9/3 grouped-query heads, 32K tied vocabulary, 2,048 context | Grammatical, locally relevant general-language continuation without assistant claims | Passed |
 | 0006 | 345.4M total / 314.6M core | 32 layers, width 960, SwiGLU 2,560, 15/5 grouped-query heads, 32K tied vocabulary, 2,048 context | Improve distribution fit and sustain longer coherent general-language continuation | Passed at 20 core TPP |
-| 0007 | inherit passed 0006 | No architecture change; one supervised post-training epoch | Bounded assistant behavior across the frozen interaction contract | Candidate validation in progress |
+| 0007 | inherit passed 0006 | No architecture change; supervised post-training with explicit foundation retention | Bounded assistant behavior across the frozen interaction contract | Defined; first candidate rejected |
 
 The 125M and 350M designs follow the deep-and-thin, tied-embedding, grouped-
 query direction validated by MobileLLM at those scales. Rung 0004 is an
@@ -297,6 +297,17 @@ foundation preservation, while the interaction suite uses the inherited
 
 No assistant rung can be proposed until its base rung passes. Post-training is
 not permitted to conceal a failed foundation model.
+
+The first candidate, `interaction-assistant-350m-01`, was rejected. Its single
+supervised epoch was numerically healthy and the frozen interaction suite
+scored 42/42 exact responses, 42/42 EOS, zero role leaks, and zero loops. That
+result did not survive the foundation-retention gate: only 15/20 sampled raw
+continuations contained two complete sentences versus the required 18/20, and
+manual review found interaction-contract language intruding into unrelated
+stories and elementary explanations. The behavior was therefore narrow
+template acquisition with material catastrophic forgetting, not a promotable
+assistant. Rung 0006 remains the frozen parent; any next candidate must add an
+explicit retention strategy and must use the same two frozen suites.
 
 ## What the failed expansion proved
 
