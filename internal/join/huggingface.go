@@ -37,39 +37,6 @@ func huggingFaceToken() string {
 	return ""
 }
 
-// downloadHuggingFace saves files from repository at revision into directory.
-func downloadHuggingFace(ctx context.Context, repository, revision, directory string, files []string) error {
-	token := huggingFaceToken()
-	for _, file := range files {
-		request, err := http.NewRequestWithContext(ctx, http.MethodGet, huggingFaceEndpoint()+"/"+repository+"/resolve/"+revision+"/"+file, nil)
-		if err != nil {
-			return err
-		}
-		if token != "" {
-			request.Header.Set("Authorization", "Bearer "+token)
-		}
-		response, err := http.DefaultClient.Do(request)
-		if err != nil {
-			return err
-		}
-		if response.StatusCode != http.StatusOK {
-			response.Body.Close()
-			return fmt.Errorf("download %s/%s@%s: %s", repository, file, revision, response.Status)
-		}
-		output, err := os.Create(filepath.Join(directory, file))
-		if err == nil {
-			_, err = io.Copy(output, response.Body)
-			if closeErr := output.Close(); err == nil {
-				err = closeErr
-			}
-		}
-		response.Body.Close()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // uploadHuggingFace pushes directory to repository with the `hf` CLI and returns the new commit.
 func uploadHuggingFace(ctx context.Context, repository, directory, message string, log io.Writer) (string, error) {

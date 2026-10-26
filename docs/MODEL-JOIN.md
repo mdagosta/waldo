@@ -12,7 +12,10 @@ waldo model join <runs-repo> <run-dir> --identity <name> [--once] [--email <addr
 ```
 
 `--once` does one piece of work and exits; otherwise join loops until the run is
-complete, waiting `--wait` seconds (default 60) while others work. An identity
+complete, waiting `--wait` seconds (default 60) while others work. Join first
+checks with `waldo status` that the machine can train. A unit cut short resumes
+from its newest checkpoint with `waldo model continue`; one that failed trains
+again. A completed run ends with `waldo model summary` of its final model. An identity
 keeps its signing key, optional `github-token`, clone, models, and exports in
 `~/.waldo/join/<identity>/`; a new identity is given its key and the
 `identities` entry to add to the plan.
@@ -21,38 +24,62 @@ keeps its signing key, optional `github-token`, clone, models, and exports in
 
 ```
 runs/<run>/
-  plan.yaml, *.yaml.tmpl                 # the plan and its compose templates
+  run.yaml                               # the run file: a compose with a join block
   rounds/round-NNNN/
     claims/<slot>[.<attempt>].yaml(.sig) # slot: <unit>-<n> or close-<n>
     submissions/<unit>-<identity>.yaml(.sig)
     merges/<identity>.yaml(.sig)
 ```
 
-| Plan key | Meaning |
+A run file is an ordinary WALDO compose ([Model compose](MODEL-COMPOSE.md))
+with a `join:` block, which every other command ignores:
+`waldo model train baseline run.yaml` trains the same model alone, a
+single-model baseline. Its `pre-training` stage trains the bootstrap and
+pretraining rounds and its `fine-tuning` stage the post-training rounds. For each
+unit and round, join cuts a compose from the file: that stage alone, the round's
+merge as `base`, the unit's sources (pre-training) or its `filter.slice` of the
+first corpus (fine-tuning, units in sorted order), the unit's seed, and the
+round's budget. Everything else stands as written.
+
+```yaml
+kind: waldo-model-compose
+schema: 1
+architecture: {...}
+stages:
+  - {name: python, type: pre-training, corpora: [{path: code/permissive, weight: 1}], parameters: {steps: 2000, ...}}
+  - {name: sft, type: fine-tuning, corpora: [{path: post-train/sft/python-basics-v4}], parameters: {epochs: 8, ...}}
+join:
+  name: python-v1
+  units: {u0: [TheAlgorithms/Python], u1: [pallets/flask, httpie/cli]}
+  replicas: 2
+  store: huggingface
+  identities: {alice: {key: ssh-ed25519 AAAA..., hf: alice}}
+  rounds: {bootstrap_tokens: 2000000, pretrain: 4, tokens_per_round: 8192000, posttrain: 10, epochs_per_round: 8}
+```
+
+| `join` key | Meaning |
 | --- | --- |
-| `kind`, `schema` | `waldo-join-plan`, `1`. Unknown keys are rejected. |
-| `name`, `units` | Run and unit names: lowercase letters, digits, `.`, `_`, `-`. |
+| `name`, `units` | Run name; unit to the sources its pre-training reads. Names use lowercase letters, digits, `.`, `_`, `-`. Unknown keys are rejected. |
 | `replicas` | Identities that train each unit per round. |
 | `closers` | Identities that close each round; a majority must agree. Default 3. |
 | `claim_minutes` | How long a claim holds its slot. Default 60. |
 | `merge`, `store` | `mean`; `huggingface` or `file:///path`. |
-| `base` | Optional model to start from instead of a bootstrap: `model`, `url` (`huggingface://<user>/<model>@<commit>` in any account, or `file://`), `model_sha256`, and `files` (every file's SHA-256). |
 | `identities` | Name to `{key: <ssh public key>, hf: <Hugging Face user>}`. |
-| `pretrain` | `compose`, `bootstrap_tokens`, `rounds`, `tokens_per_round`, and `shards` (unit to sources). |
-| `posttrain` | `compose`, `corpus` (an index path each unit takes a `filter.slice` of), `rounds`, `epochs_per_round`. |
-| `replica_tolerance`, `replica_floor` | Agreement thresholds; defaults 0.25 and 0.001. |
+| `rounds` | `bootstrap_tokens`, `pretrain` rounds of `tokens_per_round` (as fixed steps), `posttrain` rounds of `epochs_per_round`. |
+| `base` | Optional model to start from instead of a bootstrap: `model`, `url` (`huggingface://<user>/<model>@<commit>` in any account, or `file://`), `model_sha256`, and `files` (every file's SHA-256). |
+| `gates` | Optional promotion criteria per stage; see [Gates](#gates-and-training-ladders). |
+| `replica_tolerance`, `replica_floor` | Agreement thresholds; defaults 0.25 and 0.001. Raise the floor (to about 0.01) once rounds barely move the loss. |
 | `min_steps_per_round`, `round_minutes` | Minimum steps per unit; optional round deadline. |
 
-Units that train a narrow slice of a corpus should set
+The stages' own budgets are a baseline's; join sets each unit's. Units that
+train a narrow part of a corpus should set
 `evaluation_selection: lowest-sha256-v1`, which scans every record the unit's
 filters keep for held-out records rather than probing a sample of rows.
-Templates are composes with `$base_block`, `$seed`, `$budget`, `$sources`,
-`$corpus`, `$learning_rate`, `$weight_decay`, and `$extra` placeholders.
 
 ## Rounds
 
 Round 0 trains one shared unit, `all`, on every unit's sources, unless the plan
-names a `base`: then round 0 starts from that model, whose files every
+sets a `base`: then round 0 starts from that model, whose files every
 contributor checks against the plan's pins and whose recorded history the run
 inherits (an incompletely recorded one is refused). Pretraining and
 post-training rounds follow, each starting from the previous round's merge. A
@@ -69,9 +96,9 @@ Each pass, an identity:
    token-weighted mean (`base.merge`, [ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)),
    publishes the merge, and signs it.
 
-Every record pins the plan it was made under, a SHA-256 over `plan.yaml` and
-the compose templates it names, and counts only under that plan, so editing
-either starts the run afresh. Records count only
+Every record pins the run it was made under, a SHA-256 over the run file and
+the files its gates use, and counts only under that pin, so editing the run
+starts it afresh. Records count only
 from identities holding a claim, one slot per identity per unit. Each unit's replicas are taken one per slot, so every closer judges the
 same set.
 
@@ -126,12 +153,44 @@ plan hash, and every accepted submission's signed record by path and hash;
 pulls keep it, and exporting unchanged weights republishes it. Every node imports network models
 from their published packages, so all record the same lineage.
 
+### Gates and training ladders
+
+A gate is what a stage's merged model must meet before the run moves on:
+
+```yaml
+join:
+  gates:
+    - {after: pretrain, heldout_loss_at_most: 1.6, extra_rounds: 3}
+    - after: posttrain
+      evaluation: python-basics-v4-eval.json                  # waldo model evaluation-bom output
+      evaluator: [python3, evaluate_python.py, --records, eval.jsonl]
+      extra_rounds: 4
+```
+
+The stage's last round checks it. Its closers measure the merged weights: the
+mean held-out loss over the units, or the evaluator's results checked by
+`waldo model gate`, which applies the evaluation BOM's thresholds and checks the
+evaluation against every corpus the lineage trained on. Whether the gate passed
+is part of the closers' decision, and an evaluation gate's report is published
+with the merge. A failed gate adds another round of the stage, checked again, up
+to `extra_rounds`; a gate that never passes stops the run, failing closed. The
+evaluation BOM and evaluator files are pinned with the run file.
+`testing/join/evaluate_python.py` evaluates prompt-to-program data by running
+the programs a model writes; it runs model-written code, so use it only for
+models you would run anyway.
+
 ### Choosing replicas
 
 Two replicas catch a free-rider while a round's progress is well above
 `replica_floor`; below it, a free-rider is indistinguishable from honest work,
 so spend compute on new data instead. Three replicas outvote one bad
 submission. Each merge's evidence shows where replication stopped verifying.
+
+Packages carry a Sigstore signature of their BOMs when the identity's WALDO
+configuration sets `signing.*` ([Model exports](MODEL-EXPORTS.md)), so a
+downloaded package shows who published it apart from the runs repository.
+Training hash-checks every shard a unit reads against the index; a run's
+organizer audits its corpora's ingest attestations once with `waldo index audit`.
 
 ## Stores
 
@@ -158,7 +217,8 @@ failing.
 
 ## Testing
 
-`testing/e2e/model-join.sh` (opt-in, `WALDO_E2E_JOIN=1`) trains three identities
+`testing/e2e/model-join.sh` (opt-in, `WALDO_E2E_JOIN=1`) builds a run file from
+`testing/join/compose.yaml` and trains three identities
 for real through a local runs repository: one free-rides, another closes
 dishonestly, and the test asserts both are caught. `testing/join/run-identities.sh`
 burns in a GitHub run, and with `FAULTS`, `testing/join/burnin.py` injects

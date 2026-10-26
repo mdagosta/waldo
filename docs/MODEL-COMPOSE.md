@@ -186,6 +186,7 @@ BOM.
 | `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
 | `interaction` | no | object | Declares a versioned inference-time prompt contract. Omit it for raw causal continuation. |
 | `stages` | yes, unless `base.merge` creates the model | list | Ordered training stages. Stage names must be unique. |
+| `join` | no | object | Makes the compose a distributed run's file, read only by `waldo model join` ([Model join](MODEL-JOIN.md)); every other command ignores it, and it is no part of the compose's identity. |
 
 ### Interaction fields
 
