@@ -698,9 +698,11 @@ waldo model gate conversation2 core-v1.bom.json core-v1.results.json core-v1.gat
 
 The evaluator-owned results file uses kind `openwaldo-evaluation-results`,
 schema 1, the evaluation BOM SHA-256, and a `results` array of metric/value
-pairs. The gate re-materializes every completed real training BOM, scans each
-corpus once for exact and fuzzy overlap, and fails promotion on contamination
-or threshold errors. Simulated runs can never pass this release gate.
+pairs. The gate re-materializes every corpus in the model's training closure,
+its own runs' and every one its lineage inherited (a pulled or merged model's
+included), scans each once for exact and fuzzy overlap, and fails promotion on
+contamination or threshold errors. A model whose training history is not
+completely recorded cannot be gated, and simulated runs can never pass.
 
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records
