@@ -54,6 +54,8 @@ func claimAttempt(file string) (string, int) {
 
 // State is a run as its signed records describe it; unsigned or misplaced records are ignored.
 type State struct {
+	Slots   []Slot // the rounds as far as the decided ones determine them
+	Stopped bool   // a gate never passed, and the run ended there
 	Plan       Plan
 	PlanSHA256 string // the Pin every counted record carries
 	Rounds     []Round
@@ -83,7 +85,13 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 		return State{}, err
 	}
 	state := State{Plan: plan, PlanSHA256: pin}
-	for number := range plan.Stages() {
+	var decided []*MergeRecord
+	for number := 0; ; number++ {
+		slots, _ := plan.Schedule(decided)
+		if number >= len(slots) {
+			break
+		}
+		stage := slots[number].Stage
 		directory := roundDir(runDir, number)
 		round := Round{Claims: map[string][]Claim{}, Latest: map[string]Attempt{}, Submissions: map[string][]Submission{}, Merged: map[string]bool{}}
 		paths, err := filepath.Glob(filepath.Join(directory, "claims", "*.yaml"))
@@ -108,7 +116,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 			if err != nil {
 				return State{}, err
 			}
-			if ok && record.Round == number && record.Attempt >= 1 && record.Plan == pin && filepath.Base(path) == claimFile(record.Slot, record.Attempt) && validClaim(record, plan, number) {
+			if ok && record.Round == number && record.Attempt >= 1 && record.Plan == pin && filepath.Base(path) == claimFile(record.Slot, record.Attempt) && validClaim(record, plan, number, stage) {
 				claims = append(claims, record)
 			}
 		}
@@ -147,7 +155,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 			// A record must match the file and run it is in, so none can be replayed elsewhere,
 			// and its identity must have claimed the unit, so none trains a unit unasked.
 			if _, claimed := holds[record.Identity+" "+record.Unit]; ok && claimed && record.Round == number && record.Plan == pin &&
-				filepath.Base(path) == record.Unit+"-"+record.Identity+".yaml" && validSubmission(record, plan, number) {
+				filepath.Base(path) == record.Unit+"-"+record.Identity+".yaml" && validSubmission(record, plan, number, stage) {
 				round.Submissions[record.Unit] = append(round.Submissions[record.Unit], record)
 			}
 		}
@@ -168,17 +176,19 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 				return State{}, err
 			}
 			if _, claimed := holds[record.Identity+" close"]; ok && claimed && record.Round == number && record.Plan == pin &&
-				filepath.Base(path) == record.Identity+".yaml" && validMerge(record, plan, number, previous) {
+				filepath.Base(path) == record.Identity+".yaml" && validMerge(record, plan, number, stage, previous) && gated(record, slots[number].Gate) {
 				round.Merges = append(round.Merges, record)
 			}
 		}
 		round.Votes = votes(round, plan)
 		round.Merge, round.ClosedAt = decide(round.Votes, plan.Quorum())
 		state.Rounds = append(state.Rounds, round)
+		decided = append(decided, round.Merge)
 		if round.Merge == nil {
 			break
 		}
 	}
+	state.Slots, state.Stopped = plan.Schedule(decided)
 	return state, nil
 }
 
@@ -231,7 +241,12 @@ func (record MergeRecord) decision() string {
 		}
 	}
 	slices.Sort(provenance)
-	return strings.Join(append(parts, provenance...), "\n")
+	parts = append(parts, provenance...)
+	// A gate round's merges must also agree whether the gate passed.
+	if record.Gate != nil {
+		parts = append(parts, fmt.Sprintf("gate %s %t", record.Gate.After, record.Gate.Passed))
+	}
+	return strings.Join(parts, "\n")
 }
 
 // decide returns the first decision, in slot order, that a quorum of votes
@@ -290,15 +305,21 @@ func validFiles(files map[string]string, modelSHA256 string) bool {
 	return true
 }
 
-func validSubmission(record Submission, plan Plan, number int) bool {
-	stage := plan.Stages()[number]
+func validSubmission(record Submission, plan Plan, number int, stage string) bool {
 	return record.Kind == SubmissionKind && record.Schema == RecordSchema && record.Run == plan.Name && record.Stage == stage &&
 		slices.Contains(plan.RoundUnits(stage), record.Unit) && model.ValidateName(record.Model) == nil &&
 		validFiles(record.Files, record.ModelSHA256)
 }
 
-func validClaim(record Claim, plan Plan, number int) bool {
-	stage := plan.Stages()[number]
+// gated is whether a merge carries a gate result exactly when its round checks a gate.
+func gated(record MergeRecord, gate *Gate) bool {
+	if gate == nil {
+		return record.Gate == nil
+	}
+	return record.Gate != nil && record.Gate.After == gate.After
+}
+
+func validClaim(record Claim, plan Plan, number int, stage string) bool {
 	unit, index, _ := cutLast(record.Slot, "-")
 	position, err := strconv.Atoi(index)
 	if err != nil || position < 1 || strconv.Itoa(position) != index {
@@ -311,8 +332,7 @@ func validClaim(record Claim, plan Plan, number int) bool {
 	return err == nil && record.Kind == ClaimKind && record.Schema == RecordSchema && record.Run == plan.Name && record.Stage == stage
 }
 
-func validMerge(record MergeRecord, plan Plan, number int, previous *MergeRecord) bool {
-	stage := plan.Stages()[number]
+func validMerge(record MergeRecord, plan Plan, number int, stage string, previous *MergeRecord) bool {
 	// Every round starts from the one before's decision, so the chain between rounds holds.
 	if (previous == nil) != (record.BaseSHA256 == nil) || (previous != nil && *record.BaseSHA256 != previous.ModelSHA256) {
 		return false
@@ -425,7 +445,6 @@ func positions(identity string, round, count int) []int {
 // majority signs one merge. Otherwise an identity trains the unit it claimed,
 // else claims a replica slot of the lowest unit it has not taken part in.
 func (state State) Next(identity string, now time.Time) Action {
-	stages := state.Plan.Stages()
 	number := len(state.Rounds) - 1
 	if number < 0 {
 		number = 0
@@ -433,10 +452,19 @@ func (state State) Next(identity string, now time.Time) Action {
 	if number < len(state.Rounds) && state.Rounds[number].Merge != nil {
 		number++
 	}
-	if number >= len(stages) {
-		return Action{Kind: "done", Round: len(stages) - 1}
+	slots := state.Slots
+	if slots == nil {
+		var decided []*MergeRecord
+		for _, round := range state.Rounds {
+			decided = append(decided, round.Merge)
+		}
+		slots, _ = state.Plan.Schedule(decided)
 	}
-	stage, units := stages[number], state.Plan.RoundUnits(stages[number])
+	if number >= len(slots) {
+		return Action{Kind: "done", Round: len(slots) - 1}
+	}
+	stage := slots[number].Stage
+	units := state.Plan.RoundUnits(stage)
 	round := Round{Claims: map[string][]Claim{}, Submissions: map[string][]Submission{}}
 	if number < len(state.Rounds) {
 		round = state.Rounds[number]

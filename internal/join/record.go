@@ -92,6 +92,7 @@ type MergeRecord struct {
 	Accepted    []AcceptedUnit    `json:"accepted"`
 	Dropped     []DroppedUnit     `json:"dropped"`
 	Rejected    []DroppedUnit     `json:"rejected,omitempty"` // replicas set aside in units that were still judged
+	Gate        *GateResult       `json:"gate,omitempty"`     // on a stage's gate rounds
 	Evidence    []UnitEvidence    `json:"evidence,omitempty"`
 	Model       string            `json:"model"`
 	ModelSHA256 string            `json:"model_sha256"`
@@ -99,6 +100,15 @@ type MergeRecord struct {
 	URL         string            `json:"url"`
 	ClosedAt    string            `json:"closed_at"`
 	Plan        string            `json:"plan_sha256"`
+}
+
+// GateResult is a closer's check of the merged weights against a stage's gate.
+// Whether it passed is part of the decision; the value and report are evidence.
+type GateResult struct {
+	After  string   `json:"after"`
+	Passed bool     `json:"passed"`
+	Value  *float64 `json:"heldout_loss,omitempty"`
+	Report string   `json:"report,omitempty"` // the waldo model gate report, published with the merge
 }
 
 type AcceptedUnit struct {

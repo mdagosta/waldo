@@ -44,40 +44,48 @@ done
 git init -q --bare -b main "$work/runs.git"
 git clone -q "$work/runs.git" "$work/seed"
 mkdir -p "$work/seed/runs/$run"
-cp "$repo_root/testing/join/pretrain.yaml.tmpl" "$repo_root/testing/join/sft.yaml.tmpl" "$work/seed/runs/$run/"
-cat > "$work/seed/runs/$run/plan.yaml" <<EOF
-kind: waldo-join-plan
-schema: 1
-name: $run
-units: [u0, u1, u2]
-replicas: 2
-closers: 3
-merge: mean
-store: file://$work/store
-identities:
-  e2e-alice: $(cut -d' ' -f1,2 "$work/keys/e2e-alice.pub")
-  e2e-bob: $(cut -d' ' -f1,2 "$work/keys/e2e-bob.pub")
-  e2e-carol: $(cut -d' ' -f1,2 "$work/keys/e2e-carol.pub")
-pretrain:
-  compose: pretrain.yaml.tmpl
-  bootstrap_tokens: 2000000
-  rounds: 1
-  tokens_per_round: 4000000
-  shards:
+# The run file: the e2e's compose, a fine-tuning stage when post-training is asked for, then the join block.
+run_file="$work/seed/runs/$run/run.yaml"
+cp "$repo_root/testing/join/compose.yaml" "$run_file"
+posttrain_rounds=0
+if [ -n "$posttrain_corpus" ]; then
+  posttrain_rounds=1
+  cat >> "$run_file" <<EOF
+  - name: sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    corpora:
+      - path: $posttrain_corpus
+    parameters:
+      profile: causal-pretrain-shuffled
+      epochs: 4
+      batch_size: 8
+      sequence_length: 512
+      learning_rate: 0.0005
+      weight_decay: 0.05
+      evaluation_fraction: 0.05
+EOF
+fi
+cat >> "$run_file" <<EOF
+join:
+  name: $run
+  units:
     u0: [TheAlgorithms/Python]
     u1: [pallets/flask, httpie/cli]
     u2: [nvbn/thefuck, psf/requests]
-replica_tolerance: 0.25
+  replicas: 2
+  closers: 3
+  store: file://$work/store
+  identities:
+    e2e-alice: $(cut -d' ' -f1,2 "$work/keys/e2e-alice.pub")
+    e2e-bob: $(cut -d' ' -f1,2 "$work/keys/e2e-bob.pub")
+    e2e-carol: $(cut -d' ' -f1,2 "$work/keys/e2e-carol.pub")
+  rounds: {bootstrap_tokens: 2000000, pretrain: 1, tokens_per_round: 4000000, posttrain: $posttrain_rounds, epochs_per_round: 4}
+  replica_tolerance: 0.25
 EOF
-if [ -n "$posttrain_corpus" ]; then
-  cat >> "$work/seed/runs/$run/plan.yaml" <<EOF
-posttrain:
-  compose: sft.yaml.tmpl
-  corpus: $posttrain_corpus
-  rounds: 1
-  epochs_per_round: 4
-EOF
-fi
 git -C "$work/seed" add -A
 git -C "$work/seed" -c user.name=e2e -c user.email=e2e@waldo.invalid commit -q -m "runs/$run: plan"
 git -C "$work/seed" push -q origin main
@@ -159,7 +167,7 @@ if command in ("lazy-u2", "cheat-close"):
                    "closed_at": lazy["created_at"]}}
     # Every record pins the plan it was made under.
     run_files = seed / f"runs/{run}"
-    named = ["plan.yaml"] + re.findall(r"^  compose: (\S+)", (run_files / "plan.yaml").read_text(), re.M)
+    named = ["run.yaml"]  # no gates, so the pin is the run file alone
     pin = hashlib.sha256("".join(f"{f} {hashlib.sha256((run_files / f).read_bytes()).hexdigest()}\n" for f in named).encode()).hexdigest()
     directory = seed / rounds / f"round-{number:04d}"
     for name, record in out.items():
@@ -188,7 +196,7 @@ cheat() {
   echo "!! $identity: $command"
 }
 
-last=$(grep -c '^  rounds: 1' "$work/seed/runs/$run/plan.yaml")
+last=$((1 + posttrain_rounds))  # the bootstrap is round 0, then 1 pretraining round and any post-training
 passes=0
 until rounds decided "$last"; do
   passes=$((passes + 1))

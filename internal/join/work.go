@@ -6,6 +6,7 @@
 package join
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/csv"
@@ -17,40 +18,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/model"
-	"gopkg.in/yaml.v3"
 )
 
 // Files a merged Hugging Face package takes from its first input; inputs must agree on every one.
 var mergeSharedFiles = []string{"config.json", "generation_config.json", "tokenizer_config.json", "special_tokens_map.json", "tokenization_openwaldo.py", "chat_template.jinja", "architecture.py"}
-
-var templateVariable = regexp.MustCompile(`\$(?:\$|([A-Za-z_][A-Za-z0-9_]*)|\{([A-Za-z_][A-Za-z0-9_]*)\})`)
-
-// fillTemplate substitutes $name and ${name}, with $$ for a literal $, in a run's compose templates.
-func fillTemplate(text string, values map[string]string) (string, error) {
-	var missing []string
-	filled := templateVariable.ReplaceAllStringFunc(text, func(match string) string {
-		if match == "$$" {
-			return "$"
-		}
-		name := strings.Trim(match, "${}")
-		value, ok := values[name]
-		if !ok {
-			missing = append(missing, name)
-		}
-		return value
-	})
-	if len(missing) > 0 {
-		return "", fmt.Errorf("compose template uses unknown variables: %s", strings.Join(missing, ", "))
-	}
-	return filled, nil
-}
 
 // pieceSeed is the same for every replica of one piece of work and different across pieces.
 func pieceSeed(parts ...any) int {
@@ -64,89 +41,6 @@ func pieceSeed(parts ...any) int {
 
 func (joiner *Joiner) modelName(number int, suffix string) string {
 	return fmt.Sprintf("waldo-%s-r%04d-%s", joiner.plan.Name, number, suffix)
-}
-
-// values are a stage's compose template inputs for one unit.
-func (joiner *Joiner) values(stage, unit string) (map[string]string, error) {
-	pretrain := joiner.plan.Pretrain
-	switch stage {
-	case "bootstrap":
-		var sources []string
-		for _, name := range joiner.plan.Units {
-			sources = append(sources, pretrain.Shards[name]...)
-		}
-		encoded, _ := json.Marshal(sources)
-		return map[string]string{"budget": fmt.Sprintf("tokens: %d", pretrain.BootstrapTokens), "sources": string(encoded)}, nil
-	case "pretrain":
-		template, err := os.ReadFile(joiner.planFile(pretrain.Compose))
-		if err != nil {
-			return nil, err
-		}
-		batch, sequence := templateInt(template, "batch_size"), templateInt(template, "sequence_length")
-		if batch == 0 || sequence == 0 {
-			return nil, fmt.Errorf("%s needs batch_size and sequence_length", pretrain.Compose)
-		}
-		steps := (pretrain.TokensPerRound + int64(batch*sequence) - 1) / int64(batch*sequence)
-		encoded, _ := json.Marshal(pretrain.Shards[unit])
-		return map[string]string{"budget": fmt.Sprintf("steps: %d\n      epochs: 1000", steps), "sources": string(encoded)}, nil
-	}
-	posttrain := joiner.plan.Posttrain
-	if posttrain.Corpus == "" {
-		return nil, fmt.Errorf("post-training needs posttrain.corpus, an index path that every unit takes a slice of")
-	}
-	template, err := os.ReadFile(joiner.planFile(posttrain.Compose))
-	if err != nil {
-		return nil, err
-	}
-	line := regexp.MustCompile(`(?m)^( *)- path: \$corpus *$`).FindSubmatch(template)
-	if line == nil {
-		return nil, fmt.Errorf("%s must list `- path: $corpus` on its own line", posttrain.Compose)
-	}
-	index := -1
-	for position, name := range joiner.plan.Units {
-		if name == unit {
-			index = position
-		}
-	}
-	indent := string(line[1]) + "  "
-	corpus := fmt.Sprintf("%s\n%sfilter:\n%s  slice: {index: %d, count: %d}", posttrain.Corpus, indent, indent, index, len(joiner.plan.Units))
-	return map[string]string{"budget": fmt.Sprintf("epochs: %d", posttrain.EpochsPerRound), "corpus": corpus}, nil
-}
-
-func templateInt(template []byte, key string) int {
-	match := regexp.MustCompile(key + `: (\d+)`).FindSubmatch(template)
-	if match == nil {
-		return 0
-	}
-	value, _ := strconv.Atoi(string(match[1]))
-	return value
-}
-
-func (joiner *Joiner) planFile(value string) string {
-	return runFile(joiner.runDir, value)
-}
-
-// compose fills a stage template for one unit.
-func (joiner *Joiner) compose(stage, base string, seed int, budget string, values map[string]string) (string, error) {
-	compose := joiner.plan.Pretrain.Compose
-	if stage == "posttrain" {
-		compose = joiner.plan.Posttrain.Compose
-	}
-	template, err := os.ReadFile(joiner.planFile(compose))
-	if err != nil {
-		return "", err
-	}
-	fill := map[string]string{"base_block": "", "seed": strconv.Itoa(seed), "budget": budget, "sources": "[]", "corpus": "",
-		"learning_rate": "0.0005", "weight_decay": "0.05", "extra": ""}
-	if base != "" {
-		fill["base_block"] = "base:\n  model: " + base
-	}
-	for key, value := range values {
-		if key != "budget" {
-			fill[key] = value
-		}
-	}
-	return fillTemplate(string(template), fill)
 }
 
 func (joiner *Joiner) waldo(ctx context.Context, args ...string) error {
@@ -168,7 +62,7 @@ func (joiner *Joiner) waldoOutput(ctx context.Context, args ...string) ([]byte, 
 	fmt.Fprintf(joiner.Log, "$ waldo %s\n", strings.Join(args, " "))
 	output, err := command.Output()
 	if err != nil {
-		return nil, fmt.Errorf("waldo %s: %w", strings.Join(args[1:3], " "), err)
+		return nil, fmt.Errorf("waldo %s: %w", strings.Join(args, " "), err)
 	}
 	return output, nil
 }
@@ -200,9 +94,14 @@ func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 		fmt.Fprintf(joiner.Log, "   %s already trained\n", name)
 		return nil
 	}
-	// A failed pass leaves the model behind with only its starting weights; start it over.
+	// A pass cut short (a closed laptop, a killed process) leaves training to resume from its newest
+	// checkpoint; waldo refuses a run that failed outright, and that one starts over.
 	if _, err := model.Inspect(joiner.models(), name); err == nil {
-		fmt.Fprintf(joiner.Log, "   %s did not finish training; starting it over\n", name)
+		fmt.Fprintf(joiner.Log, "   %s did not finish training; resuming it\n", name)
+		if err := joiner.waldo(ctx, "model", "continue", name); err == nil && joiner.built(name) {
+			return nil
+		}
+		fmt.Fprintf(joiner.Log, "   %s cannot resume; starting it over\n", name)
 		if err := joiner.waldo(ctx, "model", "rm", name); err != nil {
 			return err
 		}
@@ -345,68 +244,38 @@ func (joiner *Joiner) fetched(identity, name string) string {
 	return filepath.Join(joiner.workDir(), "fetched", identity, name)
 }
 
-// fetch copies a record's files from the store and checks them against the hashes it commits to.
+// fetch brings a record's package from the store, exactly the files it pins,
+// each checked against its hash, and keeps it for later passes.
 func (joiner *Joiner) fetch(ctx context.Context, name, identity, sha string, files map[string]string, url string) (string, error) {
-	if files == nil {
-		files = map[string]string{"model.safetensors": sha}
-	}
 	if files["model.safetensors"] != sha {
 		return "", fmt.Errorf("%s: its files and model_sha256 disagree", name)
 	}
-	repository, revision := "", ""
 	if strings.HasPrefix(url, "huggingface://") {
-		at := strings.LastIndex(url, "@")
-		if at < 0 {
-			return "", fmt.Errorf("%s: %s pins no revision", name, url)
-		}
-		repository, revision = url[len("huggingface://"):at], url[at+1:]
-		// A plan's base may be in any account; it is pinned by the plan itself.
+		repository, _, _ := strings.Cut(strings.TrimPrefix(url, "huggingface://"), "@")
+		// A contributor publishes from its own account; a plan's base may be in any, pinned by the plan.
 		if owner, _, _ := strings.Cut(repository, "/"); identity != "" && owner != joiner.plan.Identities[identity].HuggingFace {
 			return "", fmt.Errorf("%s: %s is not in %s's Hugging Face account", name, url, identity)
 		}
-	} else if !strings.HasPrefix(url, "file://") {
-		return "", fmt.Errorf("%s: %s is not in a supported store", name, url)
 	}
 	target := joiner.fetched(identity, name)
-	if _, err := os.Stat(filepath.Join(target, "model.safetensors")); os.IsNotExist(err) {
-		partial := target + ".partial"
-		_ = os.RemoveAll(partial)
-		if err := os.MkdirAll(partial, 0o755); err != nil {
-			return "", err
-		}
-		var names []string
-		for file := range files {
-			names = append(names, file)
-		}
-		sort.Strings(names)
-		if repository != "" {
-			fmt.Fprintf(joiner.Log, "   fetching %s\n", url)
-			if err := downloadHuggingFace(ctx, repository, revision, partial, names); err != nil {
-				return "", err
-			}
-		} else {
-			for _, file := range names {
-				if err := copyFile(filepath.Join(strings.TrimPrefix(url, "file://"), file), filepath.Join(partial, file)); err != nil {
-					return "", err
-				}
-			}
-		}
-		_ = os.RemoveAll(target)
-		if err := os.Rename(partial, target); err != nil {
-			return "", err
-		}
+	if actual, err := fileHashes(target); err == nil && sameFiles(actual, files) {
+		return target, nil
 	}
-	actual, err := fileHashes(target)
-	if err != nil {
-		return "", err
-	}
-	for file, digest := range files {
-		if actual[file] != digest {
-			_ = os.RemoveAll(target)
-			return "", fmt.Errorf("%s: %s in the store does not match the record's hash", name, file)
-		}
+	fmt.Fprintf(joiner.Log, "   fetching %s\n", url)
+	if err := (model.Puller{}).FetchPinned(ctx, url, files, target); err != nil {
+		return "", fmt.Errorf("%s: %w", name, err)
 	}
 	return target, nil
+}
+
+// sameFiles is whether a kept package still holds every pinned file unchanged.
+func sameFiles(actual, pinned map[string]string) bool {
+	for file, digest := range pinned {
+		if actual[file] != digest {
+			return false
+		}
+	}
+	return true
 }
 
 // published is the local name of a model taken from the network: its record's
@@ -482,19 +351,15 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 	if err != nil {
 		return err
 	}
-	values, err := joiner.values(action.Stage, action.Unit)
-	if err != nil {
-		return err
-	}
-	stage := action.Stage
-	if stage == "bootstrap" {
-		stage = "pretrain"
-	}
 	baseName := ""
 	if base != nil {
 		baseName = published(base.Model, base.ModelSHA256)
 	}
-	text, err := joiner.compose(stage, baseName, pieceSeed(joiner.plan.Name, action.Round, action.Unit), values["budget"], values)
+	budget, err := joiner.plan.budget(action.Stage)
+	if err != nil {
+		return err
+	}
+	text, err := joiner.plan.unitCompose(action.Stage, action.Unit, baseName, pieceSeed(joiner.plan.Name, action.Round, action.Unit), budget)
 	if err != nil {
 		return err
 	}
@@ -557,18 +422,12 @@ func (joiner *Joiner) timestamp() string {
 // probe is the held-out loss the verifier itself measures on an export's
 // exact weights, never the contributor's own report. seed must be the unit's
 // training seed, so the probe scores the records every replica held out.
-func (joiner *Joiner) probe(ctx context.Context, stage, export string, seed int, values map[string]string) (model.Evaluation, error) {
+func (joiner *Joiner) probe(ctx context.Context, stage, unit, export string, seed int) (model.Evaluation, error) {
 	name := filepath.Base(export)
 	if err := joiner.ensure(name, export); err != nil {
 		return model.Evaluation{}, err
 	}
-	probeValues := map[string]string{}
-	for _, key := range []string{"sources", "corpus"} {
-		if value, ok := values[key]; ok {
-			probeValues[key] = value
-		}
-	}
-	text, err := joiner.compose(stage, "", seed, "tokens: 16384", probeValues)
+	text, err := joiner.plan.unitCompose(stage, unit, "", seed, Budget{"tokens", 16384})
 	if err != nil {
 		return model.Evaluation{}, err
 	}
@@ -593,32 +452,28 @@ func (joiner *Joiner) probe(ctx context.Context, stage, export string, seed int,
 // verify returns the index of the replica most others agree with, among
 // those agreeing with at least half of the others, or -1 without a majority. Honest replicas improve alike from the round's start; a
 // free-rider does not, so gaps are judged against each round's progress.
-func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports []string, records []Submission, corpora []string, values map[string]string, base *MergeRecord, round int, unit string) (int, []int, []int, *UnitEvidence, error) {
+func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports []string, records []Submission, corpora []string, base *MergeRecord, round int, unit string) (int, []int, []int, *UnitEvidence, error) {
 	seed := pieceSeed(joiner.plan.Name, round, unit)
 	evidence := &UnitEvidence{Unit: unit}
 	var start float64
 	if base != nil {
-		measured, err := joiner.probe(ctx, stage, joiner.fetched(base.Identity, base.Model), seed, values)
+		measured, err := joiner.probe(ctx, stage, unit, joiner.fetched(base.Identity, base.Model), seed)
 		if err != nil {
 			return -1, nil, nil, nil, err
 		}
 		start = measured.Loss
 	} else {
 		// A bootstrap starts from random weights, whose loss is about uniform over the vocabulary.
-		template, err := os.ReadFile(joiner.planFile(joiner.plan.Pretrain.Compose))
-		if err != nil {
-			return -1, nil, nil, nil, err
-		}
-		vocabulary := templateInt(template, "vocabulary_size")
+		vocabulary := joiner.plan.vocabulary()
 		if vocabulary < 2 {
-			return -1, nil, nil, nil, fmt.Errorf("%s needs vocabulary_size to judge bootstrap replicas", joiner.plan.Pretrain.Compose)
+			return -1, nil, nil, nil, fmt.Errorf("the run file's architecture needs vocabulary_size to judge bootstrap replicas")
 		}
 		start = math.Log(float64(vocabulary))
 	}
 	evidence.StartLoss = start
 	losses := make([]float64, len(exports))
 	for index, export := range exports {
-		measured, err := joiner.probe(ctx, stage, export, seed, values)
+		measured, err := joiner.probe(ctx, stage, unit, export, seed)
 		if err != nil {
 			return -1, nil, nil, nil, err
 		}
@@ -726,9 +581,7 @@ func (joiner *Joiner) checkProvenance(record Submission, directory string, base 
 func (joiner *Joiner) budgets(stage, unit string, exports []string, present []Submission, runs []model.RunBOM, refused []DroppedUnit) ([]string, []Submission, []model.RunBOM, []DroppedUnit) {
 	steps := int64(0)
 	if stage == "pretrain" {
-		if values, err := joiner.values(stage, unit); err == nil {
-			fmt.Sscanf(values["budget"], "steps: %d", &steps)
-		}
+		steps, _ = joiner.plan.pretrainSteps()
 	}
 	counts := map[string]int{}
 	keys := make([]string, len(runs))
@@ -789,10 +642,6 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	if err != nil {
 		return err
 	}
-	stage := action.Stage
-	if stage == "bootstrap" {
-		stage = "pretrain"
-	}
 	round := state.Rounds[action.Round]
 	var accepted []Submission
 	var evidence []UnitEvidence
@@ -841,11 +690,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 			dropped = append(dropped, DroppedUnit{Unit: unit, Reason: fmt.Sprintf("%d of %d replicas left after rejections", len(present), joiner.plan.Replicas), Identities: identities})
 			continue
 		}
-		values, err := joiner.values(action.Stage, unit)
-		if err != nil {
-			return err
-		}
-		winner, disagreeing, elsewhere, unitEvidence, err := joiner.verify(ctx, stage, "unit "+unit, exports, present, corpora, values, base, action.Round, unit)
+		winner, disagreeing, elsewhere, unitEvidence, err := joiner.verify(ctx, action.Stage, "unit "+unit, exports, present, corpora, base, action.Round, unit)
 		if unitEvidence != nil {
 			evidence = append(evidence, *unitEvidence)
 		}
@@ -896,6 +741,12 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	if err := joiner.writeRound(target, action, base, method, accepted); err != nil {
 		return err
 	}
+	var gate *GateResult
+	if action.Round < len(state.Slots) && state.Slots[action.Round].Gate != nil {
+		if gate, err = joiner.checkGate(ctx, *state.Slots[action.Round].Gate, action, name, target); err != nil {
+			return err
+		}
+	}
 	files, err := fileHashes(target)
 	if err != nil {
 		return err
@@ -906,7 +757,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 	}
 	record := MergeRecord{
 		Kind: MergeKind, Schema: RecordSchema, Run: joiner.plan.Name, Round: action.Round, Stage: action.Stage, Identity: joiner.Identity,
-		Method: method, Dropped: dropped, Rejected: rejected, Evidence: evidence, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(), Plan: joiner.planSHA256,
+		Method: method, Dropped: dropped, Rejected: rejected, Evidence: evidence, Gate: gate, Model: name, ModelSHA256: files["model.safetensors"], Files: files, URL: url, ClosedAt: joiner.timestamp(), Plan: joiner.planSHA256,
 	}
 	if base != nil {
 		record.Base, record.BaseSHA256 = &base.Model, &base.ModelSHA256
@@ -923,6 +774,74 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		return fmt.Errorf("round %d: the runs repo did not accept this merge; on GitHub, the verifier's comment on its pull request says why", action.Round)
 	}
 	return nil
+}
+
+// GateReportFile is an evaluation gate's report in a merge package.
+const GateReportFile = "GATE-REPORT.json"
+
+// checkGate measures the merged weights against the round's gate. A held-out
+// loss gate averages the merge's loss on every unit's held-out records; an
+// evaluation gate runs the plan's evaluator on the merge, then waldo model gate,
+// which checks the evaluation against everything the lineage trained on and
+// writes its report into the package, so the merge publishes the bar it met.
+func (joiner *Joiner) checkGate(ctx context.Context, gate Gate, action Action, name, target string) (*GateResult, error) {
+	result := &GateResult{After: gate.After}
+	if gate.HeldoutLossAtMost != nil {
+		units := joiner.plan.RoundUnits(action.Stage)
+		total := 0.0
+		for _, unit := range units {
+			measured, err := joiner.probe(ctx, action.Stage, unit, target, pieceSeed(joiner.plan.Name, action.Round, unit))
+			if err != nil {
+				return nil, err
+			}
+			total += measured.Loss
+		}
+		mean := total / float64(len(units))
+		result.Value, result.Passed = &mean, mean <= *gate.HeldoutLossAtMost
+		fmt.Fprintf(joiner.Log, "   gate after %s: held-out loss %.4f, at most %.4f: passed %t\n", gate.After, mean, *gate.HeldoutLossAtMost, result.Passed)
+		return result, nil
+	}
+	scratch, err := os.MkdirTemp("", "waldo-join-gate-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(scratch)
+	evaluation := filepath.Join(joiner.runDir, gate.Evaluation)
+	results := filepath.Join(scratch, "results.json")
+	command := exec.CommandContext(ctx, gate.Evaluator[0], append(append([]string{}, gate.Evaluator[1:]...), name, evaluation, results)...)
+	command.Dir = joiner.runDir
+	command.Env = append(os.Environ(), "WALDO="+joiner.Waldo, "WALDO_CONFIG="+joiner.config())
+	command.Stdout, command.Stderr = joiner.Log, joiner.Log
+	fmt.Fprintf(joiner.Log, "$ %s %s %s %s\n", strings.Join(gate.Evaluator, " "), name, gate.Evaluation, results)
+	if err := command.Run(); err != nil {
+		return nil, fmt.Errorf("gate after %s: evaluator: %w", gate.After, err)
+	}
+	report := filepath.Join(target, GateReportFile)
+	_ = os.Remove(report)
+	// waldo model gate exits non-zero when the model does not pass; the report says so either way,
+	// so its output is kept back unless it wrote no report.
+	command = exec.CommandContext(ctx, joiner.Waldo, "--json", "model", "gate", name, evaluation, results, report)
+	command.Env = append(os.Environ(), "WALDO_CONFIG="+joiner.config())
+	var gateOutput bytes.Buffer
+	command.Stdout, command.Stderr = io.Discard, &gateOutput
+	fmt.Fprintf(joiner.Log, "$ waldo model gate %s %s %s %s\n", name, gate.Evaluation, filepath.Base(results), GateReportFile)
+	_ = command.Run()
+	data, err := os.ReadFile(report)
+	if err != nil {
+		return nil, fmt.Errorf("gate after %s: waldo model gate wrote no report: %s", gate.After, bytes.TrimSpace(gateOutput.Bytes()))
+	}
+	var written struct {
+		Promotion struct {
+			Passed   bool     `json:"passed"`
+			Failures []string `json:"failures"`
+		} `json:"promotion"`
+	}
+	if err := json.Unmarshal(data, &written); err != nil {
+		return nil, fmt.Errorf("gate after %s: read report: %w", gate.After, err)
+	}
+	result.Passed, result.Report = written.Promotion.Passed, GateReportFile
+	fmt.Fprintf(joiner.Log, "   gate after %s: evaluation passed %t %v\n", gate.After, result.Passed, written.Promotion.Failures)
+	return result, nil
 }
 
 // writeRound writes the merge package's RoundRecord.
@@ -956,7 +875,7 @@ func (joiner *Joiner) writeRound(target string, action Action, base *MergeRecord
 // merge in waldo, whose records pin every parent and their shared ancestry;
 // the exported merge carries that lineage to the next round.
 func (joiner *Joiner) merge(ctx context.Context, name string, accepted []Submission, target string) error {
-	interaction, err := joiner.interaction()
+	interaction, err := joiner.plan.interaction()
 	if err != nil {
 		return err
 	}
@@ -973,23 +892,6 @@ func (joiner *Joiner) merge(ctx context.Context, name string, accepted []Submiss
 	}
 	_, err = joiner.export(ctx, name)
 	return err
-}
-
-// interaction is the plan's compose interaction block, so merged models chat like trained ones.
-func (joiner *Joiner) interaction() (string, error) {
-	text, err := joiner.compose("pretrain", "", 0, "tokens: 1", nil)
-	if err != nil {
-		return "", err
-	}
-	var compose model.Compose
-	if err := yaml.Unmarshal([]byte(text), &compose); err != nil {
-		return "", err
-	}
-	if compose.Interaction == (model.Interaction{}) {
-		return "", nil
-	}
-	encoded, err := yaml.Marshal(map[string]any{"interaction": compose.Interaction})
-	return string(encoded), err
 }
 
 func copyDirectory(source, target string) error {

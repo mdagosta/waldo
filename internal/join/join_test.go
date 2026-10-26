@@ -18,9 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/model"
-	"gopkg.in/yaml.v3"
 )
 
 func signingKey(t *testing.T, name string) (string, string) {
@@ -36,89 +34,21 @@ func signingKey(t *testing.T, name string) (string, string) {
 	return path, strings.Join(strings.Fields(string(public))[:2], " ")
 }
 
-func writePlan(t *testing.T, text string) string {
-	t.Helper()
-	path := filepath.Join(t.TempDir(), "plan.yaml")
-	if err := os.WriteFile(path, []byte("kind: waldo-join-plan\nschema: 1\n"+text), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
+// testRun is the run file runDirectory writes, which fixtures pin.
+const testRun = "kind: waldo-model-compose\n"
 
-func TestLoadPlanReadsRunPlans(t *testing.T) {
-	plan, err := LoadPlan(writePlan(t, `name: smoke
-units: [u0, u1]
-replicas: 2
-store: file:///tmp/store
-identities:
-  alice: ssh-ed25519 AAAA
-  bob:
-    key: ssh-ed25519 BBBB
-    hf: bob
-pretrain:
-  compose: pretrain.yaml.tmpl
-  bootstrap_tokens: 2000000
-  rounds: 1
-  tokens_per_round: 4000000   # ~244 steps
-  shards:
-    u0: [TheAlgorithms/Python]
-    u1: [pallets/flask, httpie/cli]
-posttrain:
-  compose: sft.yaml.tmpl
-  rounds: 2
-  epochs_per_round: 1
-replica_tolerance: 0.5
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.Identities["alice"].Key != "ssh-ed25519 AAAA" || plan.Identities["bob"].HuggingFace != "bob" || plan.Merge != "mean" {
-		t.Fatalf("plan = %+v", plan)
-	}
-	if got := strings.Join(plan.Stages(), ","); got != "bootstrap,pretrain,posttrain,posttrain" {
-		t.Fatalf("stages = %s", got)
-	}
-	if plan.Tolerance() != 0.5 || plan.Floor() != 0.001 || len(plan.Pretrain.Shards["u1"]) != 2 || plan.Closers != 3 || plan.ClaimMinutes != 60 || plan.Quorum() != 2 || plan.Closing() != 2 {
-		t.Fatalf("plan = %+v", plan)
-	}
-}
-
-func TestLoadPlanRejectsUnsupportedPlans(t *testing.T) {
-	for name, text := range map[string]string{
-		"store":          "name: x\nunits: [u0]\nstore: s3://bucket\npretrain: {compose: p.tmpl}\n",
-		"merge":          "name: x\nunits: [u0]\nmerge: diloco\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"units":          "name: x\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"signer":         "name: x\nunits: [u0]\nstore: huggingface\nidentities: {alice: {hf: alice}}\npretrain: {compose: p.tmpl}\n",
-		"unit name":      "name: x\nunits: [../u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"identity":       "name: x\nunits: [u0]\nstore: huggingface\nidentities: {Alice/x: k}\npretrain: {compose: p.tmpl}\n",
-		"run name":       "name: X Run\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"all unit":       "name: x\nunits: [all]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"close unit":     "name: x\nunits: [close]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"duplicate":      "name: x\nunits: [u0, u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n",
-		"unknown":        "name: x\nunits: [u0]\nstore: huggingface\ntamper: {round: 1}\npretrain: {compose: p.tmpl}\n",
-		"identity field": "name: x\nunits: [u0]\nstore: huggingface\nidentities: {alice: {key: k, email: a}}\npretrain: {compose: p.tmpl}\n",
-	} {
-		if _, err := LoadPlan(writePlan(t, text)); err == nil {
-			t.Fatalf("%s: plan accepted", name)
-		}
-	}
-}
-
-// testPlan is the plan.yaml runDirectory writes, which fixtures pin.
-const testPlan = "kind: waldo-join-plan\n"
-
-// testPlanSHA256 is the Pin of a run directory holding only testPlan.
+// testPlanSHA256 is the Pin of a run directory holding testRun.
 var testPlanSHA256 = func() string {
-	digest := sha256.Sum256([]byte(testPlan))
-	manifest := sha256.Sum256([]byte("plan.yaml " + hex.EncodeToString(digest[:]) + "\n"))
+	digest := sha256.Sum256([]byte(testRun))
+	manifest := sha256.Sum256([]byte(RunFile + " " + hex.EncodeToString(digest[:]) + "\n"))
 	return hex.EncodeToString(manifest[:])
 }()
 
-// runDirectory is a run directory holding the plan fixtures pin.
+// runDirectory is a run directory holding the run file fixtures pin.
 func runDirectory(t *testing.T) string {
 	t.Helper()
 	directory := t.TempDir()
-	if err := os.WriteFile(filepath.Join(directory, "plan.yaml"), []byte(testPlan), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, RunFile), []byte(testRun), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return directory
@@ -261,7 +191,7 @@ func TestMajorityOfClosersDecidesRound(t *testing.T) {
 		key, public := signingKey(t, name)
 		keys[name], identities[name] = key, Identity{Key: public}
 	}
-	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Pretrain: PretrainPlan{Rounds: 1}, Identities: identities}
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Rounds: RoundsPlan{Pretrain: 1}, Identities: identities}
 	runDir := runDirectory(t)
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
 	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
@@ -325,7 +255,7 @@ func TestMajorityOfClosersDecidesRound(t *testing.T) {
 }
 
 func TestNextAction(t *testing.T) {
-	plan := Plan{Units: []string{"u0", "u1"}, Replicas: 2, Closers: 1, ClaimMinutes: 60, Pretrain: PretrainPlan{Rounds: 1}}
+	plan := Plan{Units: []string{"u0", "u1"}, Replicas: 2, Closers: 1, ClaimMinutes: 60, Rounds: RoundsPlan{Pretrain: 1}}
 	merged := Round{Merge: &MergeRecord{}, ClosedAt: time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)}
 	// round builds a round from "slot identity" claims, "unit identity" submissions, and "merge identity" merges.
 	round := func(entries ...string) Round {
@@ -396,55 +326,6 @@ func TestComposeInputsAreDeterministic(t *testing.T) {
 	}
 	if got := pieceSeed("python-basics-v1", 7, "u2"); got != 15339753 {
 		t.Fatalf("pieceSeed = %d", got)
-	}
-	if got, err := fillTemplate("a $x ${y} $$z", map[string]string{"x": "1", "y": "2"}); err != nil || got != "a 1 2 $z" {
-		t.Fatalf("fillTemplate = %q, %v", got, err)
-	}
-	if _, err := fillTemplate("$missing", nil); err == nil {
-		t.Fatal("unknown template variable accepted")
-	}
-}
-
-func TestPosttrainComposeTakesItsUnitsSlice(t *testing.T) {
-	runDir := runDirectory(t)
-	template, err := os.ReadFile("../../testing/join/sft.yaml.tmpl")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(runDir, "sft.yaml.tmpl"), template, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	joiner := &Joiner{runDir: runDir, plan: Plan{Name: "run", Units: []string{"u0", "u1", "u2"}, Posttrain: &PosttrainPlan{Compose: "sft.yaml.tmpl", Corpus: "post-train/sft/python-hello-v1", EpochsPerRound: 4}}}
-	values, err := joiner.values("posttrain", "u1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	text, err := joiner.compose("posttrain", "base-model", 7, values["budget"], values)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var compose model.Compose
-	if err := yaml.Unmarshal([]byte(text), &compose); err != nil {
-		t.Fatalf("%v\n%s", err, text)
-	}
-	selection := compose.Stages[0].Corpora[0]
-	if selection.Path != "post-train/sft/python-hello-v1" || selection.Filter == nil || *selection.Filter.Slice != (corpus.SliceFilter{Index: 1, Count: 3}) {
-		t.Fatalf("corpus selection = %+v\n%s", selection, text)
-	}
-	if compose.Base == nil || compose.Base.Model != "base-model" || compose.Stages[0].Parameters.Epochs != 4 {
-		t.Fatalf("compose = %+v", compose)
-	}
-}
-
-func TestLoadPlanRequiresItsKindAndSchema(t *testing.T) {
-	for name, header := range map[string]string{"missing": "", "kind": "kind: waldo-plan\nschema: 1\n", "schema": "kind: waldo-join-plan\nschema: 2\n"} {
-		path := filepath.Join(t.TempDir(), "plan.yaml")
-		if err := os.WriteFile(path, []byte(header+"name: x\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl}\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := LoadPlan(path); err == nil || !strings.Contains(err.Error(), "unsupported plan identity") {
-			t.Fatalf("%s: error = %v", name, err)
-		}
 	}
 }
 
@@ -525,7 +406,7 @@ func TestDecidedRoundStaysDecided(t *testing.T) {
 		key, public := signingKey(t, name)
 		keys[name], identities[name] = key, Identity{Key: public}
 	}
-	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Pretrain: PretrainPlan{Rounds: 1}, Identities: identities}
+	plan := Plan{Name: "run", Units: []string{"u0"}, Replicas: 1, Closers: 3, ClaimMinutes: 60, Rounds: RoundsPlan{Pretrain: 1}, Identities: identities}
 	runDir := runDirectory(t)
 	allowed := filepath.Join(t.TempDir(), "allowed_signers")
 	if err := writeAllowedSigners(allowed, plan.Identities); err != nil {
@@ -559,12 +440,12 @@ func TestDecidedRoundStaysDecided(t *testing.T) {
 	next.Round, next.Stage = 1, "pretrain"
 	next.Accepted[0].Unit = "u0"
 	next.BaseSHA256 = &honest
-	if !validMerge(next, plan, 1, state.Rounds[0].Merge) {
+	if !validMerge(next, plan, 1, "pretrain", state.Rounds[0].Merge) {
 		t.Fatal("a merge from the decided base did not count")
 	}
 	wrong := strings.Repeat("e", 64)
 	next.BaseSHA256 = &wrong
-	if validMerge(next, plan, 1, state.Rounds[0].Merge) {
+	if validMerge(next, plan, 1, "pretrain", state.Rounds[0].Merge) {
 		t.Fatal("a merge from the wrong base counted")
 	}
 }
@@ -581,54 +462,5 @@ func TestBudgetsSetAsideShortRuns(t *testing.T) {
 	_, kept, _, refused := joiner.budgets("bootstrap", "all", exports, present, []model.RunBOM{run(250), run(1), run(250)}, nil)
 	if len(kept) != 2 || kept[0].Identity != "a" || kept[1].Identity != "c" || len(refused) != 1 || refused[0].Identities[0] != "b" {
 		t.Fatalf("kept %+v, refused %+v", kept, refused)
-	}
-}
-
-func TestPinCoversTheTemplates(t *testing.T) {
-	directory := runDirectory(t)
-	plan := Plan{Pretrain: PretrainPlan{Compose: "pretrain.yaml.tmpl"}}
-	if err := os.WriteFile(filepath.Join(directory, "pretrain.yaml.tmpl"), []byte("seed: $seed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	before, err := Pin(directory, plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(directory, "pretrain.yaml.tmpl"), []byte("seed: 1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if after, err := Pin(directory, plan); err != nil || after == before {
-		t.Fatalf("an edited template kept the pin: %s, %v", after, err)
-	}
-}
-
-func TestPlanBaseStartsTheRun(t *testing.T) {
-	digest := strings.Repeat("a", 64)
-	base := "base:\n  model: python-base\n  url: huggingface://someone/python-base@" + strings.Repeat("0", 40) + "\n  model_sha256: " + digest + "\n  files:\n    model.safetensors: " + digest + "\n"
-	plan, err := LoadPlan(writePlan(t, "name: x\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl, rounds: 2}\n"+base))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// No bootstrap: round 0 is the first pretraining round, from the base.
-	if got := strings.Join(plan.Stages(), ","); got != "pretrain,pretrain" || plan.start().ModelSHA256 != digest {
-		t.Fatalf("stages %s, start %+v", got, plan.start())
-	}
-	merge := MergeRecord{Kind: MergeKind, Schema: RecordSchema, Run: "x", Stage: "pretrain", Model: "m", ModelSHA256: strings.Repeat("c", 64),
-		Files: map[string]string{"model.safetensors": strings.Repeat("c", 64)}, Accepted: []AcceptedUnit{{Unit: "u0", Model: "u"}}}
-	if validMerge(merge, plan, 0, plan.start()) {
-		t.Fatal("a round-0 merge that did not start from the base counted")
-	}
-	merge.BaseSHA256 = &digest
-	if !validMerge(merge, plan, 0, plan.start()) {
-		t.Fatal("a round-0 merge from the base did not count")
-	}
-	for name, bad := range map[string]string{
-		"unpinned url":  strings.Replace(base, "@"+strings.Repeat("0", 40), "", 1),
-		"unpinned file": strings.Replace(base, "model.safetensors: "+digest, "model.safetensors: "+strings.Repeat("b", 64), 1),
-		"bad name":      strings.Replace(base, "model: python-base", "model: ../x", 1),
-	} {
-		if _, err := LoadPlan(writePlan(t, "name: x\nunits: [u0]\nstore: huggingface\npretrain: {compose: p.tmpl, rounds: 2}\n"+bad)); err == nil {
-			t.Fatalf("%s: base accepted", name)
-		}
 	}
 }

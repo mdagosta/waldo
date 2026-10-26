@@ -64,12 +64,72 @@ def now(ahead=datetime.timedelta()):
     return (datetime.datetime.now(datetime.timezone.utc) + ahead).strftime("%Y-%m-%dT%H:%M:%S+00:00")
 
 
-def stages(text):
-    """Each round's stage, as join orders them: a bootstrap unless the plan has a base, pretraining, post-training."""
-    pretrain = re.search(r"^pretrain:\n(?:  .*\n|\s*\n)*?  rounds: (\d+)", text, re.M)
-    posttrain = re.search(r"^posttrain:\n(?:  .*\n|\s*\n)*?  rounds: (\d+)", text, re.M)
-    return ([] if re.search(r"^base:", text, re.M) else ["bootstrap"]) + ["pretrain"] * int(pretrain.group(1) if pretrain else 0) + \
-        ["posttrain"] * int(posttrain.group(1) if posttrain else 0)
+def parse_scalar(text):
+    """The small YAML subset plans use: scalars, flow lists and maps, and nested blocks."""
+    text = text.strip()
+    if text.startswith("[") and text.endswith("]"):
+        return [parse_scalar(item) for item in text[1:-1].split(",") if item.strip()]
+    if text.startswith("{") and text.endswith("}"):
+        pairs = (item.split(":", 1) for item in text[1:-1].split(",") if item.strip())
+        return {key.strip(): parse_scalar(value) for key, value in pairs}
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        return text[1:-1]
+    for kind in (int, float):
+        try:
+            return kind(text)
+        except ValueError:
+            pass
+    return {"true": True, "false": False, "null": None}.get(text, text)
+
+
+def parse_plan(text):
+    lines = []
+    for raw in text.splitlines():
+        line = "" if raw.lstrip().startswith("#") else raw.split(" #", 1)[0].rstrip()
+        if line.strip():
+            lines.append((len(line) - len(line.lstrip()), line.strip()))
+
+    def block(index, indent):
+        if lines[index][1].startswith("- "):
+            items = []
+            while index < len(lines) and lines[index][0] == indent and lines[index][1].startswith("- "):
+                item = lines[index][1][2:]
+                if item[:1] in "{[\"'" or ":" not in item:
+                    items.append(parse_scalar(item))
+                    index += 1
+                    continue
+                # A block mapping item: its first key on the dash's line, the rest indented under it.
+                lines[index] = (indent + 2, item)
+                value, index = block(index, indent + 2)
+                items.append(value)
+            return items, index
+        mapping = {}
+        while index < len(lines) and lines[index][0] == indent:
+            key, _, value = lines[index][1].partition(":")
+            index += 1
+            if value.strip():
+                mapping[key.strip()] = parse_scalar(value)
+            elif index < len(lines) and lines[index][0] > indent:
+                mapping[key.strip()], index = block(index, lines[index][0])
+            else:
+                mapping[key.strip()] = None
+        return mapping, index
+
+    return block(0, lines[0][0])[0]
+
+
+def join_block(text):
+    """The join block of a run file, dedented, for parse_plan: the rest is a compose join reads itself."""
+    lines, inside = [], False
+    for line in text.splitlines():
+        if line.startswith("join:"):
+            inside = True
+            continue
+        if inside and line and not line[0].isspace() and not line.startswith("#"):
+            break
+        if inside:
+            lines.append(line[2:] if line.startswith("  ") else line)
+    return "\n".join(lines)
 
 
 def unit_of(slot):
@@ -98,21 +158,34 @@ class Run:
                               capture_output=True, check=True).stdout
 
     def plan_sha256(self):
-        """The pin every record carries, as join computes it: plan.yaml and each compose template it names."""
-        plan = self.show("plan.yaml")
-        files = ["plan.yaml"] + re.findall(r"^  compose: (\S+)", plan.decode(), re.M)
+        """The pin every record carries, as join computes it: run.yaml and the files its gates use."""
+        join = parse_plan(join_block(self.show("run.yaml").decode()))
+        files = ["run.yaml"]
+        for gate in join.get("gates") or []:
+            files += [str(gate["evaluation"])] if gate.get("evaluation") else []
+            for argument in gate.get("evaluator") or []:
+                if subprocess.run(["git", "cat-file", "-e", f"origin/main:{self.run_dir}/{argument}"], cwd=self.clone, capture_output=True).returncode == 0:
+                    files.append(str(argument))
         manifest = "".join(f"{f} {hashlib.sha256(self.show(f)).hexdigest()}\n" for f in files)
         return hashlib.sha256(manifest.encode()).hexdigest()
 
     def plan(self):
-        text = self.git("show", f"origin/main:{self.run_dir}/plan.yaml")
-        number = lambda key, default: int(m.group(1)) if (m := re.search(rf"^{key}: (\d+)", text, re.M)) else default
-        identities = re.search(r"^identities:\n((?:  .*\n|\s*\n)*)", text, re.M).group(1)
-        count = len(re.findall(r"^  [^\s#][^:]*:", identities, re.M))
-        return {"units": [u.strip() for u in re.search(r"^units: \[(.*)\]", text, re.M).group(1).split(",")],
-                "replicas": number("replicas", 1), "closers": min(number("closers", 3), count), "claim_minutes": number("claim_minutes", 60),
-                "rounds": (0 if re.search(r"^base:", text, re.M) else 1) + sum(int(r) for r in re.findall(r"^  rounds: (\d+)", text, re.M)),
-                "stages": stages(text)}
+        join = parse_plan(join_block(self.show("run.yaml").decode()))
+        rounds = join.get("rounds") or {}
+        planned = ([] if join.get("base") else ["bootstrap"]) + ["pretrain"] * int(rounds.get("pretrain", 0)) + \
+            ["posttrain"] * int(rounds.get("posttrain", 0))
+        extra = sum(int(gate.get("extra_rounds", 0)) for gate in join.get("gates") or [])
+        return {"units": sorted(str(unit) for unit in join["units"]), "replicas": int(join.get("replicas", 1)),
+                "closers": min(int(join.get("closers", 3)), len(join.get("identities") or {}) or 3),
+                "claim_minutes": float(join.get("claim_minutes", 60)), "rounds": len(planned) + extra, "stages": planned}
+
+    def stage(self, number, plan):
+        """A round's stage: as its records name it, else as planned (gates may add rounds of their stage)."""
+        for kind in ("merges", "submissions", "claims"):
+            for record in self.records(number, kind).values():
+                if record.get("stage"):
+                    return record["stage"]
+        return plan["stages"][number] if number < len(plan["stages"]) else plan["stages"][-1]
 
     def records(self, number, kind):
         base = f"{self.run_dir}/rounds/round-{number:04d}/{kind}/"
@@ -124,7 +197,8 @@ class Run:
         """What closers must agree on, as join decides it: weights, units, and published provenance."""
         provenance = sorted(f"{n} {d}" for n, d in merge.get("files", {}).items() if n in ("TRAINING-CLOSURE.json", "JOIN-ROUND.json") or n.startswith("provenance-"))
         accepted = [f"{a['unit']} {a['identity']} {a['model_sha256']}" for a in merge.get("accepted", [])]
-        return "\n".join([str(merge.get("base_sha256") or ""), str(merge.get("method")), str(merge.get("model_sha256"))] + accepted + provenance)
+        gate = [f"gate {merge['gate']['after']} {str(merge['gate']['passed']).lower()}"] if merge.get("gate") else []
+        return "\n".join([str(merge.get("base_sha256") or ""), str(merge.get("method")), str(merge.get("model_sha256"))] + accepted + provenance + gate)
 
     def votes(self, number, plan):
         """One merge per closing slot, from its earliest holder to land one, in slot order, as join counts them."""
@@ -273,7 +347,7 @@ class Identity:
         return url, state == "MERGED"
 
     def claim_record(self, number, slot, created=None):
-        return {"kind": "waldo-join-claim", "schema": 1, "run": self.run.name, "round": number, "stage": self.run.plan()["stages"][number],
+        return {"kind": "waldo-join-claim", "schema": 1, "run": self.run.name, "round": number, "stage": self.run.stage(number, self.run.plan()),
                 "slot": slot, "attempt": 1, "identity": self.name, "created_at": created or now(), "plan_sha256": self.run.plan_sha256()}
 
     def claim(self, number, slot):
@@ -289,7 +363,7 @@ class Identity:
 
     def submission(self, number, unit, base, weights, tokens):
         """A submission of this identity's claiming weights as its training of unit from base."""
-        return {"kind": "waldo-join-submission", "schema": 1, "run": self.run.name, "round": number, "stage": self.run.plan()["stages"][number],
+        return {"kind": "waldo-join-submission", "schema": 1, "run": self.run.name, "round": number, "stage": self.run.stage(number, self.run.plan()),
                 "unit": unit, "identity": self.name, "base": base and base["model"], "base_sha256": base and base["model_sha256"],
                 "model": weights["model"], "model_sha256": weights["model_sha256"], "bom_sha256": weights["files"].get("BOM.json"),
                 "files": weights["files"], "tokens": tokens, "url": weights["url"], "created_at": now(), "plan_sha256": self.run.plan_sha256()}
@@ -301,7 +375,7 @@ class Identity:
         start = base and base["model_sha256"]
         # Honest work: trained from the round's start, and not the start itself.
         honest = [s for s in run.records(number, "submissions").values() if s.get("base_sha256") == start and s["model_sha256"] != start]
-        units = ["all"] if plan["stages"][number] == "bootstrap" else plan["units"]
+        units = ["all"] if run.stage(number, plan) == "bootstrap" else plan["units"]
         if fault in UNIT_FAULTS:
             if fault in ("lazy", "stale-base") and (base is None or not honest or (fault == "stale-base" and number < 2)):
                 return False
@@ -346,7 +420,7 @@ class Identity:
             accepted = [{"unit": s["unit"], "identity": s["identity"], "model": s["model"], "model_sha256": s["model_sha256"],
                          "tokens": s["tokens"]} for u in units for s in replicas[u]]
             first = replicas[units[0]][0]
-            record = {"kind": "waldo-join-merge", "schema": 1, "run": run.name, "round": number, "stage": plan["stages"][number],
+            record = {"kind": "waldo-join-merge", "schema": 1, "run": run.name, "round": number, "stage": run.stage(number, plan),
                       "identity": self.name, "method": "weighted-mean-f32-v1", "base": base and base["model"], "base_sha256": start,
                       "accepted": accepted, "dropped": [], "model": first["model"], "model_sha256": first["model_sha256"],
                       "files": first["files"], "url": first["url"], "closed_at": now(), "plan_sha256": run.plan_sha256()}

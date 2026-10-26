@@ -8,6 +8,7 @@ package join
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -76,6 +77,9 @@ func (joiner *Joiner) Open(ctx context.Context, url, runDir string) error {
 		return err
 	}
 	if err := joiner.configure(ctx); err != nil {
+		return err
+	}
+	if err := joiner.ready(ctx); err != nil {
 		return err
 	}
 	if joiner.Key == "" {
@@ -151,6 +155,51 @@ func (joiner *Joiner) configure(ctx context.Context) error {
 	return joiner.waldo(ctx, "config", "set", "lookaside.cache.retain-completed", "true")
 }
 
+// summarize imports the run's final model and prints waldo's own summary of
+// it: its architecture and the training history its records pin. A summary is
+// a courtesy, so failing to make one does not fail the run.
+func (joiner *Joiner) summarize(ctx context.Context, final MergeRecord) {
+	directory, err := joiner.fetch(ctx, final.Model, final.Identity, final.ModelSHA256, final.Files, final.URL)
+	name := published(final.Model, final.ModelSHA256)
+	if err == nil {
+		err = joiner.ensure(name, directory)
+	}
+	if err == nil {
+		err = joiner.waldo(ctx, "model", "summary", name)
+	}
+	if err != nil {
+		fmt.Fprintf(joiner.Log, "   (no summary of %s: %v)\n", final.Model, err)
+	}
+}
+
+// ready checks, with waldo status, that this identity's machine can train
+// before it claims any work, so a missing backend fails now, not an hour in.
+func (joiner *Joiner) ready(ctx context.Context) error {
+	output, err := joiner.waldoOutput(ctx, "--json", "status")
+	if err != nil {
+		return err
+	}
+	var status struct {
+		Ready    bool `json:"ready"`
+		Training struct {
+			Ready     bool `json:"ready"`
+			Execution struct {
+				Backend struct {
+					Name string `json:"name"`
+				} `json:"backend"`
+			} `json:"execution"`
+		} `json:"training"`
+	}
+	if err := json.Unmarshal(output, &status); err != nil {
+		return fmt.Errorf("read waldo status: %w", err)
+	}
+	if !status.Ready || !status.Training.Ready {
+		return fmt.Errorf("this machine is not ready to train; see waldo status: %s", bytes.TrimSpace(output))
+	}
+	fmt.Fprintf(joiner.Log, "%s trains with %s\n", joiner.Identity, status.Training.Execution.Backend.Name)
+	return nil
+}
+
 // Step does one unit of work and reports "done", "idle", or "worked". Work
 // is claimed first, so a pass that wins its claim goes straight on to the work.
 func (joiner *Joiner) Step(ctx context.Context) (string, error) {
@@ -173,7 +222,13 @@ func (joiner *Joiner) Step(ctx context.Context) (string, error) {
 						number, record.Identity, record.ModelSHA256[:12], len(agreeing), round.Merge.ModelSHA256[:12])
 				}
 			}
+			if state.Stopped {
+				fmt.Fprintf(joiner.Log, "run %s stopped: round %d's gate after %s did not pass in its extra rounds; the last merge is %s (%s), %s\n",
+					joiner.plan.Name, action.Round, final.Gate.After, final.Model, final.ModelSHA256[:12], final.URL)
+				return "done", nil
+			}
 			fmt.Fprintf(joiner.Log, "run %s is complete: %s (%s), %s\n", joiner.plan.Name, final.Model, final.ModelSHA256[:12], final.URL)
+			joiner.summarize(ctx, *final)
 			return "done", nil
 		case "idle":
 			fmt.Fprintf(joiner.Log, "round %d: nothing for %s until others finish\n", action.Round, joiner.Identity)
@@ -205,9 +260,9 @@ func (joiner *Joiner) claim(ctx context.Context, action Action) (bool, error) {
 	return won, err
 }
 
-// load reads the plan as of this pass, since amendments land through git, and checks this identity is in it.
+// load reads the run file as of this pass, since amendments land through git, and checks this identity is in it.
 func (joiner *Joiner) load() (State, error) {
-	plan, err := LoadPlan(filepath.Join(joiner.runDir, "plan.yaml"))
+	plan, err := LoadRun(filepath.Join(joiner.runDir, RunFile))
 	if err != nil {
 		return State{}, err
 	}
@@ -217,7 +272,7 @@ func (joiner *Joiner) load() (State, error) {
 	}
 	key := strings.Join(strings.Fields(string(public))[:2], " ")
 	if plan.Identities[joiner.Identity].Key != key {
-		return State{}, fmt.Errorf("%s is not in %s with this key; add under identities:\n  %s:\n    key: %s", joiner.Identity, filepath.Join(joiner.runDir, "plan.yaml"), joiner.Identity, key)
+		return State{}, fmt.Errorf("%s is not in %s with this key; add under join.identities:\n    %s:\n      key: %s", joiner.Identity, filepath.Join(joiner.runDir, RunFile), joiner.Identity, key)
 	}
 	joiner.plan = plan
 	if joiner.planSHA256, err = Pin(joiner.runDir, plan); err != nil {

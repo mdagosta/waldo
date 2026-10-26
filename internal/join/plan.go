@@ -17,37 +17,61 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 
 	"github.com/openwaldo/waldo/internal/model"
 	"gopkg.in/yaml.v3"
 )
 
-const (
-	PlanKind   = "waldo-join-plan"
-	PlanSchema = 1
-)
+// RunFile is a run's one file in its directory of the runs repository: a WALDO
+// compose with a join block.
+const RunFile = "run.yaml"
 
-// Plan is a run's plan.yaml, the one file every contributor reads to know
-// the run's units, rounds, identities, and store.
+// Plan is how a run is divided and checked, from its run file's join block:
+// units, rounds, identities, store, and verification. Compose is the run file
+// itself, the training each unit's work is cut from.
 type Plan struct {
-	Kind             string              `yaml:"kind"`
-	Schema           int                 `yaml:"schema"`
 	Name             string              `yaml:"name"`
-	Units            []string            `yaml:"units"`
+	UnitSources      map[string][]string `yaml:"units"` // unit to the sources its pre-training stage reads
 	Replicas         int                 `yaml:"replicas"`
+	Closers          int                 `yaml:"closers"`
+	ClaimMinutes     float64             `yaml:"claim_minutes"`
 	Merge            string              `yaml:"merge"`
 	Store            string              `yaml:"store"`
 	Identities       map[string]Identity `yaml:"identities"`
-	Pretrain         PretrainPlan        `yaml:"pretrain"`
-	Posttrain        *PosttrainPlan      `yaml:"posttrain"`
+	Base             *PlanBase           `yaml:"base"`
+	Rounds           RoundsPlan          `yaml:"rounds"`
 	MinStepsPerRound int                 `yaml:"min_steps_per_round"`
 	ReplicaTolerance *float64            `yaml:"replica_tolerance"`
 	ReplicaFloor     *float64            `yaml:"replica_floor"`
 	RoundMinutes     float64             `yaml:"round_minutes"`
-	Closers          int                 `yaml:"closers"`
-	ClaimMinutes     float64             `yaml:"claim_minutes"`
-	Base             *PlanBase           `yaml:"base"`
+	Gates            []Gate              `yaml:"gates"`
+
+	Units   []string   `yaml:"-"` // unit names in order; a fine-tuning unit takes the slice at its position
+	Compose *yaml.Node `yaml:"-"` // the run file's compose mapping
+}
+
+// Gate is what a stage's merged model must meet before the run moves on: a
+// held-out loss, or an evaluation's metrics checked by waldo model gate. The
+// stage's last round checks it; failing, the run adds up to ExtraRounds more of
+// the stage, each checked again, and stops if none passes.
+type Gate struct {
+	After             string   `yaml:"after"` // pretrain or posttrain
+	HeldoutLossAtMost *float64 `yaml:"heldout_loss_at_most"`
+	Evaluation        string   `yaml:"evaluation"` // evaluation BOM in the run directory
+	Evaluator         []string `yaml:"evaluator"`  // run in the run directory as: <command...> <model> <evaluation BOM> <results.json>
+	ExtraRounds       int      `yaml:"extra_rounds"`
+}
+
+// RoundsPlan sizes the run: the bootstrap, then pretraining rounds of the
+// pre-training stage, then post-training rounds of the fine-tuning stage.
+type RoundsPlan struct {
+	BootstrapTokens int64 `yaml:"bootstrap_tokens"`
+	Pretrain        int   `yaml:"pretrain"`
+	TokensPerRound  int64 `yaml:"tokens_per_round"` // each pretraining unit's budget, as fixed steps
+	Posttrain       int   `yaml:"posttrain"`
+	EpochsPerRound  int   `yaml:"epochs_per_round"` // each post-training unit's budget over its slice
 }
 
 // PlanBase is an existing model a run starts from instead of random weights: a
@@ -67,21 +91,6 @@ type Identity struct {
 	HuggingFace string `yaml:"hf"`
 }
 
-type PretrainPlan struct {
-	Compose         string              `yaml:"compose"`
-	BootstrapTokens int64               `yaml:"bootstrap_tokens"`
-	Rounds          int                 `yaml:"rounds"`
-	TokensPerRound  int64               `yaml:"tokens_per_round"`
-	Shards          map[string][]string `yaml:"shards"`
-}
-
-type PosttrainPlan struct {
-	Compose        string `yaml:"compose"`
-	Corpus         string `yaml:"corpus"` // index path; each unit trains its own slice of it
-	Rounds         int    `yaml:"rounds"`
-	EpochsPerRound int    `yaml:"epochs_per_round"`
-}
-
 func (identity *Identity) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		identity.Key = node.Value
@@ -99,20 +108,48 @@ func (identity *Identity) UnmarshalYAML(node *yaml.Node) error {
 	return node.Decode((*plain)(identity))
 }
 
-func LoadPlan(path string) (Plan, error) {
+// LoadRun reads a run file: a compose, valid as one, whose join block is
+// decoded strictly into the run's plan.
+func LoadRun(path string) (Plan, error) {
+	if _, _, err := model.LoadCompose(path); err != nil {
+		return Plan{}, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Plan{}, err
 	}
+	var document yaml.Node
+	if err := yaml.Unmarshal(data, &document); err != nil || len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+		return Plan{}, fmt.Errorf("%s: a run file is a compose mapping", path)
+	}
+	compose := document.Content[0]
+	block := mapGet(compose, "join")
+	if block == nil {
+		return Plan{}, fmt.Errorf("%s: a run file needs a join block", path)
+	}
+	encoded, err := yaml.Marshal(block)
+	if err != nil {
+		return Plan{}, err
+	}
 	var plan Plan
-	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	decoder := yaml.NewDecoder(bytes.NewReader(encoded))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&plan); err != nil {
+		return Plan{}, fmt.Errorf("%s: join: %w", path, err)
+	}
+	plan.Compose = compose
+	for unit := range plan.UnitSources {
+		plan.Units = append(plan.Units, unit)
+	}
+	sort.Strings(plan.Units)
+	if err := plan.check(); err != nil {
 		return Plan{}, fmt.Errorf("%s: %w", path, err)
 	}
-	if plan.Kind != PlanKind || plan.Schema != PlanSchema {
-		return Plan{}, fmt.Errorf("%s: unsupported plan identity %q schema %d; expected kind %s, schema %d", path, plan.Kind, plan.Schema, PlanKind, PlanSchema)
-	}
+	return plan, nil
+}
+
+// check fills the plan's defaults and refuses one join cannot run.
+func (plan *Plan) check() error {
 	if plan.Replicas == 0 {
 		plan.Replicas = 1
 	}
@@ -125,56 +162,128 @@ func LoadPlan(path string) (Plan, error) {
 	if plan.ClaimMinutes == 0 {
 		plan.ClaimMinutes = 60
 	}
-	if plan.Name == "" || len(plan.Units) == 0 || plan.Replicas < 1 || plan.Closers < 1 || plan.ClaimMinutes < 0 || plan.Pretrain.Compose == "" {
-		return Plan{}, fmt.Errorf("%s: a plan needs a name, units, replicas, and a pretrain compose", path)
+	if plan.Name == "" || len(plan.Units) == 0 || plan.Replicas < 1 || plan.Closers < 1 || plan.ClaimMinutes < 0 {
+		return fmt.Errorf("join needs a name, units, and replicas")
 	}
 	if plan.Merge != "mean" {
-		return Plan{}, fmt.Errorf("%s: merge %q is not supported; use mean", path, plan.Merge)
+		return fmt.Errorf("join merge %q is not supported; use mean", plan.Merge)
 	}
 	if plan.Store != "huggingface" && !strings.HasPrefix(plan.Store, "file://") {
-		return Plan{}, fmt.Errorf("%s: store %q: expected huggingface or file:///path", path, plan.Store)
+		return fmt.Errorf("join store %q: expected huggingface or file:///path", plan.Store)
 	}
 	// Run, unit, and identity names become directory, model, and branch names.
 	names := append([]string{plan.Name}, plan.Units...)
 	for name, identity := range plan.Identities {
 		if identity.Key == "" {
-			return Plan{}, fmt.Errorf("%s: identity %s has no signing key", path, name)
+			return fmt.Errorf("identity %s has no signing key", name)
 		}
 		names = append(names, name)
 	}
 	for _, name := range names {
 		if model.ValidateName(name) != nil {
-			return Plan{}, fmt.Errorf("%s: %q must use lowercase letters, digits, '.', '_', and '-'", path, name)
+			return fmt.Errorf("%q must use lowercase letters, digits, '.', '_', and '-'", name)
 		}
+	}
+	if slices.Contains(plan.Units, "all") || slices.Contains(plan.Units, "close") {
+		return fmt.Errorf("units must not be named all, the bootstrap's unit, or close, the closing slots' name")
 	}
 	if base := plan.Base; base != nil {
 		pinned := strings.HasPrefix(base.URL, "file://") || huggingFacePin.MatchString(base.URL)
 		if model.ValidateName(base.Model) != nil || !pinned || !validFiles(base.Files, base.ModelSHA256) {
-			return Plan{}, fmt.Errorf("%s: base needs a model name, a file:// or huggingface://<user>/<model>@<commit> url, its model_sha256, and every file's sha256, model.safetensors included", path)
+			return fmt.Errorf("base needs a model name, a file:// or huggingface://<user>/<model>@<commit> url, its model_sha256, and every file's sha256, model.safetensors included")
 		}
 	}
-	if slices.Contains(plan.Units, "all") || slices.Contains(plan.Units, "close") || len(slices.Compact(slices.Sorted(slices.Values(plan.Units)))) != len(plan.Units) {
-		return Plan{}, fmt.Errorf("%s: units must be distinct and not named all, the bootstrap's unit, or close, the closing slots' name", path)
+	rounds := plan.Rounds
+	if rounds.Pretrain < 0 || rounds.Posttrain < 0 || (plan.Base == nil && rounds.BootstrapTokens <= 0) ||
+		(rounds.Pretrain > 0 && rounds.TokensPerRound <= 0) || (rounds.Posttrain > 0 && rounds.EpochsPerRound <= 0) {
+		return fmt.Errorf("rounds need bootstrap_tokens (without a base), tokens_per_round for pretraining, and epochs_per_round for post-training")
 	}
-	return plan, nil
+	seen := map[string]bool{}
+	for _, gate := range plan.Gates {
+		loss, evaluation := gate.HeldoutLossAtMost != nil, gate.Evaluation != "" || len(gate.Evaluator) > 0
+		if (gate.After != "pretrain" && gate.After != "posttrain") || seen[gate.After] || gate.ExtraRounds < 0 || loss == evaluation ||
+			(evaluation && (gate.Evaluation == "" || len(gate.Evaluator) == 0 || filepath.IsAbs(gate.Evaluation) || strings.Contains(gate.Evaluation, ".."))) {
+			return fmt.Errorf("each gate names after (pretrain or posttrain, once each), and either heldout_loss_at_most or an evaluation BOM in the run directory with its evaluator")
+		}
+		seen[gate.After] = true
+	}
+	if plan.Compose != nil {
+		if (plan.Base == nil || rounds.Pretrain > 0) && stageNode(plan.Compose, "pre-training") == nil {
+			return fmt.Errorf("a bootstrap or pretraining rounds need a pre-training stage")
+		}
+		if rounds.Posttrain > 0 && stageNode(plan.Compose, "fine-tuning") == nil {
+			return fmt.Errorf("post-training rounds need a fine-tuning stage")
+		}
+	}
+	return nil
 }
 
-// Stages lists every round in order: the bootstrap, unless the run starts from
-// a base, then pretraining, then post-training.
-func (plan Plan) Stages() []string {
-	var stages []string
-	if plan.Base == nil {
-		stages = append(stages, "bootstrap")
-	}
-	for range plan.Pretrain.Rounds {
-		stages = append(stages, "pretrain")
-	}
-	if plan.Posttrain != nil {
-		for range plan.Posttrain.Rounds {
-			stages = append(stages, "posttrain")
+// Slot is one round of the schedule: its stage, and the gate its merge checks.
+type Slot struct {
+	Stage string
+	Gate  *Gate
+}
+
+func (plan Plan) gate(stage string) *Gate {
+	for index := range plan.Gates {
+		if plan.Gates[index].After == stage {
+			return &plan.Gates[index]
 		}
 	}
+	return nil
+}
+
+// Stages lists the planned rounds in order: the bootstrap, unless the run
+// starts from a base, then pretraining, then post-training. Gates may add
+// rounds; Schedule says which.
+func (plan Plan) Stages() []string {
+	slots, _ := plan.Schedule(nil)
+	var stages []string
+	for _, slot := range slots {
+		stages = append(stages, slot.Stage)
+	}
 	return stages
+}
+
+// Schedule is every round as far as the decided merges determine it: a stage's
+// last round checks its gate, and while the gate fails another round of the
+// stage follows, up to the gate's extra rounds. The schedule ends at a gate
+// round not yet decided, and stops the run at a gate that never passed.
+func (plan Plan) Schedule(decided []*MergeRecord) ([]Slot, bool) {
+	var slots []Slot
+	if plan.Base == nil {
+		slots = append(slots, Slot{Stage: "bootstrap"})
+	}
+	for _, segment := range []struct {
+		stage  string
+		rounds int
+	}{{"pretrain", plan.Rounds.Pretrain}, {"posttrain", plan.Rounds.Posttrain}} {
+		gate := plan.gate(segment.stage)
+		for index := range segment.rounds {
+			slot := Slot{Stage: segment.stage}
+			if index == segment.rounds-1 {
+				slot.Gate = gate
+			}
+			slots = append(slots, slot)
+		}
+		if gate == nil || segment.rounds == 0 {
+			continue
+		}
+		for extra := 0; ; extra++ {
+			last := len(slots) - 1
+			if last >= len(decided) || decided[last] == nil {
+				return slots, false // the gate's round is not decided yet; nothing after it is known
+			}
+			if result := decided[last].Gate; result != nil && result.Passed {
+				break
+			}
+			if extra == gate.ExtraRounds {
+				return slots, true // the gate never passed: the run stops here
+			}
+			slots = append(slots, Slot{Stage: segment.stage, Gate: gate})
+		}
+	}
+	return slots, false
 }
 
 // RoundUnits is the bootstrap's single shared unit, or the plan's units.
@@ -220,34 +329,25 @@ func (plan Plan) Closing() int {
 	return plan.Closers
 }
 
-// runFile resolves a path a plan names: relative to the run directory, or
-// absolute, or under the home directory with ~/.
-func runFile(runDir, value string) string {
-	if strings.HasPrefix(value, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, value[2:])
-		}
-	}
-	if filepath.IsAbs(value) {
-		return value
-	}
-	return filepath.Join(runDir, value)
-}
-
-// Pin is what every record pins: the SHA-256 of a manifest listing plan.yaml
-// and each compose template it names, one "<path> <sha256>" line per file, so a
-// changed template changes the run as surely as a changed plan.
+// Pin is what every record pins: the SHA-256 of a manifest of the run file
+// and the files its gates use (each evaluation BOM, and each evaluator argument
+// that is a file in the run directory), one "<path> <sha256>" line per file,
+// so the run's training, rules, and bar are all fixed.
 func Pin(runDir string, plan Plan) (string, error) {
-	files := []string{"plan.yaml", plan.Pretrain.Compose}
-	if plan.Posttrain != nil {
-		files = append(files, plan.Posttrain.Compose)
+	files := []string{RunFile}
+	for _, gate := range plan.Gates {
+		if gate.Evaluation != "" {
+			files = append(files, gate.Evaluation)
+		}
+		for _, argument := range gate.Evaluator {
+			if info, err := os.Stat(filepath.Join(runDir, argument)); err == nil && info.Mode().IsRegular() && !filepath.IsAbs(argument) && !strings.Contains(argument, "..") {
+				files = append(files, argument)
+			}
+		}
 	}
 	var manifest strings.Builder
 	for _, file := range files {
-		if file == "" {
-			continue // LoadPlan requires a pretrain compose; only hand-built plans lack one
-		}
-		data, err := os.ReadFile(runFile(runDir, file))
+		data, err := os.ReadFile(filepath.Join(runDir, file))
 		if err != nil {
 			return "", err
 		}
