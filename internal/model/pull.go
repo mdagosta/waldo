@@ -381,21 +381,7 @@ func (puller Puller) resolveHub(ctx context.Context, source string) (hubModel, s
 	if err != nil {
 		return hubModel{}, "", "", "", "", nil, err
 	}
-	client := puller.Client
-	if client == nil {
-		client = &http.Client{}
-	}
-	endpoint := strings.TrimRight(puller.Endpoint, "/")
-	if endpoint == "" {
-		endpoint = strings.TrimRight(os.Getenv("HF_ENDPOINT"), "/")
-		if endpoint == "" {
-			endpoint = "https://huggingface.co"
-		}
-	}
-	token := puller.Token
-	if token == "" {
-		token = huggingFaceToken()
-	}
+	client, endpoint, token := puller.hubClient()
 	puller.report(PullProgress{Phase: "resolve", Message: fmt.Sprintf("resolving %s@%s", repository, requested)})
 	metadataURL := endpoint + "/api/models/" + repository + "/revision/" + url.PathEscape(requested)
 	var metadata hubModel
@@ -846,4 +832,101 @@ func releaseLineage(path string) (*LineageNode, error) {
 		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
 	}
 	return release.Lineage, nil
+}
+
+var pinnedFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// FetchPinned downloads exactly the named files of a release into directory,
+// from huggingface://<repository>@<commit> or a file:// directory, and refuses
+// the release if any file's SHA-256 differs from its pin: the result is the
+// release the pins name, or nothing. A Hugging Face source must name a commit.
+func (puller Puller) FetchPinned(ctx context.Context, source string, files map[string]string, directory string) error {
+	names := make([]string, 0, len(files))
+	for name, digest := range files {
+		if !pinnedFileName.MatchString(name) || len(digest) != 64 {
+			return fmt.Errorf("pinned file %q must be a plain name with a SHA-256", name)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	partial := directory + ".partial"
+	_ = os.RemoveAll(partial)
+	if err := os.MkdirAll(partial, 0o755); err != nil {
+		return err
+	}
+	defer os.RemoveAll(partial)
+	fetch := func(name, path string) (string, error) {
+		local := strings.TrimPrefix(source, "file://")
+		digest, _, err := copyHashed(filepath.Join(local, name), path)
+		return digest, err
+	}
+	if strings.HasPrefix(source, "huggingface://") {
+		repository, revision, err := parseHuggingFaceSource(source)
+		if err != nil {
+			return err
+		}
+		if !huggingFaceCommit.MatchString(revision) {
+			return fmt.Errorf("%s must pin a commit", source)
+		}
+		client, endpoint, token := puller.hubClient()
+		fetch = func(name, path string) (string, error) {
+			puller.report(PullProgress{Phase: "download", Message: fmt.Sprintf("downloading %s from %s@%s", name, repository, revision[:12])})
+			digest, _, err := downloadFile(ctx, client, endpoint+"/"+repository+"/resolve/"+revision+"/"+escapePath(name), token, path, 0)
+			return digest, err
+		}
+	} else if !strings.HasPrefix(source, "file://") {
+		return fmt.Errorf("%s is not a huggingface:// or file:// release", source)
+	}
+	for _, name := range names {
+		digest, err := fetch(name, filepath.Join(partial, name))
+		if err != nil {
+			return fmt.Errorf("fetch %s: %w", name, err)
+		}
+		if digest != files[name] {
+			return fmt.Errorf("%s in %s does not match its pinned SHA-256", name, source)
+		}
+	}
+	if err := os.RemoveAll(directory); err != nil {
+		return err
+	}
+	return os.Rename(partial, directory)
+}
+
+// hubClient is the HTTP client, endpoint, and token Hugging Face requests use.
+func (puller Puller) hubClient() (*http.Client, string, string) {
+	client := puller.Client
+	if client == nil {
+		client = &http.Client{}
+	}
+	endpoint := strings.TrimRight(puller.Endpoint, "/")
+	if endpoint == "" {
+		endpoint = strings.TrimRight(os.Getenv("HF_ENDPOINT"), "/")
+		if endpoint == "" {
+			endpoint = "https://huggingface.co"
+		}
+	}
+	token := puller.Token
+	if token == "" {
+		token = huggingFaceToken()
+	}
+	return client, endpoint, token
+}
+
+// copyHashed copies source to a new file at path and returns its SHA-256.
+func copyHashed(source, path string) (string, int64, error) {
+	input, err := os.Open(source)
+	if err != nil {
+		return "", 0, err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", 0, err
+	}
+	hasher := sha256.New()
+	bytes, err := io.Copy(io.MultiWriter(output, hasher), input)
+	if closeErr := output.Close(); err == nil {
+		err = closeErr
+	}
+	return hex.EncodeToString(hasher.Sum(nil)), bytes, err
 }
