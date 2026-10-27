@@ -94,7 +94,7 @@ func TestLoadRunReadsTheJoinBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Units in sorted order, which is the order fine-tuning units take their slices in.
-	if strings.Join(plan.Units, ",") != "u0,u1" || len(plan.UnitSources["u1"]) != 2 || plan.Identities["bob"].HuggingFace != "bob" {
+	if strings.Join(plan.Units, ",") != "u0,u1" || len(plan.UnitData["u1"].Sources) != 2 || plan.Identities["bob"].HuggingFace != "bob" {
 		t.Fatalf("plan = %+v", plan)
 	}
 	if got := strings.Join(plan.Stages(), ","); got != "bootstrap,pretrain,pretrain,posttrain,posttrain,posttrain" {
@@ -182,6 +182,101 @@ func TestUnitComposesCutTheRunFile(t *testing.T) {
 	}
 	if plan.vocabulary() != 259 {
 		t.Fatalf("vocabulary = %d", plan.vocabulary())
+	}
+}
+
+func TestLanguageUnitsCutTheirRecordsByFilter(t *testing.T) {
+	units := `    rust: {metadata: {programming_language: {include: [Rust]}}}
+    english: {sources: {include: [wikimedia*]}}
+    python: [TheAlgorithms/Python]
+`
+	text := runCompose + strings.Replace(runJoin, "    u1: [pallets/flask, httpie/cli]\n    u0: [TheAlgorithms/Python]\n", units, 1)
+	plan, err := LoadRun(writeRun(t, text))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A filter unit's keys join the stage's filter, which keeps its own others.
+	_, stage := unitStage(t, plan, "pretrain", "rust", "round-base")
+	if stage.Filter.Metadata["programming_language"].Include[0] != "Rust" || stage.Filter.Sources != nil || stage.Filter.MainContent == nil {
+		t.Fatalf("rust = %+v", stage.Filter)
+	}
+	_, stage = unitStage(t, plan, "pretrain", "english", "round-base")
+	if strings.Join(stage.Filter.Sources.Include, ",") != "wikimedia*" || stage.Filter.Metadata != nil {
+		t.Fatalf("english = %+v", stage.Filter)
+	}
+	_, stage = unitStage(t, plan, "pretrain", "python", "round-base")
+	if strings.Join(stage.Filter.Sources.Include, ",") != "TheAlgorithms/Python" {
+		t.Fatalf("python = %+v", stage.Filter)
+	}
+	// The bootstrap can't union filters, so it trains the stage's whole selection, which the units divide.
+	_, stage = unitStage(t, plan, "bootstrap", "all", "")
+	if stage.Filter.Sources != nil || stage.Filter.Metadata != nil || stage.Filter.MainContent == nil {
+		t.Fatalf("bootstrap = %+v", stage.Filter)
+	}
+	for name, bad := range map[string]string{
+		"unknown filter key": "    rust: {metadata: {programming_language: {include: [Rust]}}, tamper: true}\n",
+		"empty filter":       "    rust: {}\n",
+		"no sources":         "    rust: []\n",
+	} {
+		if _, err := LoadRun(writeRun(t, strings.Replace(text, "    rust: {metadata: {programming_language: {include: [Rust]}}}\n", bad, 1))); err == nil {
+			t.Fatalf("%s: run accepted", name)
+		}
+	}
+}
+
+func TestUnitsInheritATrainedTokenizerFromTheirBase(t *testing.T) {
+	trained := strings.Replace(runCompose, "  tokenizer: {name: byte, revision: builtin-byte-schema-1}\n", `  tokenizer:
+    training:
+      algorithm: byte-bpe-v1
+      sample_bytes: 4194304
+      seed: 1
+      distribution_policy: distributable
+      corpora:
+        - path: code/permissive
+`, 1)
+	trained = strings.Replace(trained, "vocabulary_size: 259", "vocabulary_size: 1024", 1)
+	plan, err := LoadRun(writeRun(t, trained+runJoin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The bootstrap trains the tokenizer from the run file's declaration.
+	compose, _ := unitStage(t, plan, "bootstrap", "all", "")
+	if compose.Architecture.Tokenizer.Training == nil {
+		t.Fatalf("bootstrap architecture = %+v", compose.Architecture)
+	}
+	// Later units declare no architecture, so they take the base's, trained tokenizer included.
+	for _, stage := range []string{"pretrain", "posttrain"} {
+		if compose, _ := unitStage(t, plan, stage, "u1", "round-base"); compose.Architecture != (model.Architecture{}) {
+			t.Fatalf("%s architecture = %+v", stage, compose.Architecture)
+		}
+	}
+	// A byte-tokenizer run keeps its architecture, which must match the base's.
+	plan, err = LoadRun(writeRun(t, runCompose+runJoin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compose, _ := unitStage(t, plan, "pretrain", "u1", "round-base"); compose.Architecture.VocabularySize != 259 {
+		t.Fatalf("byte architecture = %+v", compose.Architecture)
+	}
+}
+
+func TestProbesDropScheduleLengths(t *testing.T) {
+	scheduled := strings.Replace(runCompose, "      evaluation_selection: lowest-sha256-v1\n", "      evaluation_selection: lowest-sha256-v1\n      warmup_steps: 100\n      checkpoint_every: 500\n", 1)
+	plan, err := LoadRun(writeRun(t, scheduled+runJoin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A real unit keeps the run file's schedule; the one-step probe would fail validation with it.
+	_, stage := unitStage(t, plan, "pretrain", "u1", "round-base")
+	if stage.Parameters.WarmupSteps == nil || *stage.Parameters.WarmupSteps != 100 {
+		t.Fatalf("unit parameters = %+v", stage.Parameters)
+	}
+	text, err := plan.unitCompose("pretrain", "u1", "", 7, probeBudget)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "warmup_steps") || strings.Contains(text, "checkpoint_every") || !strings.Contains(text, "tokens: 16384") {
+		t.Fatalf("probe compose:\n%s", text)
 	}
 }
 
