@@ -464,3 +464,20 @@ func TestBudgetsSetAsideShortRuns(t *testing.T) {
 		t.Fatalf("kept %+v, refused %+v", kept, refused)
 	}
 }
+
+func TestRoundsStopAtTheRoundBoundary(t *testing.T) {
+	joiner := &Joiner{Rounds: 2}
+	// Started while round 3 is open: rounds 3 and 4 are its to work in, idle or not.
+	for _, action := range []Action{{Kind: "idle", Round: 3}, {Kind: "contribute", Round: 3}, {Kind: "close", Round: 4}} {
+		if joiner.stops(action) {
+			t.Fatalf("stopped at %+v", action)
+		}
+	}
+	if !joiner.stops(Action{Kind: "claim", Round: 5}) {
+		t.Fatal("claimed work in round 5 after two rounds")
+	}
+	// A finished run reports done rather than stopping, and no limit never stops.
+	if joiner.stops(Action{Kind: "done", Round: 9}) || (&Joiner{}).stops(Action{Kind: "claim", Round: 99}) {
+		t.Fatal("stopped a done run or one without a limit")
+	}
+}

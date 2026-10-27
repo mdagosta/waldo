@@ -59,7 +59,7 @@ join:
 
 | `join` key | Meaning |
 | --- | --- |
-| `name`, `units` | Run name; unit to the sources its pre-training reads. Names use lowercase letters, digits, `.`, `_`, `-`. Unknown keys are rejected. |
+| `name`, `units` | Run name; unit to the sources its pre-training reads, or to a record filter in the compose's form, such as `rust: {metadata: {programming_language: {include: [Rust]}}}`, whose keys replace the stage filter's. The bootstrap reads every unit's sources, or the stage's whole selection when any unit is a filter. Names use lowercase letters, digits, `.`, `_`, `-`. Unknown keys are rejected. |
 | `replicas` | Identities that train each unit per round. |
 | `closers` | Identities that close each round; a majority must agree. Default 3. |
 | `claim_minutes` | How long a claim holds its slot. Default 60. |
@@ -75,6 +75,16 @@ The stages' own budgets are a baseline's; join sets each unit's. Units that
 train a narrow part of a corpus should set
 `evaluation_selection: lowest-sha256-v1`, which scans every record the unit's
 filters keep for held-out records rather than probing a sample of rows.
+
+A run file may train its own tokenizer with `architecture.tokenizer.training`
+([Model compose](MODEL-COMPOSE.md)). Each bootstrap replica trains it from the
+same pinned index, and the training is deterministic, so replicas produce the
+same tokenizer; a replica that didn't would have a different architecture and
+could not be merged. Every later unit starts from a merge whose architecture
+already embeds the tokenizer, so join leaves the architecture out of those
+units' composes and they inherit it rather than train another. Trained byte-BPE
+models travel through the store as Hugging Face packages carrying
+`openwaldo_tokenizer.json`.
 
 ## Rounds
 
@@ -101,6 +111,12 @@ the files its gates use, and counts only under that pin, so editing the run
 starts it afresh. Records count only
 from identities holding a claim, one slot per identity per unit. Each unit's replicas are taken one per slot, so every closer judges the
 same set.
+
+Rounds are a run's pause points: once a round is merged, nothing is in flight.
+`waldo model join --rounds <n>` takes part in n rounds, counting from the first
+one still open, then exits; `--rounds 1` runs the next round. An identity
+stopped mid-round keeps its claim for `claim_minutes`, so it resumes that work
+if it restarts in time, and otherwise its slot is retaken and retrained.
 
 ### Judging replicas
 

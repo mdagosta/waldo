@@ -12,6 +12,8 @@
 #
 # IDENTITIES (default 5) and JOIN_THROTTLE (default 0.2, each identity's WALDO_GPU_THROTTLE
 # regardless of any global setting) size the run; JOIN_EMAIL is the record commits' author.
+# ROUNDS=<n> stops every identity once n rounds, from the first still open, are merged:
+#   ROUNDS=1 run-identities.sh runs/<run>                  # run the next round, then stop
 # FAULTS runs identities through burnin.py, which injects protocol faults as they join:
 #   FAULTS=random run-identities.sh runs/<run>             # every identity, random faults
 #   FAULTS="<identity>=close <identity>=lazy" ...           # these identities, these faults
@@ -26,6 +28,7 @@ repo=${RUNS_REPO:?set RUNS_REPO to the runs repository}
 prefix=${JOIN_IDENTITY_PREFIX:?set JOIN_IDENTITY_PREFIX, as in <account>-bot-}
 identities=${IDENTITIES:-5}
 throttle=${JOIN_THROTTLE:-0.2}
+rounds=${ROUNDS:-0}
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 waldo=$(CDPATH='' cd -- "$script_dir/../.." && pwd)/waldo
 logs=$HOME/.waldo/join/logs/$(basename "$run_dir")
@@ -52,7 +55,7 @@ for n in $(seq 1 "$identities"); do
       >> "$logs/$identity.log" 2>&1 &
   else
     WALDO_GPU_THROTTLE=$throttle uv run -q --with mlx --with huggingface_hub \
-      "$waldo" model join "$repo" "$run_dir" --identity "$identity" --email "$email" --wait 30 \
+      "$waldo" model join "$repo" "$run_dir" --identity "$identity" --email "$email" --rounds "$rounds" --wait 30 \
       >> "$logs/$identity.log" 2>&1 &
   fi
   sleep 5
