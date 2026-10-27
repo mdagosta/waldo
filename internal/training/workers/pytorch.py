@@ -24,8 +24,8 @@ from torch.utils.checkpoint import checkpoint
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-pytorch-worker-schema-1-r17"
-TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r27"
+WORKER_REVISION = "builtin-pytorch-worker-schema-1-r18"
+TORCHTITAN_REVISION = "builtin-torchtitan-worker-schema-1-r28"
 IS_PRIMARY = True
 
 
@@ -1431,6 +1431,9 @@ class Trainer:
         backend_name = "torchtitan" if self.distributed else "pytorch"
         evaluated_checkpoints = {checkpoint["step"]: checkpoint for checkpoint in self.checkpoints}
         candidates = [evaluation for evaluation in self.evaluations if evaluation["step"] in evaluated_checkpoints]
+        if self.parameters.get("artifact_selection") == "final":
+            # The run's last weights, still verified against their held-out loss.
+            candidates = [evaluation for evaluation in candidates if evaluation["step"] == self.step_number]
         selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"]) if candidates else None
         selected_checkpoint = None if selected_evaluation is None else evaluated_checkpoints[selected_evaluation["step"]]
         if IS_PRIMARY and selected_checkpoint is not None:

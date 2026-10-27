@@ -112,6 +112,13 @@ starts it afresh. Records count only
 from identities holding a claim, one slot per identity per unit. Each unit's replicas are taken one per slot, so every closer judges the
 same set.
 
+Each unit holds out the same records every round: join gives a unit an
+`evaluation_seed` from the run and unit, while its training `seed` still changes
+each round. Its losses therefore compare across rounds, and no round trains on
+records another measures. Units publish their last weights
+(`artifact_selection: final`), since a round's best held-out checkpoint can be
+its starting weights when a few records misjudge it.
+
 Rounds are a run's pause points: once a round is merged, nothing is in flight.
 `waldo model join --rounds <n>` takes part in n rounds, counting from the first
 one still open, then exits; `--rounds 1` runs the next round. An identity

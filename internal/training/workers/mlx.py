@@ -20,7 +20,7 @@ from mlx.utils import tree_flatten, tree_map, tree_unflatten
 
 
 PROTOCOL_SCHEMA = 1
-WORKER_REVISION = "builtin-mlx-worker-schema-1-r17"
+WORKER_REVISION = "builtin-mlx-worker-schema-1-r18"
 
 
 class ArtifactIntegrityError(ValueError):
@@ -779,6 +779,9 @@ class Trainer:
         weights_path = os.path.join(self.artifact_directory, weights_name)
         evaluated_checkpoints = {checkpoint["step"]: checkpoint for checkpoint in self.checkpoints}
         candidates = [evaluation for evaluation in self.evaluations if evaluation["step"] in evaluated_checkpoints]
+        if self.parameters.get("artifact_selection") == "final":
+            # The run's last weights, still verified against their held-out loss.
+            candidates = [evaluation for evaluation in candidates if evaluation["step"] == self.step_number]
         selected_evaluation = min(candidates, key=lambda evaluation: evaluation["metrics"]["heldout_loss"]) if candidates else None
         selected_checkpoint = None if selected_evaluation is None else evaluated_checkpoints[selected_evaluation["step"]]
         selected_step = self.step_number
