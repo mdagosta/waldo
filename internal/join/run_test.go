@@ -260,6 +260,44 @@ func TestUnitsInheritATrainedTokenizerFromTheirBase(t *testing.T) {
 	}
 }
 
+func TestUnitsHoldOutTheSameRecordsEveryRound(t *testing.T) {
+	plan, err := LoadRun(writeRun(t, runCompose+runJoin))
+	if err != nil {
+		t.Fatal(err)
+	}
+	budget, err := plan.budget("pretrain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cut := func(unit string, seed int, budget Budget) string {
+		text, err := plan.unitCompose("pretrain", unit, "round-base", seed, budget)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return text
+	}
+	line := func(text, key string) string {
+		for _, line := range strings.Split(text, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), key+":") {
+				return strings.TrimSpace(line)
+			}
+		}
+		return ""
+	}
+	// Rounds shuffle differently but hold out the same records; units hold out their own.
+	roundOne, roundTwo, other := cut("u1", pieceSeed(plan.Name, 1, "u1"), budget), cut("u1", pieceSeed(plan.Name, 2, "u1"), budget), cut("u0", 7, budget)
+	if line(roundOne, "seed") == line(roundTwo, "seed") || line(roundOne, "evaluation_seed") != line(roundTwo, "evaluation_seed") ||
+		line(roundOne, "evaluation_seed") == line(other, "evaluation_seed") {
+		t.Fatalf("seeds: %q %q, %q %q, %q", line(roundOne, "seed"), line(roundTwo, "seed"), line(roundOne, "evaluation_seed"), line(roundTwo, "evaluation_seed"), line(other, "evaluation_seed"))
+	}
+	// Units publish their last weights; the closers' probe only evaluates, on the same records.
+	probe := cut("u1", pieceSeed(plan.Name, 1, "u1"), probeBudget)
+	if line(roundOne, "artifact_selection") != "artifact_selection: final" || line(probe, "artifact_selection") != "" ||
+		line(probe, "evaluation_seed") != line(roundOne, "evaluation_seed") {
+		t.Fatalf("unit:\n%s\nprobe:\n%s", roundOne, probe)
+	}
+}
+
 func TestProbesDropScheduleLengths(t *testing.T) {
 	scheduled := strings.Replace(runCompose, "      evaluation_selection: lowest-sha256-v1\n", "      evaluation_selection: lowest-sha256-v1\n      warmup_steps: 100\n      checkpoint_every: 500\n", 1)
 	plan, err := LoadRun(writeRun(t, scheduled+runJoin))
