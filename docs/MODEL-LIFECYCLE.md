@@ -110,7 +110,9 @@ Schema 1 initially accepts standard bias-free Llama weights with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors. Pull
 also accepts the legacy `OpenWALDOByteTokenizer` class name used by older WALDO
 exports; both names identify the same byte tokenizer. That is the format
-produced by WALDO's Hugging Face export. Other tokenizers or architectural
+produced by WALDO's Hugging Face export, which also carries a trained
+`waldo/byte-bpe` tokenizer as `openwaldo_tokenizer.json`; pull restores it into
+the architecture. Other tokenizers or architectural
 variants fail before publication rather than being numerically converted or
 silently retokenized.
 

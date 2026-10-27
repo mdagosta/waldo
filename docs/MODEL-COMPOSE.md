@@ -293,7 +293,8 @@ each model has a lineage node naming its weights and its parents' nodes, by
 hash. WALDO walks the parents' chains through the model store, like
 `git merge-base`, and requires a common weights hash; parents from random
 weights or from releases without lineage cannot be merged. Merges accept
-byte-tokenizer models with `bfloat16` or `float32` parameters.
+models with `bfloat16` or `float32` parameters whose architectures, tokenizer
+included, are identical.
 
 The merge is written once, as an origin under the store's `.merges` directory,
 recording the method, each parent's model ID, weights hash, and node, in order;
@@ -351,7 +352,10 @@ Schema 1 currently accepts standard bias-free Llama Safetensors with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors—the
 format produced by current WALDO Hugging Face exports. Pull also accepts the
 legacy `OpenWALDOByteTokenizer` class name used by older WALDO exports; both
-names identify the same byte tokenizer. Other tokenizers, architectures, tensor
+names identify the same byte tokenizer. A package whose
+`openwaldo_tokenizer.json` carries a trained `waldo/byte-bpe` artifact is
+pulled with that tokenizer, validated against `config.json`'s vocabulary, so
+the pulled architecture is the exported model's. Other tokenizers, architectures, tensor
 layouts, and source providers fail before the destination model is published.
 `base.source` and `model pull` intentionally share this same compatibility
 boundary.

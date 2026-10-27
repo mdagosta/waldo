@@ -17,6 +17,7 @@ import (
 	"strings"
 	"testing"
 
+	waldotokenizer "github.com/openwaldo/waldo/internal/tokenizer"
 	"github.com/openwaldo/waldo/internal/training"
 )
 
@@ -26,8 +27,17 @@ import (
 func releasePackage(t *testing.T, parent string, salt byte) string {
 	t.Helper()
 	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
+	return releasePackageOf(t, architecture, nil, parent, salt)
+}
+
+// releasePackageOf is releasePackage for architecture, with extra package files.
+func releasePackageOf(t *testing.T, architecture Architecture, extra map[string][]byte, parent string, salt byte) string {
+	t.Helper()
 	directory := t.TempDir()
 	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
+	for name, data := range extra {
+		files[name] = data
+	}
 	weights := files["model.safetensors"]
 	weights[len(weights)-1] ^= salt
 	// Published run BOMs are pinned, like a model's runs, by the hash of their canonical JSON.
@@ -125,6 +135,46 @@ func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "unrelated")); !os.IsNotExist(err) {
 		t.Fatalf("unrelated merge left a model: %v", err)
+	}
+}
+
+func TestMergeComposeMergesTrainedTokenizerModels(t *testing.T) {
+	artifact, err := waldotokenizer.TrainByteBPE([]waldotokenizer.Sample{{ID: "one", Text: strings.Repeat("fn main() { println!(\"hello\"); } ", 20)}}, 290, 4096, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: uint64(artifact.VocabularySize), HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: artifact.Name, Revision: artifact.Revision, Artifact: &artifact}}
+	exported, err := json.Marshal(struct {
+		Kind   string `json:"kind"`
+		Schema int    `json:"schema"`
+		training.TokenizerSpec
+	}{"waldo-tokenizer", 1, training.TokenizerSpec{Name: artifact.Name, Revision: artifact.Revision, VocabularySize: artifact.VocabularySize, PadID: 0, BOSID: 1, EOSID: 2, Artifact: &artifact}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	common := strings.Repeat("a", 64)
+	root := t.TempDir()
+	extra := map[string][]byte{TokenizerArtifactFile: exported}
+	for name, directory := range map[string]string{"left": releasePackageOf(t, architecture, extra, common, 0), "right": releasePackageOf(t, architecture, extra, common, 1), "byte": releasePackage(t, common, 2)} {
+		if _, err := (Puller{Root: root}).PullDirectory(name, directory); err != nil {
+			t.Fatal(err)
+		}
+	}
+	builder := Builder{Root: root}
+	merged, err := builder.Compose(context.Background(), "merged", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(merged.Model.Architecture, architecture) {
+		t.Fatalf("merged architecture = %+v", merged.Model.Architecture)
+	}
+	// The merge's runtime tokenizer is the trained one, so it can be continued and exported.
+	if _, _, err := training.ResolveArchitectureTokenizer(mustJSON(t, merged.Model.Architecture)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = builder.Compose(context.Background(), "mixed", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "byte"}}}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "does not have the architecture") {
+		t.Fatalf("mixed tokenizer merge error = %v", err)
 	}
 }
 

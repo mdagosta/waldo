@@ -180,9 +180,6 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, error) {
 		if len(parents) > 0 && inspection.Model.ArchitectureSHA256 != parents[0].inspection.Model.ArchitectureSHA256 {
 			return nil, fmt.Errorf("base.merge parent %q does not have the architecture of %q", declared.Model, parents[0].inspection.Model.Name)
 		}
-		if inspection.Model.Architecture.Tokenizer.Name != "byte" {
-			return nil, fmt.Errorf("base.merge supports byte-tokenizer models; %q uses %s", declared.Model, inspection.Model.Architecture.Tokenizer.Name)
-		}
 		path, _, err := currentWeights(inspection)
 		if err != nil {
 			return nil, fmt.Errorf("base.merge parent: %w", err)
