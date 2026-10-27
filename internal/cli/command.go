@@ -226,6 +226,7 @@ func newModelCommand(state *cobraState) *cobra.Command {
 			textFlag("key", "", "ssh signing key; default ~/.waldo/join/<identity>/signing-key, created if missing"),
 			textFlag("email", "", "commit author email; default <identity>@waldo.invalid"),
 			booleanFlag("once", "do one unit of work and exit"),
+			integerFlag("rounds", 0, "take part in this many rounds, from the first one still open, then stop (0: until the run is done)"),
 			integerFlag("wait", 60, "seconds between checks while waiting on others")),
 		leaf(state, "continue <name>", "Resume an interrupted compose build", "Loads the model's latest numbered compose and resumes its retained transaction from the newest verified checkpoint. A stale running state left when a process could not persist its terminal status is recovered after confirming that no process owns the compose lock. Completed, failed, and untrained models are rejected.", cobra.ExactArgs(1), runModelContinue),
 		leaf(state, "train-worker", "Join a multi-node training run as a secondary node", "Internal worker used by the hostfile launcher. Manual --nodes, --node-rank, and rendezvous flags remain available for compatibility. Each node materializes the immutable stage corpus into its own cache and prepares only the sequences assigned to its local ranks.", cobra.NoArgs, runModelTrainWorker,

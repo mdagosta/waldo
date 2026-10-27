@@ -32,6 +32,11 @@ type Joiner struct {
 	Waldo    string // this waldo executable, run with the identity's own config
 	Log      io.Writer
 	Now      func() time.Time
+	// Rounds, when positive, is how many rounds this identity takes part in,
+	// counting from the first round still open when it starts; then it stops.
+	Rounds int
+
+	lastRound int // the last round to work in when Rounds is set, once known
 
 	clone      string
 	url        string // the runs repository, as round records name it
@@ -200,7 +205,7 @@ func (joiner *Joiner) ready(ctx context.Context) error {
 	return nil
 }
 
-// Step does one unit of work and reports "done", "idle", or "worked". Work
+// Step does one unit of work and reports "done", "stopped", "idle", or "worked". Work
 // is claimed first, so a pass that wins its claim goes straight on to the work.
 func (joiner *Joiner) Step(ctx context.Context) (string, error) {
 	for {
@@ -212,6 +217,10 @@ func (joiner *Joiner) Step(ctx context.Context) (string, error) {
 			return "", err
 		}
 		action := state.Next(joiner.Identity, joiner.Now())
+		if joiner.stops(action) {
+			fmt.Fprintf(joiner.Log, "round %d is merged; %s stops after its %d round(s), as asked\n", action.Round-1, joiner.Identity, joiner.Rounds)
+			return "stopped", nil
+		}
 		switch action.Kind {
 		case "done":
 			final := state.Rounds[action.Round].Merge
@@ -244,6 +253,18 @@ func (joiner *Joiner) Step(ctx context.Context) (string, error) {
 			return "worked", joiner.close(ctx, state, action)
 		}
 	}
+}
+
+// stops is whether action is past the rounds this identity was asked to take part in.
+// Rounds are the run's pause points: a merged round leaves nothing in flight.
+func (joiner *Joiner) stops(action Action) bool {
+	if joiner.Rounds <= 0 || action.Kind == "done" {
+		return false
+	}
+	if joiner.lastRound == 0 {
+		joiner.lastRound = action.Round + joiner.Rounds
+	}
+	return action.Round >= joiner.lastRound
 }
 
 // claim commits this identity's claim on a slot; false if another identity's claim landed first.

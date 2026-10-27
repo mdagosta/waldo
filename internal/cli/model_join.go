@@ -35,7 +35,7 @@ func runModelJoin(context Context, args []string, stdout, stderr io.Writer) erro
 	}
 	joiner := &join.Joiner{Waldo: executable,
 		Home: filepath.Join(home, ".waldo", "join", identity), Identity: identity,
-		Key: stringOption(context, "key"), Email: email, Log: stdout,
+		Key: stringOption(context, "key"), Email: email, Log: stdout, Rounds: intOption(context, "rounds"),
 	}
 	if err := joiner.Open(context.Execution, args[0], args[1]); err != nil {
 		return err
@@ -43,7 +43,7 @@ func runModelJoin(context Context, args []string, stdout, stderr io.Writer) erro
 	wait := time.Duration(intOption(context, "wait")) * time.Second
 	for {
 		result, err := joiner.Step(context.Execution)
-		if err != nil || result == "done" || boolOption(context, "once") {
+		if err != nil || result == "done" || result == "stopped" || boolOption(context, "once") {
 			return err
 		}
 		if result == "idle" {
