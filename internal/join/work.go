@@ -427,7 +427,7 @@ func (joiner *Joiner) probe(ctx context.Context, stage, unit, export string, see
 	if err := joiner.ensure(name, export); err != nil {
 		return model.Evaluation{}, err
 	}
-	text, err := joiner.plan.unitCompose(stage, unit, "", seed, Budget{"tokens", 16384})
+	text, err := joiner.plan.unitCompose(stage, unit, "", seed, probeBudget)
 	if err != nil {
 		return model.Evaluation{}, err
 	}
