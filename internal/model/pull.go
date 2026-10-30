@@ -869,10 +869,9 @@ func releaseLineage(path string) (*LineageNode, error) {
 
 var pinnedFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// FetchPinned downloads exactly the named files of a release into directory,
-// from huggingface://<repository>@<commit> or a file:// directory, and refuses
-// the release if any file's SHA-256 differs from its pin: the result is the
-// release the pins name, or nothing. A Hugging Face source must name a commit.
+// FetchPinned copies exactly the named files of a file:// release into
+// directory, and refuses the release if any file's SHA-256 differs from its
+// pin: the result is the release the pins name, or nothing.
 func (puller Puller) FetchPinned(ctx context.Context, source string, files map[string]string, directory string) error {
 	names := make([]string, 0, len(files))
 	for name, digest := range files {
@@ -888,30 +887,11 @@ func (puller Puller) FetchPinned(ctx context.Context, source string, files map[s
 		return err
 	}
 	defer os.RemoveAll(partial)
-	fetch := func(name, path string) (string, error) {
-		local := strings.TrimPrefix(source, "file://")
-		digest, _, err := copyHashed(filepath.Join(local, name), path)
-		return digest, err
-	}
-	if strings.HasPrefix(source, "huggingface://") {
-		repository, revision, err := parseHuggingFaceSource(source)
-		if err != nil {
-			return err
-		}
-		if !huggingFaceCommit.MatchString(revision) {
-			return fmt.Errorf("%s must pin a commit", source)
-		}
-		client, endpoint, token := puller.hubClient()
-		fetch = func(name, path string) (string, error) {
-			puller.report(PullProgress{Phase: "download", Message: fmt.Sprintf("downloading %s from %s@%s", name, repository, revision[:12])})
-			digest, _, err := downloadFile(ctx, client, endpoint+"/"+repository+"/resolve/"+revision+"/"+escapePath(name), token, path, 0)
-			return digest, err
-		}
-	} else if !strings.HasPrefix(source, "file://") {
-		return fmt.Errorf("%s is not a huggingface:// or file:// release", source)
+	if !strings.HasPrefix(source, "file://") {
+		return fmt.Errorf("%s is not a file:// release", source)
 	}
 	for _, name := range names {
-		digest, err := fetch(name, filepath.Join(partial, name))
+		digest, _, err := copyHashed(filepath.Join(strings.TrimPrefix(source, "file://"), name), filepath.Join(partial, name))
 		if err != nil {
 			return fmt.Errorf("fetch %s: %w", name, err)
 		}

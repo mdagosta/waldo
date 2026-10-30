@@ -9,8 +9,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,25 +40,5 @@ func TestFetchPinnedFetchesOnlyThePinnedRelease(t *testing.T) {
 	}
 	if _, err := os.Stat(other); !os.IsNotExist(err) {
 		t.Fatal("a refused release left files behind")
-	}
-	// From Hugging Face, only at a pinned commit.
-	commit := strings.Repeat("a", 40)
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		name := filepath.Base(request.URL.Path)
-		if !strings.Contains(request.URL.Path, "/someone/model/resolve/"+commit+"/") {
-			http.NotFound(writer, request)
-			return
-		}
-		data, _ := os.ReadFile(filepath.Join(release, name))
-		_, _ = writer.Write(data)
-	}))
-	defer server.Close()
-	puller := Puller{Endpoint: server.URL, Token: "unused"}
-	hub := filepath.Join(t.TempDir(), "hub")
-	if err := puller.FetchPinned(context.Background(), "huggingface://someone/model@"+commit, files, hub); err != nil {
-		t.Fatal(err)
-	}
-	if err := puller.FetchPinned(context.Background(), "huggingface://someone/model@main", files, hub); err == nil || !strings.Contains(err.Error(), "pin a commit") {
-		t.Fatalf("unpinned error = %v", err)
 	}
 }

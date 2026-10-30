@@ -15,12 +15,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
 
-	"github.com/openwaldo/waldo/internal/corpus"
 	"github.com/openwaldo/waldo/internal/model"
 	"gopkg.in/yaml.v3"
 )
@@ -34,7 +32,7 @@ const RunFile = "run.yaml"
 // itself, the training each unit's work is cut from.
 type Plan struct {
 	Name             string              `yaml:"name"`
-	UnitData         map[string]UnitData `yaml:"units"` // unit to the data its pre-training stage reads
+	UnitData         map[string][]string `yaml:"units"` // unit to the sources its pre-training stage reads
 	Replicas         int                 `yaml:"replicas"`
 	Closers          int                 `yaml:"closers"`
 	ClaimMinutes     float64             `yaml:"claim_minutes"`
@@ -50,31 +48,6 @@ type Plan struct {
 
 	Units   []string   `yaml:"-"` // unit names in order; a fine-tuning unit takes the slice at its position
 	Compose *yaml.Node `yaml:"-"` // the run file's compose mapping
-}
-
-// UnitData is what a unit's pre-training reads: the sources it lists, or the
-// records a filter selects, in the compose's record-filter form, as in
-// {metadata: {programming_language: {include: [Rust]}}}.
-type UnitData struct {
-	Sources []string
-	Filter  *yaml.Node
-}
-
-func (data *UnitData) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode {
-		return node.Decode(&data.Sources)
-	}
-	encoded, err := yaml.Marshal(node)
-	if err != nil {
-		return err
-	}
-	decoder := yaml.NewDecoder(bytes.NewReader(encoded))
-	decoder.KnownFields(true)
-	if err := decoder.Decode(&corpus.RecordFilter{}); err != nil {
-		return fmt.Errorf("unit filter: %w", err)
-	}
-	data.Filter = node
-	return nil
 }
 
 // Gate is what a stage's merged model must meet before the run moves on: a
@@ -207,14 +180,13 @@ func (plan *Plan) check() error {
 		return fmt.Errorf("units must not be named all, the bootstrap's unit, or close, the closing slots' name")
 	}
 	for _, unit := range plan.Units {
-		if data := plan.UnitData[unit]; len(data.Sources) == 0 && (data.Filter == nil || len(data.Filter.Content) == 0) {
-			return fmt.Errorf("unit %s needs sources or a filter", unit)
+		if len(plan.UnitData[unit]) == 0 {
+			return fmt.Errorf("unit %s needs sources", unit)
 		}
 	}
 	if base := plan.Base; base != nil {
-		pinned := strings.HasPrefix(base.URL, "file://") || huggingFacePin.MatchString(base.URL)
-		if model.ValidateName(base.Model) != nil || !pinned || !validFiles(base.Files, base.ModelSHA256) {
-			return fmt.Errorf("base needs a model name, a file:// or huggingface://<user>/<model>@<commit> url, its model_sha256, and every file's sha256, model.safetensors included")
+		if model.ValidateName(base.Model) != nil || !strings.HasPrefix(base.URL, "file://") || !validFiles(base.Files, base.ModelSHA256) {
+			return fmt.Errorf("base needs a model name, a file:// url, its model_sha256, and every file's sha256, model.safetensors included")
 		}
 	}
 	rounds := plan.Rounds
@@ -381,8 +353,6 @@ func Pin(runDir string, plan Plan) (string, error) {
 	digest := sha256.Sum256([]byte(manifest.String()))
 	return hex.EncodeToString(digest[:]), nil
 }
-
-var huggingFacePin = regexp.MustCompile(`^huggingface://[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[0-9a-f]{40}$`)
 
 // start is the plan's base as the record round 0 starts from, or nil for a bootstrap.
 func (plan Plan) start() *MergeRecord {

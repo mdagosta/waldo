@@ -75,11 +75,6 @@ func (joiner *Joiner) models() string {
 	return filepath.Join(joiner.Home, "models")
 }
 
-func (joiner *Joiner) complete(name string) bool {
-	inspection, err := model.Inspect(joiner.models(), name)
-	return err == nil && (inspection.BOM.CurrentRunID != "" || inspection.BOM.CurrentOriginSHA256 != "")
-}
-
 // built is whether an earlier pass already built name: a completed training run,
 // or a merged origin. A run that failed leaves a model holding only its starting
 // weights, which must be trained again, not taken as the result.
@@ -116,44 +111,29 @@ func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 	return joiner.waldo(ctx, "model", "train", name, path)
 }
 
-// telemetry is the last run's TELEMETRY.csv rows by column.
-func (joiner *Joiner) telemetry(name string) ([]map[string]string, error) {
+// maxTelemetry is the largest value of a column in the last run's TELEMETRY.csv.
+func (joiner *Joiner) maxTelemetry(name, column string) (float64, error) {
 	runs, err := filepath.Glob(filepath.Join(joiner.models(), name, "runs", "*", "TELEMETRY.csv"))
 	if err != nil || len(runs) == 0 {
-		return nil, fmt.Errorf("model %s has no telemetry", name)
+		return 0, fmt.Errorf("model %s has no telemetry", name)
 	}
 	sort.Strings(runs)
 	file, err := os.Open(runs[len(runs)-1])
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	defer file.Close()
 	rows, err := csv.NewReader(file).ReadAll()
 	if err != nil || len(rows) == 0 {
-		return nil, fmt.Errorf("read %s telemetry: %v", name, err)
+		return 0, fmt.Errorf("read %s telemetry: %v", name, err)
 	}
-	var result []map[string]string
-	for _, row := range rows[1:] {
-		values := map[string]string{}
-		for index, column := range rows[0] {
-			if index < len(row) {
-				values[column] = row[index]
-			}
-		}
-		result = append(result, values)
-	}
-	return result, nil
-}
-
-func (joiner *Joiner) maxTelemetry(name, column string) (float64, error) {
-	rows, err := joiner.telemetry(name)
-	if err != nil {
-		return 0, err
-	}
+	index := slices.Index(rows[0], column)
 	best := 0.0
-	for _, row := range rows {
-		if value, err := strconv.ParseFloat(row[column], 64); err == nil && value > best {
-			best = value
+	for _, row := range rows[1:] {
+		if index >= 0 && index < len(row) {
+			if value, err := strconv.ParseFloat(row[index], 64); err == nil && value > best {
+				best = value
+			}
 		}
 	}
 	return best, nil
@@ -264,7 +244,7 @@ func published(name, sha256 string) string {
 
 // ensure imports a fetched package as a local model so composes can name it as a base.
 func (joiner *Joiner) ensure(name, directory string) error {
-	if joiner.complete(name) {
+	if inspection, err := model.Inspect(joiner.models(), name); err == nil && (inspection.BOM.CurrentRunID != "" || inspection.BOM.CurrentOriginSHA256 != "") {
 		return nil
 	}
 	_, err := (model.Puller{Root: joiner.models()}).PullDirectory(name, directory)

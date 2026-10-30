@@ -94,7 +94,7 @@ func TestLoadRunReadsTheJoinBlock(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Units in sorted order, which is the order fine-tuning units take their slices in.
-	if strings.Join(plan.Units, ",") != "u0,u1" || len(plan.UnitData["u1"].Sources) != 2 || plan.Identities["bob"].HuggingFace != "bob" {
+	if strings.Join(plan.Units, ",") != "u0,u1" || len(plan.UnitData["u1"]) != 2 || plan.Identities["bob"].HuggingFace != "bob" {
 		t.Fatalf("plan = %+v", plan)
 	}
 	if got := strings.Join(plan.Stages(), ","); got != "bootstrap,pretrain,pretrain,posttrain,posttrain,posttrain" {
@@ -182,45 +182,6 @@ func TestUnitComposesCutTheRunFile(t *testing.T) {
 	}
 	if plan.vocabulary() != 259 {
 		t.Fatalf("vocabulary = %d", plan.vocabulary())
-	}
-}
-
-func TestLanguageUnitsCutTheirRecordsByFilter(t *testing.T) {
-	units := `    rust: {metadata: {programming_language: {include: [Rust]}}}
-    english: {sources: {include: [wikimedia*]}}
-    python: [TheAlgorithms/Python]
-`
-	text := runCompose + strings.Replace(runJoin, "    u1: [pallets/flask, httpie/cli]\n    u0: [TheAlgorithms/Python]\n", units, 1)
-	plan, err := LoadRun(writeRun(t, text))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// A filter unit's keys join the stage's filter, which keeps its own others.
-	_, stage := unitStage(t, plan, "pretrain", "rust", "round-base")
-	if stage.Filter.Metadata["programming_language"].Include[0] != "Rust" || stage.Filter.Sources != nil || stage.Filter.MainContent == nil {
-		t.Fatalf("rust = %+v", stage.Filter)
-	}
-	_, stage = unitStage(t, plan, "pretrain", "english", "round-base")
-	if strings.Join(stage.Filter.Sources.Include, ",") != "wikimedia*" || stage.Filter.Metadata != nil {
-		t.Fatalf("english = %+v", stage.Filter)
-	}
-	_, stage = unitStage(t, plan, "pretrain", "python", "round-base")
-	if strings.Join(stage.Filter.Sources.Include, ",") != "TheAlgorithms/Python" {
-		t.Fatalf("python = %+v", stage.Filter)
-	}
-	// The bootstrap can't union filters, so it trains the stage's whole selection, which the units divide.
-	_, stage = unitStage(t, plan, "bootstrap", "all", "")
-	if stage.Filter.Sources != nil || stage.Filter.Metadata != nil || stage.Filter.MainContent == nil {
-		t.Fatalf("bootstrap = %+v", stage.Filter)
-	}
-	for name, bad := range map[string]string{
-		"unknown filter key": "    rust: {metadata: {programming_language: {include: [Rust]}}, tamper: true}\n",
-		"empty filter":       "    rust: {}\n",
-		"no sources":         "    rust: []\n",
-	} {
-		if _, err := LoadRun(writeRun(t, strings.Replace(text, "    rust: {metadata: {programming_language: {include: [Rust]}}}\n", bad, 1))); err == nil {
-			t.Fatalf("%s: run accepted", name)
-		}
 	}
 }
 
@@ -334,7 +295,7 @@ func TestPinIsTheRunFile(t *testing.T) {
 
 func TestPlanBaseStartsTheRun(t *testing.T) {
 	digest := strings.Repeat("a", 64)
-	base := "  base:\n    model: python-base\n    url: huggingface://someone/python-base@" + strings.Repeat("0", 40) + "\n    model_sha256: " + digest + "\n    files:\n      model.safetensors: " + digest + "\n"
+	base := "  base:\n    model: python-base\n    url: file:///srv/python-base\n    model_sha256: " + digest + "\n    files:\n      model.safetensors: " + digest + "\n"
 	withBase := strings.Replace(runJoin, "bootstrap_tokens: 2000000, ", "", 1) + base
 	plan, err := LoadRun(writeRun(t, runCompose+withBase))
 	if err != nil {
@@ -354,7 +315,7 @@ func TestPlanBaseStartsTheRun(t *testing.T) {
 		t.Fatal("a round-0 merge from the base did not count")
 	}
 	for name, bad := range map[string]string{
-		"unpinned url":  strings.Replace(base, "@"+strings.Repeat("0", 40), "", 1),
+		"remote url":    strings.Replace(base, "file:///srv", "huggingface://someone", 1),
 		"unpinned file": strings.Replace(base, "model.safetensors: "+digest, "model.safetensors: "+strings.Repeat("b", 64), 1),
 		"bad name":      strings.Replace(base, "model: python-base", "model: ../x", 1),
 	} {
