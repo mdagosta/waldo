@@ -1,0 +1,1794 @@
+diff --git a/docs/MODEL-COMPOSE.md b/docs/MODEL-COMPOSE.md
+index 7274161..60bb5cd 100644
+--- a/docs/MODEL-COMPOSE.md
++++ b/docs/MODEL-COMPOSE.md
+@@ -185,7 +185,7 @@ BOM.
+ | `base` | no | object | Optionally initializes a new model from verified managed or external weights. |
+ | `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
+ | `interaction` | no | object | Declares a versioned inference-time prompt contract. Omit it for raw causal continuation. |
+-| `stages` | yes | non-empty list | Ordered training stages. Stage names must be unique. |
++| `stages` | yes, unless `base.merge` creates the model | list | Ordered training stages. Stage names must be unique. |
+ 
+ ### Interaction fields
+ 
+@@ -222,28 +222,31 @@ model-level contract. New composes should use only `interaction.tools`.
+ 
+ | Field | Required | Value | Meaning |
+ | --- | --- | --- | --- |
+-| `model` | exactly one of `model` or `source` | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model with a verified completed checkpoint or pulled origin. |
+-| `source` | exactly one of `model` or `source` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
++| `model` | exactly one of `model`, `source`, or `merge` | `^[a-z0-9][a-z0-9._-]{0,63}$` | Names a managed model with a verified completed checkpoint or pulled origin. |
++| `source` | exactly one of `model`, `source`, or `merge` | pinned model source | Acquires a supported external model through the same verified importer as `model pull`. Schema 1 accepts `huggingface://organization/model@<commit>`. |
+ | `origin_sha256` | no | SHA-256 | Asserts the expected origin BOM. WALDO always resolves and pins the actual value. |
+ | `model_id` | no | model ID | Asserts the identity of a managed base. WALDO fills it during resolution. |
+ | `run_id` | no | run ID | Selects a completed run. When omitted, WALDO resolves the latest completed run with real weights. |
+ | `run_bom_sha256` | no | SHA-256 | Asserts the selected run BOM. WALDO fills it during resolution. |
+ | `artifact_sha256` | no | SHA-256 | Asserts the selected checkpoint bytes. WALDO fills it during resolution. |
+ | `artifact_bytes` | no | non-negative bytes | Asserts the selected checkpoint size. WALDO fills it during resolution. |
++| `merge` | exactly one of `model`, `source`, or `merge` | two or more `{model, weight}` | Averages managed models into a merged origin. `weight` is optional and must be given for every parent or none; weighted parents contribute in proportion. |
++| `lineage_sha256` | no | SHA-256 | Asserts a trained base's lineage node. WALDO fills it during resolution. |
+ 
+ ## Base initialization
+ 
+ `base` controls the weights used to initialize a model before its first stage.
+ It does not name the destination model; the destination is the first argument
+-to `waldo model train`. A compose supports three initialization modes:
++to `waldo model train`. A compose supports four initialization modes:
+ 
+ | Compose declaration | Initial weights | Architecture rule |
+ | --- | --- | --- |
+ | no `base` | Newly initialized weights | `architecture` is required. |
+ | `base.model` | Verified completed checkpoint from a named managed model, falling back to its origin when it has no completed run | `architecture` may be omitted and inherited; when present, it must exactly match. |
+ | `base.source` | Verified origin weights acquired from an external source | `architecture` may be omitted and inherited; when present, it must exactly match. |
++| `base.merge` | The weighted mean of two or more managed models that share a recorded ancestor | Every parent must have the same architecture, which the compose inherits. |
+ 
+-`model` and `source` are mutually exclusive. A base initializes the destination
++`model`, `source`, and `merge` are mutually exclusive. A base initializes the destination
+ model and is never mutated by its training. For a trained managed base, WALDO
+ resolves the latest completed run containing real weights unless `run_id` is
+ specified. It verifies and persists the parent model ID, run ID, run BOM hash,
+@@ -268,6 +271,48 @@ base should be visible to `waldo model list` and independently inspectable with
+ `waldo model summary conversation`. Resolution turns the inherited architecture
+ and omitted pins into immutable values before training starts.
+ 
++### Merged base
++
++```yaml
++kind: waldo-model-compose
++schema: 1
++base:
++  merge:
++    - model: contributor-a
++      weight: 472344
++    - model: contributor-b
++      weight: 477616
++```
++
++Averaging weights is meaningful only for models trained from common weights,
++so WALDO fails closed unless the parents share an ancestor
++([ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)). Ancestry is
++recorded the way git records history: every model has a lineage node naming
++its current weights and the weights they came from, each by weights hash and by
++the hash of that parent's own node. A fine-tune's parent pin, a pulled model's
++origin, and a merge's origin each record a node, and a release's `BOM.json`
++carries the released model's node, so nodes stay the same size however long
++the history behind them. WALDO walks each parent's chain through every node
++the model store holds, like `git merge-base`, and requires a weights hash that
++every parent reaches. Where a chain leaves the store, the walk stops there.
++Parents trained from random weights, or pulled from releases that record no
++lineage, cannot be merged. Merges accept byte-tokenizer models with `bfloat16`
++or `float32` parameters.
++
++WALDO writes the merge as an origin under the model store's `.merges`
++directory, keyed by its parents and weights, so the same merge is built once.
++Its origin BOM records the method (`mean-f32-v1`, or `weighted-mean-f32-v1`
++with weights: float32 accumulation in parent order, rounded to nearest even),
++each parent's model ID, weights hash, and
++lineage node hash in merge order, and the weights; its lineage node names every
++parent's node, like a git merge commit. Anyone holding the parents can
++recompute the merged weights and compare hashes. A compose with
++`base.merge` may have no stages: the destination is then the merged model
++itself, usable for chat, export, or as another compose's base. With stages, the
++merge initializes training like any origin. Exports record the model's lineage node in
++their release `BOM.json`, and pulls keep it in the origin, so the chain
++continues across publication.
++
+ ### Direct external base
+ 
+ The smallest complete source-based compose is:
+@@ -322,6 +367,9 @@ names identify the same byte tokenizer. Other tokenizers, architectures, tensor
+ layouts, and source providers fail before the destination model is published.
+ `base.source` and `model pull` intentionally share this same compatibility
+ boundary.
++`waldo model pull <name> <directory>` (or `file://<directory>`) imports an
++exported package from a local directory through the same importer, recording
++a `file` origin ([ADR 0085](adr/0085-import-exported-packages-from-a-directory.md)).
+ 
+ ## Architecture fields
+ 
+diff --git a/docs/adr/0083-record-model-lineage.md b/docs/adr/0083-record-model-lineage.md
+new file mode 100644
+index 0000000..7f6c9ae
+--- /dev/null
++++ b/docs/adr/0083-record-model-lineage.md
+@@ -0,0 +1,39 @@
++# ADR 0083: Record model lineage as content-addressed nodes
++
++Status: proposed
++
++## Context
++
++WALDO records a model's own training runs and a single parent pin or origin,
++so one model traces back to its immediate parent. Weights that pass through
++several models, such as a fine-tune of a fine-tune or a merge of fine-tunes,
++lose that trail, and nothing can tell whether two models share the weights they
++started from. Copying every ancestor's facts forward instead would make each
++record grow with the length of its history.
++
++## Decision
++
++Every model has a lineage node: the SHA-256 of its current weights and its
++direct parents, each by weights hash and by the hash of the parent's own node.
++Like a git commit, a node names only its direct parents, so its size does not
++depend on the history behind it. A fine-tune's parent pin records the parent's
++node hash; a merged origin (ADR 0084) records its own node; a release's
++`BOM.json` carries the released model's node; a pull keeps the release's node
++in the origin.
++
++Ancestry is found the way `git merge-base` finds it: by walking each node's
++parents through every node the model store holds. Where a chain leaves the
++store, the walk stops there.
++
++## Consequences
++
++- Whether two models share ancestor weights is answered from recorded nodes,
++  never inferred from names or shapes.
++- Records stay bounded: a node names only its direct parents.
++- Parent pins recorded before lineage nodes keep matching; their history ends
++  at the immediate parent.
++- Declared lineage from an unsigned release is recorded as the release declared
++  it. Verifying it against signed releases is future work.
++
++Amends [0026](0026-pinned-model-origin.md), [0066](0066-pin-trained-model-parents.md),
++and [0022](0022-model-release-exports.md).
+diff --git a/docs/adr/0084-merge-models-with-a-common-ancestor.md b/docs/adr/0084-merge-models-with-a-common-ancestor.md
+new file mode 100644
+index 0000000..c8e2508
+--- /dev/null
++++ b/docs/adr/0084-merge-models-with-a-common-ancestor.md
+@@ -0,0 +1,41 @@
++# ADR 0084: Merge models with a recorded common ancestor into a merged origin
++
++Status: proposed
++
++## Context
++
++Averaging the weights of models fine-tuned from common weights is an
++established way to combine them. Merges made outside WALDO discard provenance.
++A merged model also fits none of WALDO's existing model kinds: it has no
++training run, and ADR 0026 forbids recording a synthetic one.
++
++## Decision
++
++A compose base may be `merge`: two or more managed models, each with an
++optional weight given for every parent or none. WALDO resolves each parent's
++current weights, requires identical architectures and the byte tokenizer, and
++fails closed unless the parents' lineage chains (ADR 0083) reach a common
++weights hash. There is no override: unrelated models are never averaged.
++
++The merge is an origin. WALDO computes the mean in float32 in parent order,
++rounds to nearest-even bfloat16 or float32, and writes it under
++`<model.root>/.merges/<hash of the merge>` with an origin BOM recording the
++versioned method (`mean-f32-v1` or `weighted-mean-f32-v1`), every parent's
++model ID, weights hash, and lineage node hash in order, the weights, and its
++own lineage node. The same merge is built once. A compose with `base.merge` may
++have no stages: the destination is then the merged model, servable, exportable,
++and usable as another compose's base; with stages, the merge initializes
++training like any origin. `model train` needs no training backend for a
++merge-only compose.
++
++## Consequences
++
++- Anyone holding the parents can recompute a merge and compare its weights hash;
++  two independent merges of the same parents agree byte for byte.
++- A merge never invents a training run.
++- Changing the arithmetic requires a new method name.
++- Parents trained from random weights, or pulled without recorded lineage,
++  cannot be merged.
++
++Relates to [0026](0026-pinned-model-origin.md), [0051](0051-direct-compose-model-origins.md),
++[0043](0043-unified-model-training.md), and [0066](0066-pin-trained-model-parents.md).
+diff --git a/docs/adr/0085-import-exported-packages-from-a-directory.md b/docs/adr/0085-import-exported-packages-from-a-directory.md
+new file mode 100644
+index 0000000..eca77c3
+--- /dev/null
++++ b/docs/adr/0085-import-exported-packages-from-a-directory.md
+@@ -0,0 +1,28 @@
++# ADR 0085: Import exported WALDO packages from a local directory
++
++Status: proposed
++
++## Context
++
++`model pull` imports Hugging Face repositories only. Moving an exported package
++between machines without a hub, such as through a shared file store, would
++otherwise mean imitating the Hugging Face API, and the resulting origin would
++name a repository that does not exist.
++
++## Decision
++
++The importer that verifies and normalizes pulled packages also accepts a local
++directory holding an exported Hugging Face package. The origin's provider is
++`file`; it pins every imported file by hash and takes the weights hash as its
++revision. Hugging Face and directory imports share file selection,
++architecture and tokenizer validation, normalization, and the keeping of a
++release's lineage node (ADR 0083).
++
++## Consequences
++
++- An origin always names the source the weights actually came from.
++- The origin currently records the directory's absolute path as its URL, so the
++  path is part of the origin BOM and its hash. A relocatable source identity is
++  open work.
++
++Relates to [0026](0026-pinned-model-origin.md) and [0051](0051-direct-compose-model-origins.md).
+diff --git a/docs/adr/README.md b/docs/adr/README.md
+index 546d5dc..f92c7e7 100644
+--- a/docs/adr/README.md
++++ b/docs/adr/README.md
+@@ -79,3 +79,6 @@ Superseded and historical ADRs are removed. Missing numbers are intentional.
+ - [0080: Support a pinned contiguous-tail evaluation view](0080-contiguous-tail-evaluation.md)
+ - [0081: Version exact intrinsic-loss telemetry](0081-version-intrinsic-loss-telemetry.md)
+ - [0082: Stream training-ready Parquet into token-budget runs](0082-stream-training-ready-parquet.md)
++- [0083: Record model lineage as content-addressed nodes](0083-record-model-lineage.md)
++- [0084: Merge models with a recorded common ancestor into a merged origin](0084-merge-models-with-a-common-ancestor.md)
++- [0085: Import exported WALDO packages from a local directory](0085-import-exported-packages-from-a-directory.md)
+diff --git a/internal/cli/command.go b/internal/cli/command.go
+index b31a64f..89abd0a 100644
+--- a/internal/cli/command.go
++++ b/internal/cli/command.go
+@@ -187,7 +187,7 @@ func newModelCommand(state *cobraState) *cobra.Command {
+ 	command.AddCommand(
+ 		leaf(state, "init <name>", "Initialize an untrained model", "Available presets: 10m, 35m, 90m, 300m, 1b, 3b, 7b, 13b, 34b, 70b.", cobra.ExactArgs(1), runModelInit,
+ 			requiredTextFlag("preset", "model architecture preset")),
+-		leaf(state, "pull <name> <source>", "Import a supported external model", "Imports and verifies a supported external model into WALDO's managed model store. Schema 1 accepts pinned Hugging Face Safetensors sources.", cobra.ExactArgs(2), runModelPull),
++		leaf(state, "pull <name> <source>", "Import a supported external model", "Imports and verifies a supported external model into WALDO's managed model store. Schema 1 accepts pinned Hugging Face Safetensors sources and local directories (or file:// URLs) holding an exported WALDO Hugging Face package.", cobra.ExactArgs(2), runModelPull),
+ 		leaf(state, "list [pattern...]", "List locally managed models", "Patterns use shell-style *, ?, and character classes.", cobra.ArbitraryArgs, runModelList),
+ 		leaf(state, "summary <name>", "Summarize architecture and training history", "", cobra.ExactArgs(1), runModelSummary),
+ 		leaf(state, "advisor <name>", "Chat with an AI model advisor", "Compatibility form of `waldo advisor <name>`.", cobra.ExactArgs(1), runModelAdvisor, advisorFlags()...),
+diff --git a/internal/cli/model.go b/internal/cli/model.go
+index 8ed68fb..a7d6be7 100644
+--- a/internal/cli/model.go
++++ b/internal/cli/model.go
+@@ -514,7 +514,13 @@ func runModelPull(context Context, args []string, stdout, stderr io.Writer) erro
+ 	puller := model.Puller{Root: root, Client: &http.Client{}, Progress: func(progress model.PullProgress) {
+ 		fmt.Fprintln(stderr, progress.Message)
+ 	}}
+-	inspection, err := puller.Pull(context.Execution, args[0], args[1])
++	var inspection model.Inspection
++	// A local directory or file:// URL holds an exported package; anything else is a hub source.
++	if directory := strings.TrimPrefix(args[1], "file://"); strings.HasPrefix(args[1], "file://") || isDirectory(directory) {
++		inspection, err = puller.PullDirectory(args[0], directory)
++	} else {
++		inspection, err = puller.Pull(context.Execution, args[0], args[1])
++	}
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -529,6 +535,11 @@ func runModelPull(context Context, args []string, stdout, stderr io.Writer) erro
+ 	return nil
+ }
+ 
++func isDirectory(path string) bool {
++	info, err := os.Stat(path)
++	return err == nil && info.IsDir()
++}
++
+ func runModelList(context Context, args []string, stdout, _ io.Writer) error {
+ 	root, err := configuredModelRoot()
+ 	if err != nil {
+@@ -604,7 +615,13 @@ func runModelSummary(context Context, args []string, stdout, _ io.Writer) error
+ 		}
+ 		fmt.Fprintf(stdout, "INTERACTION:   %s\n", label)
+ 	}
+-	if inspection.Origin != nil {
++	if merge := originMerge(inspection); merge != nil {
++		parents := make([]string, 0, len(merge.Parents))
++		for _, parent := range merge.Parents {
++			parents = append(parents, parent.Model)
++		}
++		fmt.Fprintf(stdout, "ORIGIN:        %s of %s (merge)\n", merge.Method, strings.Join(parents, ", "))
++	} else if inspection.Origin != nil {
+ 		fmt.Fprintf(stdout, "ORIGIN:        %s@%s (%s)\n", inspection.Origin.Source.Repository, shortModelHash(inspection.Origin.Source.Revision), inspection.Origin.Source.Provider)
+ 	}
+ 	for position, pin := range inspection.Model.Runs {
+@@ -1472,8 +1489,11 @@ func runModelComposeTrainingWithHandoff(context Context, name, path string, clus
+ 			objectives = append(objectives, stage.Objective)
+ 		}
+ 	}
+-	if err := builder.CheckBackend(context.Execution, compose.Architecture, objectives); err != nil {
+-		return err
++	// A merge-only compose trains nothing, so it needs no training backend.
++	if len(objectives) > 0 {
++		if err := builder.CheckBackend(context.Execution, compose.Architecture, objectives); err != nil {
++			return err
++		}
+ 	}
+ 	builder.PreparedCacheDirectory = filepath.Join(cache.Scratch(), "prepared")
+ 	builder.PreparedCacheMaxBytes = cache.MaxBytes()
+@@ -2520,3 +2540,10 @@ func humanBytesUint(value uint64) string {
+ 	}
+ 	return fmt.Sprintf("%d B", value)
+ }
++
++func originMerge(inspection model.Inspection) *model.OriginMerge {
++	if inspection.Origin == nil {
++		return nil
++	}
++	return inspection.Origin.Merge
++}
+diff --git a/internal/model/build.go b/internal/model/build.go
+index 69ccc70..40188a7 100644
+--- a/internal/model/build.go
++++ b/internal/model/build.go
+@@ -1388,7 +1388,7 @@ func validateComposeCompatibility(target Inspection, compose Compose) error {
+ 	if compose.Base != nil && compose.Base.OriginSHA256 != "" && target.Model.OriginBOMSHA256 != compose.Base.OriginSHA256 {
+ 		return fmt.Errorf("compose base does not match existing model %q; use a new model name", target.Model.Name)
+ 	}
+-	if compose.Base != nil && compose.Base.RunID != "" && !reflect.DeepEqual(target.Model.Parent, composeParent(compose)) {
++	if compose.Base != nil && compose.Base.RunID != "" && !sameParent(target.Model.Parent, composeParent(compose)) {
+ 		return fmt.Errorf("compose parent does not match existing model %q; use a new model name", target.Model.Name)
+ 	}
+ 	return nil
+@@ -1419,7 +1419,24 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
+ 		compose.Base.Source = "huggingface://" + repository + "@" + strings.ToLower(revision)
+ 	}
+ 	var base Inspection
+-	if compose.Base.Model != "" {
++	if len(compose.Base.Merge) > 0 {
++		if !acquire {
++			parents, err := builder.mergeParents(*compose.Base)
++			if err != nil {
++				return Compose{}, nil, err
++			}
++			if compose.Architecture != (Architecture{}) && !reflect.DeepEqual(compose.Architecture, parents[0].inspection.Model.Architecture) {
++				return Compose{}, nil, fmt.Errorf("compose architecture does not match the base.merge parents")
++			}
++			compose.Architecture = parents[0].inspection.Model.Architecture
++			return compose, nil, compose.Validate()
++		}
++		merged, err := builder.mergeOrigin(*compose.Base)
++		if err != nil {
++			return Compose{}, nil, err
++		}
++		base = merged
++	} else if compose.Base.Model != "" {
+ 		resolved, err := Inspect(builder.Root, compose.Base.Model)
+ 		if err != nil {
+ 			return Compose{}, nil, fmt.Errorf("resolve compose base model %q: %w", compose.Base.Model, err)
+@@ -1499,6 +1516,18 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
+ 		if compose.Base.ArtifactBytes != 0 && compose.Base.ArtifactBytes != initialization.Artifact.Bytes {
+ 			return Compose{}, nil, fmt.Errorf("compose base artifact has %d bytes, not requested %d", initialization.Artifact.Bytes, compose.Base.ArtifactBytes)
+ 		}
++		node, err := ModelLineage(base)
++		if err != nil {
++			return Compose{}, nil, err
++		}
++		lineage, err := hashJSON(node)
++		if err != nil {
++			return Compose{}, nil, err
++		}
++		if compose.Base.LineageSHA256 != "" && compose.Base.LineageSHA256 != lineage {
++			return Compose{}, nil, fmt.Errorf("compose base lineage does not match the base model's recorded ancestry")
++		}
++		compose.Base.LineageSHA256 = lineage
+ 		compose.Base.RunID = initialization.SourceRunID
+ 		compose.Base.RunBOMSHA256 = pin.BOMSHA256
+ 		compose.Base.ArtifactSHA256 = initialization.Artifact.SHA256
+@@ -1693,7 +1722,7 @@ func (builder Builder) Compose(ctx context.Context, name string, compose Compose
+ 	if staged.Model.ArchitectureSHA256 != architectureHash {
+ 		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture", destination)
+ 	}
+-	if transaction.ModelID == "" && (staged.Model.OriginBOMSHA256 != composeOriginHash(compose) || !reflect.DeepEqual(staged.Model.Parent, composeParent(compose))) {
++	if transaction.ModelID == "" && (staged.Model.OriginBOMSHA256 != composeOriginHash(compose) || !sameParent(staged.Model.Parent, composeParent(compose))) {
+ 		return Inspection{}, fmt.Errorf("composing model %s does not match the requested architecture or origin", destination)
+ 	}
+ 	if transaction.ModelID != "" && staged.Model.ID != transaction.ModelID {
+@@ -1867,6 +1896,17 @@ func composeOriginHash(compose Compose) string {
+ 	return compose.Base.OriginSHA256
+ }
+ 
++// sameParent compares parent pins. Models created before parent pins recorded
++// lineage match on every other field, so they keep accepting new stages.
++func sameParent(stored, wanted *ModelParent) bool {
++	if stored != nil && wanted != nil && stored.LineageSHA256 == "" {
++		legacy := *wanted
++		legacy.LineageSHA256 = ""
++		return reflect.DeepEqual(*stored, legacy)
++	}
++	return reflect.DeepEqual(stored, wanted)
++}
++
+ func composeParent(compose Compose) *ModelParent {
+ 	if compose.Base == nil || compose.Base.RunID == "" {
+ 		return nil
+@@ -1874,7 +1914,8 @@ func composeParent(compose Compose) *ModelParent {
+ 	return &ModelParent{
+ 		Model: compose.Base.Model, ModelID: compose.Base.ModelID,
+ 		RunID: compose.Base.RunID, RunBOMSHA256: compose.Base.RunBOMSHA256,
+-		Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
++		Artifact:      training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
++		LineageSHA256: compose.Base.LineageSHA256,
+ 	}
+ }
+ 
+diff --git a/internal/model/lineage.go b/internal/model/lineage.go
+new file mode 100644
+index 0000000..cfef17d
+--- /dev/null
++++ b/internal/model/lineage.go
+@@ -0,0 +1,308 @@
++// Copyright (c) 2026 OpenWALDO Project contributors
++// Copyright (c) 2026 CtrlIQ, Inc.
++// Copyright (c) 2026 Gregory M. Kurtzer
++// SPDX-License-Identifier: Apache-2.0
++
++package model
++
++import (
++	"fmt"
++	"os"
++	"path/filepath"
++
++	"github.com/openwaldo/waldo/internal/modelweights"
++)
++
++func (node LineageNode) validate() error {
++	if !lineageDigest.MatchString(node.WeightsSHA256) {
++		return fmt.Errorf("weights %q is not a SHA-256", node.WeightsSHA256)
++	}
++	for _, link := range node.Parents {
++		if !lineageDigest.MatchString(link.WeightsSHA256) || (link.LineageSHA256 != "" && !lineageDigest.MatchString(link.LineageSHA256)) {
++			return fmt.Errorf("parent %q is not a SHA-256", link.WeightsSHA256)
++		}
++	}
++	return nil
++}
++
++// ModelLineage is a model's lineage node: its current weights and the weights
++// they came from. Trained weights descend from the model's starting weights;
++// a model with no runs is its origin, pulled or merged.
++func ModelLineage(inspection Inspection) (LineageNode, error) {
++	initialization, err := resolveRunInitialization(inspection, "")
++	if err != nil {
++		return LineageNode{}, err
++	}
++	if initialization == nil {
++		if inspection.Origin == nil || inspection.BOM.CurrentOriginSHA256 == "" {
++			return LineageNode{}, fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
++		}
++		return originNode(*inspection.Origin)
++	}
++	node := LineageNode{WeightsSHA256: initialization.Artifact.SHA256}
++	if parent := inspection.Model.Parent; parent != nil {
++		node.Parents = []LineageLink{{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}}
++	} else if inspection.Origin != nil {
++		start, err := originNode(*inspection.Origin)
++		if err != nil {
++			return LineageNode{}, err
++		}
++		link, err := linkTo(start)
++		if err != nil {
++			return LineageNode{}, err
++		}
++		node.Parents = []LineageLink{link}
++	}
++	return node, nil
++}
++
++// originNode is an origin's node. A merge records its own; pulled weights
++// descend from the release they were normalized from, whose node the release
++// recorded, if it did.
++func originNode(origin OriginBOM) (LineageNode, error) {
++	weights := ""
++	for _, artifact := range origin.Artifacts {
++		if artifact.Role == "weights" {
++			weights = artifact.SHA256
++		}
++	}
++	if weights == "" {
++		return LineageNode{}, fmt.Errorf("model origin has no weights artifact")
++	}
++	if origin.Merge != nil {
++		if origin.Lineage == nil || origin.Lineage.WeightsSHA256 != weights {
++			return LineageNode{}, fmt.Errorf("merged origin does not record its own lineage")
++		}
++		return *origin.Lineage, nil
++	}
++	node := LineageNode{WeightsSHA256: weights}
++	if origin.Lineage != nil {
++		link, err := linkTo(*origin.Lineage)
++		if err != nil {
++			return LineageNode{}, err
++		}
++		node.Parents = []LineageLink{link}
++	}
++	return node, nil
++}
++
++func linkTo(node LineageNode) (LineageLink, error) {
++	digest, err := hashJSON(node)
++	return LineageLink{WeightsSHA256: node.WeightsSHA256, LineageSHA256: digest}, err
++}
++
++// lineageIndex holds every lineage node this model store can show, keyed by
++// node hash: each model's own node and each release node its origin records.
++func (builder Builder) lineageIndex() map[string]LineageNode {
++	index := map[string]LineageNode{}
++	add := func(node LineageNode) {
++		if digest, err := hashJSON(node); err == nil {
++			index[digest] = node
++		}
++	}
++	for _, root := range []string{builder.Root, filepath.Join(builder.Root, ".merges"), filepath.Join(builder.Root, ".origins")} {
++		entries, err := os.ReadDir(root)
++		if err != nil {
++			continue
++		}
++		for _, entry := range entries {
++			if !entry.IsDir() || !validName.MatchString(entry.Name()) {
++				continue
++			}
++			inspection, err := Inspect(root, entry.Name())
++			if err != nil {
++				continue
++			}
++			if node, err := ModelLineage(inspection); err == nil {
++				add(node)
++			}
++			if inspection.Origin != nil && inspection.Origin.Lineage != nil {
++				add(*inspection.Origin.Lineage)
++			}
++		}
++	}
++	return index
++}
++
++// ancestry walks a node's chain through the nodes the index holds, like git
++// merge-base, collecting the weights it reaches; a branch ends where its node
++// is not held.
++func ancestry(node LineageNode, index map[string]LineageNode) map[string]bool {
++	reached := map[string]bool{}
++	visited := map[string]bool{}
++	queue := []LineageNode{node}
++	for len(queue) > 0 {
++		current := queue[0]
++		queue = queue[1:]
++		reached[current.WeightsSHA256] = true
++		for _, link := range current.Parents {
++			reached[link.WeightsSHA256] = true
++			if next, ok := index[link.LineageSHA256]; ok && !visited[link.LineageSHA256] {
++				visited[link.LineageSHA256] = true
++				queue = append(queue, next)
++			}
++		}
++	}
++	return reached
++}
++
++type mergeParent struct {
++	inspection Inspection
++	path       string
++	link       LineageLink
++	weight     float64
++}
++
++// mergeParents resolves base.merge and fails closed unless every parent has
++// the same architecture and all of them share an ancestor their lineage
++// shows. Averaging weights is only meaningful for models trained from common
++// weights.
++func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, error) {
++	var parents []mergeParent
++	var shared map[string]bool
++	index := builder.lineageIndex()
++	for _, declared := range base.Merge {
++		inspection, err := Inspect(builder.Root, declared.Model)
++		if err != nil {
++			return nil, fmt.Errorf("resolve base.merge parent %q: %w", declared.Model, err)
++		}
++		if len(parents) > 0 && inspection.Model.ArchitectureSHA256 != parents[0].inspection.Model.ArchitectureSHA256 {
++			return nil, fmt.Errorf("base.merge parent %q does not have the architecture of %q", declared.Model, parents[0].inspection.Model.Name)
++		}
++		if inspection.Model.Architecture.Tokenizer.Name != "byte" {
++			return nil, fmt.Errorf("base.merge supports byte-tokenizer models; %q uses %s", declared.Model, inspection.Model.Architecture.Tokenizer.Name)
++		}
++		path, _, err := currentWeights(inspection)
++		if err != nil {
++			return nil, fmt.Errorf("base.merge parent: %w", err)
++		}
++		node, err := ModelLineage(inspection)
++		if err != nil {
++			return nil, fmt.Errorf("base.merge parent %q lineage: %w", declared.Model, err)
++		}
++		link, err := linkTo(node)
++		if err != nil {
++			return nil, err
++		}
++		reached := ancestry(node, index)
++		if shared == nil {
++			shared = reached
++		} else {
++			for digest := range shared {
++				if !reached[digest] {
++					delete(shared, digest)
++				}
++			}
++		}
++		parents = append(parents, mergeParent{inspection, path, link, declared.Weight})
++	}
++	if len(shared) == 0 {
++		return nil, fmt.Errorf("base.merge parents share no recorded ancestor; only models trained from common weights can be merged")
++	}
++	return parents, nil
++}
++
++// ExportLineage is the node a release records, so a model pulled from it
++// continues the chain.
++func ExportLineage(inspection Inspection) (*LineageNode, error) {
++	node, err := ModelLineage(inspection)
++	if err != nil {
++		return nil, err
++	}
++	return &node, nil
++}
++
++// currentWeights is the newest complete real run's weights, else the origin's.
++func currentWeights(inspection Inspection) (string, string, error) {
++	initialization, err := resolveRunInitialization(inspection, "")
++	if err != nil {
++		return "", "", err
++	}
++	if initialization != nil {
++		return initialization.Path, initialization.Artifact.SHA256, nil
++	}
++	if inspection.Origin != nil && inspection.BOM.CurrentOriginSHA256 != "" {
++		for _, artifact := range inspection.Origin.Artifacts {
++			if artifact.Role == "weights" {
++				return filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)), artifact.SHA256, nil
++			}
++		}
++	}
++	return "", "", fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
++}
++
++// mergeOrigin averages the parents into a merged origin under .merges, named
++// by the parents and weights so the same merge is built once. Its lineage
++// node names every parent's node, like a git merge commit.
++func (builder Builder) mergeOrigin(base ComposeBase) (Inspection, error) {
++	parents, err := builder.mergeParents(base)
++	if err != nil {
++		return Inspection{}, err
++	}
++	// Method names version the exact arithmetic: float32 accumulation in parent
++	// order, rounded to nearest-even, so the same parents always merge to the same bytes.
++	merge := &OriginMerge{Method: "mean-f32-v1"}
++	var paths []string
++	var weights []float64
++	var links []LineageLink
++	for _, parent := range parents {
++		merge.Parents = append(merge.Parents, OriginMergeParent{Model: parent.inspection.Model.Name, ModelID: parent.inspection.Model.ID, WeightsSHA256: parent.link.WeightsSHA256, LineageSHA256: parent.link.LineageSHA256, Weight: parent.weight})
++		paths = append(paths, parent.path)
++		weights = append(weights, parent.weight)
++		links = append(links, parent.link)
++	}
++	if parents[0].weight > 0 {
++		merge.Method = "weighted-mean-f32-v1"
++	} else {
++		weights = nil
++	}
++	key, err := hashJSON(merge)
++	if err != nil {
++		return Inspection{}, err
++	}
++	root := filepath.Join(builder.Root, ".merges")
++	if _, err := os.Stat(filepath.Join(root, key)); err == nil {
++		return Inspect(root, key)
++	}
++	if err := os.MkdirAll(root, 0o755); err != nil {
++		return Inspection{}, err
++	}
++	temporary, err := os.MkdirTemp(root, ".waldo-merge-*")
++	if err != nil {
++		return Inspection{}, err
++	}
++	committed := false
++	defer func() {
++		if !committed {
++			_ = os.RemoveAll(temporary)
++		}
++	}()
++	artifactDirectory := filepath.Join(temporary, "origin", "artifacts")
++	if err := os.MkdirAll(artifactDirectory, 0o755); err != nil {
++		return Inspection{}, err
++	}
++	builder.report(Progress{Phase: "merge", Message: fmt.Sprintf("merging %d models (%s)", len(parents), merge.Method)})
++	if _, err := modelweights.Merge(paths, weights, filepath.Join(artifactDirectory, "model.safetensors")); err != nil {
++		return Inspection{}, err
++	}
++	architecture := parents[0].inspection.Model.Architecture
++	artifacts, err := writeOriginRuntime(temporary, architecture, parents[0].inspection.Model.ArchitectureSHA256)
++	if err != nil {
++		return Inspection{}, err
++	}
++	origin := OriginBOM{
++		Kind: "openwaldo-bom", Schema: 1, Subject: "model-origin", Source: OriginSource{Provider: "merge"},
++		ArchitectureSHA256: parents[0].inspection.Model.ArchitectureSHA256, SourceArtifacts: []OriginArtifact{}, Artifacts: artifacts,
++		Merge: merge,
++	}
++	for _, artifact := range artifacts {
++		if artifact.Role == "weights" {
++			origin.Lineage = &LineageNode{WeightsSHA256: artifact.SHA256, Parents: links}
++		}
++	}
++	if err := publishOrigin(root, key, temporary, origin, architecture, builder.clock()()); err != nil {
++		return Inspection{}, err
++	}
++	committed = true
++	return Inspect(root, key)
++}
+diff --git a/internal/model/lineage_test.go b/internal/model/lineage_test.go
+new file mode 100644
+index 0000000..1f85128
+--- /dev/null
++++ b/internal/model/lineage_test.go
+@@ -0,0 +1,125 @@
++// Copyright (c) 2026 OpenWALDO Project contributors
++// Copyright (c) 2026 CtrlIQ, Inc.
++// Copyright (c) 2026 Gregory M. Kurtzer
++// SPDX-License-Identifier: Apache-2.0
++
++package model
++
++import (
++	"context"
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"reflect"
++	"strings"
++	"testing"
++
++	"github.com/openwaldo/waldo/internal/training"
++)
++
++// releasePackage writes an exported package whose release BOM records a
++// lineage node descending from parent; salt changes one weight byte so
++// packages can hold different weights.
++func releasePackage(t *testing.T, parent string, salt byte) string {
++	t.Helper()
++	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
++	directory := t.TempDir()
++	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
++	weights := files["model.safetensors"]
++	weights[len(weights)-1] ^= salt
++	node := LineageNode{WeightsSHA256: strings.Repeat(string("0123456789"[salt]), 64), Parents: []LineageLink{{WeightsSHA256: parent}}}
++	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node})
++	if err != nil {
++		t.Fatal(err)
++	}
++	files["BOM.json"] = bom
++	for name, data := range files {
++		if err := os.WriteFile(filepath.Join(directory, name), data, 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	return directory
++}
++
++func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
++	common, other := strings.Repeat("a", 64), strings.Repeat("b", 64)
++	root := t.TempDir()
++	for name, directory := range map[string]string{"left": releasePackage(t, common, 0), "right": releasePackage(t, common, 1), "stranger": releasePackage(t, other, 2)} {
++		if _, err := (Puller{Root: root}).PullDirectory(name, directory); err != nil {
++			t.Fatal(err)
++		}
++	}
++	builder := Builder{Root: root}
++	merged, err := builder.Compose(context.Background(), "merged", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left", Weight: 1}, {Model: "right", Weight: 3}}}}, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	origin := merged.Origin
++	if origin == nil || origin.Source.Provider != "merge" || origin.Merge == nil || origin.Merge.Method != "weighted-mean-f32-v1" || len(origin.Merge.Parents) != 2 || origin.Merge.Parents[1].Weight != 3 {
++		t.Fatalf("origin = %+v", origin)
++	}
++	// Like a git merge commit, the merged node names each parent's node and nothing older.
++	if origin.Lineage == nil || len(origin.Lineage.Parents) != 2 || origin.Lineage.Parents[0].LineageSHA256 != origin.Merge.Parents[0].LineageSHA256 || origin.Merge.Parents[0].LineageSHA256 == "" {
++		t.Fatalf("lineage = %+v", origin.Lineage)
++	}
++	for _, artifact := range origin.Artifacts {
++		if artifact.Role == "weights" && artifact.SHA256 != origin.Lineage.WeightsSHA256 {
++			t.Fatalf("merged node weights = %s, artifact %s", origin.Lineage.WeightsSHA256, artifact.SHA256)
++		}
++	}
++	// The common ancestor is two links up the chain, through each release's own node.
++	if reached := ancestry(*origin.Lineage, builder.lineageIndex()); !reached[common] || reached[other] {
++		t.Fatalf("ancestry = %v", reached)
++	}
++	if merged.BOM.CurrentOriginSHA256 == "" || len(merged.Runs) != 0 {
++		t.Fatalf("merged model is not usable from its origin: %+v", merged.BOM)
++	}
++	// A release of the merge records the merged node, so the chain continues past publication.
++	lineage, err := ExportLineage(merged)
++	if err != nil || !reflect.DeepEqual(*lineage, *origin.Lineage) {
++		t.Fatalf("export lineage = %+v, %v", lineage, err)
++	}
++	_, err = builder.Compose(context.Background(), "unrelated", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "stranger"}}}}, nil)
++	if err == nil || !strings.Contains(err.Error(), "share no recorded ancestor") {
++		t.Fatalf("unrelated merge error = %v", err)
++	}
++	if _, err := os.Stat(filepath.Join(root, "unrelated")); !os.IsNotExist(err) {
++		t.Fatalf("unrelated merge left a model: %v", err)
++	}
++}
++
++func TestMergeComposeValidation(t *testing.T) {
++	for name, base := range map[string]ComposeBase{
++		"one parent":     {Merge: []ComposeMergeParent{{Model: "a"}}},
++		"duplicate":      {Merge: []ComposeMergeParent{{Model: "a"}, {Model: "a"}}},
++		"partial weight": {Merge: []ComposeMergeParent{{Model: "a", Weight: 2}, {Model: "b"}}},
++		"with model":     {Model: "c", Merge: []ComposeMergeParent{{Model: "a"}, {Model: "b"}}},
++		"run pin":        {RunID: "r", Merge: []ComposeMergeParent{{Model: "a"}, {Model: "b"}}},
++	} {
++		if err := (Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &base}).Validate(); err == nil {
++			t.Fatalf("%s: compose accepted", name)
++		}
++	}
++	if err := (Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "a"}}).Validate(); err == nil {
++		t.Fatal("stageless compose without base.merge accepted")
++	}
++}
++
++func TestSameParentAcceptsPinsRecordedBeforeLineage(t *testing.T) {
++	pin := ModelParent{Model: "base", ModelID: "id", RunID: "run", RunBOMSHA256: "bom", Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: "weights"}}
++	withLineage := pin
++	withLineage.LineageSHA256 = strings.Repeat("a", 64)
++	if !sameParent(&pin, &withLineage) || !sameParent(&withLineage, &withLineage) {
++		t.Fatal("matching parents rejected")
++	}
++	other := withLineage
++	other.LineageSHA256 = strings.Repeat("b", 64)
++	if sameParent(&withLineage, &other) {
++		t.Fatal("a recorded lineage must match exactly")
++	}
++	changed := pin
++	changed.RunID = "another"
++	if sameParent(&changed, &withLineage) || sameParent(nil, &withLineage) {
++		t.Fatal("a different parent matched")
++	}
++}
+diff --git a/internal/model/preflight.go b/internal/model/preflight.go
+index 3b8dee8..263d74e 100644
+--- a/internal/model/preflight.go
++++ b/internal/model/preflight.go
+@@ -194,13 +194,7 @@ func composePlan(name string, compose Compose) (Plan, error) {
+ 	}
+ 	if compose.Base != nil {
+ 		plan.OriginBOMSHA256 = compose.Base.OriginSHA256
+-		if compose.Base.RunID != "" {
+-			plan.Parent = &ModelParent{
+-				Model: compose.Base.Model, ModelID: compose.Base.ModelID,
+-				RunID: compose.Base.RunID, RunBOMSHA256: compose.Base.RunBOMSHA256,
+-				Artifact: training.Artifact{Path: "base/model.safetensors", SHA256: compose.Base.ArtifactSHA256, Bytes: compose.Base.ArtifactBytes},
+-			}
+-		}
++		plan.Parent = composeParent(compose)
+ 	}
+ 	return plan, nil
+ }
+diff --git a/internal/model/pull.go b/internal/model/pull.go
+index 493acda..977b518 100644
+--- a/internal/model/pull.go
++++ b/internal/model/pull.go
+@@ -58,6 +58,7 @@ type hubModel struct {
+ 
+ var huggingFaceRepository = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$`)
+ var huggingFaceCommit = regexp.MustCompile(`^[a-fA-F0-9]{40,64}$`)
++var lineageDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
+ var huggingFaceShard = regexp.MustCompile(`^model-[0-9]{5}-of-[0-9]{5}\.safetensors$`)
+ 
+ // Probe resolves only the portable architecture and tokenizer contract. It is
+@@ -158,23 +159,104 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
+ 		}
+ 		sourceArtifacts = append(sourceArtifacts, OriginArtifact{Role: sourceRole(filename), Path: filename, SHA256: digest, Bytes: bytes})
+ 	}
+-	if err := validateShardIndex(sourceDirectory, names); err != nil {
++	origin := OriginSource{Provider: "huggingface", Repository: metadata.ID, RequestedRevision: requested, Revision: metadata.SHA, URL: endpoint + "/" + metadata.ID, License: metadata.CardData.License}
++	if err := puller.importSource(name, temporary, sourceDirectory, names, sourceArtifacts, origin); err != nil {
+ 		return Inspection{}, err
+ 	}
+-	architecture, err := loadHuggingFaceArchitecture(filepath.Join(sourceDirectory, "config.json"))
++	committed = true
++	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s at %s", metadata.ID, metadata.SHA)})
++	return Inspect(puller.Root, name)
++}
++
++// PullDirectory imports a Hugging Face package exported to a local directory.
++// Its origin names the directory and pins every imported file by hash.
++func (puller Puller) PullDirectory(name, directory string) (Inspection, error) {
++	if err := ValidateName(name); err != nil {
++		return Inspection{}, err
++	}
++	directory, err := filepath.Abs(directory)
+ 	if err != nil {
+ 		return Inspection{}, err
+ 	}
+-	if err := validateDownloadedTokenizer(sourceDirectory, architecture); err != nil {
++	if _, err := os.Stat(filepath.Join(puller.Root, name)); err == nil {
++		return Inspection{}, fmt.Errorf("model %q already exists", name)
++	}
++	entries, err := os.ReadDir(directory)
++	if err != nil {
+ 		return Inspection{}, err
+ 	}
+-	architectureHash, err := hashJSON(architecture)
++	var listing hubModel
++	for _, entry := range entries {
++		if entry.Type().IsRegular() {
++			listing.Siblings = append(listing.Siblings, struct {
++				Name string `json:"rfilename"`
++				Size int64  `json:"size"`
++			}{Name: entry.Name()})
++		}
++	}
++	names, err := selectModelFiles(listing)
+ 	if err != nil {
+ 		return Inspection{}, err
+ 	}
++	if err := os.MkdirAll(puller.Root, 0o755); err != nil {
++		return Inspection{}, err
++	}
++	temporary, err := os.MkdirTemp(puller.Root, ".waldo-pull-*")
++	if err != nil {
++		return Inspection{}, err
++	}
++	committed := false
++	defer func() {
++		if !committed {
++			_ = os.RemoveAll(temporary)
++		}
++	}()
++	sourceDirectory := filepath.Join(temporary, ".source")
++	var sourceArtifacts []OriginArtifact
++	revision := ""
++	for _, filename := range names {
++		target := filepath.Join(sourceDirectory, filename)
++		if err := copyArtifactFile(filepath.Join(directory, filename), target); err != nil {
++			return Inspection{}, err
++		}
++		digest, bytes, err := hashFile(target)
++		if err != nil {
++			return Inspection{}, err
++		}
++		if filename == "model.safetensors" {
++			revision = digest
++		}
++		sourceArtifacts = append(sourceArtifacts, OriginArtifact{Role: sourceRole(filename), Path: filename, SHA256: digest, Bytes: bytes})
++	}
++	origin := OriginSource{Provider: "file", Repository: filepath.Base(directory), RequestedRevision: revision, Revision: revision, URL: "file://" + filepath.ToSlash(directory)}
++	if err := puller.importSource(name, temporary, sourceDirectory, names, sourceArtifacts, origin); err != nil {
++		return Inspection{}, err
++	}
++	committed = true
++	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s", origin.URL)})
++	return Inspect(puller.Root, name)
++}
++
++// importSource validates a Hugging Face layout in sourceDirectory and
++// publishes it as model name with an origin BOM naming source.
++func (puller Puller) importSource(name, temporary, sourceDirectory string, names []string, sourceArtifacts []OriginArtifact, source OriginSource) error {
++	if err := validateShardIndex(sourceDirectory, names); err != nil {
++		return err
++	}
++	architecture, err := loadHuggingFaceArchitecture(filepath.Join(sourceDirectory, "config.json"))
++	if err != nil {
++		return err
++	}
++	if err := validateDownloadedTokenizer(sourceDirectory, architecture); err != nil {
++		return err
++	}
++	architectureHash, err := hashJSON(architecture)
++	if err != nil {
++		return err
++	}
+ 	artifactDirectory := filepath.Join(temporary, "origin", "artifacts")
+ 	if err := os.MkdirAll(artifactDirectory, 0o755); err != nil {
+-		return Inspection{}, err
++		return err
+ 	}
+ 	var weightFiles []string
+ 	for _, filename := range names {
+@@ -186,77 +268,33 @@ func (puller Puller) Pull(ctx context.Context, name, source string) (Inspection,
+ 	puller.report(PullProgress{Phase: "normalize", Message: fmt.Sprintf("normalizing %d Safetensors file(s)", len(weightFiles))})
+ 	descriptors, err := modelweights.NormalizeHuggingFace(weightFiles, filepath.Join(artifactDirectory, "model.safetensors"))
+ 	if err != nil {
+-		return Inspection{}, fmt.Errorf("normalize Hugging Face weights: %w", err)
++		return fmt.Errorf("normalize Hugging Face weights: %w", err)
+ 	}
+ 	if err := validateDownloadedTensors(architecture, descriptors); err != nil {
+-		return Inspection{}, err
+-	}
+-	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "config.json"), map[string]any{
+-		"kind": "waldo-downloaded-model-config", "schema": 1,
+-		"architecture_sha256": architectureHash, "architecture": architecture,
+-		"backend": map[string]any{"name": "portable-safetensors", "revision": "huggingface-schema-1"},
+-	}); err != nil {
+-		return Inspection{}, err
++		return err
+ 	}
+-	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "tokenizer.json"), map[string]any{
+-		"kind": "waldo-byte-tokenizer", "schema": 1, "name": "byte", "revision": "builtin-byte-schema-1",
+-		"pad_id": 0, "bos_id": 1, "eos_id": 2, "byte_offset": 3, "vocabulary_size": 259,
+-	}); err != nil {
+-		return Inspection{}, err
++	artifacts, err := writeOriginRuntime(temporary, architecture, architectureHash)
++	if err != nil {
++		return err
+ 	}
+-	artifacts, err := inventoryOriginArtifacts(temporary, []string{"origin/artifacts/model.safetensors", "origin/artifacts/config.json", "origin/artifacts/tokenizer.json"})
++	lineage, err := releaseLineage(filepath.Join(sourceDirectory, "BOM.json"))
+ 	if err != nil {
+-		return Inspection{}, err
++		return err
+ 	}
+ 	origin := OriginBOM{
+ 		Kind: "openwaldo-bom", Schema: 1, Subject: "model-origin",
+-		Source:             OriginSource{Provider: "huggingface", Repository: metadata.ID, RequestedRevision: requested, Revision: metadata.SHA, URL: endpoint + "/" + metadata.ID, License: metadata.CardData.License},
++		Source:             source,
+ 		ArchitectureSHA256: architectureHash, SourceArtifacts: sourceArtifacts, Artifacts: artifacts,
++		Lineage: lineage,
+ 	}
+-	originHash, err := hashJSON(origin)
+-	if err != nil {
+-		return Inspection{}, err
+-	}
+-	plan, err := composePlan(name, Compose{Architecture: architecture})
+-	if err != nil {
+-		return Inspection{}, err
+-	}
+-	plan.OriginBOMSHA256 = originHash
+-	planHash, err := hashJSON(plan)
+-	if err != nil {
+-		return Inspection{}, err
++	if err := os.RemoveAll(sourceDirectory); err != nil {
++		return err
+ 	}
+ 	now := time.Now
+ 	if puller.Now != nil {
+ 		now = puller.Now
+ 	}
+-	created := formatTime(now())
+-	record := ModelRecord{
+-		Kind: "waldo-model", Schema: 1, ID: planHash, Name: name, PlanSHA256: planHash,
+-		ArchitectureSHA256: architectureHash, Architecture: architecture, Forecast: plan.Forecast,
+-		Created: created, Updated: created, Runs: []RunPin{}, OriginBOMSHA256: originHash, OriginArtifacts: artifacts,
+-	}
+-	if err := os.RemoveAll(sourceDirectory); err != nil {
+-		return Inspection{}, err
+-	}
+-	if err := writeJSONAtomic(filepath.Join(temporary, "ORIGIN-BOM.json"), origin); err != nil {
+-		return Inspection{}, err
+-	}
+-	if err := writeJSONAtomic(filepath.Join(temporary, "PLAN.json"), plan); err != nil {
+-		return Inspection{}, err
+-	}
+-	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL.json"), record); err != nil {
+-		return Inspection{}, err
+-	}
+-	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL-BOM.json"), modelBOM(record)); err != nil {
+-		return Inspection{}, err
+-	}
+-	if err := os.Rename(temporary, destination); err != nil {
+-		return Inspection{}, fmt.Errorf("publish pulled model %q: %w", name, err)
+-	}
+-	committed = true
+-	puller.report(PullProgress{Phase: "complete", Message: fmt.Sprintf("pulled %s at %s", metadata.ID, metadata.SHA)})
+-	return Inspect(puller.Root, name)
++	return publishOrigin(puller.Root, name, temporary, origin, architecture, now())
+ }
+ 
+ func (puller Puller) resolveHub(ctx context.Context, source string) (hubModel, string, string, string, string, *http.Client, error) {
+@@ -632,3 +670,86 @@ func huggingFaceToken() string {
+ 	}
+ 	return strings.TrimSpace(string(data))
+ }
++
++// writeOriginRuntime writes the runtime configuration and byte tokenizer
++// beside origin/artifacts/model.safetensors and inventories all three.
++func writeOriginRuntime(temporary string, architecture Architecture, architectureHash string) ([]OriginArtifact, error) {
++	artifactDirectory := filepath.Join(temporary, "origin", "artifacts")
++	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "config.json"), map[string]any{
++		"kind": "waldo-downloaded-model-config", "schema": 1,
++		"architecture_sha256": architectureHash, "architecture": architecture,
++		"backend": map[string]any{"name": "portable-safetensors", "revision": "huggingface-schema-1"},
++	}); err != nil {
++		return nil, err
++	}
++	if err := writeJSONAtomic(filepath.Join(artifactDirectory, "tokenizer.json"), map[string]any{
++		"kind": "waldo-byte-tokenizer", "schema": 1, "name": "byte", "revision": "builtin-byte-schema-1",
++		"pad_id": 0, "bos_id": 1, "eos_id": 2, "byte_offset": 3, "vocabulary_size": 259,
++	}); err != nil {
++		return nil, err
++	}
++	return inventoryOriginArtifacts(temporary, []string{"origin/artifacts/model.safetensors", "origin/artifacts/config.json", "origin/artifacts/tokenizer.json"})
++}
++
++// publishOrigin writes the origin BOM, plan, record, and model BOM into
++// temporary and renames it into place as model name under root.
++func publishOrigin(root, name, temporary string, origin OriginBOM, architecture Architecture, now time.Time) error {
++	originHash, err := hashJSON(origin)
++	if err != nil {
++		return err
++	}
++	plan, err := composePlan(name, Compose{Architecture: architecture})
++	if err != nil {
++		return err
++	}
++	plan.OriginBOMSHA256 = originHash
++	planHash, err := hashJSON(plan)
++	if err != nil {
++		return err
++	}
++	created := formatTime(now)
++	record := ModelRecord{
++		Kind: "waldo-model", Schema: 1, ID: planHash, Name: name, PlanSHA256: planHash,
++		ArchitectureSHA256: origin.ArchitectureSHA256, Architecture: architecture, Forecast: plan.Forecast,
++		Created: created, Updated: created, Runs: []RunPin{}, OriginBOMSHA256: originHash, OriginArtifacts: origin.Artifacts,
++	}
++	if err := writeJSONAtomic(filepath.Join(temporary, "ORIGIN-BOM.json"), origin); err != nil {
++		return err
++	}
++	if err := writeJSONAtomic(filepath.Join(temporary, "PLAN.json"), plan); err != nil {
++		return err
++	}
++	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL.json"), record); err != nil {
++		return err
++	}
++	if err := writeJSONAtomic(filepath.Join(temporary, "MODEL-BOM.json"), modelBOM(record)); err != nil {
++		return err
++	}
++	if err := os.Rename(temporary, filepath.Join(root, name)); err != nil {
++		return fmt.Errorf("publish model %q: %w", name, err)
++	}
++	return nil
++}
++
++// releaseLineage is the lineage node a WALDO release's BOM.json records, if
++// the package has one; the file itself is pinned among the source artifacts.
++func releaseLineage(path string) (*LineageNode, error) {
++	data, err := os.ReadFile(path)
++	if os.IsNotExist(err) {
++		return nil, nil
++	} else if err != nil {
++		return nil, err
++	}
++	var release struct {
++		Kind    string       `json:"kind"`
++		Subject string       `json:"subject"`
++		Lineage *LineageNode `json:"lineage"`
++	}
++	if json.Unmarshal(data, &release) != nil || release.Kind != "openwaldo-bom" || release.Subject != "model-release" || release.Lineage == nil {
++		return nil, nil
++	}
++	if err := release.Lineage.validate(); err != nil {
++		return nil, fmt.Errorf("release BOM.json lineage: %w", err)
++	}
++	return release.Lineage, nil
++}
+diff --git a/internal/model/pull_test.go b/internal/model/pull_test.go
+index a1b91e5..3886966 100644
+--- a/internal/model/pull_test.go
++++ b/internal/model/pull_test.go
+@@ -257,3 +257,27 @@ func sortStrings(values []string) {
+ 		}
+ 	}
+ }
++
++func TestPullDirectoryImportsAnExportedPackage(t *testing.T) {
++	architecture := Architecture{Family: "decoder-transformer", ContextTokens: 32, VocabularySize: 259, HiddenSize: 4, IntermediateSize: 8, Layers: 1, AttentionHeads: 2, KeyValueHeads: 1, TieEmbeddings: true, ParameterDType: "bfloat16", Tokenizer: Tokenizer{Name: "byte", Revision: "builtin-byte-schema-1"}}
++	directory := t.TempDir()
++	for name, data := range huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass) {
++		if err := os.WriteFile(filepath.Join(directory, name), data, 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++	inspection, err := (Puller{Root: t.TempDir()}).PullDirectory("local", directory)
++	if err != nil {
++		t.Fatal(err)
++	}
++	source := inspection.Origin.Source
++	if source.Provider != "file" || source.URL != "file://"+filepath.ToSlash(directory) || len(source.Revision) != 64 || len(inspection.Origin.SourceArtifacts) != 4 {
++		t.Fatalf("origin = %+v", inspection.Origin)
++	}
++	if _, err := os.Stat(filepath.Join(inspection.Path, "origin", "artifacts", "model.safetensors")); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := (Puller{Root: filepath.Dir(inspection.Path)}).PullDirectory("local", directory); err == nil {
++		t.Fatal("pulled over an existing model")
++	}
++}
+diff --git a/internal/model/recipe.go b/internal/model/recipe.go
+index d430ebb..a7980c8 100644
+--- a/internal/model/recipe.go
++++ b/internal/model/recipe.go
+@@ -120,6 +120,15 @@ type ComposeBase struct {
+ 	RunBOMSHA256   string `json:"run_bom_sha256,omitempty" yaml:"run_bom_sha256,omitempty"`
+ 	ArtifactSHA256 string `json:"artifact_sha256,omitempty" yaml:"artifact_sha256,omitempty"`
+ 	ArtifactBytes  int64  `json:"artifact_bytes,omitempty" yaml:"artifact_bytes,omitempty"`
++	// Merge averages two or more local models that share an ancestor.
++	Merge []ComposeMergeParent `json:"merge,omitempty" yaml:"merge,omitempty"`
++	// LineageSHA256 is resolved from a trained base model's lineage node and pinned with it.
++	LineageSHA256 string `json:"lineage_sha256,omitempty" yaml:"lineage_sha256,omitempty"`
++}
++
++type ComposeMergeParent struct {
++	Model  string  `json:"model" yaml:"model"`
++	Weight float64 `json:"weight,omitempty" yaml:"weight,omitempty"`
+ }
+ 
+ type Architecture struct {
+@@ -554,6 +563,33 @@ func IsComposeFile(path string) (bool, error) {
+ 	return header.Kind == "waldo-model-compose", nil
+ }
+ 
++func validateComposeMerge(base ComposeBase) error {
++	if base.ModelID != "" || base.RunID != "" || base.RunBOMSHA256 != "" || base.ArtifactSHA256 != "" || base.ArtifactBytes != 0 || base.LineageSHA256 != "" {
++		return fmt.Errorf("base.merge cannot declare managed-model run pins")
++	}
++	if len(base.Merge) < 2 {
++		return fmt.Errorf("base.merge needs at least two parents")
++	}
++	seen := map[string]bool{}
++	weighted := 0
++	for _, parent := range base.Merge {
++		if !validName.MatchString(parent.Model) || seen[parent.Model] {
++			return fmt.Errorf("base.merge parents must name distinct locally managed models")
++		}
++		seen[parent.Model] = true
++		if parent.Weight < 0 || math.IsInf(parent.Weight, 0) || math.IsNaN(parent.Weight) {
++			return fmt.Errorf("base.merge weights must be positive and finite")
++		}
++		if parent.Weight > 0 {
++			weighted++
++		}
++	}
++	if weighted != 0 && weighted != len(base.Merge) {
++		return fmt.Errorf("base.merge weights must be given for every parent or for none")
++	}
++	return nil
++}
++
+ func (compose Compose) Validate() error {
+ 	if compose.Kind != "waldo-model-compose" || compose.Schema != ComposeSchema {
+ 		return fmt.Errorf("unsupported model compose identity %q schema %d", compose.Kind, compose.Schema)
+@@ -568,9 +604,14 @@ func (compose Compose) Validate() error {
+ 		}
+ 	}
+ 	if compose.Base != nil {
+-		hasModel, hasSource := compose.Base.Model != "", compose.Base.Source != ""
+-		if hasModel == hasSource {
+-			return fmt.Errorf("base must declare exactly one of model or source")
++		hasModel, hasSource, hasMerge := compose.Base.Model != "", compose.Base.Source != "", len(compose.Base.Merge) > 0
++		if (hasModel && hasSource) || (hasModel && hasMerge) || (hasSource && hasMerge) || !(hasModel || hasSource || hasMerge) {
++			return fmt.Errorf("base must declare exactly one of model, source, or merge")
++		}
++		if hasMerge {
++			if err := validateComposeMerge(*compose.Base); err != nil {
++				return err
++			}
+ 		}
+ 		if hasModel && !validName.MatchString(compose.Base.Model) {
+ 			return fmt.Errorf("base.model must name a locally managed model")
+@@ -591,8 +632,8 @@ func (compose Compose) Validate() error {
+ 			return fmt.Errorf("base artifact_bytes cannot be negative")
+ 		}
+ 	}
+-	if len(compose.Stages) == 0 {
+-		return fmt.Errorf("at least one training stage is required")
++	if len(compose.Stages) == 0 && (compose.Base == nil || len(compose.Base.Merge) == 0) {
++		return fmt.Errorf("at least one training stage is required unless base.merge creates the model")
+ 	}
+ 	seen := map[string]bool{}
+ 	hasToolTraining := false
+diff --git a/internal/model/records.go b/internal/model/records.go
+index 333120c..5b7572b 100644
+--- a/internal/model/records.go
++++ b/internal/model/records.go
+@@ -49,6 +49,8 @@ type ModelParent struct {
+ 	RunID        string            `json:"run_id"`
+ 	RunBOMSHA256 string            `json:"run_bom_sha256"`
+ 	Artifact     training.Artifact `json:"artifact"`
++	// LineageSHA256 names the parent's lineage node, as a git commit names its parent.
++	LineageSHA256 string `json:"lineage_sha256,omitempty"`
+ }
+ 
+ type OriginSource struct {
+@@ -75,6 +77,38 @@ type OriginBOM struct {
+ 	ArchitectureSHA256 string           `json:"architecture_sha256"`
+ 	SourceArtifacts    []OriginArtifact `json:"source_artifacts"`
+ 	Artifacts          []OriginArtifact `json:"artifacts"`
++	Merge              *OriginMerge     `json:"merge,omitempty"`
++	// Lineage is the source release's lineage node, or a merge's own node.
++	Lineage *LineageNode `json:"lineage,omitempty"`
++}
++
++// LineageNode names a model's weights and the weights they came from, each by
++// its weights hash and the hash of its own node. Like a git commit, a node
++// names only its direct parents, so it stays the same size however long the
++// history behind it; the history is the chain of nodes.
++type LineageNode struct {
++	WeightsSHA256 string        `json:"weights_sha256"`
++	Parents       []LineageLink `json:"parents,omitempty"`
++}
++
++type LineageLink struct {
++	WeightsSHA256 string `json:"weights_sha256"`
++	LineageSHA256 string `json:"lineage_sha256,omitempty"`
++}
++
++// OriginMerge records a merged origin: its parents in merge order, so anyone
++// holding them can recompute the weights and compare hashes.
++type OriginMerge struct {
++	Method  string              `json:"method"`
++	Parents []OriginMergeParent `json:"parents"`
++}
++
++type OriginMergeParent struct {
++	Model         string  `json:"model"`
++	ModelID       string  `json:"model_id"`
++	WeightsSHA256 string  `json:"weights_sha256"`
++	LineageSHA256 string  `json:"lineage_sha256"`
++	Weight        float64 `json:"weight,omitempty"`
+ }
+ 
+ type PlannedStage struct {
+diff --git a/internal/modelexport/gguf.go b/internal/modelexport/gguf.go
+index 81e856a..d2967de 100644
+--- a/internal/modelexport/gguf.go
++++ b/internal/modelexport/gguf.go
+@@ -196,7 +196,11 @@ func exportGGUFPackage(ctx context.Context, inspection model.Inspection, destina
+ 	if err != nil {
+ 		return "", err
+ 	}
+-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
++	lineage, err := model.ExportLineage(inspection)
++	if err != nil {
++		return "", err
++	}
++	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Lineage: lineage, Artifacts: inventory, Generated: inspection.Model.Updated}
+ 	if options.Quantization != nil {
+ 		if options.result == nil {
+ 			return "", fmt.Errorf("quantization result is missing")
+diff --git a/internal/modelexport/huggingface.go b/internal/modelexport/huggingface.go
+index 3bd6c70..abf4673 100644
+--- a/internal/modelexport/huggingface.go
++++ b/internal/modelexport/huggingface.go
+@@ -54,17 +54,20 @@ type Calibration struct {
+ }
+ 
+ type releaseBOM struct {
+-	Kind         string               `json:"kind"`
+-	Schema       int                  `json:"schema"`
+-	Subject      string               `json:"subject"`
+-	Format       string               `json:"format"`
+-	ModelID      string               `json:"model_id"`
+-	Name         string               `json:"name"`
+-	Interaction  model.Interaction    `json:"interaction,omitzero"`
+-	SourceType   string               `json:"source_type"`
+-	SourceID     string               `json:"source_id"`
+-	RunID        string               `json:"run_id,omitempty"`
+-	SourceBOM    string               `json:"source_bom_sha256"`
++	Kind        string            `json:"kind"`
++	Schema      int               `json:"schema"`
++	Subject     string            `json:"subject"`
++	Format      string            `json:"format"`
++	ModelID     string            `json:"model_id"`
++	Name        string            `json:"name"`
++	Interaction model.Interaction `json:"interaction,omitzero"`
++	SourceType  string            `json:"source_type"`
++	SourceID    string            `json:"source_id"`
++	RunID       string            `json:"run_id,omitempty"`
++	SourceBOM   string            `json:"source_bom_sha256"`
++	// Lineage carries the exported weights and their ancestry, so a model
++	// pulled from this release can prove what it descends from.
++	Lineage      *model.LineageNode   `json:"lineage,omitempty"`
+ 	Artifacts    []releaseArtifact    `json:"artifacts"`
+ 	Quantization *releaseQuantization `json:"quantization,omitempty"`
+ 	Generated    string               `json:"generated"`
+@@ -189,7 +192,11 @@ func exportLlamaPackage(ctx context.Context, inspection model.Inspection, destin
+ 	if err != nil {
+ 		return "", err
+ 	}
+-	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Artifacts: inventory, Generated: inspection.Model.Updated}
++	lineage, err := model.ExportLineage(inspection)
++	if err != nil {
++		return "", err
++	}
++	bom := releaseBOM{Kind: "openwaldo-bom", Schema: 1, Subject: "model-release", Format: format, ModelID: inspection.Model.ID, Name: inspection.Model.Name, Interaction: record.Interaction, SourceType: artifacts.SourceType, SourceID: artifacts.SourceID, RunID: artifacts.RunID, SourceBOM: sourceBOM, Lineage: lineage, Artifacts: inventory, Generated: inspection.Model.Updated}
+ 	if err := writeJSON(filepath.Join(temporary, "BOM.json"), bom); err != nil {
+ 		return "", err
+ 	}
+diff --git a/internal/modelweights/merge.go b/internal/modelweights/merge.go
+new file mode 100644
+index 0000000..9990784
+--- /dev/null
++++ b/internal/modelweights/merge.go
+@@ -0,0 +1,213 @@
++// Copyright (c) 2026 OpenWALDO Project contributors
++// Copyright (c) 2026 CtrlIQ, Inc.
++// Copyright (c) 2026 Gregory M. Kurtzer
++// SPDX-License-Identifier: Apache-2.0
++
++package modelweights
++
++import (
++	"encoding/binary"
++	"encoding/json"
++	"fmt"
++	"math"
++	"os"
++	"reflect"
++	"sort"
++)
++
++type mergeSource struct {
++	file      *os.File
++	tensors   map[string]Descriptor
++	dataStart int64
++}
++
++// Merge writes the weighted mean of every source's tensors to destination.
++// Sources must hold the same tensors with the same dtypes and shapes. Values
++// accumulate in float32 in source order, rounding each product before it is
++// added, so the same inputs always produce the same bytes.
++func Merge(sources []string, weights []float64, destination string) (map[string]Descriptor, error) {
++	if len(sources) < 2 {
++		return nil, fmt.Errorf("a merge needs at least two sources")
++	}
++	if weights == nil {
++		weights = make([]float64, len(sources))
++		for index := range weights {
++			weights[index] = 1
++		}
++	}
++	if len(weights) != len(sources) {
++		return nil, fmt.Errorf("a merge needs one weight per source; got %d for %d sources", len(weights), len(sources))
++	}
++	var total float64
++	for _, weight := range weights {
++		if !(weight > 0) || math.IsInf(weight, 0) {
++			return nil, fmt.Errorf("merge weights must be positive and finite")
++		}
++		total += weight
++	}
++	opened := make([]mergeSource, 0, len(sources))
++	defer func() {
++		for _, source := range opened {
++			_ = source.file.Close()
++		}
++	}()
++	for _, path := range sources {
++		source, err := openMergeSource(path)
++		if err != nil {
++			return nil, err
++		}
++		opened = append(opened, source)
++	}
++	names := make([]string, 0, len(opened[0].tensors))
++	for name, descriptor := range opened[0].tensors {
++		if descriptor.DType != "BF16" && descriptor.DType != "F32" {
++			return nil, fmt.Errorf("tensor %s is %s; merges support BF16 and F32", name, descriptor.DType)
++		}
++		names = append(names, name)
++	}
++	sort.Strings(names)
++	for index, source := range opened[1:] {
++		if len(source.tensors) != len(names) {
++			return nil, fmt.Errorf("%s has %d tensors; %s has %d", sources[index+1], len(source.tensors), sources[0], len(names))
++		}
++		for _, name := range names {
++			want, got := opened[0].tensors[name], source.tensors[name]
++			if got.DType != want.DType || !reflect.DeepEqual(got.Shape, want.Shape) {
++				return nil, fmt.Errorf("%s tensor %s does not match %s in dtype and shape", sources[index+1], name, sources[0])
++			}
++		}
++	}
++	result := make(map[string]Descriptor, len(names))
++	header := map[string]any{"__metadata__": map[string]string{"format": "pt", "merged_by": "openwaldo"}}
++	var offset uint64
++	for _, name := range names {
++		descriptor := opened[0].tensors[name]
++		length := descriptor.DataOffsets[1] - descriptor.DataOffsets[0]
++		result[name] = Descriptor{descriptor.DType, descriptor.Shape, []uint64{offset, offset + length}}
++		header[name] = result[name]
++		offset += length
++	}
++	encoded, err := json.Marshal(header)
++	if err != nil {
++		return nil, err
++	}
++	for len(encoded)%8 != 0 {
++		encoded = append(encoded, ' ')
++	}
++	output, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
++	if err != nil {
++		return nil, err
++	}
++	committed := false
++	defer func() {
++		_ = output.Close()
++		if !committed {
++			_ = os.Remove(destination)
++		}
++	}()
++	var length [8]byte
++	binary.LittleEndian.PutUint64(length[:], uint64(len(encoded)))
++	if _, err := output.Write(length[:]); err != nil {
++		return nil, err
++	}
++	if _, err := output.Write(encoded); err != nil {
++		return nil, err
++	}
++	// Python and MLX evaluate the same mean as float32(sum of weights) in float64.
++	divisor := float32(total)
++	for _, name := range names {
++		descriptor := opened[0].tensors[name]
++		width := uint64(2)
++		if descriptor.DType == "F32" {
++			width = 4
++		}
++		size := descriptor.DataOffsets[1] - descriptor.DataOffsets[0]
++		sums := make([]float32, size/width)
++		raw := make([]byte, size)
++		for index, source := range opened {
++			start := source.tensors[name].DataOffsets[0]
++			if _, err := source.file.ReadAt(raw, source.dataStart+int64(start)); err != nil {
++				return nil, fmt.Errorf("read %s tensor %s: %w", sources[index], name, err)
++			}
++			share := float32(weights[index])
++			for element := range sums {
++				// The explicit conversion stops Go from fusing the multiply into the add.
++				sums[element] += float32(decodeFloat(raw, element, width) * share)
++			}
++		}
++		for element, sum := range sums {
++			encodeFloat(raw, element, width, sum/divisor)
++		}
++		if _, err := output.Write(raw); err != nil {
++			return nil, fmt.Errorf("write tensor %s: %w", name, err)
++		}
++	}
++	if err := output.Sync(); err != nil {
++		return nil, err
++	}
++	if err := output.Close(); err != nil {
++		return nil, err
++	}
++	committed = true
++	return result, nil
++}
++
++func openMergeSource(path string) (mergeSource, error) {
++	file, err := os.Open(path)
++	if err != nil {
++		return mergeSource{}, err
++	}
++	header, dataStart, err := readHeader(file)
++	if err != nil {
++		_ = file.Close()
++		return mergeSource{}, fmt.Errorf("%s: %w", path, err)
++	}
++	info, err := file.Stat()
++	if err != nil {
++		_ = file.Close()
++		return mergeSource{}, err
++	}
++	dataBytes := uint64(info.Size() - dataStart)
++	tensors := make(map[string]Descriptor, len(header))
++	for name, raw := range header {
++		if name == "__metadata__" {
++			continue
++		}
++		var descriptor Descriptor
++		if err := json.Unmarshal(raw, &descriptor); err != nil {
++			_ = file.Close()
++			return mergeSource{}, fmt.Errorf("%s tensor %s: %w", path, name, err)
++		}
++		expected, err := tensorBytes(descriptor)
++		if err != nil || len(descriptor.DataOffsets) != 2 || descriptor.DataOffsets[1] > dataBytes || descriptor.DataOffsets[1] < descriptor.DataOffsets[0] || descriptor.DataOffsets[1]-descriptor.DataOffsets[0] != expected {
++			_ = file.Close()
++			return mergeSource{}, fmt.Errorf("%s tensor %s has an invalid payload", path, name)
++		}
++		tensors[name] = descriptor
++	}
++	return mergeSource{file, tensors, dataStart}, nil
++}
++
++func decodeFloat(raw []byte, index int, width uint64) float32 {
++	if width == 4 {
++		return math.Float32frombits(binary.LittleEndian.Uint32(raw[index*4:]))
++	}
++	return math.Float32frombits(uint32(binary.LittleEndian.Uint16(raw[index*2:])) << 16)
++}
++
++func encodeFloat(raw []byte, index int, width uint64, value float32) {
++	if width == 4 {
++		binary.LittleEndian.PutUint32(raw[index*4:], math.Float32bits(value))
++		return
++	}
++	binary.LittleEndian.PutUint16(raw[index*2:], bfloat16(value))
++}
++
++// bfloat16 rounds to nearest, ties to even, as MLX and PyTorch do.
++func bfloat16(value float32) uint16 {
++	if value != value {
++		return 0x7fc0
++	}
++	bits := math.Float32bits(value)
++	return uint16((bits + 0x7fff + (bits>>16)&1) >> 16)
++}
+diff --git a/internal/modelweights/merge_test.go b/internal/modelweights/merge_test.go
+new file mode 100644
+index 0000000..8e5de18
+--- /dev/null
++++ b/internal/modelweights/merge_test.go
+@@ -0,0 +1,149 @@
++// Copyright (c) 2026 OpenWALDO Project contributors
++// Copyright (c) 2026 CtrlIQ, Inc.
++// Copyright (c) 2026 Gregory M. Kurtzer
++// SPDX-License-Identifier: Apache-2.0
++
++package modelweights
++
++import (
++	"encoding/binary"
++	"encoding/json"
++	"math"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++type fixtureTensor struct {
++	dtype  string
++	shape  []uint64
++	values []float32
++}
++
++func writeFixture(t *testing.T, tensors map[string]fixtureTensor) string {
++	t.Helper()
++	header := map[string]any{"__metadata__": map[string]string{"format": "pt"}}
++	var payload []byte
++	for _, name := range []string{"a.weight", "b.weight"} {
++		tensor, ok := tensors[name]
++		if !ok {
++			continue
++		}
++		width := uint64(2)
++		if tensor.dtype == "F32" {
++			width = 4
++		}
++		raw := make([]byte, uint64(len(tensor.values))*width)
++		for index, value := range tensor.values {
++			if width == 4 {
++				binary.LittleEndian.PutUint32(raw[index*4:], math.Float32bits(value))
++			} else {
++				binary.LittleEndian.PutUint16(raw[index*2:], bfloat16(value))
++			}
++		}
++		header[name] = Descriptor{tensor.dtype, tensor.shape, []uint64{uint64(len(payload)), uint64(len(payload) + len(raw))}}
++		payload = append(payload, raw...)
++	}
++	encoded, err := json.Marshal(header)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var length [8]byte
++	binary.LittleEndian.PutUint64(length[:], uint64(len(encoded)))
++	path := filepath.Join(t.TempDir(), "model.safetensors")
++	if err := os.WriteFile(path, append(append(length[:], encoded...), payload...), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	return path
++}
++
++func readFixture(t *testing.T, path, name string) []float32 {
++	t.Helper()
++	source, err := openMergeSource(path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer source.file.Close()
++	descriptor := source.tensors[name]
++	width := uint64(2)
++	if descriptor.DType == "F32" {
++		width = 4
++	}
++	raw := make([]byte, descriptor.DataOffsets[1]-descriptor.DataOffsets[0])
++	if _, err := source.file.ReadAt(raw, source.dataStart+int64(descriptor.DataOffsets[0])); err != nil {
++		t.Fatal(err)
++	}
++	values := make([]float32, uint64(len(raw))/width)
++	for index := range values {
++		values[index] = decodeFloat(raw, index, width)
++	}
++	return values
++}
++
++func TestMergeAveragesEveryTensor(t *testing.T) {
++	first := writeFixture(t, map[string]fixtureTensor{"a.weight": {"BF16", []uint64{2}, []float32{1, 2}}, "b.weight": {"F32", []uint64{1}, []float32{0.5}}})
++	second := writeFixture(t, map[string]fixtureTensor{"a.weight": {"BF16", []uint64{2}, []float32{3, 4}}, "b.weight": {"F32", []uint64{1}, []float32{1.5}}})
++	destination := filepath.Join(t.TempDir(), "merged.safetensors")
++	descriptors, err := Merge([]string{first, second}, nil, destination)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(descriptors) != 2 || descriptors["a.weight"].DType != "BF16" || descriptors["b.weight"].DType != "F32" {
++		t.Fatalf("descriptors = %+v", descriptors)
++	}
++	if got := readFixture(t, destination, "a.weight"); got[0] != 2 || got[1] != 3 {
++		t.Fatalf("a.weight = %v", got)
++	}
++	if got := readFixture(t, destination, "b.weight"); got[0] != 1 {
++		t.Fatalf("b.weight = %v", got)
++	}
++}
++
++func TestMergeWeightsSources(t *testing.T) {
++	first := writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{1}, []float32{1}}})
++	second := writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{1}, []float32{4}}})
++	destination := filepath.Join(t.TempDir(), "merged.safetensors")
++	if _, err := Merge([]string{first, second}, []float64{1, 3}, destination); err != nil {
++		t.Fatal(err)
++	}
++	if got := readFixture(t, destination, "a.weight"); got[0] != 3.25 {
++		t.Fatalf("a.weight = %v", got)
++	}
++}
++
++func TestBFloat16RoundsToNearestEven(t *testing.T) {
++	for value, want := range map[float32]uint16{1: 0x3f80, 1 + 1.0/256: 0x3f80, 1 + 3.0/256: 0x3f82, 1 + 1.5/256: 0x3f81, -2: 0xc000, float32(math.Inf(1)): 0x7f80} {
++		if got := bfloat16(value); got != want {
++			t.Fatalf("bfloat16(%v) = %#x, want %#x", value, got, want)
++		}
++	}
++	if got := bfloat16(float32(math.NaN())); got != 0x7fc0 {
++		t.Fatalf("bfloat16(NaN) = %#x", got)
++	}
++}
++
++func TestMergeRejectsIncompatibleSources(t *testing.T) {
++	base := writeFixture(t, map[string]fixtureTensor{"a.weight": {"BF16", []uint64{2}, []float32{1, 2}}})
++	for name, test := range map[string]struct {
++		other   string
++		weights []float64
++		want    string
++	}{
++		"shape":   {writeFixture(t, map[string]fixtureTensor{"a.weight": {"BF16", []uint64{1, 2}, []float32{1, 2}}}), nil, "dtype and shape"},
++		"dtype":   {writeFixture(t, map[string]fixtureTensor{"a.weight": {"F32", []uint64{2}, []float32{1, 2}}}), nil, "dtype and shape"},
++		"tensors": {writeFixture(t, map[string]fixtureTensor{"a.weight": {"BF16", []uint64{2}, []float32{1, 2}}, "b.weight": {"BF16", []uint64{1}, []float32{1}}}), nil, "tensors"},
++		"weights": {base, []float64{1, 0}, "positive"},
++	} {
++		destination := filepath.Join(t.TempDir(), "merged.safetensors")
++		if _, err := Merge([]string{base, test.other}, test.weights, destination); err == nil || !strings.Contains(err.Error(), test.want) {
++			t.Fatalf("%s: error = %v", name, err)
++		}
++		if _, err := os.Stat(destination); !os.IsNotExist(err) {
++			t.Fatalf("%s: merge left %s behind", name, destination)
++		}
++	}
++	if _, err := Merge([]string{base}, nil, filepath.Join(t.TempDir(), "merged.safetensors")); err == nil {
++		t.Fatal("a single source merged")
++	}
++}
