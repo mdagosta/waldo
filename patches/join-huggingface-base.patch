@@ -1,0 +1,161 @@
+Restores fetching a join plan's base (and FetchPinned) from huggingface://<repo>@<commit>,
+removed from md/join-local on 2026-10-29 after 8e2d767. Apply in waldo-join-local: git apply <this file>
+
+diff --git b/docs/MODEL-JOIN.md a/docs/MODEL-JOIN.md
+index c038ae6..f851fba 100644
+--- b/docs/MODEL-JOIN.md
++++ a/docs/MODEL-JOIN.md
+@@ -66,7 +66,7 @@ join:
+ | `store` | `file:///path`. |
+ | `identities` | Name to `{key: <ssh public key>}`. |
+ | `rounds` | `bootstrap_tokens`, `pretrain` rounds of `tokens_per_round` (as fixed steps), `posttrain` rounds of `epochs_per_round`. |
+-| `base` | Optional model to start from instead of a bootstrap: `model`, `url` (`file://`), `model_sha256`, and `files` (every file's SHA-256). |
++| `base` | Optional model to start from instead of a bootstrap: `model`, `url` (`huggingface://<user>/<model>@<commit>` in any account, or `file://`), `model_sha256`, and `files` (every file's SHA-256). |
+ | `gates` | Optional promotion criteria per stage; see [Gates](#gates-and-training-ladders). |
+ | `replica_tolerance`, `replica_floor` | Agreement thresholds; defaults 0.25 and 0.001. Raise the floor (to about 0.01) once rounds barely move the loss. |
+ | `min_steps_per_round`, `round_minutes` | Minimum steps per unit; optional round deadline. |
+diff --git b/internal/join/plan.go a/internal/join/plan.go
+index 74024bf..4ee789e 100644
+--- b/internal/join/plan.go
++++ a/internal/join/plan.go
+@@ -15,6 +15,7 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
++	"regexp"
+ 	"slices"
+ 	"sort"
+ 	"strings"
+@@ -211,8 +212,9 @@ func (plan *Plan) check() error {
+ 		}
+ 	}
+ 	if base := plan.Base; base != nil {
+-		if model.ValidateName(base.Model) != nil || !strings.HasPrefix(base.URL, "file://") || !validFiles(base.Files, base.ModelSHA256) {
+-			return fmt.Errorf("base needs a model name, a file:// url, its model_sha256, and every file's sha256, model.safetensors included")
++		pinned := strings.HasPrefix(base.URL, "file://") || huggingFacePin.MatchString(base.URL)
++		if model.ValidateName(base.Model) != nil || !pinned || !validFiles(base.Files, base.ModelSHA256) {
++			return fmt.Errorf("base needs a model name, a file:// or huggingface://<user>/<model>@<commit> url, its model_sha256, and every file's sha256, model.safetensors included")
+ 		}
+ 	}
+ 	rounds := plan.Rounds
+@@ -380,6 +382,8 @@ func Pin(runDir string, plan Plan) (string, error) {
+ 	return hex.EncodeToString(digest[:]), nil
+ }
+ 
++var huggingFacePin = regexp.MustCompile(`^huggingface://[A-Za-z0-9._-]+/[A-Za-z0-9._-]+@[0-9a-f]{40}$`)
++
+ // start is the plan's base as the record round 0 starts from, or nil for a bootstrap.
+ func (plan Plan) start() *MergeRecord {
+ 	if plan.Base == nil {
+diff --git b/internal/join/run_test.go a/internal/join/run_test.go
+index 3976482..da09bd9 100644
+--- b/internal/join/run_test.go
++++ a/internal/join/run_test.go
+@@ -334,7 +334,7 @@ func TestPinIsTheRunFile(t *testing.T) {
+ 
+ func TestPlanBaseStartsTheRun(t *testing.T) {
+ 	digest := strings.Repeat("a", 64)
+-	base := "  base:\n    model: python-base\n    url: file:///srv/python-base\n    model_sha256: " + digest + "\n    files:\n      model.safetensors: " + digest + "\n"
++	base := "  base:\n    model: python-base\n    url: huggingface://someone/python-base@" + strings.Repeat("0", 40) + "\n    model_sha256: " + digest + "\n    files:\n      model.safetensors: " + digest + "\n"
+ 	withBase := strings.Replace(runJoin, "bootstrap_tokens: 2000000, ", "", 1) + base
+ 	plan, err := LoadRun(writeRun(t, runCompose+withBase))
+ 	if err != nil {
+@@ -354,7 +354,7 @@ func TestPlanBaseStartsTheRun(t *testing.T) {
+ 		t.Fatal("a round-0 merge from the base did not count")
+ 	}
+ 	for name, bad := range map[string]string{
+-		"remote url":    strings.Replace(base, "file:///srv", "huggingface://someone", 1),
++		"unpinned url":  strings.Replace(base, "@"+strings.Repeat("0", 40), "", 1),
+ 		"unpinned file": strings.Replace(base, "model.safetensors: "+digest, "model.safetensors: "+strings.Repeat("b", 64), 1),
+ 		"bad name":      strings.Replace(base, "model: python-base", "model: ../x", 1),
+ 	} {
+diff --git b/internal/model/fetch_pinned_test.go a/internal/model/fetch_pinned_test.go
+index 219d7dd..d56b5b7 100644
+--- b/internal/model/fetch_pinned_test.go
++++ a/internal/model/fetch_pinned_test.go
+@@ -9,6 +9,8 @@ import (
+ 	"context"
+ 	"crypto/sha256"
+ 	"encoding/hex"
++	"net/http"
++	"net/http/httptest"
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+@@ -41,4 +43,24 @@ func TestFetchPinnedFetchesOnlyThePinnedRelease(t *testing.T) {
+ 	if _, err := os.Stat(other); !os.IsNotExist(err) {
+ 		t.Fatal("a refused release left files behind")
+ 	}
++	// From Hugging Face, only at a pinned commit.
++	commit := strings.Repeat("a", 40)
++	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
++		name := filepath.Base(request.URL.Path)
++		if !strings.Contains(request.URL.Path, "/someone/model/resolve/"+commit+"/") {
++			http.NotFound(writer, request)
++			return
++		}
++		data, _ := os.ReadFile(filepath.Join(release, name))
++		_, _ = writer.Write(data)
++	}))
++	defer server.Close()
++	puller := Puller{Endpoint: server.URL, Token: "unused"}
++	hub := filepath.Join(t.TempDir(), "hub")
++	if err := puller.FetchPinned(context.Background(), "huggingface://someone/model@"+commit, files, hub); err != nil {
++		t.Fatal(err)
++	}
++	if err := puller.FetchPinned(context.Background(), "huggingface://someone/model@main", files, hub); err == nil || !strings.Contains(err.Error(), "pin a commit") {
++		t.Fatalf("unpinned error = %v", err)
++	}
+ }
+diff --git b/internal/model/pull.go a/internal/model/pull.go
+index 807b7e1..e5c1930 100644
+--- b/internal/model/pull.go
++++ a/internal/model/pull.go
+@@ -869,9 +869,10 @@ func releaseLineage(path string) (*LineageNode, error) {
+ 
+ var pinnedFileName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+ 
+-// FetchPinned copies exactly the named files of a file:// release into
+-// directory, and refuses the release if any file's SHA-256 differs from its
+-// pin: the result is the release the pins name, or nothing.
++// FetchPinned downloads exactly the named files of a release into directory,
++// from huggingface://<repository>@<commit> or a file:// directory, and refuses
++// the release if any file's SHA-256 differs from its pin: the result is the
++// release the pins name, or nothing. A Hugging Face source must name a commit.
+ func (puller Puller) FetchPinned(ctx context.Context, source string, files map[string]string, directory string) error {
+ 	names := make([]string, 0, len(files))
+ 	for name, digest := range files {
+@@ -887,11 +888,30 @@ func (puller Puller) FetchPinned(ctx context.Context, source string, files map[s
+ 		return err
+ 	}
+ 	defer os.RemoveAll(partial)
+-	if !strings.HasPrefix(source, "file://") {
+-		return fmt.Errorf("%s is not a file:// release", source)
++	fetch := func(name, path string) (string, error) {
++		local := strings.TrimPrefix(source, "file://")
++		digest, _, err := copyHashed(filepath.Join(local, name), path)
++		return digest, err
++	}
++	if strings.HasPrefix(source, "huggingface://") {
++		repository, revision, err := parseHuggingFaceSource(source)
++		if err != nil {
++			return err
++		}
++		if !huggingFaceCommit.MatchString(revision) {
++			return fmt.Errorf("%s must pin a commit", source)
++		}
++		client, endpoint, token := puller.hubClient()
++		fetch = func(name, path string) (string, error) {
++			puller.report(PullProgress{Phase: "download", Message: fmt.Sprintf("downloading %s from %s@%s", name, repository, revision[:12])})
++			digest, _, err := downloadFile(ctx, client, endpoint+"/"+repository+"/resolve/"+revision+"/"+escapePath(name), token, path, 0)
++			return digest, err
++		}
++	} else if !strings.HasPrefix(source, "file://") {
++		return fmt.Errorf("%s is not a huggingface:// or file:// release", source)
+ 	}
+ 	for _, name := range names {
+-		digest, _, err := copyHashed(filepath.Join(strings.TrimPrefix(source, "file://"), name), filepath.Join(partial, name))
++		digest, err := fetch(name, filepath.Join(partial, name))
+ 		if err != nil {
+ 			return fmt.Errorf("fetch %s: %w", name, err)
+ 		}

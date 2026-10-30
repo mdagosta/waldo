@@ -1,0 +1,52 @@
+Restores join printing waldo model summary of a completed run's final model,
+removed from md/join-local on 2026-10-29. Apply in waldo-join-local: git apply <this file>
+
+diff --git b/docs/MODEL-JOIN.md a/docs/MODEL-JOIN.md
+index 1288fab..452fea9 100644
+--- b/docs/MODEL-JOIN.md
++++ a/docs/MODEL-JOIN.md
+@@ -15,7 +15,7 @@ waldo model join <runs-repo> <run-dir> --identity <name> [--once] [--email <addr
+ complete, waiting `--wait` seconds (default 60) while others work. Join first
+ checks with `waldo status` that the machine can train. A unit cut short resumes
+ from its newest checkpoint with `waldo model continue`; one that failed trains
+-again. An identity
++again. A completed run ends with `waldo model summary` of its final model. An identity
+ keeps its signing key, clone, models, and exports in
+ `~/.waldo/join/<identity>/`; a new identity is given its key and the
+ `identities` entry to add to the plan.
+diff --git b/internal/join/join.go a/internal/join/join.go
+index 4582782..160d874 100644
+--- b/internal/join/join.go
++++ a/internal/join/join.go
+@@ -109,6 +109,23 @@ func (joiner *Joiner) configure(ctx context.Context) error {
+ 	return joiner.waldo(ctx, "config", "set", "lookaside.cache.retain-completed", "true")
+ }
+ 
++// summarize imports the run's final model and prints waldo's own summary of
++// it: its architecture and the training history its records pin. A summary is
++// a courtesy, so failing to make one does not fail the run.
++func (joiner *Joiner) summarize(ctx context.Context, final MergeRecord) {
++	directory, err := joiner.fetch(ctx, final.Model, final.Identity, final.ModelSHA256, final.Files, final.URL)
++	name := published(final.Model, final.ModelSHA256)
++	if err == nil {
++		err = joiner.ensure(name, directory)
++	}
++	if err == nil {
++		err = joiner.waldo(ctx, "model", "summary", name)
++	}
++	if err != nil {
++		fmt.Fprintf(joiner.Log, "   (no summary of %s: %v)\n", final.Model, err)
++	}
++}
++
+ // ready checks, with waldo status, that this identity's machine can train
+ // before it claims any work, so a missing backend fails now, not an hour in.
+ func (joiner *Joiner) ready(ctx context.Context) error {
+@@ -169,6 +186,7 @@ func (joiner *Joiner) Step(ctx context.Context) (string, error) {
+ 				return "done", nil
+ 			}
+ 			fmt.Fprintf(joiner.Log, "run %s is complete: %s (%s), %s\n", joiner.plan.Name, final.Model, final.ModelSHA256[:12], final.URL)
++			joiner.summarize(ctx, *final)
+ 			return "done", nil
+ 		case "idle":
+ 			fmt.Fprintf(joiner.Log, "round %d: nothing for %s until others finish\n", action.Round, joiner.Identity)

@@ -1,0 +1,178 @@
+Restores join's optional round_minutes deadline (late rounds close with the units present),
+removed from md/join-local on 2026-10-29 after 9732f3e. Apply in waldo-join-local: git apply <this file>
+
+diff --git a/docs/MODEL-JOIN.md b/docs/MODEL-JOIN.md
+index c7bd402..7689b13 100644
+--- a/docs/MODEL-JOIN.md
++++ b/docs/MODEL-JOIN.md
+@@ -50,7 +50,7 @@ join:
+ | `base` | Optional starting model instead of a bootstrap: `model`, `url` (`file://`), `model_sha256`, `files`. |
+ | `gates` | Optional bar per stage; see [Gates](#gates). |
+ | `replica_tolerance`, `replica_floor` | Agreement thresholds; defaults 0.25 and 0.001. |
+-| `min_steps_per_round` | Minimum steps per unit. |
++| `min_steps_per_round`, `round_minutes` | Minimum steps per unit; optional round deadline. |
+ 
+ ## Rounds
+ 
+diff --git a/internal/join/join_test.go b/internal/join/join_test.go
+index 2607a93..45bbbf1 100644
+--- a/internal/join/join_test.go
++++ b/internal/join/join_test.go
+@@ -266,7 +266,7 @@ func stateOf(plan Plan, rounds []Round) State {
+ 
+ func TestNextAction(t *testing.T) {
+ 	plan := Plan{Units: []string{"u0", "u1"}, Replicas: 2, Closers: 1, ClaimMinutes: 60, Rounds: RoundsPlan{Pretrain: 1}}
+-	merged := Round{Merge: &MergeRecord{}}
++	merged := Round{Merge: &MergeRecord{}, ClosedAt: time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)}
+ 	// round builds a round from "slot identity" claims, "unit identity" submissions, and "merge identity" merges.
+ 	round := func(entries ...string) Round {
+ 		result := Round{Claims: map[string][]Claim{}, Latest: map[string]Attempt{}, Submissions: map[string][]Submission{}, Merged: map[string]bool{}}
+@@ -305,21 +305,24 @@ func TestNextAction(t *testing.T) {
+ 	for name, test := range map[string]struct {
+ 		rounds   []Round
+ 		identity string
++		minutes  float64
+ 		want     Action
+ 	}{
+-		"claims first slot": {nil, "alice", Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: slot("alice", "all", 0, 2), Attempt: 1}},
+-		"claims next slot":  {[]Round{round("claim:all-1 alice")}, "bob", Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 1}},
+-		"trains its claim":  {[]Round{round("claim:all-1 alice")}, "alice", Action{Kind: "contribute", Round: 0, Stage: "bootstrap", Unit: "all"}},
+-		"slots all held":    {[]Round{round("claim:all-1 alice", "claim:all-2 bob")}, "carol", Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
+-		"retakes expired":   {[]Round{round("claim:all-1 alice", "late:all-2 bob")}, "carol", Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 2}},
+-		"waits on others":   {[]Round{round("claim:all-1 alice", "claim:all-2 bob", "submit:all alice")}, "alice", Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
+-		"claims close":      {[]Round{round(full...)}, "carol", Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "close", Slot: slot("carol", "close", 0, 1), Attempt: 1}},
+-		"closes its claim":  {[]Round{round(append(full, "claim:close-1 carol")...)}, "carol", Action{Kind: "close", Round: 0, Stage: "bootstrap", Unit: "close"}},
+-		"waits on closer":   {[]Round{round(append(full, "claim:close-1 carol")...)}, "alice", Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
+-		"lowest free unit":  {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob")}, "carol", Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("carol", "u1", 1, 2), Attempt: 1}},
+-		"other units open":  {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("alice", "u1", 1, 2), Attempt: 1}},
+-		"done":              {[]Round{merged, merged}, "alice", Action{Kind: "done", Round: 1}},
++		"claims first slot": {nil, "alice", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: slot("alice", "all", 0, 2), Attempt: 1}},
++		"claims next slot":  {[]Round{round("claim:all-1 alice")}, "bob", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 1}},
++		"trains its claim":  {[]Round{round("claim:all-1 alice")}, "alice", 0, Action{Kind: "contribute", Round: 0, Stage: "bootstrap", Unit: "all"}},
++		"slots all held":    {[]Round{round("claim:all-1 alice", "claim:all-2 bob")}, "carol", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
++		"retakes expired":   {[]Round{round("claim:all-1 alice", "late:all-2 bob")}, "carol", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 2}},
++		"waits on others":   {[]Round{round("claim:all-1 alice", "claim:all-2 bob", "submit:all alice")}, "alice", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
++		"claims close":      {[]Round{round(full...)}, "carol", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "close", Slot: slot("carol", "close", 0, 1), Attempt: 1}},
++		"closes its claim":  {[]Round{round(append(full, "claim:close-1 carol")...)}, "carol", 0, Action{Kind: "close", Round: 0, Stage: "bootstrap", Unit: "close"}},
++		"waits on closer":   {[]Round{round(append(full, "claim:close-1 carol")...)}, "alice", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
++		"lowest free unit":  {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob")}, "carol", 0, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("carol", "u1", 1, 2), Attempt: 1}},
++		"late round":        {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 20, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "close", Slot: slot("alice", "close", 1, 1), Attempt: 1}},
++		"not yet late":      {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 60, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("alice", "u1", 1, 2), Attempt: 1}},
++		"done":              {[]Round{merged, merged}, "alice", 0, Action{Kind: "done", Round: 1}},
+ 	} {
++		plan.RoundMinutes = test.minutes
+ 		if got := stateOf(plan, test.rounds).Next(test.identity, now); got != test.want {
+ 			t.Fatalf("%s: next = %+v, want %+v", name, got, test.want)
+ 		}
+diff --git a/internal/join/plan.go b/internal/join/plan.go
+index 91f1053..fb14d82 100644
+--- a/internal/join/plan.go
++++ b/internal/join/plan.go
+@@ -43,6 +43,7 @@ type Plan struct {
+ 	MinStepsPerRound int                 `yaml:"min_steps_per_round"`
+ 	ReplicaTolerance *float64            `yaml:"replica_tolerance"`
+ 	ReplicaFloor     *float64            `yaml:"replica_floor"`
++	RoundMinutes     float64             `yaml:"round_minutes"`
+ 	Gates            []Gate              `yaml:"gates"`
+ 
+ 	Units   []string   `yaml:"-"` // unit names in order; a fine-tuning unit takes the slice at its position
+diff --git a/internal/join/state.go b/internal/join/state.go
+index bc680af..e373d0d 100644
+--- a/internal/join/state.go
++++ b/internal/join/state.go
+@@ -31,6 +31,7 @@ type Round struct {
+ 	Votes       []MergeRecord   // one merge per closing slot, in slot order
+ 	Merged      map[string]bool // identities with any merge file, valid or not
+ 	Merge       *MergeRecord    // the majority's merge, once the round is decided
++	ClosedAt    time.Time       // when the majority formed, by its signers' own clocks
+ }
+ 
+ // Attempt is a slot's latest claim file as written, so a malformed claim still
+@@ -55,8 +56,8 @@ func claimAttempt(file string) (string, int) {
+ type State struct {
+ 	Slots   []Slot // the rounds as far as the decided ones determine them
+ 	Stopped bool   // a gate never passed, and the run ended there
+-	Plan    Plan
+-	Rounds  []Round
++	Plan       Plan
++	Rounds     []Round
+ }
+ 
+ func roundDir(runDir string, number int) string {
+@@ -179,7 +180,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
+ 			}
+ 		}
+ 		round.Votes = votes(round, plan)
+-		round.Merge = decide(round.Votes, plan.Quorum())
++		round.Merge, round.ClosedAt = decide(round.Votes, plan.Quorum())
+ 		state.Rounds = append(state.Rounds, round)
+ 		decided = append(decided, round.Merge)
+ 		if round.Merge == nil {
+@@ -249,18 +250,25 @@ func (record MergeRecord) decision() string {
+ 
+ // decide returns the first decision, in slot order, that a quorum of votes
+ // signs. Votes are only ever added, so once a round is decided no later record
+-// changes its decision.
+-func decide(votes []MergeRecord, quorum int) *MergeRecord {
++// changes its decision. ClosedAt is the latest clock among those votes, so a
++// signer can only make the round's deadline later.
++func decide(votes []MergeRecord, quorum int) (*MergeRecord, time.Time) {
+ 	byDecision := map[string][]MergeRecord{}
+ 	for _, record := range votes {
+ 		agreeing := append(byDecision[record.decision()], record)
+ 		byDecision[record.decision()] = agreeing
+ 		if len(agreeing) == quorum {
++			var closedAt time.Time
++			for _, vote := range agreeing {
++				if closed, err := time.Parse(time.RFC3339, vote.ClosedAt); err == nil && closed.After(closedAt) {
++					closedAt = closed
++				}
++			}
+ 			chosen := agreeing[0]
+-			return &chosen
++			return &chosen, closedAt
+ 		}
+ 	}
+-	return nil
++	return nil, time.Time{}
+ }
+ 
+ // Agreeing is every merge that signed the round's decision, so its weights can
+@@ -431,7 +439,7 @@ func positions(identity string, round, count int) []int {
+ 	return result
+ }
+ 
+-// Next picks this pass's work. A full round is closed by its claimed
++// Next picks this pass's work. A full (or late) round is closed by its claimed
+ // closers: the plan's closers, then one more for each that disagrees until a
+ // majority signs one merge. Otherwise an identity trains the unit it claimed,
+ // else claims a replica slot of the lowest unit it has not taken part in.
+@@ -459,7 +467,11 @@ func (state State) Next(identity string, now time.Time) Action {
+ 			full++
+ 		}
+ 	}
+-	if full == len(units) {
++	late := false
++	if state.Plan.RoundMinutes > 0 && number > 0 {
++		late = now.After(state.Rounds[number-1].ClosedAt.Add(time.Duration(state.Plan.RoundMinutes * float64(time.Minute))))
++	}
++	if full == len(units) || (late && full > 0) {
+ 		if round.Merged[identity] {
+ 			return Action{Kind: "idle", Round: number, Stage: stage}
+ 		}
+diff --git a/internal/join/work.go b/internal/join/work.go
+index 2a7a79a..28e9f00 100644
+--- a/internal/join/work.go
++++ b/internal/join/work.go
+@@ -348,6 +348,11 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
+ 	if err != nil || won {
+ 		return err
+ 	}
++	// The round can still close without this unit, once it is past its deadline.
++	if current, err := joiner.load(); err == nil && action.Round < len(current.Rounds) && current.Rounds[action.Round].Merge != nil {
++		fmt.Fprintf(joiner.Log, "   round %d closed while %s trained %s; moving on\n", action.Round, joiner.Identity, action.Unit)
++		return nil
++	}
+ 	return fmt.Errorf("round %d unit %s: the runs repo did not accept this submission", action.Round, action.Unit)
+ }
+ 

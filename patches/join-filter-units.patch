@@ -1,0 +1,181 @@
+Restores join units given as record filters (e.g. rust: {metadata: {programming_language: {include: [Rust]}}}),
+removed from md/join-local on 2026-10-29 (only code-m1 used them). Apply in waldo-join-local: git apply <this file>
+
+diff --git b/docs/MODEL-JOIN.md a/docs/MODEL-JOIN.md
+index 452fea9..c038ae6 100644
+--- b/docs/MODEL-JOIN.md
++++ a/docs/MODEL-JOIN.md
+@@ -59,7 +59,7 @@ join:
+ 
+ | `join` key | Meaning |
+ | --- | --- |
+-| `name`, `units` | Run name; unit to the sources its pre-training reads (the bootstrap reads them all). Names use lowercase letters, digits, `.`, `_`, `-`. |
++| `name`, `units` | Run name; unit to the sources its pre-training reads, or to a record filter in the compose's form, such as `rust: {metadata: {programming_language: {include: [Rust]}}}`, whose keys replace the stage filter's. The bootstrap reads every unit's sources, or the stage's whole selection when any unit is a filter. Names use lowercase letters, digits, `.`, `_`, `-`. Unknown keys are rejected. |
+ | `replicas` | Identities that train each unit per round. |
+ | `closers` | Identities that close each round; a majority must agree. Default 3. |
+ | `claim_minutes` | How long a claim holds its slot. Default 60. |
+diff --git b/internal/join/plan.go a/internal/join/plan.go
+index 917bb23..74024bf 100644
+--- b/internal/join/plan.go
++++ a/internal/join/plan.go
+@@ -19,6 +19,7 @@ import (
+ 	"sort"
+ 	"strings"
+ 
++	"github.com/openwaldo/waldo/internal/corpus"
+ 	"github.com/openwaldo/waldo/internal/model"
+ 	"gopkg.in/yaml.v3"
+ )
+@@ -32,7 +33,7 @@ const RunFile = "run.yaml"
+ // itself, the training each unit's work is cut from.
+ type Plan struct {
+ 	Name             string              `yaml:"name"`
+-	UnitData         map[string][]string `yaml:"units"` // unit to the sources its pre-training stage reads
++	UnitData         map[string]UnitData `yaml:"units"` // unit to the data its pre-training stage reads
+ 	Replicas         int                 `yaml:"replicas"`
+ 	Closers          int                 `yaml:"closers"`
+ 	ClaimMinutes     float64             `yaml:"claim_minutes"`
+@@ -50,6 +51,31 @@ type Plan struct {
+ 	Compose *yaml.Node `yaml:"-"` // the run file's compose mapping
+ }
+ 
++// UnitData is what a unit's pre-training reads: the sources it lists, or the
++// records a filter selects, in the compose's record-filter form, as in
++// {metadata: {programming_language: {include: [Rust]}}}.
++type UnitData struct {
++	Sources []string
++	Filter  *yaml.Node
++}
++
++func (data *UnitData) UnmarshalYAML(node *yaml.Node) error {
++	if node.Kind != yaml.MappingNode {
++		return node.Decode(&data.Sources)
++	}
++	encoded, err := yaml.Marshal(node)
++	if err != nil {
++		return err
++	}
++	decoder := yaml.NewDecoder(bytes.NewReader(encoded))
++	decoder.KnownFields(true)
++	if err := decoder.Decode(&corpus.RecordFilter{}); err != nil {
++		return fmt.Errorf("unit filter: %w", err)
++	}
++	data.Filter = node
++	return nil
++}
++
+ // Gate is what a stage's merged model must meet before the run moves on: a
+ // held-out loss, or an evaluation's metrics checked by waldo model gate. The
+ // stage's last round checks it; failing, the run adds up to ExtraRounds more of
+@@ -180,8 +206,8 @@ func (plan *Plan) check() error {
+ 		return fmt.Errorf("units must not be named all, the bootstrap's unit, or close, the closing slots' name")
+ 	}
+ 	for _, unit := range plan.Units {
+-		if len(plan.UnitData[unit]) == 0 {
+-			return fmt.Errorf("unit %s needs sources", unit)
++		if data := plan.UnitData[unit]; len(data.Sources) == 0 && (data.Filter == nil || len(data.Filter.Content) == 0) {
++			return fmt.Errorf("unit %s needs sources or a filter", unit)
+ 		}
+ 	}
+ 	if base := plan.Base; base != nil {
+diff --git b/internal/join/run.go a/internal/join/run.go
+index 7488ee0..11df712 100644
+--- b/internal/join/run.go
++++ a/internal/join/run.go
+@@ -83,11 +83,17 @@ func (plan Plan) unitCompose(stage, unit, base string, seed int, budget Budget)
+ 		slice := mapping("index", scalar(strconv.Itoa(index)), "count", scalar(strconv.Itoa(len(plan.Units))))
+ 		slice.Style = yaml.FlowStyle
+ 		mapSet(ensureMapping(corpora.Content[0], "filter"), "slice", slice)
+-	} else {
++	} else if filter := plan.UnitData[unit].Filter; filter != nil {
++		// A unit's filter keys replace the stage's own, so the unit trains exactly the records it names.
++		stageFilter := ensureMapping(selected, "filter")
++		for index := 0; index+1 < len(filter.Content); index += 2 {
++			mapSet(stageFilter, filter.Content[index].Value, clone(filter.Content[index+1]))
++		}
++	} else if unit != "all" || plan.sourceUnits() {
+ 		var sources []string
+ 		for _, name := range plan.Units {
+ 			if unit == "all" || name == unit {
+-				sources = append(sources, plan.UnitData[name]...)
++				sources = append(sources, plan.UnitData[name].Sources...)
+ 			}
+ 		}
+ 		include := sequence()
+@@ -101,6 +107,17 @@ func (plan Plan) unitCompose(stage, unit, base string, seed int, budget Budget)
+ 	return string(data), err
+ }
+ 
++// sourceUnits is whether every unit lists sources, so the bootstrap reads their union. A run
++// with filter units bootstraps on the stage's whole selection, which its units divide.
++func (plan Plan) sourceUnits() bool {
++	for _, unit := range plan.Units {
++		if plan.UnitData[unit].Filter != nil {
++			return false
++		}
++	}
++	return true
++}
++
+ // probeBudget is the one step a closer's evaluate-only probe declares.
+ var probeBudget = Budget{"tokens", 16384}
+ 
+diff --git b/internal/join/run_test.go a/internal/join/run_test.go
+index dd695e4..3976482 100644
+--- b/internal/join/run_test.go
++++ a/internal/join/run_test.go
+@@ -94,7 +94,7 @@ func TestLoadRunReadsTheJoinBlock(t *testing.T) {
+ 		t.Fatal(err)
+ 	}
+ 	// Units in sorted order, which is the order fine-tuning units take their slices in.
+-	if strings.Join(plan.Units, ",") != "u0,u1" || len(plan.UnitData["u1"]) != 2 || plan.Identities["bob"].HuggingFace != "bob" {
++	if strings.Join(plan.Units, ",") != "u0,u1" || len(plan.UnitData["u1"].Sources) != 2 || plan.Identities["bob"].HuggingFace != "bob" {
+ 		t.Fatalf("plan = %+v", plan)
+ 	}
+ 	if got := strings.Join(plan.Stages(), ","); got != "bootstrap,pretrain,pretrain,posttrain,posttrain,posttrain" {
+@@ -185,6 +185,45 @@ func TestUnitComposesCutTheRunFile(t *testing.T) {
+ 	}
+ }
+ 
++func TestLanguageUnitsCutTheirRecordsByFilter(t *testing.T) {
++	units := `    rust: {metadata: {programming_language: {include: [Rust]}}}
++    english: {sources: {include: [wikimedia*]}}
++    python: [TheAlgorithms/Python]
++`
++	text := runCompose + strings.Replace(runJoin, "    u1: [pallets/flask, httpie/cli]\n    u0: [TheAlgorithms/Python]\n", units, 1)
++	plan, err := LoadRun(writeRun(t, text))
++	if err != nil {
++		t.Fatal(err)
++	}
++	// A filter unit's keys join the stage's filter, which keeps its own others.
++	_, stage := unitStage(t, plan, "pretrain", "rust", "round-base")
++	if stage.Filter.Metadata["programming_language"].Include[0] != "Rust" || stage.Filter.Sources != nil || stage.Filter.MainContent == nil {
++		t.Fatalf("rust = %+v", stage.Filter)
++	}
++	_, stage = unitStage(t, plan, "pretrain", "english", "round-base")
++	if strings.Join(stage.Filter.Sources.Include, ",") != "wikimedia*" || stage.Filter.Metadata != nil {
++		t.Fatalf("english = %+v", stage.Filter)
++	}
++	_, stage = unitStage(t, plan, "pretrain", "python", "round-base")
++	if strings.Join(stage.Filter.Sources.Include, ",") != "TheAlgorithms/Python" {
++		t.Fatalf("python = %+v", stage.Filter)
++	}
++	// The bootstrap can't union filters, so it trains the stage's whole selection, which the units divide.
++	_, stage = unitStage(t, plan, "bootstrap", "all", "")
++	if stage.Filter.Sources != nil || stage.Filter.Metadata != nil || stage.Filter.MainContent == nil {
++		t.Fatalf("bootstrap = %+v", stage.Filter)
++	}
++	for name, bad := range map[string]string{
++		"unknown filter key": "    rust: {metadata: {programming_language: {include: [Rust]}}, tamper: true}\n",
++		"empty filter":       "    rust: {}\n",
++		"no sources":         "    rust: []\n",
++	} {
++		if _, err := LoadRun(writeRun(t, strings.Replace(text, "    rust: {metadata: {programming_language: {include: [Rust]}}}\n", bad, 1))); err == nil {
++			t.Fatalf("%s: run accepted", name)
++		}
++	}
++}
++
+ func TestUnitsInheritATrainedTokenizerFromTheirBase(t *testing.T) {
+ 	trained := strings.Replace(runCompose, "  tokenizer: {name: byte, revision: builtin-byte-schema-1}\n", `  tokenizer:
+     training:
