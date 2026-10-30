@@ -93,16 +93,10 @@ file. Source downloads live only in private staging and are removed after the
 managed artifact has been verified. `ORIGIN-BOM.json` retains the repository,
 requested reference, resolved commit, license when declared, and hashes of all
 acquired files; it does not retain a redundant copy of the source weights.
-When the source is a WALDO release, the origin also keeps the release's
-lineage node, its published run BOMs, and its training closure (see
-[model exports](MODEL-EXPORTS.md)), so a model trained from it inherits the
-release's whole training history. Origins can also come from an exported package in a local
-directory (provider `file`), which `waldo model join` uses, or from a merge
-(provider `merge`): a merged origin records its method, its parents in merge
-order with their weights and lineage nodes, and its own lineage node, and
-keeps its parents' run BOMs and the union of their training closures. Merged
-origins live under `<model.root>/.merges`, named by their parents and weights,
-so the same merge is built once.
+A WALDO release's origin also keeps its lineage and training evidence
+([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)). Origins can
+also come from a local directory (provider `file`) or a merge (provider
+`merge`, under `<model.root>/.merges`; [ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)).
 `MODEL-BOM.json` selects the origin until a complete real training run produces
 new current weights.
 
@@ -458,16 +452,10 @@ For `--hostfile` runs, WALDO performs this local completion check before
 probing or staging secondary hosts. A verified no-op therefore has no remote
 side effects.
 
-Passing `--evaluate-only` measures instead of training: `waldo model train
-<name> <compose> --evaluate-only` scores the named model's current weights on
-the held-out records that the compose's first stage selects, prepared exactly
-as training would prepare them, and prints the held-out loss, the selected
-set's size and SHA-256, and the weights' SHA-256. It trains nothing, writes no
-weights, and records no run, so the model is unchanged. Because selection
-depends on the corpus, filters, objective, evaluation parameters, and seed, but
-not on the training budget, two machines scoring different weights with the
-same compose and seed score the same records. `waldo model join` verifiers use
-it to compare replicas ([ADR 0087](adr/0087-score-weights-without-training.md)).
+`--evaluate-only` scores the model's current weights on the held-out records
+the compose's first stage selects, and changes nothing. The same compose and
+seed select the same records on any machine, so verifiers can compare replicas
+([ADR 0087](adr/0087-score-weights-without-training.md)).
 
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected
@@ -700,11 +688,10 @@ waldo model gate conversation2 core-v1.bom.json core-v1.results.json core-v1.gat
 
 The evaluator-owned results file uses kind `openwaldo-evaluation-results`,
 schema 1, the evaluation BOM SHA-256, and a `results` array of metric/value
-pairs. The gate re-materializes every corpus in the model's training closure,
-its own runs' and every one its lineage inherited (a pulled or merged model's
-included), scans each once for exact and fuzzy overlap, and fails promotion on
-contamination or threshold errors. A model whose training history is not
-completely recorded cannot be gated, and simulated runs can never pass.
+pairs. The gate scans every corpus in the model's training closure, inherited
+ones included, for exact and fuzzy overlap, and fails promotion on
+contamination or threshold errors. A model with incompletely recorded history
+cannot be gated, and simulated runs can never pass.
 
 Model composes never select MLX, PyTorch, TensorFlow, or TorchTitan. Before a
 run is written, the environment-aware resolver chooses an adapter and records

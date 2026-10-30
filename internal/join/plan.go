@@ -43,7 +43,6 @@ type Plan struct {
 	MinStepsPerRound int                 `yaml:"min_steps_per_round"`
 	ReplicaTolerance *float64            `yaml:"replica_tolerance"`
 	ReplicaFloor     *float64            `yaml:"replica_floor"`
-	RoundMinutes     float64             `yaml:"round_minutes"`
 	Gates            []Gate              `yaml:"gates"`
 
 	Units   []string   `yaml:"-"` // unit names in order; a fine-tuning unit takes the slice at its position
@@ -209,6 +208,11 @@ func (plan *Plan) check() error {
 		}
 		if rounds.Posttrain > 0 && stageNode(plan.Compose, "fine-tuning") == nil {
 			return fmt.Errorf("post-training rounds need a fine-tuning stage")
+		}
+		if rounds.Pretrain > 0 && plan.MinStepsPerRound > 0 {
+			if steps, err := plan.pretrainSteps(); err != nil || steps < int64(plan.MinStepsPerRound) {
+				return fmt.Errorf("pretraining rounds of %d steps are under min_steps_per_round %d (%v)", steps, plan.MinStepsPerRound, err)
+			}
 		}
 	}
 	return nil

@@ -44,7 +44,6 @@ type Submission struct {
 	BaseSHA256  *string           `json:"base_sha256"`
 	Model       string            `json:"model"`
 	ModelSHA256 string            `json:"model_sha256"`
-	BOMSHA256   *string           `json:"bom_sha256"`
 	Files       map[string]string `json:"files"`
 	Tokens      int64             `json:"tokens"`
 	URL         string            `json:"url"`

@@ -32,14 +32,17 @@ Older runs stay published by the releases they came from. A package also
 includes `TRAINING-CLOSURE.json`: every distinct corpus BOM the lineage trained
 on, with use counts, and whether that history is complete. It is keyed by
 corpus BOM, so it grows with the corpora a lineage uses rather than its length.
-Pulls verify and keep both with the origin; merges keep their parents' run BOMs
-and the union of their closures.
+Pulls verify and keep both with the origin, checking each run BOM against the
+hash it is named by and refusing a closure that is malformed or leaves out the
+release's own runs; merges keep their parents' run BOMs and the union of their
+closures.
 
 Disclosure and attribution cover the whole lineage. `EU-BOM.json` adds the
 inherited corpora and reports unrecorded history as a gap.
 `ATTRIBUTION.md` and its distributable review take the inherited corpus BOMs
 too, so a non-distributable corpus anywhere in a lineage blocks a distributable
-release.
+release. `waldo model gate` scans every corpus in the closure for contamination,
+and refuses a model whose history is incomplete.
 
 Run BOMs record the Python runtime by executable name and version only, never
 an absolute local path, because they are now published.
