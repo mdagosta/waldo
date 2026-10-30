@@ -83,17 +83,11 @@ func (plan Plan) unitCompose(stage, unit, base string, seed int, budget Budget) 
 		slice := mapping("index", scalar(strconv.Itoa(index)), "count", scalar(strconv.Itoa(len(plan.Units))))
 		slice.Style = yaml.FlowStyle
 		mapSet(ensureMapping(corpora.Content[0], "filter"), "slice", slice)
-	} else if filter := plan.UnitData[unit].Filter; filter != nil {
-		// A unit's filter keys replace the stage's own, so the unit trains exactly the records it names.
-		stageFilter := ensureMapping(selected, "filter")
-		for index := 0; index+1 < len(filter.Content); index += 2 {
-			mapSet(stageFilter, filter.Content[index].Value, clone(filter.Content[index+1]))
-		}
-	} else if unit != "all" || plan.sourceUnits() {
+	} else {
 		var sources []string
 		for _, name := range plan.Units {
 			if unit == "all" || name == unit {
-				sources = append(sources, plan.UnitData[name].Sources...)
+				sources = append(sources, plan.UnitData[name]...)
 			}
 		}
 		include := sequence()
@@ -105,17 +99,6 @@ func (plan Plan) unitCompose(stage, unit, base string, seed int, budget Budget) 
 	}
 	data, err := yaml.Marshal(compose)
 	return string(data), err
-}
-
-// sourceUnits is whether every unit lists sources, so the bootstrap reads their union. A run
-// with filter units bootstraps on the stage's whole selection, which its units divide.
-func (plan Plan) sourceUnits() bool {
-	for _, unit := range plan.Units {
-		if plan.UnitData[unit].Filter != nil {
-			return false
-		}
-	}
-	return true
 }
 
 // probeBudget is the one step a closer's evaluate-only probe declares.

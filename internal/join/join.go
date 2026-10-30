@@ -109,23 +109,6 @@ func (joiner *Joiner) configure(ctx context.Context) error {
 	return joiner.waldo(ctx, "config", "set", "lookaside.cache.retain-completed", "true")
 }
 
-// summarize imports the run's final model and prints waldo's own summary of
-// it: its architecture and the training history its records pin. A summary is
-// a courtesy, so failing to make one does not fail the run.
-func (joiner *Joiner) summarize(ctx context.Context, final MergeRecord) {
-	directory, err := joiner.fetch(ctx, final.Model, final.Identity, final.ModelSHA256, final.Files, final.URL)
-	name := published(final.Model, final.ModelSHA256)
-	if err == nil {
-		err = joiner.ensure(name, directory)
-	}
-	if err == nil {
-		err = joiner.waldo(ctx, "model", "summary", name)
-	}
-	if err != nil {
-		fmt.Fprintf(joiner.Log, "   (no summary of %s: %v)\n", final.Model, err)
-	}
-}
-
 // ready checks, with waldo status, that this identity's machine can train
 // before it claims any work, so a missing backend fails now, not an hour in.
 func (joiner *Joiner) ready(ctx context.Context) error {
@@ -186,7 +169,6 @@ func (joiner *Joiner) Step(ctx context.Context) (string, error) {
 				return "done", nil
 			}
 			fmt.Fprintf(joiner.Log, "run %s is complete: %s (%s), %s\n", joiner.plan.Name, final.Model, final.ModelSHA256[:12], final.URL)
-			joiner.summarize(ctx, *final)
 			return "done", nil
 		case "idle":
 			fmt.Fprintf(joiner.Log, "round %d: nothing for %s until others finish\n", action.Round, joiner.Identity)

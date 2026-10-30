@@ -57,7 +57,6 @@ type State struct {
 	Slots   []Slot // the rounds as far as the decided ones determine them
 	Stopped bool   // a gate never passed, and the run ended there
 	Plan       Plan
-	PlanSHA256 string // the Pin every counted record carries
 	Rounds     []Round
 }
 
@@ -84,7 +83,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	state := State{Plan: plan, PlanSHA256: pin}
+	state := State{Plan: plan}
 	var decided []*MergeRecord
 	for number := 0; ; number++ {
 		slots, _ := plan.Schedule(decided)
