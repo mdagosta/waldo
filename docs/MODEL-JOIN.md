@@ -16,7 +16,7 @@ complete, waiting `--wait` seconds (default 60) while others work. Join first
 checks with `waldo status` that the machine can train. A unit cut short resumes
 from its newest checkpoint with `waldo model continue`; one that failed trains
 again. A completed run ends with `waldo model summary` of its final model. An identity
-keeps its signing key, optional `github-token`, clone, models, and exports in
+keeps its signing key, clone, models, and exports in
 `~/.waldo/join/<identity>/`; a new identity is given its key and the
 `identities` entry to add to the plan.
 
@@ -52,8 +52,8 @@ join:
   name: python-v1
   units: {u0: [TheAlgorithms/Python], u1: [pallets/flask, httpie/cli]}
   replicas: 2
-  store: huggingface
-  identities: {alice: {key: ssh-ed25519 AAAA..., hf: alice}}
+  store: file:///srv/waldo-join
+  identities: {alice: {key: ssh-ed25519 AAAA...}}
   rounds: {bootstrap_tokens: 2000000, pretrain: 4, tokens_per_round: 8192000, posttrain: 10, epochs_per_round: 8}
 ```
 
@@ -63,8 +63,8 @@ join:
 | `replicas` | Identities that train each unit per round. |
 | `closers` | Identities that close each round; a majority must agree. Default 3. |
 | `claim_minutes` | How long a claim holds its slot. Default 60. |
-| `merge`, `store` | `mean`; `huggingface` or `file:///path`. |
-| `identities` | Name to `{key: <ssh public key>, hf: <Hugging Face user>}`. |
+| `store` | `file:///path`. |
+| `identities` | Name to `{key: <ssh public key>}`. |
 | `rounds` | `bootstrap_tokens`, `pretrain` rounds of `tokens_per_round` (as fixed steps), `posttrain` rounds of `epochs_per_round`. |
 | `base` | Optional model to start from instead of a bootstrap: `model`, `url` (`huggingface://<user>/<model>@<commit>` in any account, or `file://`), `model_sha256`, and `files` (every file's SHA-256). |
 | `gates` | Optional promotion criteria per stage; see [Gates](#gates-and-training-ladders). |
@@ -198,9 +198,8 @@ is part of the closers' decision, and an evaluation gate's report is published
 with the merge. A failed gate adds another round of the stage, checked again, up
 to `extra_rounds`; a gate that never passes stops the run, failing closed. The
 evaluation BOM and evaluator files are pinned with the run file.
-`testing/join/evaluate_python.py` evaluates prompt-to-program data by running
-the programs a model writes; it runs model-written code, so use it only for
-models you would run anyway.
+An evaluator that runs the programs a model writes runs model-written code, so
+use one only for models you would run anyway.
 
 ### Choosing replicas
 
@@ -217,36 +216,15 @@ organizer audits its corpora's ingest attestations once with `waldo index audit`
 
 ## Stores
 
-`file:///path` keeps `<path>/<run>/<model>/` on one machine. `huggingface`
-uploads each submission or merge to the identity's own account, pinned in its
-record as `huggingface://<hf>/<model>@<commit>`; readers fetch exactly those
-files, check every hash, and refuse a URL outside the identity's account.
-
-## GitHub
-
-On GitHub, each record goes to its own branch, on the runs repository or the
-identity's fork, as a pull request merged by the repository's own verifier
-Action. The verifier merges only record files under an existing run's
-`rounds/`, applies the same validity and claim rules join does, rejects a claim
-dated ahead of its clock, and never runs code from a pull request.
-
-Fine-grained tokens cannot open pull requests on repositories their owner does
-not control, so contributors need a classic `public_repo` token, best held by a
-machine account, in `~/.waldo/join/<identity>/github-token` (private file,
-private directory; [ADR 0035](adr/0035-local-s3-credentials.md)). Join uses about
-one API call per record: it watches for its record with `git fetch`, checks the
-pull request only every five minutes, and waits out a rate limit rather than
-failing.
+`file:///path` keeps `<path>/<run>/<identity>/<model>/` on one machine.
+Remote stores and GitHub runs repositories return with the relay.
 
 ## Testing
 
 `testing/e2e/model-join.sh` (opt-in, `WALDO_E2E_JOIN=1`) builds a run file from
 `testing/join/compose.yaml` and trains three identities
 for real through a local runs repository: one free-rides, another closes
-dishonestly, and the test asserts both are caught. `testing/join/run-identities.sh`
-burns in a GitHub run, and with `FAULTS`, `testing/join/burnin.py` injects
-protocol faults; `burnin.py report runs/<run>` checks what the run did with each.
-A new bug becomes a new fault.
+dishonestly, and the test asserts both are caught.
 
 ## Limits
 
@@ -260,4 +238,3 @@ A new bug becomes a new fault.
   its weights' hash, and all reveal once a unit's replicas have committed); it is
   a known gap, not built while runs are proofs of concept.
 - The plan's author is trusted to write the plan; records pin it.
-- A runs repository not on GitHub has no verifier; join's own checks still apply.

@@ -201,31 +201,14 @@ func hashFile(path string) (string, error) {
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
 
-func (joiner *Joiner) store() (string, error) {
-	return filepath.Join(strings.TrimPrefix(joiner.plan.Store, "file://"), joiner.plan.Name), nil
+func (joiner *Joiner) store() string {
+	return filepath.Join(strings.TrimPrefix(joiner.plan.Store, "file://"), joiner.plan.Name)
 }
 
 // publish copies an export into the run's store and returns its URL.
 func (joiner *Joiner) publish(ctx context.Context, directory string) (string, error) {
-	if joiner.plan.Store == "huggingface" {
-		user := joiner.plan.Identities[joiner.Identity].HuggingFace
-		if user == "" {
-			return "", fmt.Errorf("%s has no hf user in the plan's identities; Hugging Face stores need one", joiner.Identity)
-		}
-		repository := user + "/" + filepath.Base(directory)
-		fmt.Fprintf(joiner.Log, "   publishing %s to huggingface://%s\n", filepath.Base(directory), repository)
-		revision, err := uploadHuggingFace(ctx, repository, directory, "waldo "+joiner.plan.Name+": "+filepath.Base(directory), joiner.Log)
-		if err != nil {
-			return "", err
-		}
-		return "huggingface://" + repository + "@" + revision, nil
-	}
-	store, err := joiner.store()
-	if err != nil {
-		return "", err
-	}
-	// Each identity's packages live apart, as on Hugging Face, so closers of one round never share a directory.
-	target := filepath.Join(store, joiner.Identity, filepath.Base(directory))
+	// Each identity's packages live apart, so closers of one round never share a directory.
+	target := filepath.Join(joiner.store(), joiner.Identity, filepath.Base(directory))
 	if _, err := os.Stat(target); os.IsNotExist(err) {
 		fmt.Fprintf(joiner.Log, "   publishing %s to %s\n", filepath.Base(directory), target)
 		if err := copyDirectory(directory, target); err != nil {
@@ -249,13 +232,6 @@ func (joiner *Joiner) fetched(identity, name string) string {
 func (joiner *Joiner) fetch(ctx context.Context, name, identity, sha string, files map[string]string, url string) (string, error) {
 	if files["model.safetensors"] != sha {
 		return "", fmt.Errorf("%s: its files and model_sha256 disagree", name)
-	}
-	if strings.HasPrefix(url, "huggingface://") {
-		repository, _, _ := strings.Cut(strings.TrimPrefix(url, "huggingface://"), "@")
-		// A contributor publishes from its own account; a plan's base may be in any, pinned by the plan.
-		if owner, _, _ := strings.Cut(repository, "/"); identity != "" && owner != joiner.plan.Identities[identity].HuggingFace {
-			return "", fmt.Errorf("%s: %s is not in %s's Hugging Face account", name, url, identity)
-		}
 	}
 	target := joiner.fetched(identity, name)
 	if actual, err := fileHashes(target); err == nil && sameFiles(actual, files) {
@@ -412,7 +388,7 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 		fmt.Fprintf(joiner.Log, "   round %d closed while %s trained %s; moving on\n", action.Round, joiner.Identity, action.Unit)
 		return nil
 	}
-	return fmt.Errorf("round %d unit %s: the runs repo did not accept this submission; on GitHub, the verifier's comment on its pull request says why", action.Round, action.Unit)
+	return fmt.Errorf("round %d unit %s: the runs repo did not accept this submission", action.Round, action.Unit)
 }
 
 func (joiner *Joiner) timestamp() string {
@@ -771,7 +747,7 @@ func (joiner *Joiner) close(ctx context.Context, state State, action Action) err
 		return err
 	}
 	if !won {
-		return fmt.Errorf("round %d: the runs repo did not accept this merge; on GitHub, the verifier's comment on its pull request says why", action.Round)
+		return fmt.Errorf("round %d: the runs repo did not accept this merge", action.Round)
 	}
 	return nil
 }

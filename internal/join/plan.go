@@ -38,7 +38,6 @@ type Plan struct {
 	Replicas         int                 `yaml:"replicas"`
 	Closers          int                 `yaml:"closers"`
 	ClaimMinutes     float64             `yaml:"claim_minutes"`
-	Merge            string              `yaml:"merge"`
 	Store            string              `yaml:"store"`
 	Identities       map[string]Identity `yaml:"identities"`
 	Base             *PlanBase           `yaml:"base"`
@@ -114,7 +113,7 @@ type PlanBase struct {
 // stores, the account its uploads come from. A bare string is just the key.
 type Identity struct {
 	Key         string `yaml:"key"`
-	HuggingFace string `yaml:"hf"`
+	HuggingFace string `yaml:"hf"` // accepted for older run files; unused
 }
 
 func (identity *Identity) UnmarshalYAML(node *yaml.Node) error {
@@ -179,9 +178,6 @@ func (plan *Plan) check() error {
 	if plan.Replicas == 0 {
 		plan.Replicas = 1
 	}
-	if plan.Merge == "" {
-		plan.Merge = "mean"
-	}
 	if plan.Closers == 0 {
 		plan.Closers = 3
 	}
@@ -191,11 +187,8 @@ func (plan *Plan) check() error {
 	if plan.Name == "" || len(plan.Units) == 0 || plan.Replicas < 1 || plan.Closers < 1 || plan.ClaimMinutes < 0 {
 		return fmt.Errorf("join needs a name, units, and replicas")
 	}
-	if plan.Merge != "mean" {
-		return fmt.Errorf("join merge %q is not supported; use mean", plan.Merge)
-	}
-	if plan.Store != "huggingface" && !strings.HasPrefix(plan.Store, "file://") {
-		return fmt.Errorf("join store %q: expected huggingface or file:///path", plan.Store)
+	if !strings.HasPrefix(plan.Store, "file://") {
+		return fmt.Errorf("join store %q: expected file:///path", plan.Store)
 	}
 	// Run, unit, and identity names become directory, model, and branch names.
 	names := append([]string{plan.Name}, plan.Units...)
