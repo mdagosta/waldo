@@ -20,7 +20,7 @@ untrusted distributed training.
 
 - A run is one file, `run.yaml`: a compose whose `join` block (strict) sets
   units, replicas, closers, rounds, gates, a store, and the identities allowed to
-  contribute, each an SSH key and optional Hugging Face account. Join cuts each
+  contribute, each an SSH key. Join cuts each
   unit's work from the compose; the same file trains a single-model baseline.
 - Work is claimed before it is done. Records (`waldo-join-claim`,
   `-submission`, `-merge`, schema 1) are JSON signed with `ssh-keygen -Y sign`
@@ -36,11 +36,9 @@ untrusted distributed training.
   against a held-out loss, or an evaluation through `waldo model gate`; a failed
   gate adds rounds of the stage up to a limit, and a gate that never passes stops
   the run. The result is part of the closers' decision.
-- Weights and their provenance (0083) are published to a file or Hugging Face
-  store, pinned by hash. On GitHub, a verifier Action applies join's rules to
-  each record's pull request.
-- Each identity lives in `~/.waldo/join/<identity>`; credentials as in
-  [0035](0035-local-s3-credentials.md). Join runs `git`, `ssh-keygen`, `gh`, and `hf`.
+- Weights and their provenance (0083) are published to a file store, pinned by
+  hash. Remote stores and runs repositories come later, through a relay.
+- Each identity lives in `~/.waldo/join/<identity>`. Join runs `git` and `ssh-keygen`.
 
 ## Consequences
 
@@ -51,10 +49,7 @@ untrusted distributed training.
   publishes `JOIN-ROUND.json`, linking its weights back to the signed records.
 - Not defended: a colluding majority of closers or replicas, a copied replica
   (identical weights count as agreement, since honest training can reproduce
-  them; commit-reveal would stop copies), the plan's author, and runs repositories
-  without a verifier.
-- Contributors on GitHub need a classic `public_repo` token, best on a machine
-  account, and spend about one API call per record.
+  them; commit-reveal would stop copies), and the plan's author.
 
 `internal/join` is a bounded domain of the one binary ([0001](0001-single-binary.md)) that trains,
 measures, and merges only through the model domain. Relates to [0035](0035-local-s3-credentials.md),

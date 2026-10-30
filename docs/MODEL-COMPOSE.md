@@ -231,7 +231,7 @@ model-level contract. New composes should use only `interaction.tools`.
 | `run_bom_sha256` | no | SHA-256 | Asserts the selected run BOM. WALDO fills it during resolution. |
 | `artifact_sha256` | no | SHA-256 | Asserts the selected checkpoint bytes. WALDO fills it during resolution. |
 | `artifact_bytes` | no | non-negative bytes | Asserts the selected checkpoint size. WALDO fills it during resolution. |
-| `merge` | exactly one of `model`, `source`, or `merge` | two or more `{model, weight}` | Averages managed models into a merged origin. `weight` is optional and must be given for every parent or none; weighted parents contribute in proportion. |
+| `merge` | exactly one of `model`, `source`, or `merge` | two or more `{model, weight}` | Averages managed models into a merged origin; `weight`, given for all parents or none, weights the mean. |
 | `lineage_sha256` | no | SHA-256 | Asserts a trained base's lineage node. WALDO fills it during resolution. |
 
 ## Base initialization
@@ -245,7 +245,7 @@ to `waldo model train`. A compose supports four initialization modes:
 | no `base` | Newly initialized weights | `architecture` is required. |
 | `base.model` | Verified completed checkpoint from a named managed model, falling back to its origin when it has no completed run | `architecture` may be omitted and inherited; when present, it must exactly match. |
 | `base.source` | Verified origin weights acquired from an external source | `architecture` may be omitted and inherited; when present, it must exactly match. |
-| `base.merge` | The weighted mean of two or more managed models that share a recorded ancestor | Every parent must have the same architecture, which the compose inherits. |
+| `base.merge` | The (weighted) mean of two or more managed models that share a recorded ancestor | Every parent must have the same architecture, which the compose inherits. |
 
 `model`, `source`, and `merge` are mutually exclusive. A base initializes the destination
 model and is never mutated by its training. For a trained managed base, WALDO
@@ -285,22 +285,10 @@ base:
       weight: 477616
 ```
 
-Averaging weights is meaningful only between models trained from common
-weights, so WALDO fails closed unless the parents share an ancestor
-([ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)). Ancestry is
-recorded git-style ([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)):
-each model has a lineage node naming its weights and its parents' nodes, by
-hash. WALDO walks the parents' chains through the model store, like
-`git merge-base`, and requires a common weights hash; parents from random
-weights or from releases without lineage cannot be merged. Merges accept
-models with `bfloat16` or `float32` parameters whose architectures, tokenizer
-included, are identical.
-
-The merge is written once, as an origin under the store's `.merges` directory,
-recording the method, each parent's model ID, weights hash, and node, in order;
-anyone holding the parents can recompute it and compare hashes. With no stages,
-the destination is the merged model itself; with stages, the merge initializes
-training. Exports carry the lineage node in their `BOM.json`, and pulls keep it.
+Parents must have identical architectures and share an ancestor in their
+recorded lineage ([ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)).
+The mean is deterministic, so anyone holding the parents gets the same bytes.
+With no stages the merge is the model; with stages it initializes training.
 
 ### Direct external base
 

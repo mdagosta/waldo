@@ -100,7 +100,7 @@ func TestLoadRunReadsTheJoinBlock(t *testing.T) {
 	if got := strings.Join(plan.Stages(), ","); got != "bootstrap,pretrain,pretrain,posttrain,posttrain,posttrain" {
 		t.Fatalf("stages = %s", got)
 	}
-	if plan.Floor() != 0.01 || plan.Closers != 2 || plan.ClaimMinutes != 60 || plan.Merge != "mean" {
+	if plan.Floor() != 0.01 || plan.Closers != 2 || plan.ClaimMinutes != 60 {
 		t.Fatalf("plan = %+v", plan)
 	}
 	if steps, err := plan.pretrainSteps(); err != nil || steps != 500 {

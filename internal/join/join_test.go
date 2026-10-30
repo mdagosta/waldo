@@ -329,49 +329,6 @@ func TestComposeInputsAreDeterministic(t *testing.T) {
 	}
 }
 
-func TestLoadTokenAcceptsOnlyAPrivateRegularFile(t *testing.T) {
-	home := filepath.Join(t.TempDir(), "identity")
-	if err := os.Mkdir(home, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	token := filepath.Join(home, "github-token")
-	if err := os.WriteFile(token, []byte("secret\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	joiner := &Joiner{Home: home}
-	if err := joiner.loadToken(); err != nil || joiner.token != "secret" {
-		t.Fatalf("token = %q, %v", joiner.token, err)
-	}
-	if err := os.Chmod(token, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := joiner.loadToken(); err == nil || !strings.Contains(err.Error(), "readable by others") {
-		t.Fatalf("readable token error = %v", err)
-	}
-	if err := os.Chmod(token, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(home, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := joiner.loadToken(); err == nil || !strings.Contains(err.Error(), "chmod 700") {
-		t.Fatalf("readable directory error = %v", err)
-	}
-	if err := os.Chmod(home, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	linked := filepath.Join(t.TempDir(), "linked")
-	if err := os.Mkdir(linked, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(token, filepath.Join(linked, "github-token")); err != nil {
-		t.Fatal(err)
-	}
-	if err := (&Joiner{Home: linked}).loadToken(); err == nil || !strings.Contains(err.Error(), "regular file") {
-		t.Fatalf("symlinked token error = %v", err)
-	}
-}
-
 func TestScreenSetsAsideOnlyBadReplicas(t *testing.T) {
 	start := strings.Repeat("0", 64)
 	base := &MergeRecord{ModelSHA256: start}
