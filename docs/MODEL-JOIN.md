@@ -50,7 +50,7 @@ join:
 | `base` | Optional starting model instead of a bootstrap: `model`, `url` (`file://`), `model_sha256`, `files`. |
 | `gates` | Optional bar per stage; see [Gates](#gates). |
 | `replica_tolerance`, `replica_floor` | Agreement thresholds; defaults 0.25 and 0.001. |
-| `min_steps_per_round`, `round_minutes` | Minimum steps per unit; optional round deadline. |
+| `min_steps_per_round` | Minimum steps per unit. |
 
 ## Rounds
 

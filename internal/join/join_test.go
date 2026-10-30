@@ -219,7 +219,7 @@ func TestMajorityOfClosersDecidesRound(t *testing.T) {
 	if round := read(); round.Merge != nil || len(round.Merges) != 2 {
 		t.Fatalf("round decided without a majority: %+v", round)
 	}
-	if got := (State{Plan: plan, Rounds: []Round{read()}}).Next("dave", now); got.Kind != "idle" {
+	if got := stateOf(plan, []Round{read()}).Next("dave", now); got.Kind != "idle" {
 		t.Fatalf("dave = %+v, want idle while close-3 is held", got)
 	}
 	// A fourth closer claimed before the vote split does not count.
@@ -237,7 +237,7 @@ func TestMajorityOfClosersDecidesRound(t *testing.T) {
 	}
 	// The third closer splits the vote three ways, which opens a fourth slot.
 	write("merges/carol.yaml", mergeFixture("carol", strings.Repeat("e", 64)), keys["carol"])
-	if got := (State{Plan: plan, Rounds: []Round{read()}}).Next("dave", now); got.Kind != "claim" || got.Slot != "close-4" {
+	if got := stateOf(plan, []Round{read()}).Next("dave", now); got.Kind != "claim" || got.Slot != "close-4" {
 		t.Fatalf("dave = %+v, want a claim on close-4", got)
 	}
 	late := claimFixture("close-4", 1, "dave")
@@ -254,9 +254,19 @@ func TestMajorityOfClosersDecidesRound(t *testing.T) {
 	}
 }
 
+// stateOf is a run's state from rounds built by hand, scheduled as ReadState schedules them.
+func stateOf(plan Plan, rounds []Round) State {
+	var decided []*MergeRecord
+	for _, round := range rounds {
+		decided = append(decided, round.Merge)
+	}
+	slots, _ := plan.Schedule(decided)
+	return State{Plan: plan, Rounds: rounds, Slots: slots}
+}
+
 func TestNextAction(t *testing.T) {
 	plan := Plan{Units: []string{"u0", "u1"}, Replicas: 2, Closers: 1, ClaimMinutes: 60, Rounds: RoundsPlan{Pretrain: 1}}
-	merged := Round{Merge: &MergeRecord{}, ClosedAt: time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)}
+	merged := Round{Merge: &MergeRecord{}}
 	// round builds a round from "slot identity" claims, "unit identity" submissions, and "merge identity" merges.
 	round := func(entries ...string) Round {
 		result := Round{Claims: map[string][]Claim{}, Latest: map[string]Attempt{}, Submissions: map[string][]Submission{}, Merged: map[string]bool{}}
@@ -295,25 +305,22 @@ func TestNextAction(t *testing.T) {
 	for name, test := range map[string]struct {
 		rounds   []Round
 		identity string
-		minutes  float64
 		want     Action
 	}{
-		"claims first slot": {nil, "alice", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: slot("alice", "all", 0, 2), Attempt: 1}},
-		"claims next slot":  {[]Round{round("claim:all-1 alice")}, "bob", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 1}},
-		"trains its claim":  {[]Round{round("claim:all-1 alice")}, "alice", 0, Action{Kind: "contribute", Round: 0, Stage: "bootstrap", Unit: "all"}},
-		"slots all held":    {[]Round{round("claim:all-1 alice", "claim:all-2 bob")}, "carol", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
-		"retakes expired":   {[]Round{round("claim:all-1 alice", "late:all-2 bob")}, "carol", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 2}},
-		"waits on others":   {[]Round{round("claim:all-1 alice", "claim:all-2 bob", "submit:all alice")}, "alice", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
-		"claims close":      {[]Round{round(full...)}, "carol", 0, Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "close", Slot: slot("carol", "close", 0, 1), Attempt: 1}},
-		"closes its claim":  {[]Round{round(append(full, "claim:close-1 carol")...)}, "carol", 0, Action{Kind: "close", Round: 0, Stage: "bootstrap", Unit: "close"}},
-		"waits on closer":   {[]Round{round(append(full, "claim:close-1 carol")...)}, "alice", 0, Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
-		"lowest free unit":  {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob")}, "carol", 0, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("carol", "u1", 1, 2), Attempt: 1}},
-		"late round":        {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 20, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "close", Slot: slot("alice", "close", 1, 1), Attempt: 1}},
-		"not yet late":      {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", 60, Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("alice", "u1", 1, 2), Attempt: 1}},
-		"done":              {[]Round{merged, merged}, "alice", 0, Action{Kind: "done", Round: 1}},
+		"claims first slot": {nil, "alice", Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: slot("alice", "all", 0, 2), Attempt: 1}},
+		"claims next slot":  {[]Round{round("claim:all-1 alice")}, "bob", Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 1}},
+		"trains its claim":  {[]Round{round("claim:all-1 alice")}, "alice", Action{Kind: "contribute", Round: 0, Stage: "bootstrap", Unit: "all"}},
+		"slots all held":    {[]Round{round("claim:all-1 alice", "claim:all-2 bob")}, "carol", Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
+		"retakes expired":   {[]Round{round("claim:all-1 alice", "late:all-2 bob")}, "carol", Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "all", Slot: "all-2", Attempt: 2}},
+		"waits on others":   {[]Round{round("claim:all-1 alice", "claim:all-2 bob", "submit:all alice")}, "alice", Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
+		"claims close":      {[]Round{round(full...)}, "carol", Action{Kind: "claim", Round: 0, Stage: "bootstrap", Unit: "close", Slot: slot("carol", "close", 0, 1), Attempt: 1}},
+		"closes its claim":  {[]Round{round(append(full, "claim:close-1 carol")...)}, "carol", Action{Kind: "close", Round: 0, Stage: "bootstrap", Unit: "close"}},
+		"waits on closer":   {[]Round{round(append(full, "claim:close-1 carol")...)}, "alice", Action{Kind: "idle", Round: 0, Stage: "bootstrap"}},
+		"lowest free unit":  {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob")}, "carol", Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("carol", "u1", 1, 2), Attempt: 1}},
+		"other units open":  {[]Round{merged, round("claim:u0-1 alice", "claim:u0-2 bob", "submit:u0 alice", "submit:u0 bob")}, "alice", Action{Kind: "claim", Round: 1, Stage: "pretrain", Unit: "u1", Slot: slot("alice", "u1", 1, 2), Attempt: 1}},
+		"done":              {[]Round{merged, merged}, "alice", Action{Kind: "done", Round: 1}},
 	} {
-		plan.RoundMinutes = test.minutes
-		if got := (State{Plan: plan, Rounds: test.rounds}).Next(test.identity, now); got != test.want {
+		if got := stateOf(plan, test.rounds).Next(test.identity, now); got != test.want {
 			t.Fatalf("%s: next = %+v, want %+v", name, got, test.want)
 		}
 	}

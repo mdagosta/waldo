@@ -31,7 +31,6 @@ type Round struct {
 	Votes       []MergeRecord   // one merge per closing slot, in slot order
 	Merged      map[string]bool // identities with any merge file, valid or not
 	Merge       *MergeRecord    // the majority's merge, once the round is decided
-	ClosedAt    time.Time       // when the majority formed, by its signers' own clocks
 }
 
 // Attempt is a slot's latest claim file as written, so a malformed claim still
@@ -56,8 +55,8 @@ func claimAttempt(file string) (string, int) {
 type State struct {
 	Slots   []Slot // the rounds as far as the decided ones determine them
 	Stopped bool   // a gate never passed, and the run ended there
-	Plan       Plan
-	Rounds     []Round
+	Plan    Plan
+	Rounds  []Round
 }
 
 func roundDir(runDir string, number int) string {
@@ -180,7 +179,7 @@ func ReadState(runDir string, plan Plan, allowedSigners string) (State, error) {
 			}
 		}
 		round.Votes = votes(round, plan)
-		round.Merge, round.ClosedAt = decide(round.Votes, plan.Quorum())
+		round.Merge = decide(round.Votes, plan.Quorum())
 		state.Rounds = append(state.Rounds, round)
 		decided = append(decided, round.Merge)
 		if round.Merge == nil {
@@ -250,25 +249,18 @@ func (record MergeRecord) decision() string {
 
 // decide returns the first decision, in slot order, that a quorum of votes
 // signs. Votes are only ever added, so once a round is decided no later record
-// changes its decision. ClosedAt is the latest clock among those votes, so a
-// signer can only make the round's deadline later.
-func decide(votes []MergeRecord, quorum int) (*MergeRecord, time.Time) {
+// changes its decision.
+func decide(votes []MergeRecord, quorum int) *MergeRecord {
 	byDecision := map[string][]MergeRecord{}
 	for _, record := range votes {
 		agreeing := append(byDecision[record.decision()], record)
 		byDecision[record.decision()] = agreeing
 		if len(agreeing) == quorum {
-			var closedAt time.Time
-			for _, vote := range agreeing {
-				if closed, err := time.Parse(time.RFC3339, vote.ClosedAt); err == nil && closed.After(closedAt) {
-					closedAt = closed
-				}
-			}
 			chosen := agreeing[0]
-			return &chosen, closedAt
+			return &chosen
 		}
 	}
-	return nil, time.Time{}
+	return nil
 }
 
 // Agreeing is every merge that signed the round's decision, so its weights can
@@ -439,7 +431,7 @@ func positions(identity string, round, count int) []int {
 	return result
 }
 
-// Next picks this pass's work. A full (or late) round is closed by its claimed
+// Next picks this pass's work. A full round is closed by its claimed
 // closers: the plan's closers, then one more for each that disagrees until a
 // majority signs one merge. Otherwise an identity trains the unit it claimed,
 // else claims a replica slot of the lowest unit it has not taken part in.
@@ -452,13 +444,6 @@ func (state State) Next(identity string, now time.Time) Action {
 		number++
 	}
 	slots := state.Slots
-	if slots == nil {
-		var decided []*MergeRecord
-		for _, round := range state.Rounds {
-			decided = append(decided, round.Merge)
-		}
-		slots, _ = state.Plan.Schedule(decided)
-	}
 	if number >= len(slots) {
 		return Action{Kind: "done", Round: len(slots) - 1}
 	}
@@ -474,11 +459,7 @@ func (state State) Next(identity string, now time.Time) Action {
 			full++
 		}
 	}
-	late := false
-	if state.Plan.RoundMinutes > 0 && number > 0 {
-		late = now.After(state.Rounds[number-1].ClosedAt.Add(time.Duration(state.Plan.RoundMinutes * float64(time.Minute))))
-	}
-	if full == len(units) || (late && full > 0) {
+	if full == len(units) {
 		if round.Merged[identity] {
 			return Action{Kind: "idle", Round: number, Stage: stage}
 		}

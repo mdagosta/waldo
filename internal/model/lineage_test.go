@@ -125,8 +125,8 @@ func TestMergeComposeRecordsLineageAndFailsClosed(t *testing.T) {
 		t.Fatalf("merged model is not usable from its origin: %+v", merged.BOM)
 	}
 	// A release of the merge records the merged node, so the chain continues past publication.
-	lineage, err := ExportLineage(merged)
-	if err != nil || !reflect.DeepEqual(*lineage, *origin.Lineage) {
+	lineage, err := ModelLineage(merged)
+	if err != nil || !reflect.DeepEqual(lineage, *origin.Lineage) {
 		t.Fatalf("export lineage = %+v, %v", lineage, err)
 	}
 	_, err = builder.Compose(context.Background(), "unrelated", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "stranger"}}}}, nil)

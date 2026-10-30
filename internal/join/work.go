@@ -26,9 +26,6 @@ import (
 	"github.com/openwaldo/waldo/internal/model"
 )
 
-// Files a merged Hugging Face package takes from its first input; inputs must agree on every one.
-var mergeSharedFiles = []string{"config.json", "generation_config.json", "tokenizer_config.json", "special_tokens_map.json", "tokenization_openwaldo.py", "chat_template.jinja", "architecture.py"}
-
 // pieceSeed is the same for every replica of one piece of work and different across pieces.
 func pieceSeed(parts ...any) int {
 	words := make([]string, len(parts))
@@ -322,15 +319,6 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 	if err := joiner.train(ctx, name, text); err != nil {
 		return err
 	}
-	if action.Stage != "bootstrap" && joiner.plan.MinStepsPerRound > 0 {
-		steps, err := joiner.maxTelemetry(name, "planned_steps")
-		if err != nil {
-			return err
-		}
-		if int(steps) < joiner.plan.MinStepsPerRound {
-			return fmt.Errorf("%s trained only %d steps; a round needs at least %d (min_steps_per_round)", name, int(steps), joiner.plan.MinStepsPerRound)
-		}
-	}
 	export, err := joiner.export(ctx, name)
 	if err != nil {
 		return err
@@ -355,18 +343,10 @@ func (joiner *Joiner) contribute(ctx context.Context, state State, action Action
 	if base != nil {
 		record.Base, record.BaseSHA256 = &base.Model, &base.ModelSHA256
 	}
-	if digest, ok := files["BOM.json"]; ok {
-		record.BOMSHA256 = &digest
-	}
 	path := filepath.Join(roundDir(joiner.runDir, action.Round), "submissions", action.Unit+"-"+joiner.Identity+".yaml")
 	won, err := joiner.commit(ctx, path, record, fmt.Sprintf("%s round %d: %s by %s", joiner.plan.Name, action.Round, action.Unit, joiner.Identity))
 	if err != nil || won {
 		return err
-	}
-	// The round can still close without this unit, once it is past its deadline.
-	if current, err := joiner.load(); err == nil && action.Round < len(current.Rounds) && current.Rounds[action.Round].Merge != nil {
-		fmt.Fprintf(joiner.Log, "   round %d closed while %s trained %s; moving on\n", action.Round, joiner.Identity, action.Unit)
-		return nil
 	}
 	return fmt.Errorf("round %d unit %s: the runs repo did not accept this submission", action.Round, action.Unit)
 }

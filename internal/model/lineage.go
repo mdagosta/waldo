@@ -210,16 +210,6 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, error) {
 	return parents, nil
 }
 
-// ExportLineage is the node a release records, so a model pulled from it
-// continues the chain.
-func ExportLineage(inspection Inspection) (*LineageNode, error) {
-	node, err := ModelLineage(inspection)
-	if err != nil {
-		return nil, err
-	}
-	return &node, nil
-}
-
 // currentWeights is the newest complete real run's weights, else the origin's.
 func currentWeights(inspection Inspection) (string, string, error) {
 	initialization, err := resolveRunInitialization(inspection, "")
