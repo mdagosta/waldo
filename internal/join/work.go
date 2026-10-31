@@ -443,8 +443,12 @@ func (joiner *Joiner) verify(ctx context.Context, stage, label string, exports [
 				agree[first]++
 				agree[second]++
 			}
-			fmt.Fprintf(joiner.Log, "   replicas %d vs %d: probe loss %.4f vs %.4f (gap %.0f%% of the round's progress)  %s\n",
-				first+1, second+1, losses[first], losses[second], gap*100, verdict)
+			measure := fmt.Sprintf("gap %.0f%% of the round's progress", gap*100)
+			if progress <= 1e-9 {
+				measure = fmt.Sprintf("no progress; gap %.4f", math.Abs(losses[first]-losses[second]))
+			}
+			fmt.Fprintf(joiner.Log, "   replicas %d vs %d: probe loss %.4f vs %.4f (%s)  %s\n",
+				first+1, second+1, losses[first], losses[second], measure, verdict)
 		}
 	}
 	var accepted, rejected []string
