@@ -1,15 +1,15 @@
 ---
-name: send-pr
-description: Prepare an upstream pull request from the current feature branch using that repository's own PR template, show the user everything that will be posted, and open it only after they approve.
+name: draft-pr
+description: Draft an upstream pull request from the current feature branch using that repository's own PR template, and hand the user the title and body to paste into GitHub themselves.
 disable-model-invocation: true
 argument-hint: "[worktree path or branch; default: the current worktree]"
 ---
 
-# Send an upstream PR
+# Draft an upstream PR
 
 The user signs off on every PR personally, so they must understand and stand behind everything
-that gets posted. Move at a pace they can follow: one PR at a time, plain words, nothing posted
-without an explicit yes.
+in it. Move at a pace they can follow: one PR at a time, plain words. The user opens the PR in
+GitHub's web page and pastes the draft; this skill never posts, pushes, or uses `gh`.
 
 ## 1. Read the branch and its repository (no questions)
 
@@ -47,20 +47,19 @@ Then fill the template:
 
 Write the body to the scratchpad as `pr-<branch>.md`.
 
-## 4. Show everything, then wait
+## 4. Show everything, then revise
 
 Show, in one message:
-- the repo, head (`mdagosta:<branch>`), and base;
+- the repo, the branch to open it from (`mdagosta:<branch>`), and the base;
 - which template file was used;
 - the commit list and the diff stat;
-- the full title and body, as they will appear;
-- the exact command: `gh pr create --repo <upstream> --head mdagosta:<branch> --base <base> --title "<title>" --body-file <file>`
+- the title, in a code block on its own, ready to copy;
+- the body, in a code block, exactly as it should be pasted;
+- the compare link to open: `https://github.com/<upstream>/compare/<base>...mdagosta:<branch>`
 
-Ask for approval. Revise on feedback and show the whole draft again. Anything short of a clear
-yes means wait.
+Revise on feedback and show the whole draft again.
 
-## 5. Post only after approval
+## 5. Hand off
 
-- If the fork's branch is behind local, ask before pushing; never force-push without the user saying so.
-- Run the shown command unchanged and report the PR URL.
-- Never commit, amend, or rebase: the user does those (DCO). Offer a one-line Slack note, as text only.
+- If the fork's branch is behind local, say so; the user pushes (never force-push for them).
+- Never commit, amend, rebase, push, or post: the user does those (DCO). Offer a one-line Slack note, as text only.
