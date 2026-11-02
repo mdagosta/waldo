@@ -94,9 +94,9 @@ managed artifact has been verified. `ORIGIN-BOM.json` retains the repository,
 requested reference, resolved commit, license when declared, and hashes of all
 acquired files; it does not retain a redundant copy of the source weights.
 A WALDO release's origin also keeps its lineage and training evidence
-([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)). Origins can
+([ADR 0084](adr/0084-record-lineage-and-training-provenance.md)). Origins can
 also come from a local directory (provider `file`) or a merge (provider
-`merge`, under `<model.root>/.merges`; [ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)).
+`merge`, under `<model.root>/.merges`; [ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)).
 `MODEL-BOM.json` selects the origin until a complete real training run produces
 new current weights.
 
@@ -470,7 +470,7 @@ side effects.
 `--evaluate-only` scores the model's current weights on the held-out records
 the compose's first stage selects, and changes nothing. The same compose and
 seed select the same records on any machine, so verifiers can compare replicas
-([ADR 0087](adr/0087-score-weights-without-training.md)).
+([ADR 0088](adr/0088-score-weights-without-training.md)).
 
 Passing `--audit` audits every materialized stage before the transaction starts.
 Interactive terminals receive byte-level materialization progress; redirected

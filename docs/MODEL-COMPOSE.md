@@ -286,7 +286,7 @@ base:
 ```
 
 Parents must have identical architectures and share an ancestor in their
-recorded lineage ([ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)).
+recorded lineage ([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)).
 The mean is deterministic, so anyone holding the parents gets the same bytes.
 With no stages the merge is the model; with stages it initializes training.
 
@@ -523,7 +523,7 @@ corpora:
 | `sources` | no | Matches either the canonical source identifier or source name. |
 | `metadata` | no | Maps canonical `meta` JSON keys to value filters. Each declared key must contain a string value and all declared keys must match. Missing, malformed, or non-string values are rejected. |
 | `date` | no | Selects canonical dates that overlap the inclusive `from`/`to` interval. |
-| `slice` | no | `{index, count}` with `0 <= index < count`. Keeps the records whose ID's SHA-256, read as a big-endian 64-bit integer from its first 8 bytes, modulo `count` equals `index` ([ADR 0086](adr/0086-select-deterministic-corpus-slices.md)). The `count` slices of a corpus are disjoint, near-equal in size, and stable for as long as each record's text is unchanged. |
+| `slice` | no | `{index, count}` with `0 <= index < count`. Keeps the records whose ID's SHA-256, read as a big-endian 64-bit integer from its first 8 bytes, modulo `count` equals `index` ([ADR 0087](adr/0087-select-deterministic-corpus-slices.md)). The `count` slices of a corpus are disjoint, near-equal in size, and stable for as long as each record's text is unchanged. |
 | `include` | no | At least one shell-style, case-sensitive pattern must match. |
 | `exclude` | no | Any matching pattern rejects the record and takes precedence over `include`. |
 | `languages.include_unset` | no | Also retains rows with no recorded language. Known languages must still match `include`. Defaults to `false`; it is not accepted for license or source filters. |

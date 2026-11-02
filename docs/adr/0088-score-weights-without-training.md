@@ -1,4 +1,4 @@
-# ADR 0087: Score current weights on a compose's held-out records without training
+# ADR 0088: Score current weights on a compose's held-out records without training
 
 Status: proposed
 

@@ -3,7 +3,7 @@
 `waldo model join` lets many machines train one model with no coordinator. A
 run lives in a git repository: a plan plus signed records of every unit of
 work. Every model it produces traces back to its corpora. Design:
-[ADR 0088](adr/0088-distributed-training-through-signed-records.md).
+[ADR 0089](adr/0089-distributed-training-through-signed-records.md).
 
 ```bash
 waldo model join <runs-repo> <run-dir> --identity <name> [--once] [--rounds <n>] [--email <address>] [--key <path>] [--wait <seconds>]
@@ -67,13 +67,13 @@ losses compare across rounds.
 
 A closer sets aside replicas that started from other weights, trained other
 tokens, parameters, or corpora, or whose provenance doesn't check; scores the
-rest with `--evaluate-only` ([ADR 0087](adr/0087-score-weights-without-training.md));
+rest with `--evaluate-only` ([ADR 0088](adr/0088-score-weights-without-training.md));
 and accepts the replica most others agree with. Accepted units merge by
-token-weighted mean ([ADR 0084](adr/0084-merge-models-with-a-common-ancestor.md)).
+token-weighted mean ([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)).
 
 The round is decided by the first merge a majority of closing slots sign.
 Each merge publishes its accepted units' run BOMs, the union of their training
-closures ([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)), and
+closures ([ADR 0084](adr/0084-record-lineage-and-training-provenance.md)), and
 `JOIN-ROUND.json`, linking the weights back to the signed records.
 
 ## Gates

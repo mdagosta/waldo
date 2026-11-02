@@ -1,4 +1,4 @@
-# ADR 0084: Merge models with a recorded common ancestor into a merged origin
+# ADR 0085: Merge models with a recorded common ancestor into a merged origin
 
 Status: proposed
 
@@ -15,7 +15,7 @@ ADR 0026 forbids recording a synthetic one.
 A compose base may be `merge`: two or more managed models, each with an
 optional weight given for every parent or none. WALDO resolves each parent's
 current weights, requires identical architectures and the byte tokenizer, and
-fails closed unless the parents' lineage chains (ADR 0083) reach a common
+fails closed unless the parents' lineage chains (ADR 0084) reach a common
 weights hash. It walks each chain through every lineage node the model store
 holds, like `git merge-base`. There is no override: unrelated models are never
 averaged.

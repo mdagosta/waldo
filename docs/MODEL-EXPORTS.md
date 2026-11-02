@@ -155,7 +155,7 @@ after execution.
 
 Every model export includes a deterministic training-data attribution notice.
 It is generated from the corpus BOMs of every completed run in the model's
-lineage, own and inherited ([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)),
+lineage, own and inherited ([ADR 0084](adr/0084-record-lineage-and-training-provenance.md)),
 and lists their licenses, obligations, sources, and license evidence. Export
 fails if any of those corpora no longer passes WALDO's distributable policy.
 
@@ -217,12 +217,12 @@ inventory. Its schema-1 shape is:
 
 `source_bom_sha256` connects the derived representation to the managed model
 BOM from which it was produced. `lineage` is the model's lineage node
-([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)). Each artifact path is relative to the package
+([ADR 0084](adr/0084-record-lineage-and-training-provenance.md)). Each artifact path is relative to the package
 root. This makes a release relocatable without embedding a machine-specific
 model directory.
 
 Packages also publish the training evidence behind their weights
-([ADR 0083](adr/0083-record-lineage-and-training-provenance.md)): each run BOM as
+([ADR 0084](adr/0084-record-lineage-and-training-provenance.md)): each run BOM as
 `provenance-<sha256>.json`, and `TRAINING-CLOSURE.json`, every corpus the
 lineage trained on. Join's merges add `JOIN-ROUND.json`, linking back to the
 run's signed records ([Model join](MODEL-JOIN.md)); pulls keep all three.

@@ -1,4 +1,4 @@
-# ADR 0083: Record model lineage and training provenance as content-addressed nodes
+# ADR 0084: Record model lineage and training provenance as content-addressed nodes
 
 Status: proposed
 

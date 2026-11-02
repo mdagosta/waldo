@@ -1,4 +1,4 @@
-# ADR 0088: Coordinate distributed training through signed records in a git repository
+# ADR 0089: Coordinate distributed training through signed records in a git repository
 
 Status: proposed
 
@@ -29,14 +29,14 @@ untrusted distributed training.
   slot's claimant.
 - Closers set aside replicas one at a time (wrong base, odd tokens, provenance
   that does not rebuild, another unit's corpus, short budget), score the rest
-  with `--evaluate-only` (0087), and merge the agreed ones with
-  `base.merge` (0084). A round is decided by the first decision, in slot order,
+  with `--evaluate-only` (0088), and merge the agreed ones with
+  `base.merge` (0085). A round is decided by the first decision, in slot order,
   that a majority of closing slots sign, including the published provenance.
 - Gates make runs training ladders: a stage's last round checks its merge
   against a held-out loss, or an evaluation through `waldo model gate`; a failed
   gate adds rounds of the stage up to a limit, and a gate that never passes stops
   the run. The result is part of the closers' decision.
-- Weights and their provenance (0083) are published to a file store, pinned by
+- Weights and their provenance (0084) are published to a file store, pinned by
   hash. Remote stores and runs repositories come later, through a relay.
 - Each identity lives in `~/.waldo/join/<identity>`. Join runs `git` and `ssh-keygen`.
 

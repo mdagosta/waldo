@@ -1,4 +1,4 @@
-# ADR 0086: Select deterministic hashed slices of a corpus
+# ADR 0087: Select deterministic hashed slices of a corpus
 
 Status: proposed
 

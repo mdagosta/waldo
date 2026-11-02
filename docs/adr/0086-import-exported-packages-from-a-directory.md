@@ -1,4 +1,4 @@
-# ADR 0085: Import exported WALDO packages from a local directory
+# ADR 0086: Import exported WALDO packages from a local directory
 
 Status: proposed
 
@@ -16,7 +16,7 @@ directory holding an exported Hugging Face package. The origin's provider is
 `file`; it pins every imported file by hash and takes the weights hash as its
 revision. Hugging Face and directory imports share file selection,
 architecture and tokenizer validation, normalization, and the keeping of a
-release's lineage node, run BOMs, and training closure (ADR 0083).
+release's lineage node, run BOMs, and training closure (ADR 0084).
 
 ## Consequences
 
