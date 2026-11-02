@@ -109,6 +109,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--records", required=True)
     parser.add_argument("--limit", type=int, default=0, help="score N records evenly spaced over the id-sorted set (0: all)")
+    parser.add_argument("--show", action="store_true", help="print each prompt and the program the model wrote")
     parser.add_argument("model")
     parser.add_argument("evaluation_bom")
     parser.add_argument("results")
@@ -135,6 +136,8 @@ def main():
         ok = run(written) == expected and structure(reference) <= structure(written)
         passed, scored = passed + ok, scored + 1
         print(f"{'pass' if ok else 'FAIL'}  {record['id']}", flush=True)
+        if args.show:
+            print(f"  > {record['prompt']}\n" + "".join(f"    {line}\n" for line in written.splitlines()), flush=True)
     rate = passed / scored if scored else 0.0
     print(f"{passed}/{scored} programs matched ({len(records) - scored} unscorable): pass_rate {rate:.4f}")
     document = {"kind": "openwaldo-evaluation-results", "schema": 1,
