@@ -1,6 +1,7 @@
 # ADR 0085: Merge models with a recorded common ancestor into a merged origin
 
-Status: proposed
+Status: accepted
+- Date: 2026-11-01
 
 ## Context
 
@@ -17,8 +18,11 @@ optional weight given for every parent or none. WALDO resolves each parent's
 current weights, requires identical architectures and the byte tokenizer, and
 fails closed unless the parents' lineage chains (ADR 0084) reach a common
 weights hash. It walks each chain through every lineage node the model store
-holds, like `git merge-base`. There is no override: unrelated models are never
-averaged.
+holds, like `git merge-base`. There is no override: models with no common
+ancestor in that lineage are never averaged. A pulled release's node is what
+the release declared, which the store cannot check, so when the common ancestor
+is shown only through such nodes, and the store does not record them itself,
+the merge records `declared_ancestry: true`.
 
 The merge is an origin. WALDO computes the mean in float32 in parent order,
 rounds to nearest-even bfloat16 or float32, and writes it under
@@ -38,7 +42,10 @@ origin. `model train` needs no training backend for a merge-only compose.
 - A merge never invents a training run; its provenance is its parents'.
 - Changing the arithmetic requires a new method name.
 - Parents trained from random weights, or pulled without recorded lineage,
-  cannot be merged.
+  cannot be merged, except copies of the same weights.
+- A merge's record says whether its common ancestor rests on this store's own
+  records or only on what pulled releases declared. A release can declare any
+  parent; the record never presents that claim as shown.
 
 Relates to [0026](0026-pinned-model-origin.md), [0051](0051-direct-compose-model-origins.md),
 [0043](0043-unified-model-training.md), and [0066](0066-pin-trained-model-parents.md).

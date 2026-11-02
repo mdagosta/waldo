@@ -191,7 +191,7 @@ inventory. Its schema-1 shape is:
   "run_id": "<selected real run; omitted for an origin>",
   "source_bom_sha256": "<managed model BOM hash>",
   "lineage": {
-    "weights_sha256": "<released weights' managed artifact hash>",
+    "weights_sha256": "<hash of the weights this release was converted from>",
     "parents": [
       {"weights_sha256": "<starting weights hash>", "lineage_sha256": "<parent lineage node hash>"}
     ],
@@ -219,7 +219,10 @@ inventory. Its schema-1 shape is:
 BOM from which it was produced. `lineage` is the model's lineage node
 ([ADR 0084](adr/0084-record-lineage-and-training-provenance.md)). Each artifact path is relative to the package
 root. This makes a release relocatable without embedding a machine-specific
-model directory.
+model directory. `lineage` is the lineage node of the managed weights this
+release was converted from ([ADR 0084](adr/0084-record-model-lineage.md)), so
+its `weights_sha256` names no file in the release; a pull keeps it as the node
+its origin descends from, so the chain continues past publication.
 
 Packages also publish the training evidence behind their weights
 ([ADR 0084](adr/0084-record-lineage-and-training-provenance.md)): each run BOM as

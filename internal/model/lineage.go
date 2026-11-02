@@ -31,40 +31,82 @@ func (node LineageNode) validate() error {
 	return nil
 }
 
-// ModelLineage is a model's lineage node: its current weights and the weights
-// they came from. Trained weights descend from the model's starting weights;
-// a model with no runs is its origin, pulled or merged.
-func ModelLineage(inspection Inspection) (LineageNode, error) {
-	initialization, err := resolveRunInitialization(inspection, "")
+// ModelLineage is the lineage node of a model's weights after its run runID,
+// or after its newest complete real run when runID is empty. A model with no
+// such run is its origin, pulled or merged.
+func ModelLineage(inspection Inspection, runID string) (LineageNode, error) {
+	nodes, err := runLineage(inspection)
 	if err != nil {
 		return LineageNode{}, err
 	}
-	if initialization == nil {
-		if inspection.Origin == nil || inspection.BOM.CurrentOriginSHA256 == "" {
-			return LineageNode{}, fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
-		}
-		return originNode(*inspection.Origin)
-	}
-	node := LineageNode{WeightsSHA256: initialization.Artifact.SHA256}
-	for _, pin := range inspection.Model.Runs {
-		if pin.State == RunComplete && !pin.Simulated {
-			node.Runs = append(node.Runs, pin.BOMSHA256)
+	for index := len(nodes) - 1; index >= 0; index-- {
+		if runID == "" || nodes[index].runID == runID {
+			return nodes[index].node, nil
 		}
 	}
+	if runID != "" {
+		return LineageNode{}, fmt.Errorf("model %q has no complete real weights for run %s", inspection.Model.Name, runID)
+	}
+	if inspection.Origin == nil || inspection.BOM.CurrentOriginSHA256 == "" {
+		return LineageNode{}, fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
+	}
+	return originNode(*inspection.Origin)
+}
+
+type runNode struct {
+	runID string
+	node  LineageNode
+}
+
+// runLineage is a node for each complete real run, in order. Like a git commit,
+// each names the run that produced its weights and the node of the weights it
+// started from: an earlier run's, the parent pin's, or the origin's. Weights
+// with no node here, such as a simulated run's, are named by hash alone.
+func runLineage(inspection Inspection) ([]runNode, error) {
+	known := map[string]LineageLink{}
 	if parent := inspection.Model.Parent; parent != nil {
-		node.Parents = []LineageLink{{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}}
+		known[parent.Artifact.SHA256] = LineageLink{WeightsSHA256: parent.Artifact.SHA256, LineageSHA256: parent.LineageSHA256}
 	} else if inspection.Origin != nil {
 		start, err := originNode(*inspection.Origin)
 		if err != nil {
-			return LineageNode{}, err
+			return nil, err
 		}
 		link, err := linkTo(start)
 		if err != nil {
-			return LineageNode{}, err
+			return nil, err
 		}
-		node.Parents = []LineageLink{link}
+		known[start.WeightsSHA256] = link
 	}
-	return node, nil
+	var nodes []runNode
+	for position, run := range inspection.Runs {
+		if !realRun(inspection, position) {
+			continue
+		}
+		weights := ""
+		for _, artifact := range run.Observation.Artifacts {
+			if artifact.Path == "artifacts/model.safetensors" {
+				weights = artifact.SHA256
+			}
+		}
+		if weights == "" {
+			continue
+		}
+		node := LineageNode{WeightsSHA256: weights, Runs: []string{run.BOMSHA256}}
+		if start := inspection.RunBOMs[position].Initialization; start != nil {
+			link, ok := known[start.Artifact.SHA256]
+			if !ok {
+				link = LineageLink{WeightsSHA256: start.Artifact.SHA256}
+			}
+			node.Parents = []LineageLink{link}
+		}
+		link, err := linkTo(node)
+		if err != nil {
+			return nil, err
+		}
+		known[weights] = link
+		nodes = append(nodes, runNode{run.ID, node})
+	}
+	return nodes, nil
 }
 
 // originNode is an origin's node. A merge records its own; pulled weights
@@ -103,12 +145,18 @@ func linkTo(node LineageNode) (LineageLink, error) {
 }
 
 // lineageIndex holds every lineage node this model store can show, keyed by
-// node hash: each model's own node and each release node its origin records.
-func (builder Builder) lineageIndex() map[string]LineageNode {
+// node hash: each run's and origin's node, and each release node an origin
+// records. Release nodes are declared: a pulled release says where its weights
+// came from, and nothing here can check it, so they are also returned on their
+// own, unless this store records the same node itself.
+func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) {
 	index := map[string]LineageNode{}
-	add := func(node LineageNode) {
+	recorded := map[string]bool{}
+	releases := map[string]bool{}
+	add := func(node LineageNode, into map[string]bool) {
 		if digest, err := hashJSON(node); err == nil {
 			index[digest] = node
+			into[digest] = true
 		}
 	}
 	for _, root := range []string{builder.Root, filepath.Join(builder.Root, ".merges"), filepath.Join(builder.Root, ".origins")} {
@@ -124,21 +172,38 @@ func (builder Builder) lineageIndex() map[string]LineageNode {
 			if err != nil {
 				continue
 			}
-			if node, err := ModelLineage(inspection); err == nil {
-				add(node)
+			// Every run's node, not only the newest, so a pin to an earlier run
+			// still meets the rest of the chain after the model trains on.
+			if nodes, err := runLineage(inspection); err == nil {
+				for _, run := range nodes {
+					add(run.node, recorded)
+				}
 			}
-			if inspection.Origin != nil && inspection.Origin.Lineage != nil {
-				add(*inspection.Origin.Lineage)
+			if inspection.Origin == nil {
+				continue
+			}
+			// The origin's node too, since its first run's node links to it.
+			if node, err := originNode(*inspection.Origin); err == nil {
+				add(node, recorded)
+			}
+			if inspection.Origin.Merge == nil && inspection.Origin.Lineage != nil {
+				add(*inspection.Origin.Lineage, releases)
 			}
 		}
 	}
-	return index
+	declared := map[string]bool{}
+	for digest := range releases {
+		if !recorded[digest] {
+			declared[digest] = true
+		}
+	}
+	return index, declared
 }
 
 // ancestry walks a node's chain through the nodes the index holds, like git
 // merge-base, collecting the weights it reaches; a branch ends where its node
-// is not held.
-func ancestry(node LineageNode, index map[string]LineageNode) map[string]bool {
+// is not held, or where it would follow a node in skip.
+func ancestry(node LineageNode, index map[string]LineageNode, skip map[string]bool) map[string]bool {
 	reached := map[string]bool{}
 	visited := map[string]bool{}
 	queue := []LineageNode{node}
@@ -147,6 +212,9 @@ func ancestry(node LineageNode, index map[string]LineageNode) map[string]bool {
 		queue = queue[1:]
 		reached[current.WeightsSHA256] = true
 		for _, link := range current.Parents {
+			if skip[link.LineageSHA256] {
+				continue
+			}
 			reached[link.WeightsSHA256] = true
 			if next, ok := index[link.LineageSHA256]; ok && !visited[link.LineageSHA256] {
 				visited[link.LineageSHA256] = true
@@ -167,47 +235,53 @@ type mergeParent struct {
 // mergeParents resolves base.merge and fails closed unless every parent has
 // the same architecture and all of them share an ancestor their lineage
 // shows. Averaging weights is only meaningful for models trained from common
-// weights.
-func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, error) {
+// weights. It also reports whether that ancestor rests on lineage a pulled
+// release declared rather than on this store's own records.
+func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, error) {
 	var parents []mergeParent
-	var shared map[string]bool
-	index := builder.lineageIndex()
+	var shared, recorded map[string]bool
+	index, declaredNodes := builder.lineageIndex()
 	for _, declared := range base.Merge {
 		inspection, err := Inspect(builder.Root, declared.Model)
 		if err != nil {
-			return nil, fmt.Errorf("resolve base.merge parent %q: %w", declared.Model, err)
+			return nil, false, fmt.Errorf("resolve base.merge parent %q: %w", declared.Model, err)
 		}
 		if len(parents) > 0 && inspection.Model.ArchitectureSHA256 != parents[0].inspection.Model.ArchitectureSHA256 {
-			return nil, fmt.Errorf("base.merge parent %q does not have the architecture of %q", declared.Model, parents[0].inspection.Model.Name)
+			return nil, false, fmt.Errorf("base.merge parent %q does not have the architecture of %q", declared.Model, parents[0].inspection.Model.Name)
 		}
 		path, _, err := currentWeights(inspection)
 		if err != nil {
-			return nil, fmt.Errorf("base.merge parent: %w", err)
+			return nil, false, fmt.Errorf("base.merge parent: %w", err)
 		}
-		node, err := ModelLineage(inspection)
+		node, err := ModelLineage(inspection, "")
 		if err != nil {
-			return nil, fmt.Errorf("base.merge parent %q lineage: %w", declared.Model, err)
+			return nil, false, fmt.Errorf("base.merge parent %q lineage: %w", declared.Model, err)
 		}
 		link, err := linkTo(node)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		reached := ancestry(node, index)
-		if shared == nil {
-			shared = reached
-		} else {
-			for digest := range shared {
-				if !reached[digest] {
-					delete(shared, digest)
-				}
-			}
-		}
+		shared = intersect(shared, ancestry(node, index, nil))
+		recorded = intersect(recorded, ancestry(node, index, declaredNodes))
 		parents = append(parents, mergeParent{inspection, path, link, declared.Weight})
 	}
 	if len(shared) == 0 {
-		return nil, fmt.Errorf("base.merge parents share no recorded ancestor; only models trained from common weights can be merged")
+		return nil, false, fmt.Errorf("base.merge parents share no recorded ancestor; only models trained from common weights can be merged")
 	}
-	return parents, nil
+	return parents, len(recorded) == 0, nil
+}
+
+// intersect keeps the weights both sets reached; a nil set is the first one seen.
+func intersect(shared, reached map[string]bool) map[string]bool {
+	if shared == nil {
+		return reached
+	}
+	for digest := range shared {
+		if !reached[digest] {
+			delete(shared, digest)
+		}
+	}
+	return shared
 }
 
 // currentWeights is the newest complete real run's weights, else the origin's.
@@ -233,13 +307,13 @@ func currentWeights(inspection Inspection) (string, string, error) {
 // by the parents and weights so the same merge is built once. Its lineage
 // node names every parent's node, like a git merge commit.
 func (builder Builder) mergeOrigin(base ComposeBase) (Inspection, error) {
-	parents, err := builder.mergeParents(base)
+	parents, declared, err := builder.mergeParents(base)
 	if err != nil {
 		return Inspection{}, err
 	}
 	// Method names version the exact arithmetic: float32 accumulation in parent
 	// order, rounded to nearest-even, so the same parents always merge to the same bytes.
-	merge := &OriginMerge{Method: "mean-f32-v1"}
+	merge := &OriginMerge{Method: "mean-f32-v1", DeclaredAncestry: declared}
 	var paths []string
 	var weights []float64
 	var links []LineageLink
@@ -359,20 +433,16 @@ func ProvenanceRecords(inspection Inspection) (map[string]string, error) {
 	if trained || inspection.Origin == nil {
 		return records, nil
 	}
-	// Kept run BOMs are named by their canonical hash, the hash lineage nodes list.
-	wanted := map[string]bool{}
-	if inspection.Origin.Lineage != nil && inspection.Origin.Merge == nil {
-		for _, run := range inspection.Origin.Lineage.Runs {
-			wanted[run] = true
-		}
+	// A merge publishes every run BOM it carries. A pulled release whose node
+	// names a run came from a trained model, which published its own runs;
+	// any other release's run BOMs belong to the releases it came from.
+	trainedRelease := inspection.Origin.Lineage != nil && len(inspection.Origin.Lineage.Runs) > 0
+	if inspection.Origin.Merge == nil && !trainedRelease {
+		return records, nil
 	}
 	for _, artifact := range inspection.Origin.Artifacts {
 		match := provenanceFile.FindStringSubmatch(filepath.Base(artifact.Path))
-		if artifact.Role != ProvenanceRole || match == nil {
-			continue
-		}
-		// A merge publishes every run BOM it carries; a pulled model, its release's own runs.
-		if inspection.Origin.Merge != nil || wanted[match[1]] {
+		if artifact.Role == ProvenanceRole && match != nil {
 			records[match[1]] = filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path))
 		}
 	}

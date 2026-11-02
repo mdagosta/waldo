@@ -287,7 +287,9 @@ base:
 
 Parents must have identical architectures and share an ancestor in their
 recorded lineage ([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)).
-The mean is deterministic, so anyone holding the parents gets the same bytes.
+A merge whose common ancestor rests only on what pulled releases declare
+records `declared_ancestry: true`. Weights must be normal, finite float32
+values. The mean is deterministic, so anyone holding the parents gets the same bytes.
 With no stages the merge is the model; with stages it initializes training.
 
 ### Direct external base

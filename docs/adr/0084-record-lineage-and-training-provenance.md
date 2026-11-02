@@ -1,6 +1,7 @@
 # ADR 0084: Record model lineage and training provenance as content-addressed nodes
 
-Status: proposed
+Status: accepted
+- Date: 2026-11-01
 
 ## Context
 
@@ -16,19 +17,25 @@ each record grow with the length of its history.
 
 ## Decision
 
-Every model has a lineage node: the SHA-256 of its current weights, its direct
-parents (each by weights hash and by the hash of the parent's own node), and
-the run BOMs that produced its weights from those parents. Like a git commit,
-a node names only its direct parents, so its size does not depend on the
-history behind it. A fine-tune's parent pin records the parent's node hash; a
-merged origin records its own node; a release's `BOM.json` carries the
+A lineage node is the SHA-256 of some weights, their direct parents, each by
+weights hash and by the hash of the parent's own node, and the run BOM that
+trained these weights from those parents. Like a git commit, a node names only
+its direct parents, so its size does not depend on the history behind it.
+Each complete real run of a model has its own node, whose parent is the node of
+the weights the run started from: an earlier run, the parent pin, or the
+origin. A model's node is its newest run's, or its origin's if it has none. A
+fine-tune's parent pin records the node of the run it starts from, which never
+changes as the parent trains on; a merged origin (ADR 0085) records its own
+node; a derived release's `BOM.json` (Hugging Face, MLX, GGUF) carries the
 released model's node; a pull keeps the release's node in the origin.
 
 Releases publish the evidence beside the weights. A package includes the run
 BOMs behind its weights as `provenance-<sha256>.json`, named by the hash of the
 run BOM's canonical JSON, which is how models already pin runs: a trained
 model's own runs, a merged model's parents' runs, or a pulled release's runs.
-Older runs stay published by the releases they came from. A package also
+A pulled release keeps its run BOMs only when its node names a run, so it came
+from a trained model, which publishes every run it trained; older runs stay
+published by the releases they came from. A package also
 includes `TRAINING-CLOSURE.json`: every distinct corpus BOM the lineage trained
 on, with use counts, and whether that history is complete. It is keyed by
 corpus BOM, so it grows with the corpora a lineage uses rather than its length.
@@ -59,7 +66,8 @@ an absolute local path, because they are now published.
 - Parent pins recorded before lineage nodes keep matching; their history ends
   at the immediate parent and is reported as incomplete where it matters.
 - Declared lineage from an unsigned release is recorded as the release declared
-  it. Verifying it against signed releases is future work.
+  it, and a merge that relies on it says so (ADR 0085). Verifying it against
+  signed releases is future work.
 
 Amends [0026](0026-pinned-model-origin.md), [0066](0066-pin-trained-model-parents.md),
 and [0022](0022-model-release-exports.md); relates to

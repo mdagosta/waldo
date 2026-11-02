@@ -1220,13 +1220,20 @@ func resolveInitialization(inspection Inspection) (*training.Initialization, err
 	return nil, nil
 }
 
+// realRun reports whether the run at position completed with real weights,
+// judged by its pin, as the model BOM's current run is.
+func realRun(inspection Inspection, position int) bool {
+	run := inspection.Runs[position]
+	return run.State == RunComplete && run.Observation != nil && position < len(inspection.Model.Runs) && !inspection.Model.Runs[position].Simulated
+}
+
 func resolveRunInitialization(inspection Inspection, requestedRunID string) (*training.Initialization, error) {
 	for index := len(inspection.Runs) - 1; index >= 0; index-- {
 		run := inspection.Runs[index]
 		if requestedRunID != "" && run.ID != requestedRunID {
 			continue
 		}
-		if run.State != RunComplete || run.Observation == nil || run.Observation.Simulated {
+		if !realRun(inspection, index) {
 			continue
 		}
 		for _, artifact := range run.Observation.Artifacts {
@@ -1424,7 +1431,7 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 	var base Inspection
 	if len(compose.Base.Merge) > 0 {
 		if !acquire {
-			parents, err := builder.mergeParents(*compose.Base)
+			parents, _, err := builder.mergeParents(*compose.Base)
 			if err != nil {
 				return Compose{}, nil, err
 			}
@@ -1519,7 +1526,7 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		if compose.Base.ArtifactBytes != 0 && compose.Base.ArtifactBytes != initialization.Artifact.Bytes {
 			return Compose{}, nil, fmt.Errorf("compose base artifact has %d bytes, not requested %d", initialization.Artifact.Bytes, compose.Base.ArtifactBytes)
 		}
-		node, err := ModelLineage(base)
+		node, err := ModelLineage(base, initialization.SourceRunID)
 		if err != nil {
 			return Compose{}, nil, err
 		}
@@ -1539,7 +1546,7 @@ func (builder Builder) resolveCompose(ctx context.Context, compose Compose, acqu
 		if base.Origin == nil || base.BOM.CurrentOriginSHA256 == "" {
 			return Compose{}, nil, fmt.Errorf("compose base model has no complete real weights")
 		}
-		if compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 {
+		if compose.Base.RunID != "" || compose.Base.RunBOMSHA256 != "" || compose.Base.ArtifactSHA256 != "" || compose.Base.ArtifactBytes != 0 || compose.Base.LineageSHA256 != "" {
 			return Compose{}, nil, fmt.Errorf("origin compose base cannot assert managed-model run pins")
 		}
 		if compose.Base.OriginSHA256 != "" && compose.Base.OriginSHA256 != base.Model.OriginBOMSHA256 {
