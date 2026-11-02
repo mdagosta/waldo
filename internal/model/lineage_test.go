@@ -46,6 +46,13 @@ func pullReleaseOf(t *testing.T, root, name, parent string, salt byte, architect
 	}
 	weights[len(weights)-1] ^= salt
 	node := LineageNode{WeightsSHA256: strings.Repeat(string("0123456789"[salt]), 64), Parents: []LineageLink{{WeightsSHA256: parent}}}
+	pullClaiming(t, root, name, files, node)
+}
+
+// pullClaiming pulls files as a release whose BOM.json declares node as the
+// lineage its weights came from.
+func pullClaiming(t *testing.T, root, name string, files map[string][]byte, node LineageNode) {
+	t.Helper()
 	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node})
 	if err != nil {
 		t.Fatal(err)
@@ -177,6 +184,20 @@ func TestMergeComposeRefusesDifferentArchitectures(t *testing.T) {
 }
 
 // With stages, the merge is the origin training starts from.
+// Merges average bfloat16 and float32 weights; a plan must not accept
+// float16 parents that the merge itself will refuse.
+func TestMergeComposeRefusesFloat16Parents(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	architecture := mergeArchitecture()
+	architecture.ParameterDType = "float16"
+	pullReleaseOf(t, root, "left", strings.Repeat("a", 64), 0, architecture)
+	pullReleaseOf(t, root, "right", strings.Repeat("a", 64), 1, architecture)
+	if _, _, err := (Builder{Root: root}).mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}); err == nil || !strings.Contains(err.Error(), "float16") {
+		t.Fatalf("float16 merge error = %v", err)
+	}
+}
+
 func TestMergeComposeTrainsFromTheMerge(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()
@@ -210,7 +231,25 @@ func TestMergeComposeMarksAncestryOnlyAReleaseDeclares(t *testing.T) {
 		t.Fatal(err)
 	}
 	pullRelease(t, root, "claimant", node.WeightsSHA256, 3)
-	// Training flips one bit of its initial weights, so "trained" holds weights of its own.
+	builder := flipWeightsBuilder(root)
+	stage := mergeStage("continue")
+	if _, err := builder.Compose(t.Context(), "trained", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "victim"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	for parent, declared := range map[string]bool{"claimant": true, "trained": false} {
+		merged, err := builder.Compose(t.Context(), "with-"+parent, Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "victim"}, {Model: parent}}}}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if merged.Origin.Merge.DeclaredAncestry != declared {
+			t.Fatalf("%s: declared ancestry = %v, want %v", parent, merged.Origin.Merge.DeclaredAncestry, declared)
+		}
+	}
+}
+
+// flipWeightsBuilder trains with a backend that flips one bit of the starting
+// weights, so each run holds real, mergeable weights of its own.
+func flipWeightsBuilder(root string) Builder {
 	backend := backendFunc(func(_ context.Context, request training.Request) (training.Observation, error) {
 		data, err := os.ReadFile(request.Initialization.Path)
 		if err != nil {
@@ -230,23 +269,58 @@ func TestMergeComposeMarksAncestryOnlyAReleaseDeclares(t *testing.T) {
 			Artifacts:   []training.Artifact{{Path: "artifacts/model.safetensors", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(data))}},
 		}, nil
 	})
-	builder := Builder{Root: root, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+	return Builder{Root: root, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
 		return testSelection(backend), nil
 	})}
-	stage := testStage("continue")
+}
+
+// mergeStage is a stage that fits mergeArchitecture's context.
+func mergeStage(name string) Stage {
+	stage := testStage(name)
 	stage.Parameters.SequenceLength = 32
 	stage.Parameters.Steps *= 2
-	if _, err := builder.Compose(t.Context(), "trained", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "victim"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+	return stage
+}
+
+// A model built on a merge keeps that merge as its base: re-running its
+// compose, or appending stages after a parent trains on, reuses the recorded
+// merge instead of averaging the parents' newer weights.
+func TestMergeComposeKeepsItsRecordedMerge(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "left", strings.Repeat("a", 64), 0)
+	pullRelease(t, root, "right", strings.Repeat("a", 64), 1)
+	builder := flipWeightsBuilder(root)
+	merge := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}
+	merged, err := builder.Compose(t.Context(), "merged", merge, nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	for parent, declared := range map[string]bool{"claimant": true, "trained": false} {
-		merged, err := builder.Compose(t.Context(), "with-"+parent, Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "victim"}, {Model: parent}}}}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if merged.Origin.Merge.DeclaredAncestry != declared {
-			t.Fatalf("%s: declared ancestry = %v, want %v", parent, merged.Origin.Merge.DeclaredAncestry, declared)
-		}
+	stage := mergeStage("one")
+	trained := merge
+	trained.Stages = []Stage{stage}
+	if _, err := builder.Compose(t.Context(), "trained", trained, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Train(t.Context(), "left", preparedFixture(t, mergeStage("more"))); err != nil {
+		t.Fatal(err)
+	}
+	// The merge-only model is complete as it stands.
+	resolved, err := builder.ResolveCompose(t.Context(), "merged", merge, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed, err := ComposeCompleted(resolved, merged); err != nil || !completed {
+		t.Fatalf("merge-only compose completed = %v, %v", completed, err)
+	}
+	two := mergeStage("two")
+	trained.Stages = []Stage{stage, two}
+	if _, err := builder.Compose(t.Context(), "trained", trained, []PreparedStage{preparedFixture(t, stage), preparedFixture(t, two)}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(root, ".merges"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf(".merges holds %d entries, want 1: %v", len(entries), err)
 	}
 }
 
@@ -295,7 +369,7 @@ func trainTwice(t *testing.T, builder Builder) string {
 func TestComposePinnedToEarlierRunRecordsThatRunsLineage(t *testing.T) {
 	builder := realWeightsBuilder(t.TempDir())
 	first := trainTwice(t, builder)
-	resolved, err := builder.ResolveCompose(t.Context(), Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first}, Stages: []Stage{testStage("child")}}, false)
+	resolved, err := builder.ResolveCompose(t.Context(), "", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "p", RunID: first}, Stages: []Stage{testStage("child")}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,12 +440,12 @@ func TestLineageAndCurrentWeightsSkipRunsThePinMarksSimulated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, current, err := currentWeights(p)
+	current, err := resolveRunInitialization(p, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if node.WeightsSHA256 != first || current != first {
-		t.Fatalf("lineage %s and current %s, want the first run's %s", node.WeightsSHA256, current, first)
+	if node.WeightsSHA256 != first || current.Artifact.SHA256 != first {
+		t.Fatalf("lineage %s and current %s, want the first run's %s", node.WeightsSHA256, current.Artifact.SHA256, first)
 	}
 }
 
@@ -388,8 +462,38 @@ func TestMergeFindsAncestryOfAPulledReleaseThatTrained(t *testing.T) {
 	if _, err := builder.Train(t.Context(), "left", preparedFixture(t, stage)); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}); err != nil {
+	// The two releases meet only through what they declared.
+	if _, declared, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}); err != nil || !declared {
+		t.Fatalf("merge of left and right: declared %v, %v", declared, err)
+	}
+}
+
+// A release can name a node this store records: one any export publishes, or
+// the plain node of weights anyone can pull. Its weights descending from that
+// node is still only its claim.
+func TestReleaseNamingARecordedNodeIsStillDeclared(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	client := &http.Client{Transport: huggingFaceTransport(t, huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass), strings.Repeat("a", 40))}
+	if _, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "plain", "huggingface://org/tiny"); err != nil {
 		t.Fatal(err)
+	}
+	plain, err := Inspect(root, "plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node, err := ModelLineage(plain, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for salt, claim := range map[byte]LineageNode{1: node, 2: {WeightsSHA256: node.WeightsSHA256}} {
+		files := huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass)
+		files["model.safetensors"][len(files["model.safetensors"])-1] ^= salt
+		name := fmt.Sprintf("claimant-%d", salt)
+		pullClaiming(t, root, name, files, claim)
+		if _, declared, err := (Builder{Root: root}).mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "plain"}, {Model: name}}}); err != nil || !declared {
+			t.Fatalf("%s: declared %v, %v", name, declared, err)
+		}
 	}
 }
 
@@ -438,8 +542,8 @@ func TestComposeRefusesLineagePinOnUntrainedBase(t *testing.T) {
 	stage := testStage("continue")
 	stage.Parameters.SequenceLength = 32
 	compose := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "left", LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
-	if _, err := (Builder{Root: root, Resolver: training.FakeResolver()}).Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil {
-		t.Fatal("origin base accepted a lineage pin")
+	if _, err := (Builder{Root: root, Resolver: training.FakeResolver()}).Compose(t.Context(), "child", compose, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "cannot assert managed-model run pins") {
+		t.Fatalf("origin base with a lineage pin: %v", err)
 	}
 	source := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Source: "huggingface://org/tiny@" + strings.Repeat("a", 40), LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
 	if err := source.Validate(); err == nil || !strings.Contains(err.Error(), "base.source") {

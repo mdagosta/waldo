@@ -26,7 +26,7 @@ func runModelEvaluate(context Context, name, path string, cluster training.Clust
 	if err != nil {
 		return err
 	}
-	compose, err = builder.ResolveCompose(context.Execution, compose, true)
+	compose, err = builder.ResolveCompose(context.Execution, name, compose, true)
 	if err != nil {
 		return err
 	}

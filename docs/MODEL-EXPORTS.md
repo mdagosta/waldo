@@ -222,7 +222,8 @@ root. This makes a release relocatable without embedding a machine-specific
 model directory. `lineage` is the lineage node of the managed weights this
 release was converted from ([ADR 0084](adr/0084-record-model-lineage.md)), so
 its `weights_sha256` names no file in the release; a pull keeps it as the node
-its origin descends from, so the chain continues past publication.
+its origin descends from, so the chain continues past publication. A pull
+refuses a release whose `lineage` is malformed rather than drop it silently.
 
 Packages also publish the training evidence behind their weights
 ([ADR 0084](adr/0084-record-lineage-and-training-provenance.md)): each run BOM as

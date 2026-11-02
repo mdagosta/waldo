@@ -285,12 +285,17 @@ base:
       weight: 477616
 ```
 
-Parents must have identical architectures and share an ancestor in their
-recorded lineage ([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)).
-A merge whose common ancestor rests only on what pulled releases declare
-records `declared_ancestry: true`. Weights must be normal, finite float32
-values. The mean is deterministic, so anyone holding the parents gets the same bytes.
-With no stages the merge is the model; with stages it initializes training.
+Parents must have identical architectures with `bfloat16` or `float32`
+parameters and share an ancestor in their recorded lineage
+([ADR 0085](adr/0085-merge-models-with-a-common-ancestor.md)). That pulled
+weights came from the node their release names is only the release's claim; a
+merge whose common ancestor rests only on such claims records
+`declared_ancestry: true`. Weights must be normal, finite float32 values, and a
+merge fails if a weighted value underflows or the average overflows float32.
+The mean accumulates from +0 in parent order, so anyone holding the parents gets
+the same bytes. With no stages the merge is the model; with stages it
+initializes training. Once the model exists, the same `base.merge` resolves to
+the merge it was built from, even after a parent trains on.
 
 ### Direct external base
 

@@ -19,8 +19,11 @@ func (node LineageNode) validate() error {
 		return fmt.Errorf("weights %q is not a SHA-256", node.WeightsSHA256)
 	}
 	for _, link := range node.Parents {
-		if !lineageDigest.MatchString(link.WeightsSHA256) || (link.LineageSHA256 != "" && !lineageDigest.MatchString(link.LineageSHA256)) {
-			return fmt.Errorf("parent %q is not a SHA-256", link.WeightsSHA256)
+		if !lineageDigest.MatchString(link.WeightsSHA256) {
+			return fmt.Errorf("parent weights %q is not a SHA-256", link.WeightsSHA256)
+		}
+		if link.LineageSHA256 != "" && !lineageDigest.MatchString(link.LineageSHA256) {
+			return fmt.Errorf("parent lineage %q is not a SHA-256", link.LineageSHA256)
 		}
 	}
 	for _, run := range node.Runs {
@@ -146,18 +149,19 @@ func linkTo(node LineageNode) (LineageLink, error) {
 
 // lineageIndex holds every lineage node this model store can show, keyed by
 // node hash: each run's and origin's node, and each release node an origin
-// records. Release nodes are declared: a pulled release says where its weights
-// came from, and nothing here can check it, so they are also returned on their
-// own, unless this store records the same node itself.
+// records. A pulled origin's link to its release node is declared: the release
+// says where its weights came from, whatever node it names, and nothing here
+// can check it, so pulled origins' nodes are also returned on their own.
 func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) {
 	index := map[string]LineageNode{}
-	recorded := map[string]bool{}
-	releases := map[string]bool{}
-	add := func(node LineageNode, into map[string]bool) {
-		if digest, err := hashJSON(node); err == nil {
-			index[digest] = node
-			into[digest] = true
+	pulled := map[string]bool{}
+	add := func(node LineageNode) string {
+		digest, err := hashJSON(node)
+		if err != nil {
+			return ""
 		}
+		index[digest] = node
+		return digest
 	}
 	for _, root := range []string{builder.Root, filepath.Join(builder.Root, ".merges"), filepath.Join(builder.Root, ".origins")} {
 		entries, err := os.ReadDir(root)
@@ -176,7 +180,7 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			// still meets the rest of the chain after the model trains on.
 			if nodes, err := runLineage(inspection); err == nil {
 				for _, run := range nodes {
-					add(run.node, recorded)
+					add(run.node)
 				}
 			}
 			if inspection.Origin == nil {
@@ -184,26 +188,22 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			}
 			// The origin's node too, since its first run's node links to it.
 			if node, err := originNode(*inspection.Origin); err == nil {
-				add(node, recorded)
+				if digest := add(node); inspection.Origin.Merge == nil {
+					pulled[digest] = true
+				}
 			}
 			if inspection.Origin.Merge == nil && inspection.Origin.Lineage != nil {
-				add(*inspection.Origin.Lineage, releases)
+				add(*inspection.Origin.Lineage)
 			}
 		}
 	}
-	declared := map[string]bool{}
-	for digest := range releases {
-		if !recorded[digest] {
-			declared[digest] = true
-		}
-	}
-	return index, declared
+	return index, pulled
 }
 
 // ancestry walks a node's chain through the nodes the index holds, like git
 // merge-base, collecting the weights it reaches; a branch ends where its node
-// is not held, or where it would follow a node in skip.
-func ancestry(node LineageNode, index map[string]LineageNode, skip map[string]bool) map[string]bool {
+// is not held, or at a node in stop, whose parents it does not follow.
+func ancestry(node LineageNode, index map[string]LineageNode, stop map[string]bool) map[string]bool {
 	reached := map[string]bool{}
 	visited := map[string]bool{}
 	queue := []LineageNode{node}
@@ -211,10 +211,10 @@ func ancestry(node LineageNode, index map[string]LineageNode, skip map[string]bo
 		current := queue[0]
 		queue = queue[1:]
 		reached[current.WeightsSHA256] = true
+		if digest, err := hashJSON(current); err != nil || stop[digest] {
+			continue
+		}
 		for _, link := range current.Parents {
-			if skip[link.LineageSHA256] {
-				continue
-			}
 			reached[link.WeightsSHA256] = true
 			if next, ok := index[link.LineageSHA256]; ok && !visited[link.LineageSHA256] {
 				visited[link.LineageSHA256] = true
@@ -240,7 +240,7 @@ type mergeParent struct {
 func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, error) {
 	var parents []mergeParent
 	var shared, recorded map[string]bool
-	index, declaredNodes := builder.lineageIndex()
+	index, pulled := builder.lineageIndex()
 	for _, declared := range base.Merge {
 		inspection, err := Inspect(builder.Root, declared.Model)
 		if err != nil {
@@ -249,7 +249,10 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, erro
 		if len(parents) > 0 && inspection.Model.ArchitectureSHA256 != parents[0].inspection.Model.ArchitectureSHA256 {
 			return nil, false, fmt.Errorf("base.merge parent %q does not have the architecture of %q", declared.Model, parents[0].inspection.Model.Name)
 		}
-		path, _, err := currentWeights(inspection)
+		if dtype := inspection.Model.Architecture.ParameterDType; dtype != "bfloat16" && dtype != "float32" {
+			return nil, false, fmt.Errorf("base.merge supports bfloat16 and float32 parameters; %q uses %s", declared.Model, dtype)
+		}
+		path, err := currentWeights(inspection)
 		if err != nil {
 			return nil, false, fmt.Errorf("base.merge parent: %w", err)
 		}
@@ -262,7 +265,7 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, erro
 			return nil, false, err
 		}
 		shared = intersect(shared, ancestry(node, index, nil))
-		recorded = intersect(recorded, ancestry(node, index, declaredNodes))
+		recorded = intersect(recorded, ancestry(node, index, pulled))
 		parents = append(parents, mergeParent{inspection, path, link, declared.Weight})
 	}
 	if len(shared) == 0 {
@@ -284,23 +287,58 @@ func intersect(shared, reached map[string]bool) map[string]bool {
 	return shared
 }
 
-// currentWeights is the newest complete real run's weights, else the origin's.
-func currentWeights(inspection Inspection) (string, string, error) {
+// currentWeights is the path of the newest complete real run's weights, else the origin's.
+func currentWeights(inspection Inspection) (string, error) {
 	initialization, err := resolveRunInitialization(inspection, "")
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
 	if initialization != nil {
-		return initialization.Path, initialization.Artifact.SHA256, nil
+		return initialization.Path, nil
 	}
 	if inspection.Origin != nil && inspection.BOM.CurrentOriginSHA256 != "" {
 		for _, artifact := range inspection.Origin.Artifacts {
 			if artifact.Role == "weights" {
-				return filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)), artifact.SHA256, nil
+				return filepath.Join(inspection.Path, filepath.FromSlash(artifact.Path)), nil
 			}
 		}
 	}
-	return "", "", fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
+	return "", fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
+}
+
+// recordedMerge is the merge model name was built from, when it exists and
+// base.merge names the same parents and weights: its base stays that merge
+// after the parents train on, as a run pin keeps a fine-tune's base.
+func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection, error) {
+	if name == "" || len(base.Merge) == 0 {
+		return nil, nil
+	}
+	if _, err := os.Stat(filepath.Join(builder.Root, name)); os.IsNotExist(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	target, err := Inspect(builder.Root, name)
+	if err != nil {
+		return nil, err
+	}
+	if target.Origin == nil || target.Origin.Merge == nil || len(target.Origin.Merge.Parents) != len(base.Merge) {
+		return nil, nil
+	}
+	for index, parent := range target.Origin.Merge.Parents {
+		if parent.Model != base.Merge[index].Model || parent.Weight != base.Merge[index].Weight {
+			return nil, nil
+		}
+	}
+	key, err := hashJSON(*target.Origin.Merge)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := Inspect(filepath.Join(builder.Root, ".merges"), key)
+	if err != nil || merged.Model.OriginBOMSHA256 != target.Model.OriginBOMSHA256 {
+		return nil, nil
+	}
+	return &merged, nil
 }
 
 // mergeOrigin averages the parents into a merged origin under .merges, named
