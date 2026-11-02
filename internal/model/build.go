@@ -832,7 +832,9 @@ func (builder Builder) executeTrainingAttempt(ctx context.Context, name, modelPa
 	}
 	artifactPrefix := "artifacts"
 	observation, backendErr := selection.Backend.Run(ctx, training.Request{
-		RunID: pin.ID, Stage: stage.Name, Objective: stage.Objective,
+		ModelID:      record.ID,
+		RunBOMSHA256: pin.BOMSHA256,
+		RunID:        pin.ID, Stage: stage.Name, Objective: stage.Objective,
 		Conversation:       runBOM.Conversation,
 		ArchitectureSHA256: record.ArchitectureSHA256,
 		Architecture:       architectureJSON, Tokenizer: tokenizerSpec, BOM: prepared.BOM, Inputs: prepared.Inputs,
@@ -989,6 +991,7 @@ func (builder Builder) publishMultiNodePlan(pin RunPin, runBOM RunBOM, prepared 
 	}
 	plan := MultiNodePlan{
 		Kind: MultiNodePlanKind, Schema: MultiNodePlanSchema,
+		ModelID: runBOM.ModelID, RunBOMSHA256: pin.BOMSHA256,
 		RunID: pin.ID, Stage: stage.Name, StageOrdinal: builder.MultiNode.StageOrdinal, StageCount: builder.MultiNode.StageCount,
 		Nodes: builder.MultiNode.Nodes, Objective: stage.Objective,
 		ArchitectureSHA256: runBOM.ArchitectureSHA256, Architecture: architectureJSON,
@@ -1846,7 +1849,12 @@ func findComposeTransaction(root string, requested composeTransaction) (string, 
 		}
 		if existing.Kind == requested.Kind && existing.Schema == requested.Schema && existing.Name == requested.Name {
 			if reflect.DeepEqual(candidate.Compose, requested.Compose) {
-				return "", nil, fmt.Errorf("model %q has an unfinished compose with different corpus BOMs (saved %v, requested %v); repeat the exact command to resume it", requested.Name, candidate.CorpusBOMs, requested.CorpusBOMs)
+				// Reuse the transaction workspace and let validatePreparedResume
+				// compare the complete saved and prepared corpus BOMs. Their hashes
+				// can differ when non-training metadata (for example shard
+				// attestations) changes, while the immutable training inputs remain
+				// equivalent. Genuine corpus drift is still rejected there.
+				return workspace, &existing, nil
 			}
 			return "", nil, fmt.Errorf("model %q has an unfinished compose with a different resolved compose; repeat the exact command to resume it", requested.Name)
 		}

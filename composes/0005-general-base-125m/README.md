@@ -56,15 +56,15 @@ consumption matched those weights. The largest measured source exposure was
 From the repository root:
 
 ```console
-go run ./cmd/waldo/ model forecast composes/0005-general-base/compose.yaml
+go run ./cmd/waldo/ model forecast composes/0005-general-base-125m/compose.yaml
 go run ./cmd/waldo/ model train general-base-125m-20tpp-01 \
-  composes/0005-general-base/compose.yaml
+  composes/0005-general-base-125m/compose.yaml
 
-./composes/0005-general-base/evaluate.sh \
+./composes/0005-general-base-125m/evaluate.sh \
   general-base-125m-20tpp-01 /tmp/rung0005-sampled.jsonl 0.8 42 512
-./composes/0005-general-base/evaluate.sh \
+./composes/0005-general-base-125m/evaluate.sh \
   general-base-125m-20tpp-01 /tmp/rung0005-greedy.jsonl 0 42 512
-python3 composes/0005-general-base/score.py \
+python3 composes/0005-general-base-125m/score.py \
   /tmp/rung0005-sampled.jsonl /tmp/rung0005-greedy.jsonl
 ```
 

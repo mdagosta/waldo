@@ -357,6 +357,8 @@ type Initialization struct {
 }
 
 type Request struct {
+	ModelID                string
+	RunBOMSHA256           string
 	RunID                  string
 	Stage                  string
 	Objective              string

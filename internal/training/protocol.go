@@ -19,6 +19,7 @@ import (
 const WorkerProtocolSchema = 1
 
 type WorkerBegin struct {
+	ModelID                string                `json:"model_id"`
 	RunID                  string                `json:"run_id"`
 	Stage                  string                `json:"stage"`
 	Objective              string                `json:"objective"`
@@ -34,6 +35,7 @@ type WorkerBegin struct {
 	PreparedCacheDirectory string                `json:"-"`
 	PreparedCacheMaxBytes  int64                 `json:"-"`
 	PreparedIdentity       string                `json:"-"`
+	PreparedBOMSHA256      string                `json:"-"`
 }
 
 type tokenizedRecordSource struct {
@@ -196,7 +198,7 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 		}
 	}
 	if begin.PreparedCacheDirectory != "" && begin.PreparedIdentity != "" {
-		replayed, err := replayPreparedSequences(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, begin.Parameters.BatchSize/begin.Parameters.GradientAccumulation, begin.PreparedCacheMaxBytes, resumeSequences, encoder)
+		replayed, err := replayPreparedSequences(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.PreparedBOMSHA256, begin.DataNodeRank, worldSize, GPUsPerNode, begin.Parameters.BatchSize/begin.Parameters.GradientAccumulation, begin.PreparedCacheMaxBytes, resumeSequences, encoder)
 		if err != nil {
 			return err
 		}
@@ -214,7 +216,7 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 	var masks []bool
 	var corpora []string
 	ordinal := int64(0)
-	cacheWriter, err := newPreparedCacheWriter(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.DataNodeRank, worldSize, GPUsPerNode, globalMicroBatch, begin.PreparedCacheMaxBytes)
+	cacheWriter, err := newPreparedCacheWriter(begin.PreparedCacheDirectory, begin.PreparedIdentity, begin.PreparedBOMSHA256, begin.DataNodeRank, worldSize, GPUsPerNode, globalMicroBatch, begin.PreparedCacheMaxBytes)
 	if err != nil {
 		return err
 	}
@@ -236,14 +238,14 @@ func writePreparedSequences(ctx context.Context, encoder *json.Encoder, begin Wo
 			if err := cacheWriter.Append(sequence); err != nil {
 				return err
 			}
-			if ordinal >= resumeSequences {
+			if ordinal >= resumeSequences && encoder != nil {
 				if err := encoder.Encode(WorkerInputFrame{Kind: "sequence", Schema: WorkerProtocolSchema, Sequence: &sequence}); err != nil {
 					return err
 				}
 			}
 		}
 		ordinal++
-		if ordinal > resumeSequences && ordinal%globalMicroBatch == 0 {
+		if ordinal > resumeSequences && ordinal%globalMicroBatch == 0 && encoder != nil {
 			if err := encoder.Encode(WorkerInputFrame{Kind: "micro_batch_end", Schema: WorkerProtocolSchema}); err != nil {
 				return err
 			}
