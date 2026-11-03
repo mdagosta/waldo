@@ -151,16 +151,20 @@ func linkTo(node LineageNode) (LineageLink, error) {
 // node hash: each run's and origin's node, and each release node an origin
 // records. A pulled origin's link to its release node is declared: the release
 // says where its weights came from, whatever node it names, and nothing here
-// can check it, so pulled origins' nodes are also returned on their own.
+// can check it. So it also returns the nodes whose parents are only claims:
+// pulled origins' nodes, and release nodes no local record produced.
 func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) {
 	index := map[string]LineageNode{}
-	pulled := map[string]bool{}
-	add := func(node LineageNode) string {
+	local := map[string]bool{}
+	claimed := map[string]bool{}
+	stop := map[string]bool{}
+	add := func(node LineageNode, into map[string]bool) string {
 		digest, err := hashJSON(node)
 		if err != nil {
 			return ""
 		}
 		index[digest] = node
+		into[digest] = true
 		return digest
 	}
 	for _, root := range []string{builder.Root, filepath.Join(builder.Root, ".merges"), filepath.Join(builder.Root, ".origins")} {
@@ -180,7 +184,7 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			// still meets the rest of the chain after the model trains on.
 			if nodes, err := runLineage(inspection); err == nil {
 				for _, run := range nodes {
-					add(run.node)
+					add(run.node, local)
 				}
 			}
 			if inspection.Origin == nil {
@@ -188,16 +192,22 @@ func (builder Builder) lineageIndex() (map[string]LineageNode, map[string]bool) 
 			}
 			// The origin's node too, since its first run's node links to it.
 			if node, err := originNode(*inspection.Origin); err == nil {
-				if digest := add(node); inspection.Origin.Merge == nil {
-					pulled[digest] = true
+				if digest := add(node, local); inspection.Origin.Merge == nil {
+					stop[digest] = true
 				}
 			}
 			if inspection.Origin.Merge == nil && inspection.Origin.Lineage != nil {
-				add(*inspection.Origin.Lineage)
+				add(*inspection.Origin.Lineage, claimed)
 			}
 		}
 	}
-	return index, pulled
+	// A release can republish a node whose model is gone from this store.
+	for digest := range claimed {
+		if !local[digest] {
+			stop[digest] = true
+		}
+	}
+	return index, stop
 }
 
 // ancestry walks a node's chain through the nodes the index holds, like git
@@ -240,7 +250,7 @@ type mergeParent struct {
 func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, error) {
 	var parents []mergeParent
 	var shared, recorded map[string]bool
-	index, pulled := builder.lineageIndex()
+	index, stop := builder.lineageIndex()
 	for _, declared := range base.Merge {
 		inspection, err := Inspect(builder.Root, declared.Model)
 		if err != nil {
@@ -265,7 +275,7 @@ func (builder Builder) mergeParents(base ComposeBase) ([]mergeParent, bool, erro
 			return nil, false, err
 		}
 		shared = intersect(shared, ancestry(node, index, nil))
-		recorded = intersect(recorded, ancestry(node, index, pulled))
+		recorded = intersect(recorded, ancestry(node, index, stop))
 		parents = append(parents, mergeParent{inspection, path, link, declared.Weight})
 	}
 	if len(shared) == 0 {
@@ -306,11 +316,13 @@ func currentWeights(inspection Inspection) (string, error) {
 	return "", fmt.Errorf("model %q has no complete real weights", inspection.Model.Name)
 }
 
-// recordedMerge is the merge model name was built from, when it exists and
-// base.merge names the same parents and weights: its base stays that merge
-// after the parents train on, as a run pin keeps a fine-tune's base.
+// recordedMerge is the merge an existing model name was built from: its base
+// stays that merge after the parents train on, as a run pin keeps a
+// fine-tune's base. An existing model built otherwise, or from parents whose
+// names no longer hold the weights that were averaged, is refused before
+// anything is merged.
 func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection, error) {
-	if name == "" || len(base.Merge) == 0 {
+	if len(base.Merge) == 0 || ValidateName(name) != nil {
 		return nil, nil
 	}
 	if _, err := os.Stat(filepath.Join(builder.Root, name)); os.IsNotExist(err) {
@@ -322,12 +334,22 @@ func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection
 	if err != nil {
 		return nil, err
 	}
+	mismatch := fmt.Errorf("compose base does not match existing model %q; use a new model name", name)
 	if target.Origin == nil || target.Origin.Merge == nil || len(target.Origin.Merge.Parents) != len(base.Merge) {
-		return nil, nil
+		return nil, mismatch
 	}
 	for index, parent := range target.Origin.Merge.Parents {
 		if parent.Model != base.Merge[index].Model || parent.Weight != base.Merge[index].Weight {
-			return nil, nil
+			return nil, mismatch
+		}
+		current, err := Inspect(builder.Root, parent.Model)
+		if err != nil {
+			return nil, fmt.Errorf("resolve base.merge parent %q: %w", parent.Model, err)
+		}
+		if held, err := holdsNode(current, parent.LineageSHA256); err != nil {
+			return nil, err
+		} else if !held {
+			return nil, fmt.Errorf("base.merge parent %q no longer holds the weights model %q merged; use a new model name", parent.Model, name)
 		}
 	}
 	key, err := hashJSON(*target.Origin.Merge)
@@ -339,6 +361,34 @@ func (builder Builder) recordedMerge(name string, base ComposeBase) (*Inspection
 		return nil, nil
 	}
 	return &merged, nil
+}
+
+// holdsNode reports whether a model's own history, its origin's node or one
+// of its runs', is the lineage node digest.
+func holdsNode(inspection Inspection, digest string) (bool, error) {
+	nodes, err := runLineage(inspection)
+	if err != nil {
+		return false, err
+	}
+	var own []LineageNode
+	for _, run := range nodes {
+		own = append(own, run.node)
+	}
+	if inspection.Origin != nil {
+		node, err := originNode(*inspection.Origin)
+		if err != nil {
+			return false, err
+		}
+		own = append(own, node)
+	}
+	for _, node := range own {
+		if hashed, err := hashJSON(node); err != nil {
+			return false, err
+		} else if hashed == digest {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // mergeOrigin averages the parents into a merged origin under .merges, named

@@ -291,11 +291,13 @@ parameters and share an ancestor in their recorded lineage
 weights came from the node their release names is only the release's claim; a
 merge whose common ancestor rests only on such claims records
 `declared_ancestry: true`. Weights must be normal, finite float32 values, and a
-merge fails if a weighted value underflows or the average overflows float32.
-The mean accumulates from +0 in parent order, so anyone holding the parents gets
-the same bytes. With no stages the merge is the model; with stages it
-initializes training. Once the model exists, the same `base.merge` resolves to
-the merge it was built from, even after a parent trains on.
+merge fails if the average overflows float32; subnormal results are what IEEE
+float32 computes. The mean accumulates from +0 in parent order, so anyone
+holding the parents gets the same bytes. With no stages the merge is the model;
+with stages it initializes training. Once the model exists, the same
+`base.merge` resolves to the merge it was built from while each parent's name
+still holds the weights that were averaged, or a model that trained on from
+them; otherwise the compose is refused before anything is merged.
 
 ### Direct external base
 
@@ -805,7 +807,8 @@ WALDO fails before training when a compose has:
 - an unsupported architecture, tokenizer contract, dtype, or objective;
 - zero architecture dimensions or incompatible attention-head divisibility;
 - dropout outside `0..<1` or a sequence longer than the architecture context;
-- no stages, duplicate stage names, no corpus selection, or duplicate corpora;
+- no stages (unless `base.merge` makes the merged model the destination),
+  duplicate stage names, no corpus selection, or duplicate corpora;
 - invalid parameter ranges or an overflowing planned token capacity;
 - corpus weights outside `causal-pretrain-weighted`, missing weighted-profile
   weights, or weights for unselected corpora;

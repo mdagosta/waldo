@@ -38,6 +38,14 @@ func mergeArchitecture() Architecture {
 
 func pullReleaseOf(t *testing.T, root, name, parent string, salt byte, architecture Architecture) {
 	t.Helper()
+	node := LineageNode{WeightsSHA256: strings.Repeat(string("0123456789"[salt]), 64), Parents: []LineageLink{{WeightsSHA256: parent}}}
+	pullClaiming(t, root, name, mergeableFixture(t, architecture, salt), node)
+}
+
+// mergeableFixture is a release's files whose weights average to finite
+// values; salt changes one weight byte so releases hold different weights.
+func mergeableFixture(t *testing.T, architecture Architecture, salt byte) map[string][]byte {
+	t.Helper()
 	files := huggingFaceFixture(t, architecture, HuggingFaceTokenizerClass)
 	weights := files["model.safetensors"]
 	// Keep each bf16 value below 2, so averaging them stays finite.
@@ -45,19 +53,20 @@ func pullReleaseOf(t *testing.T, root, name, parent string, salt byte, architect
 		weights[index] &= 0x3f
 	}
 	weights[len(weights)-1] ^= salt
-	node := LineageNode{WeightsSHA256: strings.Repeat(string("0123456789"[salt]), 64), Parents: []LineageLink{{WeightsSHA256: parent}}}
-	pullClaiming(t, root, name, files, node)
+	return files
 }
 
 // pullClaiming pulls files as a release whose BOM.json declares node as the
-// lineage its weights came from.
+// lineage its weights came from, or with no BOM.json when node is empty.
 func pullClaiming(t *testing.T, root, name string, files map[string][]byte, node LineageNode) {
 	t.Helper()
-	bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node})
-	if err != nil {
-		t.Fatal(err)
+	if node.WeightsSHA256 != "" {
+		bom, err := json.Marshal(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "lineage": node})
+		if err != nil {
+			t.Fatal(err)
+		}
+		files["BOM.json"] = bom
 	}
-	files["BOM.json"] = bom
 	client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
 	if _, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), name, "huggingface://org/tiny"); err != nil {
 		t.Fatal(err)
@@ -183,7 +192,6 @@ func TestMergeComposeRefusesDifferentArchitectures(t *testing.T) {
 	}
 }
 
-// With stages, the merge is the origin training starts from.
 // Merges average bfloat16 and float32 weights; a plan must not accept
 // float16 parents that the merge itself will refuse.
 func TestMergeComposeRefusesFloat16Parents(t *testing.T) {
@@ -198,6 +206,7 @@ func TestMergeComposeRefusesFloat16Parents(t *testing.T) {
 	}
 }
 
+// With stages, the merge is the origin training starts from.
 func TestMergeComposeTrainsFromTheMerge(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()
@@ -313,15 +322,28 @@ func TestMergeComposeKeepsItsRecordedMerge(t *testing.T) {
 	if completed, err := ComposeCompleted(resolved, merged); err != nil || !completed {
 		t.Fatalf("merge-only compose completed = %v, %v", completed, err)
 	}
+	// A failed run leaves the weights as they were, so the merge-only model is still complete.
+	failing := backendFunc(func(context.Context, training.Request) (training.Observation, error) {
+		return training.Observation{}, fmt.Errorf("interrupted")
+	})
+	failer := Builder{Root: root, Resolver: training.ResolverFunc(func(context.Context, training.ResolveRequest) (training.Selection, error) {
+		return testSelection(failing), nil
+	})}
+	if _, err := failer.Train(t.Context(), "merged", preparedFixture(t, mergeStage("failed"))); err == nil {
+		t.Fatal("failing backend trained")
+	}
+	if merged, err = Inspect(root, "merged"); err != nil {
+		t.Fatal(err)
+	}
+	if completed, err := ComposeCompleted(resolved, merged); err != nil || !completed {
+		t.Fatalf("merge-only compose after a failed run completed = %v, %v", completed, err)
+	}
 	two := mergeStage("two")
 	trained.Stages = []Stage{stage, two}
 	if _, err := builder.Compose(t.Context(), "trained", trained, []PreparedStage{preparedFixture(t, stage), preparedFixture(t, two)}); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := os.ReadDir(filepath.Join(root, ".merges"))
-	if err != nil || len(entries) != 1 {
-		t.Fatalf(".merges holds %d entries, want 1: %v", len(entries), err)
-	}
+	assertMerges(t, root, 1)
 }
 
 // realWeightsBuilder trains with a backend that writes distinct, non-simulated
@@ -468,31 +490,44 @@ func TestMergeFindsAncestryOfAPulledReleaseThatTrained(t *testing.T) {
 	}
 }
 
-// A release can name a node this store records: one any export publishes, or
-// the plain node of weights anyone can pull. Its weights descending from that
-// node is still only its claim.
+// A release can name a node this store records: the plain node of weights
+// anyone can pull, or a run node any export publishes. Its weights descending
+// from that node is still only its claim.
 func TestReleaseNamingARecordedNodeIsStillDeclared(t *testing.T) {
 	isolateHuggingFaceToken(t)
 	root := t.TempDir()
-	client := &http.Client{Transport: huggingFaceTransport(t, huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass), strings.Repeat("a", 40))}
-	if _, err := (Puller{Root: root, Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "plain", "huggingface://org/tiny"); err != nil {
+	pullClaiming(t, root, "plain", mergeableFixture(t, mergeArchitecture(), 0), LineageNode{})
+	stage := mergeStage("local")
+	if _, err := flipWeightsBuilder(root).Compose(t.Context(), "trained", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "plain"}, Stages: []Stage{stage}}, []PreparedStage{preparedFixture(t, stage)}); err != nil {
 		t.Fatal(err)
 	}
-	plain, err := Inspect(root, "plain")
-	if err != nil {
-		t.Fatal(err)
-	}
-	node, err := ModelLineage(plain, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for salt, claim := range map[byte]LineageNode{1: node, 2: {WeightsSHA256: node.WeightsSHA256}} {
-		files := huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass)
-		files["model.safetensors"][len(files["model.safetensors"])-1] ^= salt
-		name := fmt.Sprintf("claimant-%d", salt)
-		pullClaiming(t, root, name, files, claim)
-		if _, declared, err := (Builder{Root: root}).mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "plain"}, {Model: name}}}); err != nil || !declared {
+	for salt, recorded := range map[byte]string{1: "plain", 2: "trained"} {
+		inspection, err := Inspect(root, recorded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		node, err := ModelLineage(inspection, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		name := "claims-" + recorded
+		pullClaiming(t, root, name, mergeableFixture(t, mergeArchitecture(), salt), node)
+		if _, declared, err := (Builder{Root: root}).mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: recorded}, {Model: name}}}); err != nil || !declared {
 			t.Fatalf("%s: declared %v, %v", name, declared, err)
+		}
+	}
+}
+
+// A release whose lineage is not a lineage node is refused, not pulled as if
+// it recorded none.
+func TestPullRefusesMalformedReleaseLineage(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	for name, lineage := range map[string]string{"type": `{"weights_sha256":123}`, "parents": `{"weights_sha256":"` + strings.Repeat("a", 64) + `","parents":"oops"}`, "digest": `{"weights_sha256":"xyz"}`} {
+		files := huggingFaceFixture(t, mergeArchitecture(), HuggingFaceTokenizerClass)
+		files["BOM.json"] = []byte(`{"kind":"openwaldo-bom","schema":1,"subject":"model-release","lineage":` + lineage + `}`)
+		client := &http.Client{Transport: huggingFaceTransport(t, files, strings.Repeat("a", 40))}
+		if _, err := (Puller{Root: t.TempDir(), Endpoint: "https://hub.test", Client: client}).Pull(t.Context(), "tiny", "huggingface://org/tiny"); err == nil || !strings.Contains(err.Error(), "lineage") {
+			t.Fatalf("%s: pull error = %v", name, err)
 		}
 	}
 }
@@ -548,6 +583,178 @@ func TestComposeRefusesLineagePinOnUntrainedBase(t *testing.T) {
 	source := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Source: "huggingface://org/tiny@" + strings.Repeat("a", 40), LineageSHA256: strings.Repeat("f", 64)}, Stages: []Stage{stage}}
 	if err := source.Validate(); err == nil || !strings.Contains(err.Error(), "base.source") {
 		t.Fatalf("source base with a lineage pin: %v", err)
+	}
+}
+
+// A merge links to its parents' pulled nodes. Once a parent is removed, a
+// release republishing that parent's node must not let the walk follow the
+// parent's claim as if this store had shown it.
+func TestRemovedParentsClaimStaysDeclared(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullClaiming(t, root, "base", mergeableFixture(t, mergeArchitecture(), 7), LineageNode{})
+	base, err := Inspect(root, "base")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseNode, err := ModelLineage(base, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a and b only claim to descend from base's weights.
+	pullClaiming(t, root, "a", mergeableFixture(t, mergeArchitecture(), 1), baseNode)
+	pullClaiming(t, root, "b", mergeableFixture(t, mergeArchitecture(), 2), baseNode)
+	a, err := Inspect(root, "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aNode, err := ModelLineage(a, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	builder := flipWeightsBuilder(root)
+	if _, err := builder.Compose(t.Context(), "m", Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "a"}, {Model: "b"}}}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Train(t.Context(), "base", preparedFixture(t, mergeStage("local"))); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(root, []string{"a"}); err != nil {
+		t.Fatal(err)
+	}
+	pullClaiming(t, root, "mirror", mergeableFixture(t, mergeArchitecture(), 5), aNode)
+	if _, declared, err := builder.mergeParents(ComposeBase{Merge: []ComposeMergeParent{{Model: "m"}, {Model: "base"}}}); err != nil || !declared {
+		t.Fatalf("merge of m and base: declared %v, %v", declared, err)
+	}
+}
+
+// A recorded merge belongs to the models it averaged: once a parent's name
+// holds a different model, the compose no longer names that merge.
+func TestRecordedMergeRefusesARecreatedParent(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "left", strings.Repeat("a", 64), 0)
+	pullRelease(t, root, "right", strings.Repeat("a", 64), 1)
+	builder := flipWeightsBuilder(root)
+	merge := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}
+	if _, err := builder.Compose(t.Context(), "merged", merge, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(root, []string{"left"}); err != nil {
+		t.Fatal(err)
+	}
+	pullClaiming(t, root, "left", mergeableFixture(t, mergeArchitecture(), 9), LineageNode{WeightsSHA256: strings.Repeat("c", 64)})
+	if _, err := builder.ResolveCompose(t.Context(), "merged", merge, true); err == nil {
+		t.Fatal("merge compose resolved to the merge of the removed left")
+	}
+	assertMerges(t, root, 1)
+}
+
+// A parent rebuilt from the same base keeps its plan's model ID but not its
+// weights; the merge of the old weights is refused before anything is merged.
+func TestRecordedMergeRefusesAParentRebuiltUnderItsID(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "base", strings.Repeat("a", 64), 0)
+	builder := flipWeightsBuilder(root)
+	child := func(name string, stages ...Stage) {
+		var prepared []PreparedStage
+		for _, stage := range stages {
+			prepared = append(prepared, preparedFixture(t, stage))
+		}
+		if _, err := builder.Compose(t.Context(), name, Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "base"}, Stages: stages}, prepared); err != nil {
+			t.Fatal(err)
+		}
+	}
+	child("left", mergeStage("one"))
+	child("right", mergeStage("two"))
+	merge := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}
+	if _, err := builder.Compose(t.Context(), "merged", merge, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Remove(root, []string{"left"}); err != nil {
+		t.Fatal(err)
+	}
+	child("left", mergeStage("other"), mergeStage("data"))
+	if _, err := builder.ResolveCompose(t.Context(), "merged", merge, true); err == nil || !strings.Contains(err.Error(), "no longer holds") {
+		t.Fatalf("rebuilt parent error = %v", err)
+	}
+	assertMerges(t, root, 1)
+}
+
+// A merge-only compose describes the merged model only until it runs a stage,
+// even one that leaves its weights as they were.
+func TestMergeOnlyComposeIsNotCompleteAfterAStage(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "left", strings.Repeat("a", 64), 0)
+	pullRelease(t, root, "right", strings.Repeat("a", 64), 1)
+	merge := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}
+	simulated := Builder{Root: root, Resolver: training.FakeResolver()}
+	if _, err := simulated.Compose(t.Context(), "merged", merge, nil); err != nil {
+		t.Fatal(err)
+	}
+	stage := mergeStage("simulated")
+	grown := merge
+	grown.Stages = []Stage{stage}
+	if _, err := simulated.Compose(t.Context(), "merged", grown, []PreparedStage{preparedFixture(t, stage)}); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := Inspect(root, "merged")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := simulated.ResolveCompose(t.Context(), "merged", merge, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed, err := ComposeCompleted(resolved, merged); err != nil || completed {
+		t.Fatalf("merge-only compose after a simulated stage completed = %v, %v", completed, err)
+	}
+}
+
+// assertMerges checks how many merged origins the store holds.
+func assertMerges(t *testing.T, root string, want int) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, ".merges"))
+	if err != nil || len(entries) != want {
+		t.Fatalf(".merges holds %d entries, want %d: %v", len(entries), want, err)
+	}
+}
+
+// A merge-only compose interrupted after its model is written leaves its
+// transaction pending; repeating the compose finishes it.
+func TestMergeComposeFinishesAnInterruptedTransaction(t *testing.T) {
+	isolateHuggingFaceToken(t)
+	root := t.TempDir()
+	pullRelease(t, root, "left", strings.Repeat("a", 64), 0)
+	pullRelease(t, root, "right", strings.Repeat("a", 64), 1)
+	builder := Builder{Root: root}
+	merge := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Merge: []ComposeMergeParent{{Model: "left"}, {Model: "right"}}}}
+	resolved, err := builder.ResolveCompose(t.Context(), "", merge, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Compose(t.Context(), "merged", merge, nil); err != nil {
+		t.Fatal(err)
+	}
+	// The transaction Compose writes before the model exists, left behind by an interruption.
+	transaction := composeTransaction{Kind: "waldo-model-compose-transaction", Schema: 1, Name: "merged", Compose: resolved}
+	id, err := hashJSON(transaction)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(filepath.Join(root, ".waldo-compose", id, "COMPOSE.json"), transaction); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := HasPendingCompose(root, "merged"); err != nil || !pending {
+		t.Fatalf("pending = %v, %v", pending, err)
+	}
+	if _, err := builder.Compose(t.Context(), "merged", merge, nil); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := HasPendingCompose(root, "merged"); err != nil || pending {
+		t.Fatalf("after repeating the compose, pending = %v, %v", pending, err)
 	}
 }
 
