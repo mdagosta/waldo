@@ -44,7 +44,8 @@ Then fill the template:
 - Each section answered briefly and concretely; replace the template's comments, keep its headings.
 - Verification lists only checks actually run in step 2, with the environment and any skips.
 - Tick a checkbox only when step 2 confirmed it.
-- End the body with: `🤖 Generated with [Claude Code](https://claude.com/claude-code)`
+- No "Generated with Claude Code" footer or other tool attribution: the user doesn't want their PRs to
+  carry tool marketing.
 
 Write the body to the scratchpad as `pr-<branch>.md`.
 
@@ -55,10 +56,16 @@ Show, in one message:
 - which template file was used;
 - the commit list and the diff stat;
 - the title, in a code block on its own, ready to copy;
-- the body, in a code block, exactly as it should be pasted;
+- the body, in a code block, for reading and approval;
 - the compare link to open: `https://github.com/<upstream>/compare/<base>...mdagosta:<branch>`
 
 Revise on feedback and show the whole draft again.
+
+Long lines copied out of the terminal arrive damaged (dropped words, joined lines), so the user never
+copies the body from the terminal. Once they approve it, put the exact file on the clipboard with
+`pbcopy < <body file>` and say so; to fix a PR already opened, do the same and have them paste it over
+the description with Edit. After they paste, fetch the saved description from the public API
+(`curl -s https://api.github.com/repos/<upstream>/pulls/<n>`) and diff it against the file.
 
 ## 5. Hand off
 
