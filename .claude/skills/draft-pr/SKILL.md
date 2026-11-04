@@ -14,8 +14,9 @@ GitHub's web page and pastes the draft; this skill never posts, pushes, or uses 
 ## 1. Read the branch and its repository (no questions)
 
 From the feature worktree (the argument, or the current directory):
-- Upstream repo from the `origin` remote (e.g. `openwaldo/waldo`, `openwaldo/waldo-index`); the fork is
-  the remote that points at `mdagosta/...`; base is upstream's default branch (`git fetch origin` first).
+- Upstream repo from the `origin` remote (e.g. `openwaldo/waldo`, `openwaldo/waldo-index`); the user's fork
+  is the remote that points at `mdagosta/...`, named `mdagosta` (push with `git push mdagosta <branch>`);
+  base is upstream's default branch (`git fetch origin` first).
 - `git log --format='%h %s' origin/<base>..HEAD` and `git diff --stat origin/<base>...HEAD`.
 - The repository's own template, from the branch, first found of: `.github/PULL_REQUEST_TEMPLATE.md`,
   `.github/pull_request_template.md`, `PULL_REQUEST_TEMPLATE.md`, `docs/PULL_REQUEST_TEMPLATE.md`, or one
