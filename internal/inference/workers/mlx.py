@@ -25,6 +25,30 @@ def emit(kind, **payload):
     print(json.dumps(frame, separators=(",", ":")), flush=True)
 
 
+# WALDO_GPU_THROTTLE=0.25 caps generation to ~25% of wall-clock time, as it does training. The
+# chat protocol has no log frame, so a value outside 0.01-1.0 just leaves it off.
+def read_gpu_throttle():
+    try:
+        value = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
+    except ValueError:
+        return 1
+    return value if 0.01 <= value <= 1 else 1
+GPU_THROTTLE = read_gpu_throttle()
+owed_idle = 0.0
+
+
+# throttle idles the GPU in proportion to work that began at started. A token takes about a
+# millisecond, which macOS oversleeps, so idle time builds up and is slept in 50ms pieces.
+def throttle(started):
+    global owed_idle
+    if GPU_THROTTLE < 1:
+        owed_idle += (time.perf_counter() - started) * (1 / GPU_THROTTLE - 1)
+        if owed_idle >= 0.05:
+            slept = time.perf_counter()
+            time.sleep(owed_idle)
+            owed_idle -= time.perf_counter() - slept
+
+
 class Attention(nn.Module):
     def __init__(self, hidden, heads, kv_heads):
         super().__init__()
@@ -204,9 +228,11 @@ class Generator:
         started = time.perf_counter()
         produced = 0
         reason = "max_tokens"
+        step_started = time.perf_counter()
         inputs = mx.array([tokens], dtype=mx.int32)
         logits, cache = self.model.generate(inputs)
         mx.eval(logits, cache)
+        throttle(step_started)
         for _ in range(maximum):
             token = sample(logits[0, -1], temperature, top_p, generator)
             tokens.append(token)
@@ -225,6 +251,7 @@ class Generator:
             if any(len(tokens) >= len(sequence) and tokens[-len(sequence):] == sequence for sequence in stop_sequences):
                 reason = "stop"
                 break
+            step_started = time.perf_counter()
             if len(tokens) >= self.context_tokens:
                 tokens = tokens[-self.context_tokens:]
                 inputs = mx.array([tokens], dtype=mx.int32)
@@ -233,6 +260,7 @@ class Generator:
                 inputs = mx.array([[token]], dtype=mx.int32)
                 logits, cache = self.model.generate(inputs, cache)
             mx.eval(logits, cache)
+            throttle(step_started)
         emit(
             "complete",
             tokens=produced,

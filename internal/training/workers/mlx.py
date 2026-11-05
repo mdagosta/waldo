@@ -67,8 +67,8 @@ class RateWindow:
         return progress_estimate(step, target_steps, step - self.step, tokens - self.tokens, now - self.started)
 
 
-# WALDO_GPU_THROTTLE=0.25 caps training and held-out scoring to ~25% of wall-clock time; the GPU
-# alternates between full speed and idle. Applies only to the MLX worker.
+# WALDO_GPU_THROTTLE=0.25 caps training and held-out scoring to ~25% of wall-clock time, as the MLX
+# chat worker does generation; the GPU alternates between full speed and idle.
 def read_gpu_throttle():
     try:
         value = float(os.environ.get("WALDO_GPU_THROTTLE") or 1)
@@ -497,6 +497,7 @@ class Trainer:
         averaged_gradients = tree_map(lambda gradient: gradient / self.accumulated_tokens, self.accumulated_gradients)
         # Validate every optimizer update before mutating model or optimizer
         # state. Delayed sampling can let one bad gradient poison a long run.
+        checked_started = time.perf_counter()
         squared_norm = mx.array(0.0)
         for _, gradient in tree_flatten(averaged_gradients):
             squared_norm = squared_norm + mx.sum(gradient.astype(mx.float32) ** 2)
@@ -508,6 +509,8 @@ class Trainer:
         update_started = time.perf_counter()
         self.optimizer.update(self.model, averaged_gradients)
         mx.eval(self.model.parameters(), self.optimizer.state)
+        if GPU_THROTTLE < 1:
+            time.sleep((time.perf_counter() - checked_started) * (1 / GPU_THROTTLE - 1))
         self.accumulated_compute_seconds += max(time.perf_counter() - update_started, 1e-9)
         loss_value = self.accumulated_loss_sum / self.accumulated_tokens
         valid_tokens = self.accumulated_tokens
