@@ -1,0 +1,296 @@
+diff --git a/docs/adr/0084-record-model-lineage.md b/docs/adr/0084-record-model-lineage.md
+index 4fcb433..06b40c9 100644
+--- a/docs/adr/0084-record-model-lineage.md
++++ b/docs/adr/0084-record-model-lineage.md
+@@ -5,96 +5,62 @@ Status: accepted
+ 
+ ## Context
+ 
+-WALDO records a model's own training runs and a single parent pin or origin,
+-so one model traces back to its immediate parent. Weights that pass through
+-several models, such as a fine-tune of a fine-tune, or a release pulled and
+-trained again, lose that trail: a release says nothing about the weights it
+-descends from, and a fine-tune of a fine-tune cannot show where the first one
+-started. Keeping every intermediate model to answer that is too much to store
+-and to ship with a finished model.
++A model records only its immediate parent or origin. Weights that pass through
++several models, such as a fine-tune of a fine-tune or a release pulled and
++trained again, lose the trail, and keeping every intermediate model to keep it
++is too much to store and to ship with a finished model.
+ 
+ ## Decision
+ 
+-A lineage node is the SHA-256 of some weights, their direct parents, each by
+-weights hash and by the hash of the parent's own node, and the run BOM that
+-trained these weights from those parents. Like a git commit, a node names only
+-its direct parents, and the hash of the newest node commits to the whole chain
+-behind it.
++A lineage node names some weights by SHA-256, the run BOM that trained them,
++and each direct parent by weights hash and by the hash of its own node. Like a
++git commit, a node's hash commits to the whole chain behind it, whatever
++produced the weights. Each complete real run has a node, and a model's node is
++its newest run's, or its origin's. A pulled origin's node names the release by
++the hash of its repository, resolved revision, license, and files, and links
++to the lineage the release declares; without one it is a root.
+ 
+-Each complete real run of a model has its own node, computed from its records,
+-whose parent is the node of the weights the run started from: an earlier run,
+-the parent's, or the origin's. A pulled origin's node names the release, by
+-the hash of its repository, resolved revision, license, and files, so the same
+-release is one node however the pull was written or which mirror served it. Its
+-parent is the node the release declared, when the pull keeps that lineage;
+-otherwise it is a root, where the chain ends. A model's node is its newest
+-run's, or its origin's if it has none.
+-
+-A model's identity commits to its history, and the history itself travels in a
+-small file beside the records, so the models that made it can be deleted:
+-
+-- A fine-tune's parent pin records the hash of the node of the run it starts
+-  from (`lineage_sha256`), which never changes as the parent trains on. The
+-  model also writes `LINEAGE.json` (`waldo-model-lineage`, schema 1): that node
+-  and every node behind it the parent held, read with exact keys. The parent
+-  node must hash to the pinned value and the ancestors must be exactly the
+-  chain behind it; a file that does not is an error.
+-- A pull keeps the release's `BOM.json`, whose hash the origin already pins
+-  among its source files, as `origin/release/BOM.json`; a kept file that no
+-  longer has that hash is an error.
+-- A derived release's `BOM.json` (Hugging Face, MLX, GGUF, Ollama) carries its
+-  weights' node as `lineage` and the nodes behind it as `lineage_ancestors`. A
+-  pull keeps that lineage only when every reader reads it the same way and the
+-  release's `artifacts` list each pulled weights file once by hash and size;
+-  otherwise it notes why and leaves it out. A release's `BOM.json` never fails a
+-  pull.
+-
+-Nodes name weights by content hash and runs by run BOM hash, whatever produced
+-them, so models trained by other means can join a chain later without changing
+-the node.
++- **Pin.** A fine-tune's parent pin records the node hash of the run it starts
++  from (`lineage_sha256`), so its model ID commits to its history. A compose
++  carries a pin only to assert it, and it must match.
++- **`LINEAGE.json`.** A fine-tune writes its parent's node and every node
++  behind it (`waldo-model-lineage`, schema 1), so the models that made it can
++  be deleted. It must hash to the pin. Fine-tuning from a model and exporting
++  it read the file and refuse one that is missing, altered, or of a schema this
++  WALDO can't read: the chain is broken. The model still lists and trains on.
++- **Releases.** Hugging Face, MLX, GGUF, and Ollama exports put the weights'
++  node in `BOM.json` as `lineage` and the nodes behind it as
++  `lineage_ancestors`. A pull keeps that file as `origin/release/BOM.json` when
++  every reader reads its lineage alike and it lists the pulled weights by hash;
++  otherwise the pull notes why and leaves it out. A release's `BOM.json` never
++  fails a pull, and a kept file that no longer matches its pinned hash is
++  refused like an altered `LINEAGE.json`.
+ 
+ ## Consequences
+ 
+-- A model carries its whole known history in one small file, so deleting or
+-  never fetching the models that made it loses nothing, and a release ships its
+-  history with it. Without the file, the pinned hash still names the history;
+-  it is only not held.
+-- Hashes prove a history consistent, not true: anyone can write a consistent
+-  chain. Trust in what a node claims comes from signed records above it.
+-- Fewer ancestors make a shorter history, not a different one: the chain ends at
+-  the first node a model does not hold, where the link still names its hash. An
+-  altered `LINEAGE.json` or kept release file is an error.
+-- A pulled origin without its release's lineage, because the release file is
+-  missing, unreadable, or of a later schema, is a root: a different node, so new
++- Hashes prove a history consistent, not true. Trust in what a node claims
++  comes from signed records above it; a pulled release's node is what the
++  release declared, and checking it against signed releases is future work.
++- A model with no lineage works as before: a fine-tune from before lineage, a
++  pulled release that declared none, or a model trained from scratch. A history
++  through it ends there, where the link still names its weights hash. A model
++  that pins lineage must hold all of it: a shortened file is refused, and a
++  changed pin is a different model ID.
++- A pulled origin without its release's lineage is a different node, so
+   fine-tunes of it pin a different lineage than those of the same release
+   pulled with it.
+-- Nodes make it possible to tell whether two models started from the same
+-  weights by walking parents, like `git merge-base`; nothing walks them yet.
+-- The upgrade is one-way for fine-tunes: earlier WALDO versions refuse a model
+-  whose parent pin records `lineage_sha256`, and composes that assert it, as an
+-  invalid model plan; they cannot `model rm` one, and one such model stops their
+-  `model list` and `lookaside cache` over the whole store. They still read
+-  pulled, untrained, and from-scratch models, and ignore `LINEAGE.json` and the
+-  kept release file.
+-- Fine-tunes from before lineage keep their pins without lineage, so both
+-  versions still read and extend them; their history starts at their parent's
+-  weights hash, and a `LINEAGE.json` beside one is ignored. A model this WALDO
+-  makes pins its lineage, even for a compose an earlier WALDO was interrupted
+-  in before making the model; one it had made keeps its pin without lineage.
+-- Only a model's records hold its pin, computed from its base's history when
+-  the model is made; composes carry one only when asserted, which must match.
+-  Models already made keep the lineage they pinned, even if their base's
+-  recorded history later shortens.
+-- Lineage from a later WALDO never blocks this one: a `LINEAGE.json` of a later
+-  schema is left out, giving a shorter history, and a release of one leaves its
+-  pulled origin a root. A later WALDO that
+-  changes either bumps its schema.
+-- A WALDO-format export copies `LINEAGE.json` unsigned, but its signed
+-  `BOM.json` pins the parent node hash, which commits to that chain; release
+-  formats carry lineage in their signed `BOM.json`.
+-- A pulled release's node is what the release declared. WALDO keeps it as
+-  declared and cannot check it; verifying it against signed releases is future
+-  work.
++- The upgrade is one-way for fine-tunes. Earlier WALDO versions refuse a model
++  whose pin records `lineage_sha256` as an invalid model plan; they cannot
++  `model rm` one, and one such model stops their `model list` and `lookaside
++  cache` for the whole store. They still read pulled, untrained, and
++  from-scratch models.
++- This WALDO reads and extends everything earlier versions wrote. Their
++  fine-tunes keep pins without lineage, and a compose an earlier version was
++  interrupted in pins lineage when this one makes the model.
++- A WALDO-format export copies `LINEAGE.json` unsigned; its signed `BOM.json`
++  pins the node hash that commits to it.
++- Nodes make it possible to tell where two models' histories meet, like
++  `git merge-base`; nothing walks them yet.
+ 
+ Amends [0026](0026-pinned-model-origin.md), [0066](0066-pin-trained-model-parents.md),
+ and [0022](0022-model-release-exports.md).
+diff --git a/internal/cli/model.go b/internal/cli/model.go
+index 2802e84..88f3367 100644
+--- a/internal/cli/model.go
++++ b/internal/cli/model.go
+@@ -1661,6 +1661,10 @@ func runModelExport(context Context, args []string, stdout, stderr io.Writer) er
+ 	if err != nil {
+ 		return err
+ 	}
++	// Every format refuses a broken lineage, before calibration or conversion.
++	if err := model.CheckLineage(inspection); err != nil {
++		return err
++	}
+ 	if configuration.Disclosure.Provider == "" {
+ 		return fmt.Errorf("model export requires provider information; run waldo config set disclosure.provider <provider.json>")
+ 	}
+diff --git a/internal/model/lineage.go b/internal/model/lineage.go
+index 99f6978..ef34319 100644
+--- a/internal/model/lineage.go
++++ b/internal/model/lineage.go
+@@ -69,6 +69,15 @@ func LineageHistory(inspection Inspection, runID string) (LineageNode, []Lineage
+ 	return node, chain(node, held), nil
+ }
+ 
++// CheckLineage reads the history a model holds, its LINEAGE.json or kept release
++// file, so an export refuses a broken chain before doing any work.
++func CheckLineage(inspection Inspection) error {
++	if _, _, err := startingLineage(inspection); err != nil {
++		return fmt.Errorf("model %q lineage: %w", inspection.Model.Name, err)
++	}
++	return nil
++}
++
+ func modelLineage(inspection Inspection, runID string) (LineageNode, map[string]LineageNode, error) {
+ 	start, held, err := startingLineage(inspection)
+ 	if err != nil {
+@@ -148,10 +157,6 @@ func startingLineage(inspection Inspection) (*LineageLink, map[string]LineageNod
+ 		if err != nil {
+ 			return nil, nil, err
+ 		}
+-		// Without the file, the pinned hash still names the parent's history; it just isn't held.
+-		if record == nil {
+-			return link, held, nil
+-		}
+ 		digest, err := hashJSON(record.Parent)
+ 		if err != nil {
+ 			return nil, nil, err
+@@ -320,13 +325,17 @@ func baseLineage(base Inspection, runID, asserted string) (*lineageRecord, error
+ 	return &lineageRecord{Kind: lineageKind, Schema: 1, Parent: node, Ancestors: ancestors}, nil
+ }
+ 
+-// readLineageRecord reads LINEAGE.json once, exactly as any reader would; nil
+-// when absent or a later schema, which leaves a shorter history.
++// readLineageRecord reads LINEAGE.json once, exactly as any reader would. A
++// model that pins lineage must hold all of it, so a missing file or one of a
++// schema this WALDO can't read is refused.
+ func readLineageRecord(path string) (*lineageRecord, error) {
+ 	data, err := readRegularFile(path)
+-	if err != nil || data == nil {
++	if err != nil {
+ 		return nil, err
+ 	}
++	if data == nil {
++		return nil, fmt.Errorf("%s is missing; restore it or remove the model", path)
++	}
+ 	fields, err := topLevelFields(data)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("%s: %w", path, err)
+@@ -341,7 +350,7 @@ func readLineageRecord(path string) (*lineageRecord, error) {
+ 		return nil, fmt.Errorf("%s is not a %s record", path, lineageKind)
+ 	}
+ 	if record.Schema > 1 {
+-		return nil, nil
++		return nil, fmt.Errorf("%s is schema %d, newer than this WALDO reads; update WALDO", path, record.Schema)
+ 	}
+ 	for key := range fields {
+ 		if key != "kind" && key != "schema" && key != "parent" && key != "ancestors" {
+diff --git a/internal/model/lineage_test.go b/internal/model/lineage_test.go
+index b531ee4..11abf8f 100644
+--- a/internal/model/lineage_test.go
++++ b/internal/model/lineage_test.go
+@@ -241,8 +241,8 @@ func TestFineTunePinsItsParentsLineage(t *testing.T) {
+ }
+ 
+ // A LINEAGE.json is refused unless its parent node is the one the parent pin
+-// names and its ancestors are exactly the chain behind it. Without the file, or
+-// with a later schema, the pinned hash still names the parent's history.
++// names and its ancestors are exactly the chain behind it. A pinned model must
++// hold its whole history, so a missing file or a later schema is refused too.
+ func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
+ 	root := t.TempDir()
+ 	builder := realWeightsBuilder(root)
+@@ -277,22 +277,24 @@ func TestFineTuneLineageMustMatchItsParent(t *testing.T) {
+ 			t.Fatalf("%s: lineage accepted", name)
+ 		}
+ 	}
+-	// A later schema's LINEAGE.json, like none at all, starts from the parent's weights alone.
++	// A later schema can't be read, so it can't stand in for the history the pin names.
+ 	later := map[string]any{"kind": lineageKind, "schema": 2, "parent": map[string]any{"weights": "a later form"}}
+-	for name, write := range map[string]func() error{
+-		"later schema": func() error { return writeJSONAtomic(path, later) },
+-		"none":         func() error { return os.Remove(path) },
+-	} {
+-		if err := write(); err != nil {
+-			t.Fatal(err)
+-		}
+-		node, err := nodeOf(child, "")
+-		if err != nil {
+-			t.Fatalf("%s: %v", name, err)
+-		}
+-		if !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256, LineageSHA256: child.Model.Parent.LineageSHA256}}) {
+-			t.Fatalf("%s: starts from %+v", name, node.Parents)
+-		}
++	if err := writeJSONAtomic(path, later); err != nil {
++		t.Fatal(err)
++	}
++	if err := CheckLineage(child); err == nil || !strings.Contains(err.Error(), "update WALDO") {
++		t.Fatalf("later schema: %v", err)
++	}
++	// Without the file, the chain is broken: the child can't be fine-tuned or exported.
++	if err := os.Remove(path); err != nil {
++		t.Fatal(err)
++	}
++	if err := CheckLineage(child); err == nil || !strings.Contains(err.Error(), "LINEAGE.json is missing") {
++		t.Fatalf("missing LINEAGE.json: %v", err)
++	}
++	grandchild := Compose{Kind: "waldo-model-compose", Schema: ComposeSchema, Base: &ComposeBase{Model: "child"}, Stages: []Stage{stage}}
++	if _, err := builder.Compose(t.Context(), "grandchild", grandchild, []PreparedStage{preparedFixture(t, stage)}); err == nil || !strings.Contains(err.Error(), "LINEAGE.json is missing") {
++		t.Fatalf("fine-tune of a child missing LINEAGE.json: %v", err)
+ 	}
+ }
+ 
+@@ -389,16 +391,6 @@ func TestLineageFileMustReadAlike(t *testing.T) {
+ 	if _, err := nodeOf(child, ""); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+ 		t.Fatalf("linked LINEAGE.json: %v", err)
+ 	}
+-	// A later schema may change everything but its kind and schema.
+-	if err := os.Remove(path); err != nil {
+-		t.Fatal(err)
+-	}
+-	if err := os.WriteFile(path, []byte(`{"kind":"waldo-model-lineage","schema":2,"history":[]}`), 0o644); err != nil {
+-		t.Fatal(err)
+-	}
+-	if node, err := nodeOf(child, ""); err != nil || !reflect.DeepEqual(node.Parents, []LineageLink{{WeightsSHA256: child.Model.Parent.Artifact.SHA256, LineageSHA256: child.Model.Parent.LineageSHA256}}) {
+-		t.Fatalf("later schema: %+v, %v", node.Parents, err)
+-	}
+ }
+ 
+ // Only a trained base has a lineage node to pin; any other pin is refused, not recorded.
