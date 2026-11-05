@@ -17,6 +17,7 @@
 #   ROUNDS=1 run-identities.sh runs/<run>                  # run the next round, then stop
 #   ROUNDS=3 COOLDOWN=30 run-identities.sh runs/<run>      # three rounds, 30 minutes apart
 # Keep a laptop's lid open while it trains: closed, it runs hotter.
+# REPORT=<minutes> sets how often the launcher prints progress (default 5).
 # FAULTS runs identities through burnin.py, which injects protocol faults as they join:
 #   FAULTS=random run-identities.sh runs/<run>             # every identity, random faults
 #   FAULTS="<identity>=close <identity>=lazy" ...           # these identities, these faults
@@ -43,8 +44,45 @@ mkdir -p "$logs"
 trap 'kill 0' INT TERM
 echo "keep the lid open while training"
 
+# phase <log>: an identity's current phase from the end of its log, training in 10% steps.
+phase() {
+tail -c 4000 "$1" 2>/dev/null | tr '\r' '\n' | awk '
+  match($0, /step [0-9]+\/[0-9]+,/) {
+    split(substr($0, RSTART + 5, RLENGTH - 6), s, "/")
+    stage = $1; sub(/.*\//, "", stage)
+    line = stage " " int(s[1] * 10 / s[2]) * 10 "%"; next }
+  /"scoring / { m = $0; sub(/.*"scoring /, "", m); sub(/ on .*/, "", m); sub(/.*-r[0-9][0-9][0-9][0-9]-/, "", m)
+    if (m ~ /^merge-/) m = "round start"
+    line = "scoring " m; next }
+  /unit [^ ]+: accepted/ { m = $0; sub(/.*unit /, "", m); sub(/:.*/, "", m); line = "unit " m " accepted"; next }
+  /^merge  .*merging/ { m = $0; sub(/.*merging /, "", m); sub(/ \(.*/, "", m); line = "merging " m; next }
+  /^-- Merge round/ { line = "merged, publishing"; next }
+  /until others finish/ { line = "waiting for others"; next }
+  /is merged; .* stops/ { line = "round done"; next }
+  END { print line }'
+}
+
+# report: every REPORT minutes (default 5), prints each identity's phase when it changes.
+report() {
+for n in $(seq 1 "$identities"); do
+  now=$(phase "$logs/$prefix$n.log")
+  eval "phase_$n=\$now"
+done
+while sleep $((${REPORT:-5} * 60)); do
+  for n in $(seq 1 "$identities"); do
+    now=$(phase "$logs/$prefix$n.log")
+    eval "was=\${phase_$n:-}"
+    if [ -n "$now" ] && [ "$now" != "$was" ]; then
+      echo "$(date '+%a %H:%M') $prefix$n: $now"
+      eval "phase_$n=\$now"
+    fi
+  done
+done
+}
+
 # launch <rounds>: starts every identity for that many rounds (0: until the run ends) and waits.
 launch() {
+pids=""
 for n in $(seq 1 "$identities"); do
   identity=$prefix$n
   email=${JOIN_EMAIL:-$identity@waldo.invalid}
@@ -63,14 +101,20 @@ for n in $(seq 1 "$identities"); do
     WALDO_GPU_THROTTLE=$throttle WALDO=$waldo RUNS_REPO=$repo JOIN_EMAIL=$email JOIN_LOGS=$logs \
       uv run -q --with mlx --with huggingface_hub python3 -u "$script_dir/burnin.py" "$identity" "$run_dir" $mode \
       >> "$logs/$identity.log" 2>&1 &
+    pids="$pids $!"
   else
     WALDO_GPU_THROTTLE=$throttle uv run -q --with mlx --with huggingface_hub \
       "$waldo" model join "$repo" "$run_dir" --identity "$identity" --email "$email" --rounds "$1" --wait 30 \
       >> "$logs/$identity.log" 2>&1 &
+    pids="$pids $!"
   fi
   sleep 5
 done
-wait
+report &
+reporter=$!
+# shellcheck disable=SC2086 # one argument per identity
+wait $pids || true
+kill "$reporter" 2>/dev/null || true
 }
 
 if [ "$rounds" -eq 0 ]; then
