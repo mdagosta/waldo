@@ -52,3 +52,7 @@ Consider dropping a unit that made no progress even when its replicas agree.
 
 #41 answered (schema check, `model list` skips unreadable models). Then rebase #42 and join-local
 onto it.
+
+## Upstream crash window
+
+- A crash between `initializeModel`'s rename and copying `base/model.safetensors` (or origin artifacts) leaves a model nothing can inspect; copy them in the `prepare` callback before the rename (found in lineage vet round 6).

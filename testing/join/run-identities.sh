@@ -77,9 +77,13 @@ if [ "$rounds" -eq 0 ]; then
   launch 0
 else
   for round in $(seq 1 "$rounds"); do
+    echo "$(date '+%a %H:%M') round $round of $rounds starting"
+    started=$SECONDS
     launch 1
+    elapsed=$((SECONDS - started))
+    echo "$(date '+%a %H:%M') round $round of $rounds done in $((elapsed / 3600))h$(printf %02d $((elapsed % 3600 / 60)))m"
     if [ "$round" -lt "$rounds" ]; then
-      echo "round $round of $rounds done; cooling down $cooldown minutes"
+      echo "cooling down $cooldown minutes"
       sleep $((cooldown * 60))
     fi
   done
