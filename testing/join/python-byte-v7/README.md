@@ -26,7 +26,7 @@ A different fine-tune is a copy of this directory with a new name; the base stay
     git add runs/python-byte-v7 && git commit -m "runs/python-byte-v7: fine-tune v6's save point" && git push
 
     caffeinate -s env ROUNDS=6 COOLDOWN=10 RUNS_REPO=$HOME/.waldo/join/local/runs.git \
-      JOIN_IDENTITY_PREFIX=mdagosta-v6- IDENTITIES=3 JOIN_THROTTLE=0.10 \
+      JOIN_IDENTITY_PREFIX=mdagosta-v6- IDENTITIES=3 \
       WALDO=$HOME/src/openwaldo/waldo-join-b/waldo \
       JOIN_EMAIL=346140425+mdagosta-bot@users.noreply.github.com \
       ~/src/openwaldo/waldo-waldito/testing/join/run-identities.sh runs/python-byte-v7

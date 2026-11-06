@@ -9,9 +9,10 @@ Architecture and tokenizer are fixed by that: a plan that changes them starts it
 
 ## Launch
 
-Commit `run.yaml` to the local runs repository as `runs/python-byte-v6/`. About 1h45m a round at
-throttle 0.10 (v3's pace), so 12 rounds plus the bootstrap is about a day; run it in chunks, stopping
-during a cooldown. Keep the lid open while it trains.
+Commit `run.yaml` to the local runs repository as `runs/python-byte-v6/`. The launcher splits
+`WALDO_GPU_THROTTLE` (your 0.25) across the 3 identities, about 0.083 each: roughly 2 hours a round,
+so 12 rounds plus the bootstrap is about a day; run it in chunks, stopping during a cooldown. Keep the
+lid open while it trains.
 
     cd ~/.waldo/join/local/seed
     mkdir -p runs/python-byte-v6
@@ -19,7 +20,7 @@ during a cooldown. Keep the lid open while it trains.
     git add runs/python-byte-v6 && git commit -m "runs/python-byte-v6: pretrain to a save point" && git push
 
     caffeinate -s env ROUNDS=4 COOLDOWN=10 RUNS_REPO=$HOME/.waldo/join/local/runs.git \
-      JOIN_IDENTITY_PREFIX=mdagosta-v6- IDENTITIES=3 JOIN_THROTTLE=0.10 \
+      JOIN_IDENTITY_PREFIX=mdagosta-v6- IDENTITIES=3 \
       WALDO=$HOME/src/openwaldo/waldo-join-b/waldo \
       JOIN_EMAIL=346140425+mdagosta-bot@users.noreply.github.com \
       ~/src/openwaldo/waldo-waldito/testing/join/run-identities.sh runs/python-byte-v6
