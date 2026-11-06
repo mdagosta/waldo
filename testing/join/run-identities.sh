@@ -46,11 +46,12 @@ echo "keep the lid open while training"
 
 # phase <log>: an identity's current phase from the end of its log, training in 10% steps.
 phase() {
-tail -c 4000 "$1" 2>/dev/null | tr '\r' '\n' | awk '
+unit=$(grep '^== Round .*, unit ' "$1" 2>/dev/null | tail -1 | sed 's/.*, unit \([^:]*\):.*/\1/')
+tail -c 4000 "$1" 2>/dev/null | tr '\r' '\n' | awk -v unit="$unit" '
   match($0, /step [0-9]+\/[0-9]+,/) {
     split(substr($0, RSTART + 5, RLENGTH - 6), s, "/")
     stage = $1; sub(/.*\//, "", stage)
-    line = stage " " int(s[1] * 10 / s[2]) * 10 "%"; next }
+    line = stage " " unit " " int(s[1] * 10 / s[2]) * 10 "%"; next }
   /"scoring / { m = $0; sub(/.*"scoring /, "", m); sub(/ on .*/, "", m); sub(/.*-r[0-9][0-9][0-9][0-9]-/, "", m)
     if (m ~ /^merge-/) m = "round start"
     line = "scoring " m; next }
