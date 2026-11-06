@@ -13,6 +13,8 @@ Each pass does the next piece of work and commits its record. `--once` does one
 piece; `--rounds <n>` stops after n rounds merge; otherwise join loops until the
 run completes. An identity keeps its key, clone, and models in
 `~/.waldo/join/<identity>/`; interrupted training resumes from its checkpoint.
+A failed pass, such as one cut off by a network drop, is retried up to six times,
+waiting twice `--wait` and doubling each time, before join exits.
 
 ## Runs repository
 

@@ -41,18 +41,38 @@ func runModelJoin(context Context, args []string, stdout, stderr io.Writer) erro
 		return err
 	}
 	wait := time.Duration(intOption(context, "wait")) * time.Second
+	failures := 0
 	for {
 		result, err := joiner.Step(context.Execution)
+		if err != nil && failures < joinRetries && context.Execution.Err() == nil && !boolOption(context, "once") {
+			failures++
+			pause := wait << failures
+			fmt.Fprintf(stdout, "%v\nretrying in %s (%d of %d)\n", err, pause, failures, joinRetries)
+			if !sleepJoin(context, pause) {
+				return context.Execution.Err()
+			}
+			continue
+		}
 		if err != nil || result == "done" || result == "stopped" || boolOption(context, "once") {
 			return err
 		}
-		if result == "idle" {
-			select {
-			case <-context.Execution.Done():
-				return context.Execution.Err()
-			case <-time.After(wait):
-			}
+		failures = 0
+		if result == "idle" && !sleepJoin(context, wait) {
+			return context.Execution.Err()
 		}
+	}
+}
+
+// joinRetries is how many times in a row a failed step is retried, waiting twice as long each
+// time, so a network drop doesn't end an identity's night.
+const joinRetries = 6
+
+func sleepJoin(context Context, wait time.Duration) bool {
+	select {
+	case <-context.Execution.Done():
+		return false
+	case <-time.After(wait):
+		return true
 	}
 }
 
