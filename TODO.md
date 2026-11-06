@@ -3,6 +3,19 @@
 Work found while running joins on one Mac, newest first. WALDITO.md is the network plan; this is
 the backlog. Each item says where it would land.
 
+## Survive a network blip while closing (join-local)
+
+python-byte-v5 round 4, 2026-11-06 02:42: Wi-Fi dropped while v5-2 and v5-3 were closing. Each
+probe's `--evaluate-only` refreshes the managed index from GitHub, the fetch failed (DNS / i/o
+timeout), and both identities exited. v5-1 had already closed and published, so it logged "nothing
+until others finish" for 5 hours: the round needs 2 closers and the only one left had closed.
+Relaunching resumes it.
+
+- A failed index refresh could warn and use the checkout already on disk; a local run doesn't need
+  GitHub to score held-out records.
+- Done 2026-11-06 on join-local-b: `waldo model join` retries a failed step up to 6 times,
+  doubling the wait, instead of exiting.
+
 ## Prune old models (local, decide first)
 
 Each bot's model store holds ~800 models (58 GB per bot, 3 bots); the join store holds 19 GB. Every
