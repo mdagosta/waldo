@@ -37,7 +37,11 @@ type LineageGap struct {
 }
 
 func (gap LineageGap) String() string {
-	return gap.Link + " " + gap.Gap[:min(12, len(gap.Gap))]
+	return gap.Link + " " + short(gap.Gap)
+}
+
+func short(digest string) string {
+	return digest[:min(12, len(digest))]
 }
 
 type lineageIndex struct {
@@ -127,6 +131,12 @@ func (index *lineageIndex) loadAll() {
 			index.loadModel(filepath.Join(index.root, entry.Name()), false)
 		}
 	}
+	merges, _ := os.ReadDir(filepath.Join(index.root, ".merges"))
+	for _, entry := range merges {
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), ".") {
+			index.loadModel(filepath.Join(index.root, ".merges", entry.Name()), false)
+		}
+	}
 }
 
 func (index *lineageIndex) document(digest string) []byte {
@@ -164,14 +174,38 @@ type lineageWalk struct {
 	anchors map[string][]string
 	seen    map[string]bool
 	gaps    map[LineageGap]bool
+	// The weights graph a merge reads: what each weights were made from,
+	// which have nothing behind them, which were merged, and which have a gap.
+	parents map[string][]string
+	ends    map[string]bool
+	merged  map[string]bool
+	broken  map[string]bool
+	at      string
 }
 
 func newLineageWalk(index *lineageIndex) *lineageWalk {
-	return &lineageWalk{index: index, held: map[string][]byte{}, anchors: map[string][]string{}, seen: map[string]bool{}, gaps: map[LineageGap]bool{}}
+	return &lineageWalk{index: index, held: map[string][]byte{}, anchors: map[string][]string{}, seen: map[string]bool{}, gaps: map[LineageGap]bool{},
+		parents: map[string][]string{}, ends: map[string]bool{}, merged: map[string]bool{}, broken: map[string]bool{}}
 }
 
 func (walk *lineageWalk) gap(digest, link string) {
 	walk.gaps[LineageGap{Gap: digest, Link: link}] = true
+	if walk.at != "" {
+		walk.broken[walk.at] = true
+	}
+}
+
+// explain walks the step that made weights; the returned func restores the one before.
+func (walk *lineageWalk) explain(weights string) func() {
+	previous := walk.at
+	walk.at = weights
+	return func() { walk.at = previous }
+}
+
+func (walk *lineageWalk) edge(weights, from string) {
+	if weights != from && !slices.Contains(walk.parents[weights], from) {
+		walk.parents[weights] = append(walk.parents[weights], from)
+	}
 }
 
 func (walk *lineageWalk) fetch(digest, link string, target any) bool {
@@ -233,7 +267,8 @@ func (walk *lineageWalk) model(inspection Inspection, runID string) {
 	plan := walk.plan(inspection.Model.ID)
 	for _, run := range inspection.BOM.Runs {
 		if runID != "" && run.ID == runID {
-			walk.run(run.BOMSHA256, inspection.Model.ID, run.ID)
+			weights, _ := bomRunWeights(run)
+			walk.run(run.BOMSHA256, inspection.Model.ID, run.ID, weights)
 			return
 		}
 	}
@@ -257,23 +292,35 @@ func (walk *lineageWalk) parent(parent ModelParent) {
 		walk.gap(parent.Artifact.SHA256, "initialization")
 		return
 	}
-	walk.run(parent.RunBOMSHA256, parent.ModelID, parent.RunID)
+	walk.run(parent.RunBOMSHA256, parent.ModelID, parent.RunID, parent.Artifact.SHA256)
 }
 
 // run walks from a run BOM that a pin names as modelID's runID.
-func (walk *lineageWalk) run(digest, modelID, runID string) {
+func (walk *lineageWalk) run(digest, modelID, runID, weights string) {
+	var bom RunBOM
+	if walk.fetch(digest, "run-bom", &bom) && (bom.ModelID != modelID || bom.ID != runID) {
+		defer walk.explain(weights)()
+		walk.gap(digest, "run-bom")
+		return
+	}
+	walk.madeBy(digest, weights)
+}
+
+// madeBy walks from the run BOM that made weights.
+func (walk *lineageWalk) madeBy(digest, weights string) {
+	defer walk.explain(weights)()
+	if walk.seen[digest] {
+		return
+	}
+	walk.seen[digest] = true
 	var bom RunBOM
 	if !walk.fetch(digest, "run-bom", &bom) {
 		return
 	}
-	if bom.ModelID != modelID || bom.ID != runID {
-		walk.gap(digest, "run-bom")
+	if bom.Initialization == nil {
+		walk.ends[weights] = true
 		return
 	}
-	if walk.seen[digest] || bom.Initialization == nil {
-		return
-	}
-	walk.seen[digest] = true
 	start := bom.Initialization
 	from := start.Artifact.SHA256
 	plan := walk.plan(bom.ModelID)
@@ -281,15 +328,18 @@ func (walk *lineageWalk) run(digest, modelID, runID string) {
 	case plan == nil:
 		walk.gap(from, "initialization")
 	case start.SourceType == "origin" && start.SourceID == plan.OriginBOMSHA256:
+		walk.edge(weights, from)
 		walk.origin(start.SourceID, from)
 	case start.SourceType == "run" && start.SourceID == start.SourceRunID:
-		earlier, weights, ok := walk.anchoredRun(bom.ModelID, start.SourceRunID)
-		if !ok || weights != from {
+		earlier, earlierWeights, ok := walk.anchoredRun(bom.ModelID, start.SourceRunID)
+		if !ok || earlierWeights != from {
 			walk.gap(from, "initialization")
 			return
 		}
-		walk.run(earlier.BOMSHA256, bom.ModelID, earlier.ID)
+		walk.edge(weights, from)
+		walk.run(earlier.BOMSHA256, bom.ModelID, earlier.ID, from)
 	case start.SourceType == "run" && plan.Parent != nil && start.SourceID == plan.Parent.ModelID && start.SourceRunID == plan.Parent.RunID && from == plan.Parent.Artifact.SHA256:
+		walk.edge(weights, from)
 		walk.parent(*plan.Parent)
 	default:
 		walk.gap(from, "initialization")
@@ -297,6 +347,7 @@ func (walk *lineageWalk) run(digest, modelID, runID string) {
 }
 
 func (walk *lineageWalk) origin(digest, weights string) {
+	defer walk.explain(weights)()
 	if walk.seen[digest] {
 		return
 	}
@@ -305,13 +356,40 @@ func (walk *lineageWalk) origin(digest, weights string) {
 	if !walk.fetch(digest, "origin-bom", &origin) {
 		return
 	}
-	if pinned, _ := originWeights(origin.Artifacts); weights != "" && pinned != weights {
+	pinned, _ := originWeights(origin.Artifacts)
+	if weights != "" && pinned != weights {
 		walk.gap(digest, "origin-bom")
 		return
 	}
 	for _, artifact := range origin.SourceArtifacts {
-		if artifact.Role == "source-bom" {
-			walk.release(artifact.SHA256, origin)
+		switch artifact.Role {
+		case "source-bom":
+			walk.release(artifact.SHA256, pinned, origin)
+			return
+		case "source-merge":
+			walk.merge(artifact.SHA256, pinned)
+			return
+		}
+	}
+	walk.ends[pinned] = true
+}
+
+// merge walks a merged origin's MERGE.json to each parent's run or origin.
+func (walk *lineageWalk) merge(digest, weights string) {
+	var record MergeRecord
+	if !walk.fetch(digest, "merge", &record) {
+		return
+	}
+	walk.merged[weights] = true
+	for _, parent := range record.Parents {
+		walk.edge(weights, parent.WeightsSHA256)
+		switch {
+		case parent.RunBOMSHA256 != "":
+			walk.madeBy(parent.RunBOMSHA256, parent.WeightsSHA256)
+		case parent.OriginBOMSHA256 != "":
+			walk.origin(parent.OriginBOMSHA256, parent.WeightsSHA256)
+		default:
+			walk.gap(parent.WeightsSHA256, "merge")
 		}
 	}
 }
@@ -341,7 +419,7 @@ func (release releaseBOM) listed(role string) []string {
 }
 
 // release links only when BOM.json lists the pulled weights.
-func (walk *lineageWalk) release(digest string, origin OriginBOM) {
+func (walk *lineageWalk) release(digest, weights string, origin OriginBOM) {
 	var release releaseBOM
 	if !walk.fetch(digest, "release-bom", &release) {
 		return
@@ -362,13 +440,20 @@ func (walk *lineageWalk) release(digest string, origin OriginBOM) {
 		return
 	}
 	for _, run := range anchor.Runs {
-		if release.RunID != "" && run.ID == release.RunID {
-			walk.run(run.BOMSHA256, release.ModelID, run.ID)
+		if exported, ok := bomRunWeights(run); release.RunID != "" && run.ID == release.RunID && ok {
+			walk.edge(weights, exported)
+			walk.run(run.BOMSHA256, release.ModelID, run.ID, exported)
 			return
 		}
 	}
 	if release.RunID == "" && plan != nil && anchor.Origin != nil && anchor.Origin.SHA256 == plan.OriginBOMSHA256 {
-		walk.origin(anchor.Origin.SHA256, "")
+		var artifacts []OriginArtifact
+		for _, artifact := range anchor.Origin.Artifacts {
+			artifacts = append(artifacts, OriginArtifact(artifact))
+		}
+		exported, _ := originWeights(artifacts)
+		walk.edge(weights, exported)
+		walk.origin(anchor.Origin.SHA256, exported)
 		return
 	}
 	walk.gap(release.SourceBOM, "model-bom")
@@ -418,16 +503,18 @@ func (walk *lineageWalk) file() LineageFile {
 	return LineageFile{Kind: lineageKind, Schema: lineageSchema, Documents: walk.held, Anchors: walk.anchors, Gaps: walk.sortedGaps()}
 }
 
-func (walk *lineageWalk) warnGaps(name string) {
-	gaps := walk.sortedGaps()
-	if len(gaps) == 0 {
-		return
-	}
+func gapNames(gaps []LineageGap) string {
 	names := make([]string, len(gaps))
 	for index, gap := range gaps {
 		names[index] = gap.String()
 	}
-	walk.index.warn(fmt.Sprintf("model %q history has %d gap(s): %s", name, len(gaps), strings.Join(names, ", ")))
+	return strings.Join(names, ", ")
+}
+
+func (walk *lineageWalk) warnGaps(name string) {
+	if gaps := walk.sortedGaps(); len(gaps) > 0 {
+		walk.index.warn(fmt.Sprintf("model %q history has %d gap(s): %s", name, len(gaps), gapNames(gaps)))
+	}
 }
 
 func writeHistory(index *lineageIndex, inspection Inspection, path string) error {
@@ -481,7 +568,11 @@ func listedLineage(data []byte) string {
 }
 
 // pullLineage never fails a pull; what doesn't check out is a gap.
-func pullLineage(root, directory string, origin OriginBOM, plan Plan, warn func(string)) (LineageFile, error) {
+func pullLineage(root, directory, name string, origin OriginBOM, architecture Architecture, warn func(string)) (LineageFile, error) {
+	plan, err := originPlan(name, origin, architecture)
+	if err != nil {
+		return LineageFile{}, err
+	}
 	index := newLineageIndex(root, warn)
 	originDigest, err := index.addRecord(origin)
 	if err != nil {

@@ -119,7 +119,7 @@ func fineTune(t *testing.T, builder Builder, base, name string, warnings *[]stri
 		}
 	}
 	stage := lineageStage(name)
-	compose, err := builder.ResolveCompose(context.Background(), Compose{Kind: "waldo-model-compose", Schema: 1, Base: &ComposeBase{Model: base}, Stages: []Stage{stage}}, false)
+	compose, err := builder.ResolveCompose(context.Background(), name, Compose{Kind: "waldo-model-compose", Schema: 1, Base: &ComposeBase{Model: base}, Stages: []Stage{stage}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestAReleaseMustNameItsModelBOM(t *testing.T) {
 	x, y := add(Plan{Name: "x", OriginBOMSHA256: origin}), add(Plan{Name: "y", OriginBOMSHA256: origin})
 	other := add(ModelBOM{ModelID: y, Origin: &ModelBOMOrigin{SHA256: origin}})
 	release := add(map[string]any{"kind": "openwaldo-bom", "schema": 1, "subject": "model-release", "model_id": x, "source_bom_sha256": other, "artifacts": []map[string]string{{"role": "weights", "sha256": "w"}}})
-	walk.release(release, OriginBOM{SourceArtifacts: []OriginArtifact{{Role: "source-weights", SHA256: "w"}}})
+	walk.release(release, "w", OriginBOM{SourceArtifacts: []OriginArtifact{{Role: "source-weights", SHA256: "w"}}})
 	if len(walk.anchors[x]) != 0 || !walk.gaps[LineageGap{Gap: other, Link: "model-bom"}] {
 		t.Fatalf("model y's BOM was linked as model x's: anchors %v, gaps %v", walk.anchors, walk.sortedGaps())
 	}
@@ -267,7 +267,7 @@ func TestAParentPinMustNameItsRunsWeights(t *testing.T) {
 	walk.index.claims[parent] = []string{parentBOM}
 	child := add(Plan{Name: "child", Parent: &ModelParent{ModelID: parent, RunID: "r", RunBOMSHA256: parentRun, Artifact: training.Artifact{SHA256: "fake"}}})
 	childRun := add(RunBOM{ModelID: child, ID: "c", Initialization: &training.Initialization{SourceType: "run", SourceID: parent, SourceRunID: "r", Artifact: training.Artifact{SHA256: "fake"}}})
-	walk.run(childRun, child, "c")
+	walk.run(childRun, child, "c", "")
 	if len(walk.gaps) == 0 {
 		t.Fatalf("a child that started from weights its parent run never made has no gap; held %d documents", len(walk.held))
 	}
