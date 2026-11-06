@@ -385,6 +385,13 @@ func (walk *lineageWalk) merge(digest, weights string) {
 		walk.edge(weights, parent.WeightsSHA256)
 		switch {
 		case parent.RunBOMSHA256 != "":
+			var bom RunBOM
+			if walk.fetch(parent.RunBOMSHA256, "run-bom", &bom) {
+				if _, made, ok := walk.anchoredRun(bom.ModelID, bom.ID); ok && made != parent.WeightsSHA256 {
+					walk.gap(parent.WeightsSHA256, "merge")
+					continue
+				}
+			}
 			walk.madeBy(parent.RunBOMSHA256, parent.WeightsSHA256)
 		case parent.OriginBOMSHA256 != "":
 			walk.origin(parent.OriginBOMSHA256, parent.WeightsSHA256)

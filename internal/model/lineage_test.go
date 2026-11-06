@@ -273,6 +273,26 @@ func TestAParentPinMustNameItsRunsWeights(t *testing.T) {
 	}
 }
 
+func TestAMergeParentMustNameItsRunsWeights(t *testing.T) {
+	walk := newLineageWalk(newLineageIndex("", nil))
+	add := func(record any) string {
+		digest, err := walk.index.addRecord(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return digest
+	}
+	parent := add(Plan{Name: "parent"})
+	parentRun := add(RunBOM{ModelID: parent, ID: "r"})
+	parentBOM := add(ModelBOM{ModelID: parent, Runs: []ModelBOMRun{{ID: "r", BOMSHA256: parentRun, Artifacts: []ModelBOMArtifact{{Role: "weights", SHA256: "real"}}}}})
+	walk.index.claims[parent] = []string{parentBOM}
+	merge := add(MergeRecord{Parents: []MergeParent{{RunBOMSHA256: parentRun, WeightsSHA256: "fake"}}})
+	walk.merge(merge, "merged")
+	if !walk.gaps[LineageGap{Gap: "fake", Link: "merge"}] {
+		t.Fatalf("a merge parent its run never made has no gap: %v", walk.sortedGaps())
+	}
+}
+
 func TestComposeFillsAMissingHistory(t *testing.T) {
 	root := t.TempDir()
 	builder := lineageBuilder(root)
