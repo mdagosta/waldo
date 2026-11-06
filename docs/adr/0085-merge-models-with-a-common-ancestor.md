@@ -6,9 +6,10 @@ Status: accepted
 ## Context
 
 Averaging the weights of models fine-tuned from the same starting weights is
-an established way to combine what each learned. Done outside WALDO, the
-merged model loses its provenance: nothing records which models went into it,
-or how. A merge has no training run either, and ADR 0026 forbids inventing one.
+an established way to combine what each learned, and it is how distributed
+rounds combine their contributors' work. Done outside WALDO, the merged model
+loses its provenance: nothing records which models went into it, or how. A
+merge has no training run either, and ADR 0026 forbids inventing one.
 
 ## Decision
 
@@ -32,7 +33,7 @@ any other, and records how it was made.
 - Parents recorded the same way, by the same run or origin BOM and weights,
   give the same `MERGE.json` and the same weights, so independent merges of
   them compare byte for byte.
-- A merge never invents a training run; changing the arithmetic needs a new
-  method name.
+- A merge never invents a training run; its provenance is its parents'.
+  Changing the arithmetic needs a new method name.
 - Earlier merges in a history are checked by their documents, not recomputed.
 - A merged model needs its `.merges` entry to be composed again.

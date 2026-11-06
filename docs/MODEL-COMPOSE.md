@@ -186,6 +186,7 @@ BOM.
 | `architecture` | normally | object | Defines immutable model structure and tokenizer identity. It may be omitted with `base.source`, in which case WALDO inherits the verified source architecture. |
 | `interaction` | no | object | Declares a versioned inference-time prompt contract. Omit it for raw causal continuation. |
 | `stages` | yes, unless `base.merge` creates the model | list | Ordered training stages. Stage names must be unique. |
+| `join` | no | object | Makes the compose a distributed run's file, read only by `waldo model join` ([Model join](MODEL-JOIN.md)); every other command ignores it, and it is no part of the compose's identity. |
 
 ### Interaction fields
 
@@ -293,8 +294,9 @@ merge-base must be in its history, with no gap and no model that starts there
 from scratch or from an outside release, and every earlier merge above it must
 have parents that reach a common ancestor too: a family never merges in a model
 from outside it, but a merge can merge again with its own parents. Below the
-merge-base, gaps are only recorded. Merges accept byte-tokenizer
-models with `bfloat16` or `float32` parameters.
+merge-base, gaps are only recorded. Merges accept models with `bfloat16` or
+`float32` parameters, whether their tokenizer is the byte tokenizer or a trained
+one.
 
 WALDO computes every new merge from the parents' weights and writes it as an
 origin under the model root's `.merges` directory, named by the hash of its
@@ -372,7 +374,10 @@ Schema 1 currently accepts standard bias-free Llama Safetensors with
 `OpenWALDOTokenizer`, vocabulary size 259, and F32, F16, or BF16 tensors—the
 format produced by current WALDO Hugging Face exports. Pull also accepts the
 legacy `OpenWALDOByteTokenizer` class name used by older WALDO exports; both
-names identify the same byte tokenizer. Other tokenizers, architectures, tensor
+names identify the same byte tokenizer. A package whose
+`openwaldo_tokenizer.json` carries a trained `waldo/byte-bpe` artifact is
+pulled with that tokenizer, validated against `config.json`'s vocabulary, so
+the pulled architecture is the exported model's. Other tokenizers, architectures, tensor
 layouts, and source providers fail before the destination model is published.
 `base.source` and `model pull` intentionally share this same compatibility
 boundary.
@@ -552,6 +557,7 @@ corpora:
 | `sources` | no | Matches either the canonical source identifier or source name. |
 | `metadata` | no | Maps canonical `meta` JSON keys to value filters. Each declared key must contain a string value and all declared keys must match. Missing, malformed, or non-string values are rejected. |
 | `date` | no | Selects canonical dates that overlap the inclusive `from`/`to` interval. |
+| `slice` | no | `{index, count}` with `0 <= index < count`. Keeps the records whose ID's SHA-256, read as a big-endian 64-bit integer from its first 8 bytes, modulo `count` equals `index` ([ADR 0087](adr/0087-select-deterministic-corpus-slices.md)). The `count` slices of a corpus are disjoint, near-equal in size, and stable for as long as each record's text is unchanged. |
 | `include` | no | At least one shell-style, case-sensitive pattern must match. |
 | `exclude` | no | Any matching pattern rejects the record and takes precedence over `include`. |
 | `languages.include_unset` | no | Also retains rows with no recorded language. Known languages must still match `include`. Defaults to `false`; it is not accepted for license or source filters. |
@@ -641,6 +647,8 @@ must use one representation or the other, never both.
 | `evaluation_fraction` | no | default `0.01`; `0 <= value < 1` | Candidate fraction for deterministic held-out selection. |
 | `evaluation_max_records` | no | default `256`; `0..1000000` | Held-out record cap. |
 | `evaluation_max_bytes` | no | default 1 MiB; `0 B..16 GiB` | Held-out text-byte cap. |
+| `evaluation_seed` | no | unsigned integer; default `seed` | Picks the held-out records instead of `seed`, so runs that shuffle differently, such as successive rounds of one join unit, hold out the same records. |
+| `artifact_selection` | no | `final`; default lowest held-out | Which weights the run publishes. By default, the checkpoint with the lowest held-out loss; `final`, the last step's weights, still verified against their held-out loss. |
 
 Exactly one of `tokens`, `epochs`, or legacy `steps` is normally declared. A
 legacy compose may declare both `steps` and `epochs`; steps remains the exact
