@@ -10,8 +10,9 @@
 #   RUNS_REPO=https://github.com/<owner>/<runs> JOIN_IDENTITY_PREFIX=<account>-bot- \
 #     run-identities.sh runs/<run>
 #
-# IDENTITIES (default 5) and JOIN_THROTTLE (default 0.2, each identity's WALDO_GPU_THROTTLE
-# regardless of any global setting) size the run; JOIN_EMAIL is the record commits' author.
+# IDENTITIES (default 5) sizes the run, and WALDO_GPU_THROTTLE (default 1) is the whole machine's
+# GPU budget, split evenly: each identity gets WALDO_GPU_THROTTLE / IDENTITIES, at least 0.01.
+# JOIN_EMAIL is the record commits' author.
 # ROUNDS=<n> runs the next n rounds one at a time, cooling down COOLDOWN minutes (default 20)
 # between them so the machine isn't hot all night:
 #   ROUNDS=1 run-identities.sh runs/<run>                  # run the next round, then stop
@@ -32,7 +33,7 @@ run_dir=${1:?usage: run-identities.sh runs/<run>}
 repo=${RUNS_REPO:?set RUNS_REPO to the runs repository}
 prefix=${JOIN_IDENTITY_PREFIX:?set JOIN_IDENTITY_PREFIX, as in <account>-bot-}
 identities=${IDENTITIES:-5}
-throttle=${JOIN_THROTTLE:-0.2}
+throttle=$(awk -v budget="${WALDO_GPU_THROTTLE:-1}" -v n="$identities" 'BEGIN { t = budget / n; printf "%.4f", (t < 0.01 ? 0.01 : t) }')
 rounds=${ROUNDS:-0}
 cooldown=${COOLDOWN:-20}
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
