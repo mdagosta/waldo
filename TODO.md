@@ -27,7 +27,7 @@ step-300 checkpoint. It now keeps any run that saved past step 1 and retries the
 
 ## Keep the machine in a heat range while it trains (join-local worker, waldito launcher)
 
-The throttle is fixed at launch: launcher.sh splits WALDO_GPU_THROTTLE once, `waldo model join`
+The throttle is fixed at launch: the launcher splits WALDO_GPU_THROTTLE once, `waldo model join`
 passes it on, and the MLX worker reads it once at start (`GPU_THROTTLE` in mlx.py). Changing it
 means a stop and relaunch, cheap now that hello-python-v9 saves every 150 steps. On the M2 Max,
 0.25 kept the fans at 0 (about 50-60 C, chip 8-12 W) and 0.36 didn't (about 1,550 RPM at 67-74 C).

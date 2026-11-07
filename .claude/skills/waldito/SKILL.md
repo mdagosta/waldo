@@ -36,7 +36,7 @@ line each, exactly as they will run. Skip a step with nothing to do, and say so.
 2. Commit tooling, if any changed: the same form in `~/src/openwaldo/waldo-waldito`.
 3. Copy: `mkdir -p <SEED>/runs/<name> && cp <plan directory>/run.yaml <SEED>/runs/<name>/`
 4. Publish: `cd <SEED> && git pull --rebase && git add runs/<name> && git commit -m "runs/<name>: <one line>" && git push`
-5. Launch, for the user to type: `WALDO_GPU_THROTTLE=<throttle> ROUNDS=<rounds> ~/src/openwaldo/waldo-waldito/testing/join/launcher.sh <name>`
+5. Launch, for the user to type: `~/src/openwaldo/waldo-waldito/waldito <name>` (WALDO_GPU_THROTTLE from the shell is the budget; add ROUNDS=<n> to stop early)
 
 `SEED` and `RUNS_REPO` come from `~/.waldo/join/launch.env`.
 

@@ -25,7 +25,7 @@ Faults (add one here whenever a run finds a new kink):
 
 Each identity is a `waldo model join` identity in ~/.waldo/join/<identity>/ with a github-token;
 RUNS_REPO names the runs repository, JOIN_EMAIL the commits' author, and WALDO the binary
-(default: the one built at this checkout's root). launcher.sh launches it.
+(default: the one built at this checkout's root). `waldito launch` starts it.
 
 Records are signed with the identity's own key and proposed from its own fork with its own
 token, exactly as join does. Every fault is logged to <logs>/faults.jsonl, and every error state

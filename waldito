@@ -25,10 +25,11 @@ Usage:
     waldito data heldout <model or run directory>   # the held-out records a run scored, largest first
     waldito data mix run.yaml                   # what a plan trains on: each unit's bytes by file type
     waldito check-plan <plan directory>         # fast checks before publishing and launching a join plan
-    waldito hello-python-v9                     # check-plan, then launch it (testing/join/launcher.sh)
+    waldito hello-python-v9                     # check-plan, then run its identities here under a thermostat
 """
 import argparse
 import collections
+import contextlib
 import datetime
 import getpass
 import hashlib
@@ -38,6 +39,7 @@ import os
 import pathlib
 import re
 import shlex
+import signal
 import shutil
 import socket
 import string
@@ -1407,7 +1409,7 @@ def cmd_check_plan(args):
     else:
         check("binary", "✗", f"no waldo binary at {waldo}; set WALDO in launch.env")
     # Anything training competes for the GPU, and a throttled run sleeps longer for every slow step.
-    running = quiet("pgrep", "-f", "launcher.sh|waldo model (join|train|continue)|testing/e2e/").stdout.split()
+    running = quiet("pgrep", "-f", "waldo model (join|train|continue)|testing/e2e/").stdout.split()
     free = shutil.disk_usage(pathlib.Path.home()).free / 1e12
     check("machine", "!" if running else "✓", ("something is training; a launch now would share the GPU" if running else "nothing training")
           + f"; {free:.1f} TB free" + ("" if shutil.which("macmon") else "; macmon missing, so no heat log"))
@@ -1423,27 +1425,313 @@ def cmd_check_plan(args):
     readme = directory / "README.md"
     if not readme.exists():
         check("docs", "!", "no README.md beside the plan")
-    elif name and f"launcher.sh {name}" not in readme.read_text():
-        check("docs", "!", f"README's launch line doesn't run launcher.sh {name}")
+    elif name and f"waldito {name}" not in readme.read_text():
+        check("docs", "!", f"README's launch line doesn't run waldito {name}")
     else:
-        check("docs", "✓", f"README launches launcher.sh {name}")
+        check("docs", "✓", f"README launches waldito {name}")
     for name, mark, detail in results:
         say(f"  {mark} {name:<9} {detail}")
     if any(mark == "✗" for _, mark, _ in results):
         sys.exit(1)
 
 
+class Launch:
+    """Runs a published join plan's identities on this machine, a round at a time, under a thermostat.
+
+    Settings come from ~/.waldo/join/launch.env under the environment: RUNS_REPO, WALDO, JOIN_EMAIL;
+    WALDO_GPU_THROTTLE, the machine's GPU budget, split evenly and never exceeded; ROUNDS (default:
+    until the run ends); COOLDOWN minutes between rounds (20); HOT_C (42) and COOL_C (35), the
+    thermostat's limits; REPORT minutes between progress lines (5); FAULTS for burnin.py.
+    """
+
+    def __init__(self, name):
+        settings = launch_settings()
+        self.setting = lambda key, default=None: os.environ.get(key) or settings.get(key) or default
+        self.name, self.run_dir = name, f"runs/{name}"
+        self.repo = self.setting("RUNS_REPO")
+        self.waldo = self.setting("WALDO")
+        if not self.repo or not self.waldo or not os.access(self.waldo, os.X_OK):
+            error("set RUNS_REPO and WALDO, an executable waldo with `model join`, in ~/.waldo/join/launch.env")
+            sys.exit(1)
+        import yaml
+        shown = subprocess.run(["git", f"--git-dir={self.repo}", "show", f"HEAD:{self.run_dir}/run.yaml"],
+                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        self.plan = yaml.safe_load(shown.stdout) if shown.returncode == 0 else {}
+        join = self.plan.get("join") or {}
+        self.identities = list(join.get("identities") or {})
+        if not self.identities:
+            prefix = self.setting("JOIN_IDENTITY_PREFIX")
+            if not prefix:
+                error(f"{self.run_dir} lists no identities in {self.repo}; set JOIN_IDENTITY_PREFIX, as in <account>-bot-")
+                sys.exit(1)
+            self.identities = [f"{prefix}{n}" for n in range(1, int(self.setting("IDENTITIES", "5")) + 1)]
+        rounds = join.get("rounds") or {}
+        self.total = (rounds.get("pretrain") or 0) + (rounds.get("posttrain") or 0)
+        self.gate = next((gate["heldout_loss_at_most"] for gate in join.get("gates") or [] if "heldout_loss_at_most" in gate), None)
+        self.budget = float(self.setting("WALDO_GPU_THROTTLE", "1"))
+        self.rounds = int(self.setting("ROUNDS", "0"))
+        self.cooldown, self.report_every = int(self.setting("COOLDOWN", "20")), int(self.setting("REPORT", "5"))
+        self.hot, self.cool = float(self.setting("HOT_C", "42")), float(self.setting("COOL_C", "35"))
+        self.logs = pathlib.Path.home() / ".waldo" / "join" / "logs" / name
+        self.logs.mkdir(parents=True, exist_ok=True)
+        self.heat = self.logs / "thermal.log"
+        self.level, self.stopping = self.budget, None
+
+    def share(self, budget):
+        """One identity's part of a machine budget, at least 0.01 unless paused."""
+        return 0.0 if budget <= 0 else max(0.01, budget / len(self.identities))
+
+    def stamp(self, text):
+        say(f"{time.strftime('%a %H:%M')} {text}")
+
+    def last_minutes(self, count):
+        """thermal.log's last minutes as (gpu%, cpu%, chip W, GPU C, fan RPM)."""
+        try:
+            lines = self.heat.read_text().splitlines()[-count:]
+        except OSError:
+            return []
+        rows = []
+        for line in lines:
+            fields = line.split()
+            if len(fields) >= 8 and ":" in fields[0]:
+                rows.append((float(fields[1]), float(fields[2]), float(fields[4]), float(fields[6]), float(fields[7])))
+        return rows
+
+    def phase(self, identity):
+        """An identity's current phase from the end of its log, led by its join round: r2/12 pretrain py-a 40%."""
+        try:
+            text = (self.logs / f"{identity}.log").read_text(errors="replace").replace("\r", "\n")
+        except OSError:
+            return ""
+        headers = re.findall(r"^== Round (\d+)(?: \([^)]*\))?(?:, unit ([^:]+))?", text, re.M)
+        round_number = headers[-1][0] if headers else ""
+        unit = next((found for _, found in reversed(headers) if found), "")
+        line = ""
+        for entry in text[-4000:].splitlines():
+            if step := re.search(r"step (\d+)/(\d+),", entry):
+                line = f"{entry.split()[0].split('/')[-1]} {unit} {int(step[1]) * 10 // int(step[2]) * 10}%"
+            elif scoring := re.search(r'"scoring (\S+) on ', entry):
+                scored = re.sub(r".*-r\d{4}-", "", scoring[1])
+                line = "scoring " + ("round start" if scored.startswith("merge-") else scored)
+            elif accepted := re.search(r"unit (\S+): accepted", entry):
+                line = f"unit {accepted[1]} accepted"
+            elif merging := re.match(r"merge  .*merging (\S+)", entry):
+                line = f"merging {merging[1]}"
+            elif entry.startswith("-- Merge round"):
+                line = "merged, publishing"
+            elif "until others finish" in entry:
+                line = "waiting for others"
+            elif re.search(r"is merged; .* stops", entry):
+                line = "round done"
+        if line and round_number:
+            line = f"r{round_number}{'/' + str(self.total) if self.total else ''} {line}"
+        return line
+
+    def saves(self, identity):
+        try:
+            return len(re.findall(r"checkpoint step \S+ persisted", (self.logs / f"{identity}.log").read_text(errors="replace")))
+        except OSError:
+            return 0
+
+    def report(self, stop):
+        """Every REPORT minutes: each identity's phase when it changes, with the heat over those minutes."""
+        last = {identity: (self.phase(identity), self.saves(identity)) for identity in self.identities}
+        while not stop.wait(self.report_every * 60):
+            rows = self.last_minutes(self.report_every)
+            heat = ""
+            if rows:
+                columns = list(zip(*rows))
+                heat = (f"gpu {sum(columns[0]) / len(rows):3.0f}% cpu {sum(columns[1]) / len(rows):3.0f}% "
+                        f"{sum(columns[2]) / len(rows):4.1f}W {max(columns[3]):3.0f}C fan {max(columns[4]):.0f}")
+            printed = False
+            for identity in self.identities:
+                now, count = self.phase(identity), self.saves(identity)
+                # SAVED: a checkpoint written since the last report, so stopping now loses little.
+                mark = " SAVED" if count > last[identity][1] else ""
+                if now and (now != last[identity][0] or mark):
+                    self.stamp(f"{identity}: {now:<34} {heat}{mark}")
+                    last[identity], printed = (now, count), True
+            if not printed and rows and max(columns[4]) > 0:
+                self.stamp(heat)  # a fan is news even when no phase changed
+
+    def set_throttle(self, budget):
+        """Each identity's share of the machine budget, live in its own waldo config (gpu.throttle)."""
+        for identity in self.identities:
+            config = pathlib.Path.home() / ".waldo" / "join" / identity / "waldo-config.json"
+            result = subprocess.run([self.waldo, "config", "set", "gpu.throttle", f"{self.share(budget):.4f}"],
+                                    env={**os.environ, "WALDO_CONFIG": str(config)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if result.returncode:
+                say(f"can't set {identity}'s gpu.throttle; does {self.waldo} know it?")
+
+    def thermostat(self, stop):
+        """Each minute: above HOT_C or with a fan running, pause; below COOL_C, step up 5% of the budget."""
+        while not stop.wait(60):
+            rows = self.last_minutes(1)
+            if not rows:
+                continue
+            temperature, fan = rows[-1][3], rows[-1][4]
+            level = self.level
+            if fan > 0 or temperature > self.hot:
+                level = 0.0
+            elif temperature < self.cool:
+                level = min(self.budget, level + self.budget / 20)
+            if abs(level - self.level) > 1e-9:
+                self.stamp(f"thermostat: throttle {self.level:.2f} -> {level:.2f} at {temperature:.0f}C, fan {fan:.0f}")
+                self.level = level
+                self.set_throttle(level)
+
+    def cool_down(self):
+        """At least COOLDOWN minutes, then until the fans stop and the GPU is at HOT_C or below."""
+        say(f"cooling down: at least {self.cooldown} minutes, then until the fans stop and the GPU is at {self.hot:.0f}C")
+        time.sleep(self.cooldown * 60)
+        waited = 0
+        while (rows := self.last_minutes(1)) and (rows[-1][4] > 0 or rows[-1][3] > self.hot):
+            if waited % 15 == 0:
+                self.stamp(f"waiting for the machine to cool: fan {rows[-1][4]:.0f}, {rows[-1][3]:.0f}C")
+            time.sleep(60)
+            waited += 1
+
+    def finished(self):
+        """The run is complete, or stopped at a gate, by any identity's log."""
+        pattern = re.compile(rf"^run {re.escape(self.name)} (is complete|stopped)", re.M)
+        return any(pattern.search((self.logs / f"{identity}.log").read_text(errors="replace"))
+                   for identity in self.identities if (self.logs / f"{identity}.log").exists())
+
+    def round(self):
+        """Starts every identity for one round and waits for them, reporting as they go."""
+        import threading
+        share, faults, children = self.share(self.budget), (self.setting("FAULTS") or "").split(), []
+        for identity in self.identities:
+            email = self.setting("JOIN_EMAIL") or f"{identity}@waldo.invalid"
+            say(f"starting {identity} (throttle {share:.4f}) -> {self.logs / f'{identity}.log'}")
+            # The governor: training never goes past this share, whatever gpu.throttle says.
+            env = {**os.environ, "WALDO_GPU_THROTTLE": f"{share:.4f}"}
+            modes = ["random"] if "random" in faults else [fault.split("=", 1)[1] for fault in faults if fault.startswith(identity + "=")]
+            if modes:
+                say(f"  {identity} injects faults: {' '.join(modes)}")
+                env.update(WALDO=self.waldo, RUNS_REPO=self.repo, JOIN_EMAIL=email, JOIN_LOGS=str(self.logs))
+                command = ["uv", "run", "-q", "--with", "mlx", "--with", "huggingface_hub", "python3", "-u",
+                           str(REPO_ROOT / "testing" / "join" / "burnin.py"), identity, self.run_dir, *modes]
+            else:
+                command = ["uv", "run", "-q", "--with", "mlx", "--with", "huggingface_hub", self.waldo, "model", "join",
+                           self.repo, self.run_dir, "--identity", identity, "--email", email, "--rounds", "1", "--wait", "30"]
+            with open(self.logs / f"{identity}.log", "ab") as log:
+                children.append(subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT))
+            time.sleep(5)
+        stop = threading.Event()
+        reporter = threading.Thread(target=self.report, args=(stop,), daemon=True)
+        reporter.start()
+        try:
+            for child in children:
+                child.wait()
+        finally:
+            stop.set()
+
+    def results(self):
+        """What the run reached, its latest merge saying hello, and the plan's own checks."""
+        say(f"\n== {self.name}: held-out loss on each unit's data, at the round's start -> after it")
+        found = set()
+        for identity in self.identities:
+            try:
+                text = (self.logs / f"{identity}.log").read_text(errors="replace").replace("\r", "\n")
+            except OSError:
+                continue
+            round_number = start = end = None
+            for line in text.splitlines():
+                if header := re.match(r"== Round (\d+)", line):
+                    round_number = int(header[1])
+                elif begun := re.search(r"round start probe loss (\S+)", line):
+                    start = begun[1]
+                elif replicas := re.search(r"replicas 1 vs 2: probe loss (\S+)", line):
+                    end = replicas[1]
+                elif accepted := re.search(r"unit (\S+): accepted", line):
+                    found.add((round_number, accepted[1], start, end))
+        for round_number, unit, start, end in sorted(found, key=lambda row: (row[0] or 0, row[1])):
+            say(f"   r{round_number} {unit:<5} {start} -> {end}")
+        if found:
+            last = max(row[0] or 0 for row in found)
+            ends = [float(row[3]) for row in found if row[0] == last and row[3]]
+            gate = f", gate at most {self.gate}" if self.gate is not None else ""
+            say(f"   r{last} average {sum(ends) / len(ends):.3f}{gate}")
+        for line in sorted({line.strip() for log in self.logs.glob("*.log") for line in log.read_text(errors="replace").splitlines() if "gate after" in line}):
+            say(f"   {line}")
+        # The latest merge, from whichever identity holds it under its plain name, at temperature 0.
+        merges = sorted((int(re.search(r"-r(\d+)-merge-", directory.name)[1]), len(directory.name), identity, directory.name)
+                        for identity in self.identities
+                        for directory in (pathlib.Path.home() / ".waldo" / "join" / identity / "models").glob(f"waldo-{self.name}-r*-merge-*")
+                        if directory.is_dir())
+        if not merges:
+            say("no merge yet to chat with")
+            return
+        merges.sort(key=lambda merge: (-merge[0], merge[1]))
+        _, _, holder, model = merges[0]
+        if any(stage.get("type") == "fine-tuning" for stage in self.plan.get("stages") or []):
+            prompt, raw = "Write a Python program that prints Hello Waldo.", []
+        else:
+            # A pretrained base continues text, so it gets a comment to finish as code.
+            prompt, raw = '# Print "Hello Waldo" in Python\n', ["--raw"]
+        say(f"\n== {model} (held by {holder}) says:")
+        command = [self.waldo, "model", "chat", model, *raw, "--temperature", "0", "--max-tokens", "120", prompt]
+        show_command(command)
+        chat = subprocess.run(["uv", "run", "-q", "--with", "mlx", "--with", "huggingface_hub", *command],
+                              env={**os.environ, "WALDO_CONFIG": str(pathlib.Path.home() / ".waldo" / "join" / holder / "waldo-config.json")},
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        say(chat.stdout.rstrip() or "(no output)")
+        measure = pathlib.Path(self.waldo).parent / "testing" / "join" / self.name / "measure.sh"
+        if os.access(measure, os.X_OK):
+            say(f"\n== {self.name}/measure.sh")
+            measured = subprocess.run([str(measure)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            say(measured.stdout.rstrip())
+
+    def run(self):
+        global BUILD_LOG
+        import threading
+        BUILD_LOG = open(self.logs / "launcher.log", "a", encoding="utf-8")  # say() mirrors the screen here
+        say("keep the lid open while training")
+        background = [subprocess.Popen(["caffeinate", "-s", "-w", str(os.getpid())])]
+        if shutil.which("macmon"):
+            background.append(subprocess.Popen([str(REPO_ROOT / "testing" / "join" / "thermal-log.sh"), str(self.heat)],
+                                               stdout=subprocess.DEVNULL, start_new_session=True))
+        else:
+            say("macmon isn't installed, so heat isn't logged")
+        # Every launch starts at the full budget, so a pause left from the last one can't hold this one.
+        self.set_throttle(self.budget)
+        stop = threading.Event()
+        if shutil.which("macmon"):
+            threading.Thread(target=self.thermostat, args=(stop,), daemon=True).start()
+        try:
+            number = 0
+            of = f"of {self.rounds}" if self.rounds else "until the run ends"
+            while not self.rounds or number < self.rounds:
+                number += 1
+                self.stamp(f"round {number} {of} starting")
+                began = time.monotonic()
+                self.round()
+                elapsed = int(time.monotonic() - began)
+                self.stamp(f"round {number} {of} done in {elapsed // 3600}h{elapsed % 3600 // 60:02d}m")
+                if self.finished() or (self.rounds and number >= self.rounds):
+                    break
+                self.cool_down()
+            self.results()
+            say(f"all identities finished; logs in {self.logs}")
+        finally:
+            stop.set()
+            # The heat logger runs in its own session, so stop its whole group; caffeinate ends with us.
+            for process in background[1:]:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.killpg(process.pid, signal.SIGTERM)
+            background[0].terminate()
+
+
 def cmd_launch(args):
-    """check-plan, then hand the terminal to the launcher; `waldito <plan>` means `waldito launch <plan>`."""
+    """check-plan, then launch: `waldito <plan>` means `waldito launch <plan>`."""
     settings = launch_settings()
-    directory = pathlib.Path(settings.get("WALDO", "")).parent / "testing" / "join" / args.plan
+    directory = pathlib.Path(settings.get("WALDO", "")).parent / "testing" / "join" / args.plan.removeprefix("runs/")
     if (directory / "run.yaml").exists():
         cmd_check_plan(argparse.Namespace(plan=str(directory)))  # exits on a ✗
     else:
         say(f"no plan directory {directory}; launching without checks")
-    launcher = REPO_ROOT / "testing" / "join" / "launcher.sh"
-    sys.stdout.flush()
-    os.execv(launcher, [str(launcher), args.plan])
+    Launch(args.plan.removeprefix("runs/")).run()
 
 
 def build_parser():
