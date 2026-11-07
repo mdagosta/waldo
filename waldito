@@ -1259,6 +1259,10 @@ def cmd_data_mix(args):
     exclude = content.get("exclude") or {}
     sizes, counts, kinds, large = collections.Counter(), collections.Counter(), collections.defaultdict(collections.Counter), collections.Counter()
     biggest = collections.defaultdict(list)
+    # --keep/--drop try a source_path metadata filter as WALDO applies it; --max-kb is a cut WALDO can't make yet.
+    keep, drop = (at_any_depth(globs, args.depth) for globs in (args.keep, args.drop))
+    keeps, drops = (re.compile("|".join(go_glob_regex(pattern) for pattern in patterns)) if patterns else None for patterns in (keep, drop))
+    cut, cut_kinds = collections.Counter(), collections.defaultdict(collections.Counter)
     shards = shard_files(args)
     flags = {"main_content": True, "repetitive_content": False, "boilerplate_content": False}
     for path in shards.values():
@@ -1278,6 +1282,12 @@ def cmd_data_mix(args):
                                                             or exclude.get("boilerplate_content") and boilerplate):
                     continue
                 name = source_path(meta)
+                # As WALDO does: without metadata no file passes a metadata filter, and excludes win.
+                if (keeps or drops) and not name or drops and drops.fullmatch(name) or keeps and not keeps.fullmatch(name) \
+                        or args.max_kb and size > args.max_kb * 1000:
+                    cut[unit] += size
+                    cut_kinds[unit][file_kind(name)] += size
+                    continue
                 sizes[unit] += size
                 counts[unit] += 1
                 kinds[unit][file_kind(name)] += size
@@ -1288,9 +1298,45 @@ def cmd_data_mix(args):
     say(f"{plan.get('name', args.plan)}: {len(shards)} cached shards, {filtered} the {stage['name']} stage's content filters")
     for unit in sorted(sizes, key=lambda unit: list(units.values()).index(unit) if units else 0):
         say(f"== {unit}: {sizes[unit] / 1e6:.0f} MB in {counts[unit]} files; files over 100 KB hold {large[unit] / sizes[unit]:.0%}")
-        say(f"   by file type: {shares(kinds[unit], sizes[unit], 10)}")
+        if cut[unit]:
+            say(f"   the path filter cut {cut[unit] / 1e6:.0f} MB ({cut[unit] / (cut[unit] + sizes[unit]):.0%}): {shares(cut_kinds[unit], cut[unit], args.types)}")
+        say(f"   by file type: {shares(kinds[unit], sizes[unit], args.types)}")
         for size, source, name in sorted(biggest[unit], reverse=True)[:args.top]:
             say(f"   {size / sizes[unit]:4.1%} {size / 1000:7.0f} KB  {source}  {name}")
+    if args.emit_filter and (keep or drop):
+        say("add under the stage's filter:")
+        print("      metadata:\n        source_path:")
+        for word, patterns in (("include", keep), ("exclude", drop)):
+            if patterns:
+                print(f"          {word}:\n" + "\n".join(f"            - '{pattern}'" for pattern in patterns))
+
+
+def at_any_depth(globs, depth):
+    """File name globs as source_path patterns: Go's path.Match never crosses '/', so one per depth."""
+    names = [glob for glob in (globs or "").split(",") if glob]
+    return [("*/" * level) + name for name in names for level in range(depth + 1)]
+
+
+def go_glob_regex(pattern):
+    """A regex for Go's path.Match: * and ? stay within one path segment; [...] and \\ as in Go."""
+    out, index = [], 0
+    while index < len(pattern):
+        char = pattern[index]
+        if char == "*":
+            out.append("[^/]*")
+        elif char == "?":
+            out.append("[^/]")
+        elif char == "\\" and index + 1 < len(pattern):
+            index += 1
+            out.append(re.escape(pattern[index]))
+        elif char == "[":
+            end = pattern.index("]", index + 2)
+            out.append("[" + pattern[index + 1:end].replace("\\", "\\\\") + "]")
+            index = end
+        else:
+            out.append(re.escape(char))
+        index += 1
+    return "".join(out)
 
 
 def build_parser():
@@ -1342,6 +1388,12 @@ def build_parser():
     mix = data.add_parser("mix", help="what a plan trains on: each unit's bytes by file type, largest files first")
     mix.add_argument("plan", help="the plan's run.yaml")
     mix.add_argument("--unfiltered", action="store_true", help="before the stage's main/repetitive/boilerplate content filters")
+    mix.add_argument("--keep", help="try a source_path filter: comma-separated file name globs to keep, e.g. '*.py,*.md'")
+    mix.add_argument("--drop", help="try a source_path filter: comma-separated file name globs to drop, e.g. '*.svg,*.lock'")
+    mix.add_argument("--depth", type=int, default=24, help="deepest directory --keep/--drop reach (default 24)")
+    mix.add_argument("--emit-filter", action="store_true", help="print the --keep/--drop filter as plan YAML")
+    mix.add_argument("--max-kb", type=int, help="try dropping files over this many KB")
+    mix.add_argument("--types", type=int, default=10, help="how many file types to list (default 10)")
     mix.set_defaults(func=cmd_data_mix)
     for command in (heldout, mix):
         command.add_argument("--top", type=int, default=5, help="how many of the largest files to list (default 5)")
