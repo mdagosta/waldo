@@ -26,7 +26,7 @@ A different fine-tune is a copy of this directory with a new name; the base stay
     cp ~/src/openwaldo/waldo-join-b/testing/join/python-byte-v7/{run.yaml,eval.bom.json,eval.jsonl,evaluate_python.py} runs/python-byte-v7/
     git add runs/python-byte-v7 && git commit -m "runs/python-byte-v7: fine-tune hello-python-v9's save point" && git push
 
-    WALDO_GPU_THROTTLE=0.30 ROUNDS=6 ~/src/openwaldo/waldo-waldito/testing/join/launcher.sh python-byte-v7
+    WALDO_GPU_THROTTLE=0.30 ROUNDS=6 ~/src/openwaldo/waldo-waldito/waldito python-byte-v7
 
     ~/src/openwaldo/waldo-join-b/testing/join/python-byte-v7/measure.sh
 

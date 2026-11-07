@@ -21,6 +21,6 @@ post-training and the gate's 4 extra.
     caffeinate -s env ROUNDS=4 RUNS_REPO=$HOME/.waldo/join/local/runs.git \
       JOIN_IDENTITY_PREFIX=mdagosta-bot- IDENTITIES=3 JOIN_THROTTLE=0.08 \
       JOIN_EMAIL=346140425+mdagosta-bot@users.noreply.github.com \
-      ~/src/openwaldo/waldo-waldito/testing/join/launcher.sh runs/python-byte-v2
+      ~/src/openwaldo/waldo-waldito/waldito runs/python-byte-v2
 
 Results: TBD.

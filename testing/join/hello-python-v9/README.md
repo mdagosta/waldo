@@ -16,7 +16,7 @@ which keeps the fan off. Keep the lid open while it trains.
 
     cd ~/.waldo/join/local/seed && git pull --rebase && git add runs/hello-python-v9 && git commit -m "runs/hello-python-v9: v8 saving every 150 steps" && git push
 
-    WALDO_GPU_THROTTLE=0.25 ROUNDS=1 ~/src/openwaldo/waldo-waldito/testing/join/launcher.sh hello-python-v9
+    WALDO_GPU_THROTTLE=0.25 ROUNDS=1 ~/src/openwaldo/waldo-waldito/waldito hello-python-v9
 
 When the run completes, its last merge is the save point:
 
