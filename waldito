@@ -1535,13 +1535,13 @@ class Launch:
 
     def report(self, stop):
         """Every REPORT minutes: each identity's phase when it changes, with the heat over those minutes.
-        A first report comes 90 seconds in, once training has resumed, showing everything."""
+        A first report comes 30 seconds in, showing everything, so the heat shows right away."""
         last = {identity: ("", self.saves(identity)) for identity in self.identities}
-        wait = 90
+        first, wait = True, 30
         while not stop.wait(wait):
             # The first report's heat is the last two minutes, not minutes from before the launch.
-            rows = self.last_minutes(2 if wait == 90 else self.report_every)
-            wait = self.report_every * 60
+            rows = self.last_minutes(2 if first else self.report_every)
+            first, wait = False, self.report_every * 60
             heat = ""
             if rows:
                 columns = list(zip(*rows))
@@ -1631,9 +1631,8 @@ class Launch:
         finally:
             stop.set()
 
-    def results(self):
-        """What the run reached, its latest merge saying hello, and the plan's own checks."""
-        say(f"\n== {self.name}: held-out loss on each unit's data, at the round's start -> after it")
+    def probes(self):
+        """Every unit the closers accepted: (round, unit, held-out loss at the round's start, after it)."""
         found = set()
         for identity in self.identities:
             try:
@@ -1649,38 +1648,61 @@ class Launch:
                 elif replicas := re.search(r"replicas 1 vs 2: probe loss (\S+)", line):
                     end = replicas[1]
                 elif accepted := re.search(r"unit (\S+): accepted", line):
-                    found.add((round_number, accepted[1], start, end))
-        for round_number, unit, start, end in sorted(found, key=lambda row: (row[0] or 0, row[1])):
+                    found.add((round_number or 0, accepted[1], start, end))
+        return sorted(found)
+
+    def show_rounds(self, latest_only=False):
+        """Each unit's held-out loss at its round's start and after it, the last round's average
+        against the gate, and the gate's verdict once join has checked it."""
+        rows = self.probes()
+        if not rows:
+            return
+        last = rows[-1][0]
+        if latest_only:
+            rows = [row for row in rows if row[0] == last]
+        total = f"/{self.total}" if self.total else ""
+        say(f"\n== {self.name} r{last}{total}: held-out loss on each unit's data, at the round's start -> after it")
+        for round_number, unit, start, end in rows:
             say(f"   r{round_number} {unit:<5} {start} -> {end}")
-        if found:
-            last = max(row[0] or 0 for row in found)
-            ends = [float(row[3]) for row in found if row[0] == last and row[3]]
+        ends = [float(row[3]) for row in rows if row[0] == last and row[3]]
+        if ends:
             gate = f", gate at most {self.gate}" if self.gate is not None else ""
             say(f"   r{last} average {sum(ends) / len(ends):.3f}{gate}")
-        for line in sorted({line.strip() for log in self.logs.glob("*.log") for line in log.read_text(errors="replace").splitlines() if "gate after" in line}):
+        for line in sorted({line.strip() for log in self.logs.glob("*.log")
+                            for line in log.read_text(errors="replace").splitlines() if "gate after" in line}):
             say(f"   {line}")
-        # The latest merge, from whichever identity holds it under its plain name, at temperature 0.
-        merges = sorted((int(re.search(r"-r(\d+)-merge-", directory.name)[1]), len(directory.name), identity, directory.name)
-                        for identity in self.identities
-                        for directory in (pathlib.Path.home() / ".waldo" / "join" / identity / "models").glob(f"waldo-{self.name}-r*-merge-*")
-                        if directory.is_dir())
+
+    def hello(self):
+        """The latest merge, chatted with at temperature 0 so it's repeatable."""
+        merges = [(int(re.search(r"-r(\d+)-merge-", directory.name)[1]), len(directory.name), directory)
+                  for identity in self.identities
+                  for directory in (pathlib.Path.home() / ".waldo" / "join" / identity / "models").glob(f"waldo-{self.name}-r*-merge-*")
+                  if directory.is_dir()]
         if not merges:
             say("no merge yet to chat with")
             return
-        merges.sort(key=lambda merge: (-merge[0], merge[1]))
-        _, _, holder, model = merges[0]
+        # The newest round, held under its plain name.
+        _, _, merge = min(merges, key=lambda found: (-found[0], found[1]))
         if any(stage.get("type") == "fine-tuning" for stage in self.plan.get("stages") or []):
             prompt, raw = "Write a Python program that prints Hello Waldo.", []
         else:
-            # A pretrained base continues text, so it gets a comment to finish as code.
-            prompt, raw = '# Print "Hello Waldo" in Python\n', ["--raw"]
-        say(f"\n== {model} (held by {holder}) says:")
-        command = [self.waldo, "model", "chat", model, *raw, "--temperature", "0", "--max-tokens", "120", prompt]
+            # A pretrained base continues text, so it gets a function to finish; a lone comment
+            # can read as the end of a file, and it stops.
+            prompt, raw = 'def hello_waldo():\n    \"\"\"Print Hello Waldo.\"\"\"\n', ["--raw"]
+        say(f"\n== {merge.name} says:")
+        command = [self.waldo, "model", "chat", str(merge), *raw, "--temperature", "0", "--max-tokens", "120", prompt]
         show_command(command)
+        # By path, under the user's own config: an identity's gpu.throttle may be the thermostat's pause.
+        environment = {key: value for key, value in os.environ.items() if key != "WALDO_CONFIG"}
+        environment["WALDO_GPU_THROTTLE"] = str(self.budget)
         chat = subprocess.run(["uv", "run", "-q", "--with", "mlx", "--with", "huggingface_hub", *command],
-                              env={**os.environ, "WALDO_CONFIG": str(pathlib.Path.home() / ".waldo" / "join" / holder / "waldo-config.json")},
-                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                              env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         say(chat.stdout.rstrip() or "(no output)")
+
+    def results(self):
+        """What the run reached, its latest merge saying hello, and the plan's own checks."""
+        self.show_rounds()
+        self.hello()
         measure = pathlib.Path(self.waldo).parent / "testing" / "join" / self.name / "measure.sh"
         if os.access(measure, os.X_OK):
             say(f"\n== {self.name}/measure.sh")
@@ -1715,6 +1737,9 @@ class Launch:
                 self.stamp(f"round {number} {of} done in {elapsed // 3600}h{elapsed % 3600 // 60:02d}m")
                 if self.finished() or (self.rounds and number >= self.rounds):
                     break
+                # Each round's merge is chat-ready as soon as it's published: show how it's doing.
+                self.show_rounds(latest_only=True)
+                self.hello()
                 self.cool_down()
             self.results()
             say(f"all identities finished; logs in {self.logs}")
