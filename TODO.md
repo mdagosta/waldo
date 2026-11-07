@@ -3,6 +3,22 @@
 Work found while running joins on one Mac, newest first. WALDITO.md is the network plan; this is
 the backlog. Each item says where it would land.
 
+## Keep the machine in a heat range while it trains (join-local worker, waldito launcher)
+
+The throttle is fixed at launch: launcher.sh splits WALDO_GPU_THROTTLE once, `waldo model join`
+passes it on, and the MLX worker reads it once at start (`GPU_THROTTLE` in mlx.py). Changing it
+means a stop and relaunch, cheap now that hello-python-v9 saves every 150 steps. On the M2 Max,
+0.25 kept the fans at 0 (about 50-60 C, chip 8-12 W) and 0.36 didn't (about 1,550 RPM at 67-74 C).
+The setting a user actually wants is a range ("keep the fan off", "stay under 60 C"), not a number.
+
+- Worker: re-read the throttle every ~30 s from a file named by WALDO_GPU_THROTTLE_FILE, falling
+  back to the environment variable; the same in the inference worker. Needs a rebuilt ./waldo, so
+  it lands between chunks.
+- Launcher: write each identity's share to that file, and steer the shared budget from thermal.log
+  toward the user's range (fan at 0, GPU temperature, or chip watts), with bounds and slow steps,
+  since temperature lags power by minutes.
+- Not part of the model-merge PR.
+
 ## Walk each unit's data once, in order (join-local)
 
 Each pretraining round shuffles its unit's whole pool with a new seed, `pieceSeed(plan, round,
