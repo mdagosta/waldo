@@ -1,4 +1,4 @@
-# python-byte-v7: post-training on python-byte-v6's pretrained base: our python-basics and
+# python-byte-v7: post-training on hello-python-v8's pretrained base: our python-basics and
 # python-programs SFT sets, lightly (6 epochs), gated on python-programs' held-out split.
 kind: waldo-model-compose
 schema: 1
@@ -63,7 +63,7 @@ join:
       key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAet+TgxylPozTYWQj8N4mRZweeuCPEw5yyiSbFtG6Cq
     mdagosta-v6-3:
       key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILuwx/5b74m4RAldUXI1Hgxq3Jp95UcTFGJii2h+hBdb
-  # Paste v6's last merge here: testing/join/pin-base.sh <its published directory>
+  # Paste hello-python-v8's last merge here: testing/join/pin-base.sh <its published directory>
   base:
     model: TBD
   # 3 rounds of 2 epochs over each unit's third of the SFT records (~230 steps a round); the gate

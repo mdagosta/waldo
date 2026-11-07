@@ -31,4 +31,6 @@ When the run completes, its last merge is the save point:
 
 prints the `base:` block for a post-training plan.
 
-Results: TBD.
+Results: stopped 2026-11-06 after the bootstrap and round 1 (held-out probes py-b 2.35 to 2.18,
+py-c 2.36 to 2.03). Only ~44% of what it trained on was Python: py-a was 20% SVG, py-b 28% GeoJSON
+(`waldito data mix`). [hello-python-v8](../hello-python-v8/README.md) restarts it on Python only.
