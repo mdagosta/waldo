@@ -1534,10 +1534,14 @@ class Launch:
             return 0
 
     def report(self, stop):
-        """Every REPORT minutes: each identity's phase when it changes, with the heat over those minutes."""
-        last = {identity: (self.phase(identity), self.saves(identity)) for identity in self.identities}
-        while not stop.wait(self.report_every * 60):
-            rows = self.last_minutes(self.report_every)
+        """Every REPORT minutes: each identity's phase when it changes, with the heat over those minutes.
+        A first report comes 90 seconds in, once training has resumed, showing everything."""
+        last = {identity: ("", self.saves(identity)) for identity in self.identities}
+        wait = 90
+        while not stop.wait(wait):
+            # The first report's heat is the last two minutes, not minutes from before the launch.
+            rows = self.last_minutes(2 if wait == 90 else self.report_every)
+            wait = self.report_every * 60
             heat = ""
             if rows:
                 columns = list(zip(*rows))
@@ -1728,7 +1732,11 @@ def cmd_launch(args):
     settings = launch_settings()
     directory = pathlib.Path(settings.get("WALDO", "")).parent / "testing" / "join" / args.plan.removeprefix("runs/")
     if (directory / "run.yaml").exists():
-        cmd_check_plan(argparse.Namespace(plan=str(directory)))  # exits on a ✗
+        try:
+            cmd_check_plan(argparse.Namespace(plan=str(directory)))
+        except SystemExit:
+            error(f"not launching {args.plan}: fix the ✗ above first")
+            raise
     else:
         say(f"no plan directory {directory}; launching without checks")
     Launch(args.plan.removeprefix("runs/")).run()
