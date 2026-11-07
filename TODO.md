@@ -3,6 +3,22 @@
 Work found while running joins on one Mac, newest first. WALDITO.md is the network plan; this is
 the backlog. Each item says where it would land.
 
+## Walk each unit's data once, in order (join-local)
+
+Each pretraining round shuffles its unit's whole pool with a new seed, `pieceSeed(plan, round,
+unit)` (internal/join/work.go), and trains its first 6.5 MB, so rounds are independent random
+draws. Over hello-python-v8's 12 rounds about 20-46% of each unit's files are never seen (py-c's
+pool is 105 MB, 78 MB is trained), while others repeat. Before asking anyone else to give their GPU
+to a run, every hour should buy new data.
+
+- Shuffle once per unit (seed by plan and unit, as the held-out set already is) and start round N
+  where round N-1 stopped; WALDO already seeks into a prepared stream when resuming. A pass ends,
+  then the next pass reshuffles.
+- Balance units by filtered size (`waldito data mix` shows it) so `pretrain` rounds of
+  `tokens_per_round` make about one pass each.
+- Record the offset in each unit's compose so the run BOM shows exactly which records it trained.
+- Needs a new plan; a running plan's composes can't change.
+
 ## Look inside the training data (waldito first, then upstream)
 
 python-byte-v6 round 1, 2026-11-06: py-a's held-out loss didn't move (3.408 to 3.410) while its
@@ -10,8 +26,9 @@ training loss fell. Two throwaway Go programs built against `internal/shard` fou
 
 - Held-out records: a run's `PREFLIGHT.json` lists them as `<shard sha256>:<row>`; the shards sit
   in the lookaside cache (`waldo lookaside status`), and `shard.ReadRecordsAt` reads those rows.
-  One file, ray's `map-of-ray.svg` (785K characters), was 57% of py-a's held-out bytes. Each round
-  and unit draws a new sample (`pieceSeed`), so one huge record can swing a round's probe.
+  One file, ray's `map-of-ray.svg` (785K characters), was 57% of py-a's held-out bytes. A unit's
+  held-out set is fixed for the whole run (seeded by plan and unit), so it would have held every
+  round's probe; hello-python-v8's path filter drops it.
 - Training mix: `shard.WalkRecords` over the six shards, by unit and file extension. Only ~41% of
   the bytes are `.py`; py-a is 29% `.svg`, 11% `.lock`, 10% `.json`; py-b 12% `.geojson`; records
   over 100 KB hold 27-61% of each unit's bytes. (Before the plan's content filters.)
