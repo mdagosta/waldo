@@ -40,7 +40,11 @@ line each, exactly as they will run. Skip a step with nothing to do, and say so.
 
 `SEED` and `RUNS_REPO` come from `~/.waldo/join/launch.env`.
 
-## 4. Run steps 1-4
+Under each commit, show what it holds: its files with `git diff --stat` and a line on what each
+change does. Then stop. The user reads the steps to understand what is about to be published;
+run nothing until they say go.
+
+## 4. Run steps 1-4, after the user's go
 
 - One Bash call per step, the command byte for byte as shown: no added flags, trailers or
   co-author lines.
