@@ -3,6 +3,19 @@
 Work found while running joins on one Mac, newest first. WALDITO.md is the network plan; this is
 the backlog. Each item says where it would land.
 
+## Say when a run stops moving (waldito launcher)
+
+hello-python-v9, 2026-11-06 23:24: a resume sat 24 minutes without one training step while my join
+e2e trained at full speed beside it (each throttled step slowed, then slept 14 times as long), and
+the launcher's screen was simply quiet: it prints only when a phase changes. When an identity's log
+shows no new step for, say, three report intervals, print `<identity>: no progress for N minutes`
+with its last log line. `waldito check-plan` now warns about any training before a launch, which
+would have caught this one.
+
+Also from that night, done 2026-11-06 on join-local-b: `waldo model join` deleted a run whenever
+`waldo model continue` failed, even when Ctrl-C stopped it; only a cancelled context saved v9's
+step-300 checkpoint. It now keeps any run that saved past step 1 and retries the resume.
+
 ## Keep the machine in a heat range while it trains (join-local worker, waldito launcher)
 
 The throttle is fixed at launch: launcher.sh splits WALDO_GPU_THROTTLE once, `waldo model join`
