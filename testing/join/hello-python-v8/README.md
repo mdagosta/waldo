@@ -33,4 +33,5 @@ When the run completes, its last merge is the save point:
 
     ~/src/openwaldo/waldo-join-b/testing/join/pin-base.sh ~/.waldo/join/local/store/hello-python-v8/<closer>/<last merge>
 
-Results: TBD.
+Results: stopped 2026-11-06 a third of the way into the bootstrap; it saved only at step 500, so
+[hello-python-v9](../hello-python-v9/README.md) restarts it saving every 150 steps.
