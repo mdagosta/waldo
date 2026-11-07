@@ -3,6 +3,15 @@
 Work found while running joins on one Mac, newest first. WALDITO.md is the network plan; this is
 the backlog. Each item says where it would land.
 
+## Retire join's training closure for the lineage history (join-local)
+
+join-local-b's ADR 0090 (2026-11-04) publishes `TRAINING-CLOSURE.json` and `provenance-<sha256>.json`
+with each release so exports can attribute and disclose inherited training. Since #42 (2026-11-07)
+the lineage walk does that from `LINEAGE.json` (`model.TrainingHistory`), and on the restack the EU
+report and `ATTRIBUTION.md` moved to it: one owner. What's left of ADR 0090 is the closure files
+themselves (`provenance.go`, merges unioning closures, pulls keeping them). Remove them and the
+ADR, or rewrite it as "the lineage history serves disclosure", once the join PR is next.
+
 ## Say when a run stops moving (waldito launcher)
 
 hello-python-v9, 2026-11-06 23:24: a resume sat 24 minutes without one training step while my join
