@@ -6,7 +6,8 @@
 
 # Burn-in launcher for `waldo model join`: runs a plan's identities on one run at the same time,
 # each throttled, each logging to ~/.waldo/join/logs/<run>/<identity>.log, with the Mac kept awake
-# and its heat logged beside them to thermal.log (thermal-log.sh, when macmon is installed).
+# and its heat logged beside them to thermal.log (thermal-log.sh, when macmon is installed). What
+# the launcher prints also goes to launcher.log there.
 #
 #   WALDO_GPU_THROTTLE=0.36 ROUNDS=4 run-identities.sh <run>
 #
@@ -21,7 +22,8 @@
 #   ROUNDS=1 run-identities.sh <run>                       # run the next round, then stop
 #   ROUNDS=3 COOLDOWN=30 run-identities.sh <run>           # three rounds, 30 minutes apart
 # Keep a laptop's lid open while it trains: closed, it runs hotter.
-# REPORT=<minutes> sets how often the launcher prints progress and whether a fan is on (default 5).
+# REPORT=<minutes> sets how often the launcher prints progress, with the GPU load and fan speed over
+# those minutes from thermal.log (default 5).
 # FAULTS runs identities through burnin.py, which injects protocol faults as they join:
 #   FAULTS=random run-identities.sh <run>                  # every identity, random faults
 #   FAULTS="<identity>=close <identity>=lazy" ...           # these identities, these faults
@@ -55,6 +57,11 @@ waldo=${WALDO:-$(CDPATH='' cd -- "$script_dir/../../.." && pwd)/waldo-join-local
 logs=$HOME/.waldo/join/logs/$(basename "$run_dir")
 
 mkdir -p "$logs"
+# Everything printed here also goes to launcher.log beside the identities' logs.
+if [ -z "${RUN_IDENTITIES_TEE:-}" ]; then
+  RUN_IDENTITIES_TEE=1 "$0" "$@" 2>&1 | tee -a "$logs/launcher.log"
+  exit
+fi
 trap 'kill 0' INT TERM
 echo "keep the lid open while training"
 caffeinate -s -w $$ &
@@ -94,18 +101,24 @@ for identity in $names; do
   eval "phase_$n=\$now"
 done
 while sleep $((${REPORT:-5} * 60)); do
+  # thermal.log's minutes since the last report: mean GPU busy and chip watts, hottest GPU, fastest fan.
+  heat=$(tail -n "${REPORT:-5}" "$logs/thermal.log" 2>/dev/null | awk '$1 ~ /:/ {
+    gpu += $2; watts += $4; if ($6 > hot) hot = $6; if ($7 > fan) fan = $7; n++ }
+    END { if (n) printf "gpu %3.0f%% %4.1fW %3.0fC fan %d", gpu / n, watts / n, hot, fan }')
   n=0
+  printed=""
   for identity in $names; do
     n=$((n + 1))
     now=$(phase "$logs/$identity.log")
     eval "was=\${phase_$n:-}"
     if [ -n "$now" ] && [ "$now" != "$was" ]; then
-      echo "$(date '+%a %H:%M') $identity: $now"
+      printf '%s %s: %-30s %s\n' "$(date '+%a %H:%M')" "$identity" "$now" "$heat"
       eval "phase_$n=\$now"
+      printed=1
     fi
   done
-  heat=$(tail -1 "$logs/thermal.log" 2>/dev/null | awk '$NF + 0 > 0')
-  [ -z "$heat" ] || echo "fan on: $heat"
+  # A fan is news even when no phase changed.
+  [ -n "$printed" ] || ! echo "$heat" | awk '$NF + 0 > 0 { found = 1 } END { exit !found }' || echo "$(date '+%a %H:%M') $heat"
 done
 }
 
