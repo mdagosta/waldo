@@ -243,7 +243,7 @@ assert len(provenance) == len(merge["accepted"]), provenance
 closure = json.load(open(package + "/TRAINING-CLOSURE.json"))
 assert closure["complete"] and len(closure["corpora"]) >= 3, [(c["corpus_bom_sha256"][:12], c["uses"]) for c in closure["corpora"]]
 disclosure = json.load(open(package + "/EU-BOM.json"))
-inherited = [c for c in disclosure["training"]["unique_corpora"] if "inherited" in c["stages"]]
+inherited = [c for c in disclosure["training"]["unique_corpora"] or [] if any(s.startswith("ancestor ") for s in c["stages"])]
 assert len(inherited) >= 3, disclosure["training"]
 # The merge links back to the signed records it was made from, each pinned by hash.
 link = json.load(open(package + "/JOIN-ROUND.json"))
