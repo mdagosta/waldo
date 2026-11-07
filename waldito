@@ -1,7 +1,7 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["mlx", "huggingface_hub"]
+# dependencies = ["mlx", "huggingface_hub", "pyarrow", "pyyaml"]
 # ///
 """
 waldito -- small machines making small contributions to openwaldo models
@@ -22,6 +22,8 @@ Usage:
     waldito check my-model evaluation.jsonl     # exact-match score of `model chat` against prompt/response rows
     waldito build waldito-python-basics         # plans/<name>.yaml: distributed build with replicas, merges, checks
     waldito join ~/runs.git runs/tiny --identity alice   # one identity's turns in a run kept in git: train, verify, merge
+    waldito data heldout <model or run directory>   # the held-out records a run scored, largest first
+    waldito data mix run.yaml                   # what a plan trains on: each unit's bytes by file type
 """
 import argparse
 import collections
@@ -1179,6 +1181,118 @@ def cmd_join(args):
         hub.shutdown()
 
 
+def shard_files(args):
+    """Every shard in the lookaside cache, by SHA-256: what training last materialized."""
+    cache = pathlib.Path(args.cache or waldo_json("lookaside", "status")["cache"])
+    return {path.name: path for path in cache.glob("??/??/*") if len(path.name) == 64}
+
+
+def source_path(meta):
+    try:
+        return json.loads(meta or "{}").get("source_path", "")
+    except json.JSONDecodeError:
+        return ""
+
+
+def file_kind(path):
+    """A file's extension, or its name when it has none (Makefile, LICENSE)."""
+    path = pathlib.PurePosixPath(path)
+    return path.suffix.lower() or path.name
+
+
+def shares(counter, total, top=8):
+    return ", ".join(f"{key or '?'} {value / total:.0%}" for key, value in counter.most_common(top))
+
+
+def cmd_data_heldout(args):
+    import pyarrow.parquet as parquet
+    run_dir = pathlib.Path(args.run).expanduser()
+    if not (run_dir / "PREFLIGHT.json").exists():
+        # A model directory: its latest run.
+        runs = sorted(run_dir.glob("runs/*/PREFLIGHT.json"))
+        if not runs:
+            error(f"no PREFLIGHT.json in {run_dir} or its runs/")
+            sys.exit(1)
+        run_dir = runs[-1].parent
+    wanted = collections.defaultdict(set)
+    for key in json.loads((run_dir / "PREFLIGHT.json").read_text())["selected_records"]:
+        digest, row = key.rsplit(":", 1)
+        wanted[digest].add(int(row))
+    shards = shard_files(args)
+    records = []
+    for digest, rows in wanted.items():
+        if digest not in shards:
+            error(f"shard {digest[:12]} isn't in the lookaside cache; training or `waldo model train` fetches it")
+            sys.exit(1)
+        shard = parquet.ParquetFile(shards[digest])
+        start = 0
+        for group in range(shard.num_row_groups):
+            count = shard.metadata.row_group(group).num_rows
+            inside = sorted(row - start for row in rows if start <= row < start + count)
+            if inside:
+                table = shard.read_row_group(group, columns=["text", "source_name", "meta"]).take(inside).to_pydict()
+                for text, source, meta in zip(table["text"], table["source_name"], table["meta"]):
+                    records.append((len(text.encode()), source or "", source_path(meta)))
+            start += count
+    total = sum(size for size, _, _ in records)
+    kinds, sources = collections.Counter(), collections.Counter()
+    for size, source, path in records:
+        kinds[file_kind(path)] += size
+        sources[source] += size
+    say(f"{run_dir}: {len(records)} held-out records, {total / 1e6:.2f} MB")
+    say(f"   by file type: {shares(kinds, total)}")
+    say(f"   by source: {shares(sources, total)}")
+    say("   largest:")
+    for size, source, path in sorted(records, reverse=True)[:args.top]:
+        say(f"   {size / total:4.0%} {size / 1000:7.0f} KB  {source}  {path}")
+
+
+def cmd_data_mix(args):
+    import pyarrow.compute as compute
+    import pyarrow.parquet as parquet
+    import yaml
+    plan = yaml.safe_load(pathlib.Path(args.plan).expanduser().read_text())
+    # Join units read their listed sources; a plan without units reads everything.
+    units = {source: unit for unit, listed in ((plan.get("join") or {}).get("units") or {}).items() for source in listed}
+    stage = next(stage for stage in plan["stages"] if stage["type"] == "pre-training")
+    content = stage.get("filter") or {}
+    exclude = content.get("exclude") or {}
+    sizes, counts, kinds, large = collections.Counter(), collections.Counter(), collections.defaultdict(collections.Counter), collections.Counter()
+    biggest = collections.defaultdict(list)
+    shards = shard_files(args)
+    flags = {"main_content": True, "repetitive_content": False, "boilerplate_content": False}
+    for path in shards.values():
+        shard = parquet.ParquetFile(path)
+        for group in range(shard.num_row_groups):
+            table = shard.read_row_group(group, columns=[name for name in ("text", "source_name", "meta", *flags) if name in shard.schema_arrow.names])
+            columns = table.drop(["text"]).to_pydict()
+            columns["bytes"] = compute.binary_length(table["text"]).to_pylist()
+            for flag, passing in flags.items():
+                # As waldo does, a shard without content assessments isn't filtered by them.
+                columns.setdefault(flag, [passing] * table.num_rows)
+            for source, meta, size, main, repetitive, boilerplate in zip(columns["source_name"], columns["meta"], columns["bytes"],
+                                                                         columns["main_content"], columns["repetitive_content"], columns["boilerplate_content"]):
+                unit = units.get(source) if units else "all"
+                if unit is None or not args.unfiltered and (content.get("main_content") and not main
+                                                            or exclude.get("repetitive_content") and repetitive
+                                                            or exclude.get("boilerplate_content") and boilerplate):
+                    continue
+                name = source_path(meta)
+                sizes[unit] += size
+                counts[unit] += 1
+                kinds[unit][file_kind(name)] += size
+                if size > 100_000:
+                    large[unit] += size
+                biggest[unit].append((size, source, name))
+    filtered = "before" if args.unfiltered else "after"
+    say(f"{plan.get('name', args.plan)}: {len(shards)} cached shards, {filtered} the {stage['name']} stage's content filters")
+    for unit in sorted(sizes, key=lambda unit: list(units.values()).index(unit) if units else 0):
+        say(f"== {unit}: {sizes[unit] / 1e6:.0f} MB in {counts[unit]} files; files over 100 KB hold {large[unit] / sizes[unit]:.0%}")
+        say(f"   by file type: {shares(kinds[unit], sizes[unit], 10)}")
+        for size, source, name in sorted(biggest[unit], reverse=True)[:args.top]:
+            say(f"   {size / sizes[unit]:4.1%} {size / 1000:7.0f} KB  {source}  {name}")
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="waldito", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1220,6 +1334,18 @@ def build_parser():
     join.add_argument("--once", action="store_true", help="do one unit and exit")
     join.add_argument("--wait", type=int, default=60, help="seconds between checks while waiting on others")
     join.set_defaults(func=cmd_join)
+
+    data = sub.add_parser("data", help="look inside training data in the lookaside cache").add_subparsers(dest="data", required=True)
+    heldout = data.add_parser("heldout", help="the held-out records a run scored, by file type and source, largest first")
+    heldout.add_argument("run", help="a run directory (holding PREFLIGHT.json), or a model directory for its latest run")
+    heldout.set_defaults(func=cmd_data_heldout)
+    mix = data.add_parser("mix", help="what a plan trains on: each unit's bytes by file type, largest files first")
+    mix.add_argument("plan", help="the plan's run.yaml")
+    mix.add_argument("--unfiltered", action="store_true", help="before the stage's main/repetitive/boilerplate content filters")
+    mix.set_defaults(func=cmd_data_mix)
+    for command in (heldout, mix):
+        command.add_argument("--top", type=int, default=5, help="how many of the largest files to list (default 5)")
+        command.add_argument("--cache", help="lookaside cache directory (default: waldo's)")
 
     return parser
 

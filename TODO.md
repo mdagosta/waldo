@@ -3,6 +3,26 @@
 Work found while running joins on one Mac, newest first. WALDITO.md is the network plan; this is
 the backlog. Each item says where it would land.
 
+## Look inside the training data (waldito first, then upstream)
+
+python-byte-v6 round 1, 2026-11-06: py-a's held-out loss didn't move (3.408 to 3.410) while its
+training loss fell. Two throwaway Go programs built against `internal/shard` found why:
+
+- Held-out records: a run's `PREFLIGHT.json` lists them as `<shard sha256>:<row>`; the shards sit
+  in the lookaside cache (`waldo lookaside status`), and `shard.ReadRecordsAt` reads those rows.
+  One file, ray's `map-of-ray.svg` (785K characters), was 57% of py-a's held-out bytes. Each round
+  and unit draws a new sample (`pieceSeed`), so one huge record can swing a round's probe.
+- Training mix: `shard.WalkRecords` over the six shards, by unit and file extension. Only ~41% of
+  the bytes are `.py`; py-a is 29% `.svg`, 11% `.lock`, 10% `.json`; py-b 12% `.geojson`; records
+  over 100 KB hold 27-61% of each unit's bytes. (Before the plan's content filters.)
+
+Now `waldito data heldout <model or run>` and `waldito data mix <run.yaml>` (pyarrow over the cached
+shards; mix applies the stage's content filters and matches waldo's included-record counts). After
+those filters v6 is ~44% `.py`: py-a 34% (`.svg` 20%), py-b 29% (`.geojson` 28%, one 11.6 MB file
+9%), py-c 64%. Upstream what proves useful. A plan can't filter by path or size today: record filters
+cover licenses, languages, sources, exact metadata values, dates, and slices. A `source_path`
+glob filter, or a record-size cap, would let a plan train on code; decide before restarting v6.
+
 ## Survive a network blip while closing (join-local)
 
 python-byte-v5 round 4, 2026-11-06 02:42: Wi-Fi dropped while v5-2 and v5-3 were closing. Each
