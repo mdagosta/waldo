@@ -48,6 +48,10 @@ if [ -z "$names" ]; then
   names=$(seq 1 "${IDENTITIES:-5}" | sed "s/^/$prefix/")
 fi
 identities=$(echo "$names" | wc -l | tr -d ' ')
+# The plan's rounds after the bootstrap, so progress reads r2/12.
+total=$(git --git-dir="$repo" show "HEAD:$run_dir/run.yaml" 2>/dev/null | awk '/^  rounds:/ {
+  for (i = 1; i <= NF; i++) if ($i ~ /^(pretrain|posttrain):$/) { value = $(i + 1); gsub(/[^0-9]/, "", value); sum += value } }
+  END { if (sum) print sum }')
 throttle=$(awk -v budget="${WALDO_GPU_THROTTLE:-1}" -v n="$identities" 'BEGIN { t = budget / n; printf "%.4f", (t < 0.01 ? 0.01 : t) }')
 rounds=${ROUNDS:-0}
 cooldown=${COOLDOWN:-20}
@@ -73,10 +77,12 @@ else
   echo "macmon isn't installed, so heat isn't logged"
 fi
 
-# phase <log>: an identity's current phase from the end of its log, training in 10% steps.
+# phase <log>: an identity's current phase from the end of its log, training in 10% steps, led by the
+# join round it belongs to (r2), not the launcher's own count of rounds.
 phase() {
 unit=$(grep '^== Round .*, unit ' "$1" 2>/dev/null | tail -1 | sed 's/.*, unit \([^:]*\):.*/\1/')
-tail -c 4000 "$1" 2>/dev/null | tr '\r' '\n' | awk -v unit="$unit" '
+round=$(grep '^== Round ' "$1" 2>/dev/null | tail -1 | sed 's/^== Round \([0-9]*\).*/\1/')
+tail -c 4000 "$1" 2>/dev/null | tr '\r' '\n' | awk -v unit="$unit" -v round="$round" -v total="$total" '
   match($0, /step [0-9]+\/[0-9]+,/) {
     split(substr($0, RSTART + 5, RLENGTH - 6), s, "/")
     stage = $1; sub(/.*\//, "", stage)
@@ -89,7 +95,7 @@ tail -c 4000 "$1" 2>/dev/null | tr '\r' '\n' | awk -v unit="$unit" '
   /^-- Merge round/ { line = "merged, publishing"; next }
   /until others finish/ { line = "waiting for others"; next }
   /is merged; .* stops/ { line = "round done"; next }
-  END { print line }'
+  END { if (line != "") print (round != "" ? "r" round (total != "" ? "/" total : "") " " : "") line }'
 }
 
 # report: every REPORT minutes (default 5), prints each identity's phase when it changes.
@@ -106,10 +112,11 @@ for identity in $names; do
   eval "phase_$n=\$now saves_$n=$(saves "$logs/$identity.log")"
 done
 while sleep $((${REPORT:-5} * 60)); do
-  # thermal.log's minutes since the last report: mean GPU busy and chip watts, hottest GPU, fastest fan.
-  heat=$(tail -n "${REPORT:-5}" "$logs/thermal.log" 2>/dev/null | awk '$1 ~ /:/ {
-    gpu += $2; watts += $4; if ($6 > hot) hot = $6; if ($7 > fan) fan = $7; n++ }
-    END { if (n) printf "gpu %3.0f%% %4.1fW %3.0fC fan %d", gpu / n, watts / n, hot, fan }')
+  # thermal.log's minutes since the last report: mean GPU and CPU busy and chip watts, hottest GPU,
+  # fastest fan. The CPU is everything else on the machine too.
+  heat=$(tail -n "${REPORT:-5}" "$logs/thermal.log" 2>/dev/null | awk '$1 ~ /:/ && NF >= 8 {
+    gpu += $2; cpu += $3; watts += $5; if ($7 > hot) hot = $7; if ($8 > fan) fan = $8; n++ }
+    END { if (n) printf "gpu %3.0f%% cpu %3.0f%% %4.1fW %3.0fC fan %d", gpu / n, cpu / n, watts / n, hot, fan }')
   n=0
   printed=""
   for identity in $names; do
@@ -121,7 +128,7 @@ while sleep $((${REPORT:-5} * 60)); do
     mark=""
     [ "$count" -le "$saved" ] || mark=" SAVED"
     if [ -n "$now" ] && { [ "$now" != "$was" ] || [ -n "$mark" ]; }; then
-      printf '%s %s: %-30s %s%s\n' "$(date '+%a %H:%M')" "$identity" "$now" "$heat" "$mark"
+      printf '%s %s: %-34s %s%s\n' "$(date '+%a %H:%M')" "$identity" "$now" "$heat" "$mark"
       eval "phase_$n=\$now saves_$n=$count"
       printed=1
     fi
@@ -167,6 +174,54 @@ wait $pids || true
 kill "$reporter" 2>/dev/null || true
 }
 
+# finish: what the run reached, its latest merge saying hello, and the plan's own checks.
+finish() {
+name=$(basename "$run_dir")
+plan=$(git --git-dir="$repo" show "HEAD:$run_dir/run.yaml" 2>/dev/null)
+gate=$(echo "$plan" | sed -n 's/.*heldout_loss_at_most: *\([0-9.]*\).*/\1/p' | head -1)
+echo
+echo "== $name: held-out loss on each unit's data, at the round's start -> after it"
+# Closers record each unit as they accept it; every closer repeats the same numbers.
+results=$(for identity in $names; do
+  cat "$logs/$identity.log" 2>/dev/null | tr '\r' '\n' | awk '
+    /^== Round / { round = $3 }
+    /round start probe loss/ { start = $5 }
+    /replicas 1 vs 2: probe loss/ { end = $7 }
+    /unit [^ ]+: accepted/ { unit = $2; sub(/:$/, "", unit); print round, unit, start, end }'
+done | sort -u -k1,1n -k2,2)
+echo "$results" | awk 'NF == 4 { printf "   r%s %-5s %s -> %s\n", $1, $2, $3, $4 }'
+last=$(echo "$results" | awk 'NF == 4 { round = $1 } END { print round }')
+echo "$results" | awk -v round="$last" -v gate="$gate" 'NF == 4 && $1 == round { sum += $4; n++ }
+  END { if (n) printf "   r%s average %.3f%s\n", round, sum / n, (gate != "" ? ", gate at most " gate : "") }'
+cat "$logs"/*.log 2>/dev/null | tr '\r' '\n' | grep 'gate after' | sort -u | sed 's/^ */   /'
+# The latest merge, from whichever identity holds it under its plain name, at temperature 0.
+pick=$(for identity in $names; do
+  for dir in "$HOME/.waldo/join/$identity/models/waldo-$name-r"*-merge-*; do
+    [ -d "$dir" ] && echo "$(basename "$dir" | sed 's/.*-r\([0-9]*\)-merge-.*/\1/') ${#dir} $identity $(basename "$dir")"
+  done
+done | sort -k1,1r -k2,2n | head -1)
+[ -n "$pick" ] || { echo "no merge yet to chat with"; return 0; }
+set -- $pick
+if echo "$plan" | grep -q 'type: fine-tuning'; then
+  prompt="Write a Python program that prints Hello Waldo." raw=""
+else
+  # A pretrained base continues text, so it gets a comment to finish as code.
+  prompt='# Print "Hello Waldo" in Python
+' raw="--raw"
+fi
+echo
+echo "== $4 (held by $3) says:"
+echo "\$ waldo model chat $4 ${raw:+$raw }--temperature 0 --max-tokens 120 '$(echo "$prompt" | head -1)'"
+WALDO_CONFIG="$HOME/.waldo/join/$3/waldo-config.json" uv run -q --with mlx --with huggingface_hub \
+  "$waldo" model chat "$4" $raw --temperature 0 --max-tokens 120 "$prompt" 2>&1 || echo "(chat failed)"
+measure="$(dirname "$waldo")/testing/join/$name/measure.sh"
+if [ -x "$measure" ]; then
+  echo
+  echo "== $name/measure.sh"
+  "$measure" || echo "(measure.sh failed)"
+fi
+}
+
 if [ "$rounds" -eq 0 ]; then
   launch 0
 else
@@ -182,5 +237,6 @@ else
     fi
   done
 fi
+finish
 [ -z "$thermal" ] || { pkill -P "$thermal"; kill "$thermal"; } 2>/dev/null || true
 echo "all identities finished; logs in $logs"
