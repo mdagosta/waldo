@@ -28,6 +28,14 @@ type Config struct {
 	AI         AI         `json:"ai,omitempty"`
 	Disclosure Disclosure `json:"disclosure,omitempty"`
 	Signing    Signing    `json:"signing,omitempty"`
+	GPU        GPU        `json:"gpu,omitempty"`
+}
+
+// GPU is a live GPU budget the MLX workers re-read while they run, held under the
+// WALDO_GPU_THROTTLE they started with; 0 pauses them.
+// XXX NOTE: upstreamable on its own, apart from join.
+type GPU struct {
+	Throttle *float64 `json:"throttle,omitempty"`
 }
 
 type Disclosure struct {

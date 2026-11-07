@@ -38,6 +38,7 @@ var configKeys = []string{
 	"ai.api-key",
 	"disclosure.provider",
 	"signing.method",
+	"gpu.throttle",
 	"signing.key",
 }
 
@@ -232,6 +233,12 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("lookaside.cache.max-size must be a positive byte size such as 20GiB or 500MiB")
 		}
+	case "gpu.throttle":
+		value, parseErr := strconv.ParseFloat(strings.TrimSpace(strings.Join(values, "")), 64)
+		if len(values) != 1 || parseErr != nil || value < 0 || value > 1 {
+			return fmt.Errorf("gpu.throttle must be a decimal from 0, which pauses training, to 1")
+		}
+		configuration.GPU.Throttle = &value
 	case "lookaside.cache.retain-completed":
 		if len(values) != 1 || (values[0] != "true" && values[0] != "false") {
 			return fmt.Errorf("lookaside.cache.retain-completed must be true or false")
@@ -369,6 +376,8 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.Lookaside.Cache = ""
 	case "lookaside.cache.max-size":
 		configuration.Lookaside.CacheMaxBytes = 0
+	case "gpu.throttle":
+		configuration.GPU.Throttle = nil
 	case "lookaside.cache.retain-completed":
 		configuration.Lookaside.RetainCompleted = false
 	case "lookaside.scratch":
@@ -462,6 +471,11 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 		return value, err == nil, err
 	case "lookaside.cache.max-size":
 		return config.EffectiveCacheMaxBytes(configuration), true, nil
+	case "gpu.throttle":
+		if configuration.GPU.Throttle == nil {
+			return nil, false, nil
+		}
+		return *configuration.GPU.Throttle, true, nil
 	case "lookaside.cache.retain-completed":
 		return configuration.Lookaside.RetainCompleted, true, nil
 	case "lookaside.scratch":

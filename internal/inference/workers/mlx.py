@@ -37,12 +37,45 @@ GPU_THROTTLE = read_gpu_throttle()
 owed_idle = 0.0
 
 
+# XXX NOTE: upstreamable on its own, apart from join. As in training, `waldo config set
+# gpu.throttle` moves the live budget under WALDO_GPU_THROTTLE, and 0 pauses.
+def config_path():
+    if os.environ.get("WALDO_CONFIG"):
+        return os.environ["WALDO_CONFIG"]
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/waldo/config.json")
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "waldo", "config.json")
+
+
+live_throttle = {"read": -math.inf, "value": GPU_THROTTLE}
+
+
+def live_gpu_throttle():
+    now = time.monotonic()
+    if now - live_throttle["read"] >= 30:
+        live_throttle["read"], value = now, GPU_THROTTLE
+        try:
+            with open(config_path(), encoding="utf-8") as file:
+                configured = (json.load(file).get("gpu") or {}).get("throttle")
+            if isinstance(configured, (int, float)) and 0 <= configured <= 1:
+                value = min(configured, GPU_THROTTLE)
+        except (OSError, ValueError, AttributeError):
+            pass
+        live_throttle["value"] = value
+    return live_throttle["value"]
+
+
 # throttle idles the GPU in proportion to work that began at started. A token takes about a
 # millisecond, which macOS oversleeps, so idle time builds up and is slept in 50ms pieces.
 def throttle(started):
     global owed_idle
-    if GPU_THROTTLE < 1:
-        owed_idle += (time.perf_counter() - started) * (1 / GPU_THROTTLE - 1)
+    elapsed = time.perf_counter() - started
+    budget = live_gpu_throttle()
+    while budget == 0:
+        time.sleep(30)
+        budget = live_gpu_throttle()
+    if budget < 1:
+        owed_idle += elapsed * (1 / budget - 1)
         if owed_idle >= 0.05:
             slept = time.perf_counter()
             time.sleep(owed_idle)

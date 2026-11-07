@@ -81,6 +81,46 @@ def read_gpu_throttle():
 GPU_THROTTLE = read_gpu_throttle()
 
 
+# XXX NOTE: upstreamable on its own, apart from join. WALDO_GPU_THROTTLE is the ceiling; `waldo
+# config set gpu.throttle` moves the live budget under it while training runs, and 0 pauses.
+def config_path():
+    if os.environ.get("WALDO_CONFIG"):
+        return os.environ["WALDO_CONFIG"]
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/waldo/config.json")
+    return os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "waldo", "config.json")
+
+
+live_throttle = {"read": -math.inf, "value": GPU_THROTTLE}
+
+
+def live_gpu_throttle():
+    now = time.monotonic()
+    if now - live_throttle["read"] >= 30:
+        live_throttle["read"], value = now, GPU_THROTTLE
+        try:
+            with open(config_path(), encoding="utf-8") as file:
+                configured = (json.load(file).get("gpu") or {}).get("throttle")
+            if isinstance(configured, (int, float)) and 0 <= configured <= 1:
+                value = min(configured, GPU_THROTTLE)
+        except (OSError, ValueError, AttributeError):
+            pass
+        live_throttle["value"] = value
+    return live_throttle["value"]
+
+
+# idle_after sleeps so the GPU work since started is the live budget's share of wall-clock time,
+# measured before any pause so a long pause isn't multiplied into the sleep after it.
+def idle_after(started):
+    elapsed = time.perf_counter() - started
+    throttle = live_gpu_throttle()
+    while throttle == 0:
+        time.sleep(30)
+        throttle = live_gpu_throttle()
+    if throttle < 1:
+        time.sleep(elapsed * (1 / throttle - 1))
+
+
 # WALDO_PROGRESS_HEARTBEAT_SECONDS is how long a run may go without a progress line before the
 # worker prints one anyway, so a long 1% interval does not look like a hang. Default 300; 0 turns
 # the heartbeat off.
@@ -471,8 +511,7 @@ class Trainer:
         mx.random.seed(self.parameters["seed"] ^ micro_seed)
         loss, gradients = self.loss_and_grad(self.model, inputs, targets, mask)
         mx.eval(loss, gradients)
-        if GPU_THROTTLE < 1:
-            time.sleep((time.perf_counter() - step_started) * (1 / GPU_THROTTLE - 1))
+        idle_after(step_started)
         valid_tokens = int(mask.sum().item())
         if not math.isfinite(float(loss.item())):
             raise NumericalIntegrityError(f"non-finite training loss at optimizer step {next_step}; no optimizer update was applied")
@@ -509,8 +548,7 @@ class Trainer:
         update_started = time.perf_counter()
         self.optimizer.update(self.model, averaged_gradients)
         mx.eval(self.model.parameters(), self.optimizer.state)
-        if GPU_THROTTLE < 1:
-            time.sleep((time.perf_counter() - checked_started) * (1 / GPU_THROTTLE - 1))
+        idle_after(checked_started)
         self.accumulated_compute_seconds += max(time.perf_counter() - update_started, 1e-9)
         loss_value = self.accumulated_loss_sum / self.accumulated_tokens
         valid_tokens = self.accumulated_tokens
@@ -686,8 +724,7 @@ class Trainer:
             loss_sum = (losses * mask).sum()
             token_count = mask.sum()
             mx.eval(loss_sum, token_count)
-            if GPU_THROTTLE < 1:
-                time.sleep((time.perf_counter() - batch_started) * (1 / GPU_THROTTLE - 1))
+            idle_after(batch_started)
             total_loss += float(loss_sum.item())
             total_tokens += float(token_count.item())
         self.model.train()

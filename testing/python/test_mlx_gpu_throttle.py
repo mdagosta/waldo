@@ -157,3 +157,65 @@ class ReadGPUThrottleTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LiveGPUThrottleTest(unittest.TestCase):
+    """`waldo config set gpu.throttle` moves the budget under WALDO_GPU_THROTTLE while a worker runs."""
+
+    def load(self, ceiling, configured):
+        with open(MLX_WORKER_PATH, encoding="utf-8") as source_file:
+            tree = ast.parse(source_file.read(), filename=MLX_WORKER_PATH)
+        wanted = {"config_path", "live_throttle", "live_gpu_throttle", "idle_after"}
+        body = [node for node in tree.body
+                if (isinstance(node, ast.FunctionDef) and node.name in wanted)
+                or (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in wanted)]
+        module_ast = ast.Module(body=body, type_ignores=[])
+        ast.fix_missing_locations(module_ast)
+        directory = __import__("tempfile").mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, directory)
+        path = os.path.join(directory, "config.json")
+        self.addCleanup(os.environ.pop, "WALDO_CONFIG", None)
+        os.environ["WALDO_CONFIG"] = path
+        clock = {"now": 1000.0, "slept": []}
+
+        class Clock:
+            @staticmethod
+            def monotonic():
+                return clock["now"]
+
+            @staticmethod
+            def perf_counter():
+                return clock["now"]
+
+            @staticmethod
+            def sleep(seconds):
+                clock["slept"].append(seconds)
+                clock["now"] += seconds
+                if clock.get("resume") and len(clock["slept"]) == clock["resume"][0]:
+                    self.write(path, clock["resume"][1])
+
+        namespace = {"math": math, "os": os, "json": json, "sys": __import__("sys"), "time": Clock, "GPU_THROTTLE": ceiling}
+        exec(compile(module_ast, MLX_WORKER_PATH, "exec"), namespace)
+        if configured is not None:
+            self.write(path, configured)
+        return namespace, clock, path
+
+    @staticmethod
+    def write(path, throttle):
+        with open(path, "w", encoding="utf-8") as file:
+            json.dump({"schema": 1, "gpu": {"throttle": throttle}}, file)
+
+    def test_config_moves_the_budget_under_the_ceiling(self):
+        for ceiling, configured, want in ((0.25, 0.1, 0.1), (0.25, 0.5, 0.25), (0.25, None, 0.25), (1, 0.2, 0.2)):
+            namespace, _, _ = self.load(ceiling, configured)
+            self.assertEqual(namespace["live_gpu_throttle"](), want, (ceiling, configured))
+
+    def test_zero_pauses_until_the_budget_comes_back(self):
+        namespace, clock, path = self.load(0.5, 0)
+        clock["resume"] = (2, 0.25)  # the second 30s nap finds the budget raised again
+        started = clock["now"] - 1.0  # one second of GPU work
+        namespace["idle_after"](started)
+        naps, idle = clock["slept"][:-1], clock["slept"][-1]
+        self.assertEqual(naps, [30, 30])
+        # The work's second is idled at the new budget; the minute paused isn't multiplied.
+        self.assertAlmostEqual(idle, 1.0 * (1 / 0.25 - 1))
