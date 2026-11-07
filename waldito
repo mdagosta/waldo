@@ -1405,9 +1405,10 @@ def cmd_check_plan(args):
         check("binary", "✓" if fresh else "✗", f"{waldo} is {'newer than' if fresh else 'OLDER than'} its last Go commit {built[1] if built else '?'}")
     else:
         check("binary", "✗", f"no waldo binary at {waldo}; set WALDO in launch.env")
-    running = quiet("pgrep", "-f", "launcher.sh|waldo model join").stdout.split()
+    # Anything training competes for the GPU, and a throttled run sleeps longer for every slow step.
+    running = quiet("pgrep", "-f", "launcher.sh|waldo model (join|train|continue)|testing/e2e/").stdout.split()
     free = shutil.disk_usage(pathlib.Path.home()).free / 1e12
-    check("machine", "!" if running else "✓", ("a join is running; another would share the GPU" if running else "nothing training")
+    check("machine", "!" if running else "✓", ("something is training; a launch now would share the GPU" if running else "nothing training")
           + f"; {free:.1f} TB free" + ("" if shutil.which("macmon") else "; macmon missing, so no heat log"))
     seed = pathlib.Path(settings.get("SEED", ""))
     if (seed / ".git").exists():
