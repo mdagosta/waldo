@@ -4,23 +4,26 @@
 # Copyright (c) 2026 Gregory M. Kurtzer
 # SPDX-License-Identifier: Apache-2.0
 
-# Burn-in launcher for `waldo model join`: runs identities <prefix>1..N on one run at the
-# same time, each throttled, each logging to ~/.waldo/join/logs/<run>/<identity>.log.
+# Burn-in launcher for `waldo model join`: runs a plan's identities on one run at the same time,
+# each throttled, each logging to ~/.waldo/join/logs/<run>/<identity>.log, with the Mac kept awake
+# and its heat logged beside them to thermal.log (thermal-log.sh, when macmon is installed).
 #
-#   RUNS_REPO=https://github.com/<owner>/<runs> JOIN_IDENTITY_PREFIX=<account>-bot- \
-#     run-identities.sh runs/<run>
+#   WALDO_GPU_THROTTLE=0.36 ROUNDS=4 run-identities.sh <run>
 #
-# IDENTITIES (default 5) sizes the run, and WALDO_GPU_THROTTLE (default 1) is the whole machine's
-# GPU budget, split evenly: each identity gets WALDO_GPU_THROTTLE / IDENTITIES, at least 0.01.
-# JOIN_EMAIL is the record commits' author.
+# ~/.waldo/join/launch.env holds this machine's settings as `: "${RUNS_REPO:=...}"` lines, so the
+# command line still overrides them: RUNS_REPO, the runs repository; WALDO; JOIN_EMAIL, the record
+# commits' author; COOLDOWN. The identities are the ones the plan lists; for a plan that lists none,
+# JOIN_IDENTITY_PREFIX1..IDENTITIES (default 5).
+# WALDO_GPU_THROTTLE (default 1) is the whole machine's GPU budget, split evenly: each identity gets
+# WALDO_GPU_THROTTLE / identities, at least 0.01.
 # ROUNDS=<n> runs the next n rounds one at a time, cooling down COOLDOWN minutes (default 20)
 # between them so the machine isn't hot all night:
-#   ROUNDS=1 run-identities.sh runs/<run>                  # run the next round, then stop
-#   ROUNDS=3 COOLDOWN=30 run-identities.sh runs/<run>      # three rounds, 30 minutes apart
+#   ROUNDS=1 run-identities.sh <run>                       # run the next round, then stop
+#   ROUNDS=3 COOLDOWN=30 run-identities.sh <run>           # three rounds, 30 minutes apart
 # Keep a laptop's lid open while it trains: closed, it runs hotter.
-# REPORT=<minutes> sets how often the launcher prints progress (default 5).
+# REPORT=<minutes> sets how often the launcher prints progress and whether a fan is on (default 5).
 # FAULTS runs identities through burnin.py, which injects protocol faults as they join:
-#   FAULTS=random run-identities.sh runs/<run>             # every identity, random faults
+#   FAULTS=random run-identities.sh <run>                  # every identity, random faults
 #   FAULTS="<identity>=close <identity>=lazy" ...           # these identities, these faults
 # FAULT_RATE (default 0.15) tunes random faults; burnin.py report runs/<run> checks the outcome.
 #
@@ -29,10 +32,20 @@
 
 set -eu
 
-run_dir=${1:?usage: run-identities.sh runs/<run>}
+[ ! -f "$HOME/.waldo/join/launch.env" ] || . "$HOME/.waldo/join/launch.env"
+run_dir=${1:?usage: run-identities.sh <run>}
+case $run_dir in runs/*) ;; *) run_dir=runs/$run_dir ;; esac
 repo=${RUNS_REPO:?set RUNS_REPO to the runs repository}
-prefix=${JOIN_IDENTITY_PREFIX:?set JOIN_IDENTITY_PREFIX, as in <account>-bot-}
-identities=${IDENTITIES:-5}
+# The plan's identities, when the runs repository is one on this disk.
+names=$(git --git-dir="$repo" show "HEAD:$run_dir/run.yaml" 2>/dev/null | awk '
+  /^  identities:/ { listed = 1; next }
+  listed && /^    [^ #]/ { sub(/^ +/, ""); sub(/:.*/, ""); print; next }
+  listed && /^  [^ ]/ { listed = 0 }')
+if [ -z "$names" ]; then
+  prefix=${JOIN_IDENTITY_PREFIX:?the plan lists no identities; set JOIN_IDENTITY_PREFIX, as in <account>-bot-}
+  names=$(seq 1 "${IDENTITIES:-5}" | sed "s/^/$prefix/")
+fi
+identities=$(echo "$names" | wc -l | tr -d ' ')
 throttle=$(awk -v budget="${WALDO_GPU_THROTTLE:-1}" -v n="$identities" 'BEGIN { t = budget / n; printf "%.4f", (t < 0.01 ? 0.01 : t) }')
 rounds=${ROUNDS:-0}
 cooldown=${COOLDOWN:-20}
@@ -44,6 +57,14 @@ logs=$HOME/.waldo/join/logs/$(basename "$run_dir")
 mkdir -p "$logs"
 trap 'kill 0' INT TERM
 echo "keep the lid open while training"
+caffeinate -s -w $$ &
+thermal=""
+if command -v macmon >/dev/null; then
+  "$script_dir/thermal-log.sh" "$logs/thermal.log" > /dev/null &
+  thermal=$!
+else
+  echo "macmon isn't installed, so heat isn't logged"
+fi
 
 # phase <log>: an identity's current phase from the end of its log, training in 10% steps.
 phase() {
@@ -66,27 +87,32 @@ tail -c 4000 "$1" 2>/dev/null | tr '\r' '\n' | awk -v unit="$unit" '
 
 # report: every REPORT minutes (default 5), prints each identity's phase when it changes.
 report() {
-for n in $(seq 1 "$identities"); do
-  now=$(phase "$logs/$prefix$n.log")
+n=0
+for identity in $names; do
+  n=$((n + 1))
+  now=$(phase "$logs/$identity.log")
   eval "phase_$n=\$now"
 done
 while sleep $((${REPORT:-5} * 60)); do
-  for n in $(seq 1 "$identities"); do
-    now=$(phase "$logs/$prefix$n.log")
+  n=0
+  for identity in $names; do
+    n=$((n + 1))
+    now=$(phase "$logs/$identity.log")
     eval "was=\${phase_$n:-}"
     if [ -n "$now" ] && [ "$now" != "$was" ]; then
-      echo "$(date '+%a %H:%M') $prefix$n: $now"
+      echo "$(date '+%a %H:%M') $identity: $now"
       eval "phase_$n=\$now"
     fi
   done
+  heat=$(tail -1 "$logs/thermal.log" 2>/dev/null | awk '$NF + 0 > 0')
+  [ -z "$heat" ] || echo "fan on: $heat"
 done
 }
 
 # launch <rounds>: starts every identity for that many rounds (0: until the run ends) and waits.
 launch() {
 pids=""
-for n in $(seq 1 "$identities"); do
-  identity=$prefix$n
+for identity in $names; do
   email=${JOIN_EMAIL:-$identity@waldo.invalid}
   echo "starting $identity (throttle $throttle) -> $logs/$identity.log"
   mode=""
@@ -134,4 +160,5 @@ else
     fi
   done
 fi
+[ -z "$thermal" ] || { pkill -P "$thermal"; kill "$thermal"; } 2>/dev/null || true
 echo "all identities finished; logs in $logs"
