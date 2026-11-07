@@ -23,7 +23,7 @@ lid open while it trains.
       JOIN_IDENTITY_PREFIX=mdagosta-v6- IDENTITIES=3 \
       WALDO=$HOME/src/openwaldo/waldo-join-b/waldo \
       JOIN_EMAIL=346140425+mdagosta-bot@users.noreply.github.com \
-      ~/src/openwaldo/waldo-waldito/testing/join/run-identities.sh runs/python-byte-v6
+      ~/src/openwaldo/waldo-waldito/testing/join/launcher.sh runs/python-byte-v6
 
 When the run completes, its last merge is the save point:
 

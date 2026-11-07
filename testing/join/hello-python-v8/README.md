@@ -27,7 +27,7 @@ Commit `run.yaml` to the local runs repository as `runs/hello-python-v8/`, then 
 
     git add runs/hello-python-v8 && git commit -m "runs/hello-python-v8: pretrain on Python to a save point" && git push
 
-    WALDO_GPU_THROTTLE=0.30 ROUNDS=4 ~/src/openwaldo/waldo-waldito/testing/join/run-identities.sh hello-python-v8
+    WALDO_GPU_THROTTLE=0.30 ROUNDS=4 ~/src/openwaldo/waldo-waldito/testing/join/launcher.sh hello-python-v8
 
 When the run completes, its last merge is the save point:
 

@@ -35,7 +35,7 @@ share one M2 Max, each throttled to 0.10, with a 20-minute cooldown between roun
     caffeinate -s env ROUNDS=21 RUNS_REPO=$HOME/.waldo/join/local/runs.git \
       JOIN_IDENTITY_PREFIX=mdagosta-bot- IDENTITIES=3 JOIN_THROTTLE=0.10 \
       JOIN_EMAIL=346140425+mdagosta-bot@users.noreply.github.com \
-      ~/src/openwaldo/waldo-waldito/testing/join/run-identities.sh runs/python-byte-v1
+      ~/src/openwaldo/waldo-waldito/testing/join/launcher.sh runs/python-byte-v1
 
 21 rounds is the most the plan can take: the bootstrap, 12 pretraining rounds, 4 post-training rounds
 and the gate's 4 extra rounds; the run stops early when the gate passes. `measure.sh` then scores the

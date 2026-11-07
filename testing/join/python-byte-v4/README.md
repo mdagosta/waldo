@@ -17,7 +17,7 @@ resumes at the next round (stop during a cooldown). Keep the lid open while it t
       JOIN_IDENTITY_PREFIX=mdagosta-v4- IDENTITIES=3 JOIN_THROTTLE=0.08 \
       WALDO=$HOME/src/openwaldo/waldo-join-b/waldo \
       JOIN_EMAIL=346140425+mdagosta-bot@users.noreply.github.com \
-      ~/src/openwaldo/waldo-waldito/testing/join/run-identities.sh runs/python-byte-v4
+      ~/src/openwaldo/waldo-waldito/testing/join/launcher.sh runs/python-byte-v4
 
 If round 1 runs well past 20 minutes, lower `tokens_per_round`; post-training round time is not yet
 measured (`epochs_per_round: 1`).

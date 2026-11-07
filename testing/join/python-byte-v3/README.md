@@ -16,6 +16,6 @@ resumes at the next round (stop during a cooldown). Keep the lid open while it t
     caffeinate -s env ROUNDS=4 RUNS_REPO=$HOME/.waldo/join/local/runs.git \
       JOIN_IDENTITY_PREFIX=mdagosta-v3- IDENTITIES=3 JOIN_THROTTLE=0.08 \
       JOIN_EMAIL=346140425+mdagosta-bot@users.noreply.github.com \
-      ~/src/openwaldo/waldo-waldito/testing/join/run-identities.sh runs/python-byte-v3
+      ~/src/openwaldo/waldo-waldito/testing/join/launcher.sh runs/python-byte-v3
 
 Results: TBD.

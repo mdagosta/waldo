@@ -6,7 +6,7 @@ here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 bot=$HOME/.waldo/join/mdagosta-bot-2
 waldo=$here/../../../waldo
 mkdir -p "$here/results"
-while pgrep -f "run-identities.sh|waldo model join" >/dev/null; do sleep 300; done
+while pgrep -f "launcher.sh|waldo model join" >/dev/null; do sleep 300; done
 model=$(ls "$bot/models" | grep -E '^waldo-python-bpe-v1-r[0-9]{4}-merge-[0-9a-f]{12}/?$' | tr -d / | sort | tail -1)
 echo "$model" > "$here/results/model.txt"
 score() {
