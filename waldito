@@ -1440,8 +1440,9 @@ class Launch:
 
     Settings come from ~/.waldo/join/launch.env under the environment: RUNS_REPO, WALDO, JOIN_EMAIL;
     WALDO_GPU_THROTTLE, the machine's GPU budget, split evenly and never exceeded; ROUNDS (default:
-    until the run ends); COOLDOWN minutes between rounds (20); HOT_C (42) and COOL_C (35), the
-    thermostat's limits; REPORT minutes between progress lines (5); FAULTS for burnin.py.
+    until the run ends); COOLDOWN minutes between rounds (20); the thermostat's HOT_C (42), where it
+    pauses, COOL_C (35), below which it steps back up, and WARM_C (halfway between), above which it
+    eases off; REPORT minutes between progress lines (5); FAULTS for burnin.py.
     """
 
     def __init__(self, name):
@@ -1472,6 +1473,7 @@ class Launch:
         self.rounds = int(self.setting("ROUNDS", "0"))
         self.cooldown, self.report_every = int(self.setting("COOLDOWN", "20")), int(self.setting("REPORT", "5"))
         self.hot, self.cool = float(self.setting("HOT_C", "42")), float(self.setting("COOL_C", "35"))
+        self.warm = float(self.setting("WARM_C", str((self.hot + self.cool) / 2)))
         self.logs = pathlib.Path.home() / ".waldo" / "join" / "logs" / name
         self.logs.mkdir(parents=True, exist_ok=True)
         self.heat = self.logs / "thermal.log"
@@ -1567,16 +1569,30 @@ class Launch:
             if result.returncode:
                 say(f"can't set {identity}'s gpu.throttle; does {self.waldo} know it?")
 
+    def machine_heat(self):
+        """(GPU temperature, fan RPM) to act on: the hottest of the last three minutes, since the
+        sensor reads impossible lows (under 20C) while the GPU idles, and the last minute's fan."""
+        rows = self.last_minutes(3)
+        temperatures = [row[3] for row in rows if row[3] >= 20]
+        if not rows or not temperatures:
+            return None
+        return max(temperatures), rows[-1][4]
+
     def thermostat(self, stop):
-        """Each minute: above HOT_C or with a fan running, pause; below COOL_C, step up 5% of the budget."""
+        """Each minute: above HOT_C, pause; with a fan running, halve, down to a pause; above WARM_C,
+        step down 5% of the budget; below COOL_C, step up 5%; in between, hold."""
         while not stop.wait(60):
-            rows = self.last_minutes(1)
-            if not rows:
+            heat = self.machine_heat()
+            if heat is None:
                 continue
-            temperature, fan = rows[-1][3], rows[-1][4]
+            temperature, fan = heat
             level = self.level
-            if fan > 0 or temperature > self.hot:
+            if temperature > self.hot:
                 level = 0.0
+            elif fan > 0:
+                level = level / 2 if level / 2 >= self.budget / 20 else 0.0
+            elif temperature > self.warm:
+                level = max(0.0, level - self.budget / 20)
             elif temperature < self.cool:
                 level = min(self.budget, level + self.budget / 20)
             if abs(level - self.level) > 1e-9:
@@ -1589,9 +1605,9 @@ class Launch:
         say(f"cooling down: at least {self.cooldown} minutes, then until the fans stop and the GPU is at {self.hot:.0f}C")
         time.sleep(self.cooldown * 60)
         waited = 0
-        while (rows := self.last_minutes(1)) and (rows[-1][4] > 0 or rows[-1][3] > self.hot):
+        while (heat := self.machine_heat()) and (heat[1] > 0 or heat[0] > self.hot):
             if waited % 15 == 0:
-                self.stamp(f"waiting for the machine to cool: fan {rows[-1][4]:.0f}, {rows[-1][3]:.0f}C")
+                self.stamp(f"waiting for the machine to cool: fan {heat[1]:.0f}, {heat[0]:.0f}C")
             time.sleep(60)
             waited += 1
 
