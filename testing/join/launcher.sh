@@ -17,10 +17,14 @@
 # JOIN_IDENTITY_PREFIX1..IDENTITIES (default 5).
 # WALDO_GPU_THROTTLE (default 1) is the whole machine's GPU budget, split evenly: each identity gets
 # WALDO_GPU_THROTTLE / identities, at least 0.01.
-# ROUNDS=<n> runs the next n rounds one at a time, cooling down COOLDOWN minutes (default 20)
-# between them so the machine isn't hot all night:
+# Rounds run one at a time until the run ends, or ROUNDS=<n> of them. A thermostat watches the
+# machine, whatever heats it, a video render included: each minute, above HOT_C degrees (default
+# 42) or with a fan running it pauses training, below COOL_C (default 35) it steps the budget back
+# up by 5%, never past WALDO_GPU_THROTTLE, and in between it holds. It sets each identity's
+# `waldo config set gpu.throttle`, which training re-reads. Between rounds the launcher waits at
+# least COOLDOWN minutes (default 20), then until the fans stop and the GPU is at HOT_C or below.
 #   ROUNDS=1 launcher.sh <run>                       # run the next round, then stop
-#   ROUNDS=3 COOLDOWN=30 launcher.sh <run>           # three rounds, 30 minutes apart
+#   ROUNDS=3 COOLDOWN=30 HOT_C=45 launcher.sh <run>  # three rounds, cooling at least 30 minutes
 # Keep a laptop's lid open while it trains: closed, it runs hotter.
 # REPORT=<minutes> sets how often the launcher prints progress, with the GPU load and fan speed over
 # those minutes from thermal.log and SAVED when an identity wrote a checkpoint (default 5).
@@ -55,6 +59,9 @@ total=$(git --git-dir="$repo" show "HEAD:$run_dir/run.yaml" 2>/dev/null | awk '/
 throttle=$(awk -v budget="${WALDO_GPU_THROTTLE:-1}" -v n="$identities" 'BEGIN { t = budget / n; printf "%.4f", (t < 0.01 ? 0.01 : t) }')
 rounds=${ROUNDS:-0}
 cooldown=${COOLDOWN:-20}
+hot=${HOT_C:-42}
+cool=${COOL_C:-35}
+budget=${WALDO_GPU_THROTTLE:-1}
 script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 waldo=${WALDO:-$(CDPATH='' cd -- "$script_dir/../../.." && pwd)/waldo-join-local/waldo}
 [ -x "$waldo" ] || { echo "no waldo binary at $waldo; set WALDO" >&2; exit 1; }
@@ -70,6 +77,7 @@ trap 'kill 0' INT TERM
 echo "keep the lid open while training"
 caffeinate -s -w $$ &
 thermal=""
+thermostat_pid=""
 if command -v macmon >/dev/null; then
   "$script_dir/thermal-log.sh" "$logs/thermal.log" > /dev/null &
   thermal=$!
@@ -105,6 +113,8 @@ cat "$1" 2>/dev/null | tr '\r' '\n' | grep -c 'checkpoint step .* persisted' || 
 }
 
 report() {
+# Stopped between rounds, the reporter just exits; the launcher's kill-everything trap isn't its own.
+trap - INT TERM
 n=0
 for identity in $names; do
   n=$((n + 1))
@@ -222,21 +232,76 @@ if [ -x "$measure" ]; then
 fi
 }
 
-if [ "$rounds" -eq 0 ]; then
-  launch 0
-else
-  for round in $(seq 1 "$rounds"); do
-    echo "$(date '+%a %H:%M') round $round of $rounds starting"
-    started=$SECONDS
-    launch 1
-    elapsed=$((SECONDS - started))
-    echo "$(date '+%a %H:%M') round $round of $rounds done in $((elapsed / 3600))h$(printf %02d $((elapsed % 3600 / 60)))m"
-    if [ "$round" -lt "$rounds" ]; then
-      echo "cooling down $cooldown minutes"
-      sleep $((cooldown * 60))
-    fi
-  done
-fi
+# set_throttle <budget>: each identity's share of a machine budget, live in its own waldo config.
+set_throttle() {
+for identity in $names; do
+  share=$(awk -v budget="$1" -v n="$identities" 'BEGIN { t = budget / n; printf "%.4f", (budget > 0 && t < 0.01 ? 0.01 : t) }')
+  WALDO_CONFIG="$HOME/.waldo/join/$identity/waldo-config.json" "$waldo" config set gpu.throttle "$share" >/dev/null 2>&1 ||
+    echo "can't set $identity's gpu.throttle; does $waldo know it?"
+done
+}
+
+# thermostat: each minute, from thermal.log's last minute: above HOT_C or with a fan running,
+# pause; below COOL_C, step up 5% of the budget; in between, hold.
+thermostat() {
+trap - INT TERM
+level=$budget
+while sleep 60; do
+  next=$(tail -n 1 "$logs/thermal.log" 2>/dev/null | awk -v level="$level" -v budget="$budget" -v hot="$hot" -v cool="$cool" '
+    $1 ~ /:/ && NF >= 8 {
+      if ($8 > 0 || $7 > hot) level = 0
+      else if ($7 < cool) { level += budget / 20; if (level > budget) level = budget }
+      printf "%.4f %dC fan %d\n", level, $7, $8 }')
+  [ -n "$next" ] || continue
+  set -- $next
+  if [ "$1" != "$(printf '%.4f' "$level")" ]; then
+    echo "$(date '+%a %H:%M') thermostat: throttle $(printf '%.2f' "$level") -> $(printf '%.2f' "$1") at $2, $3 $4"
+    level=$1
+    set_throttle "$level"
+  fi
+done
+}
+
+# cool_down: at least COOLDOWN minutes, then until thermal.log's last minute shows the fans stopped
+# and the GPU at COOL_C or below. Without macmon there's no heat log, only the minutes.
+cool_down() {
+echo "cooling down: at least $cooldown minutes, then until the fans stop and the GPU is at ${hot}C"
+sleep $((cooldown * 60))
+[ -n "$thermal" ] || return 0
+waited=0
+while heat=$(tail -n 1 "$logs/thermal.log" 2>/dev/null | awk -v hot="$hot" '$1 ~ /:/ && NF >= 8 && ($8 > 0 || $7 > hot) { printf "fan %d, %dC", $8, $7 }') && [ -n "$heat" ]; do
+  [ $((waited % 15)) -ne 0 ] || echo "$(date '+%a %H:%M') waiting for the machine to cool: $heat"
+  sleep 60
+  waited=$((waited + 1))
+done
+}
+
+# done_run: the run is complete, or stopped at a gate, by any identity's log.
+done_run() {
+for identity in $names; do
+  grep -q "^run $(basename "$run_dir") \(is complete\|stopped\)" "$logs/$identity.log" 2>/dev/null && return 0
+done
+return 1
+}
+
+# Every launch starts at the full budget, so a pause left from the last one can't hold this one.
+set_throttle "$budget"
+[ -z "$thermal" ] || { thermostat & thermostat_pid=$!; }
+round=0
+while [ "$rounds" -eq 0 ] || [ "$round" -lt "$rounds" ]; do
+  round=$((round + 1))
+  if [ "$rounds" -eq 0 ]; then of="until the run ends"; else of="of $rounds"; fi
+  echo "$(date '+%a %H:%M') round $round $of starting"
+  started=$SECONDS
+  launch 1
+  elapsed=$((SECONDS - started))
+  echo "$(date '+%a %H:%M') round $round $of done in $((elapsed / 3600))h$(printf %02d $((elapsed % 3600 / 60)))m"
+  if done_run || { [ "$rounds" -ne 0 ] && [ "$round" -ge "$rounds" ]; }; then
+    break
+  fi
+  cool_down
+done
 finish
+[ -z "$thermostat_pid" ] || kill "$thermostat_pid" 2>/dev/null || true
 [ -z "$thermal" ] || { pkill -P "$thermal"; kill "$thermal"; } 2>/dev/null || true
 echo "all identities finished; logs in $logs"

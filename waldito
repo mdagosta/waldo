@@ -25,6 +25,7 @@ Usage:
     waldito data heldout <model or run directory>   # the held-out records a run scored, largest first
     waldito data mix run.yaml                   # what a plan trains on: each unit's bytes by file type
     waldito check-plan <plan directory>         # fast checks before publishing and launching a join plan
+    waldito hello-python-v9                     # check-plan, then launch it (testing/join/launcher.sh)
 """
 import argparse
 import collections
@@ -1432,6 +1433,19 @@ def cmd_check_plan(args):
         sys.exit(1)
 
 
+def cmd_launch(args):
+    """check-plan, then hand the terminal to the launcher; `waldito <plan>` means `waldito launch <plan>`."""
+    settings = launch_settings()
+    directory = pathlib.Path(settings.get("WALDO", "")).parent / "testing" / "join" / args.plan
+    if (directory / "run.yaml").exists():
+        cmd_check_plan(argparse.Namespace(plan=str(directory)))  # exits on a ✗
+    else:
+        say(f"no plan directory {directory}; launching without checks")
+    launcher = REPO_ROOT / "testing" / "join" / "launcher.sh"
+    sys.stdout.flush()
+    os.execv(launcher, [str(launcher), args.plan])
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="waldito", description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1492,6 +1506,10 @@ def build_parser():
     check_plan.add_argument("plan", help="the plan's directory, holding run.yaml and README.md")
     check_plan.set_defaults(func=cmd_check_plan)
 
+    launch = sub.add_parser("launch", help="check a published join plan and run its identities here (also: waldito <plan>)")
+    launch.add_argument("plan", help="the plan's name, as in the runs repository's runs/<plan>")
+    launch.set_defaults(func=cmd_launch)
+
     for command in (heldout, mix):
         command.add_argument("--top", type=int, default=5, help="how many of the largest files to list (default 5)")
         command.add_argument("--cache", help="lookaside cache directory (default: waldo's)")
@@ -1503,7 +1521,12 @@ def main():
     # Without this, print() fully buffers when stdout isn't a TTY, so our
     # messages can appear out of order against subprocess output.
     sys.stdout.reconfigure(line_buffering=True)
-    args = build_parser().parse_args()
+    parser = build_parser()
+    commands = next(action for action in parser._actions if isinstance(action, argparse._SubParsersAction)).choices
+    # `waldito <plan>` launches it.
+    if len(sys.argv) > 1 and sys.argv[1] not in commands and not sys.argv[1].startswith("-"):
+        sys.argv.insert(1, "launch")
+    args = parser.parse_args()
     # "starting"/"finished" are both 8 chars, so the colons and timestamps line up.
     started = datetime.datetime.now(datetime.timezone.utc)
     print(f"{FRAME_COLOR}waldito starting: {started:%Y-%m-%d %H:%M:%S} UTC{RESET_COLOR}")
