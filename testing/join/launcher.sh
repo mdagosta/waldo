@@ -9,7 +9,7 @@
 # and its heat logged beside them to thermal.log (thermal-log.sh, when macmon is installed). What
 # the launcher prints also goes to launcher.log there.
 #
-#   WALDO_GPU_THROTTLE=0.36 ROUNDS=4 run-identities.sh <run>
+#   WALDO_GPU_THROTTLE=0.36 ROUNDS=4 launcher.sh <run>
 #
 # ~/.waldo/join/launch.env holds this machine's settings as `: "${RUNS_REPO:=...}"` lines, so the
 # command line still overrides them: RUNS_REPO, the runs repository; WALDO; JOIN_EMAIL, the record
@@ -19,13 +19,13 @@
 # WALDO_GPU_THROTTLE / identities, at least 0.01.
 # ROUNDS=<n> runs the next n rounds one at a time, cooling down COOLDOWN minutes (default 20)
 # between them so the machine isn't hot all night:
-#   ROUNDS=1 run-identities.sh <run>                       # run the next round, then stop
-#   ROUNDS=3 COOLDOWN=30 run-identities.sh <run>           # three rounds, 30 minutes apart
+#   ROUNDS=1 launcher.sh <run>                       # run the next round, then stop
+#   ROUNDS=3 COOLDOWN=30 launcher.sh <run>           # three rounds, 30 minutes apart
 # Keep a laptop's lid open while it trains: closed, it runs hotter.
 # REPORT=<minutes> sets how often the launcher prints progress, with the GPU load and fan speed over
-# those minutes from thermal.log (default 5).
+# those minutes from thermal.log and SAVED when an identity wrote a checkpoint (default 5).
 # FAULTS runs identities through burnin.py, which injects protocol faults as they join:
-#   FAULTS=random run-identities.sh <run>                  # every identity, random faults
+#   FAULTS=random launcher.sh <run>                  # every identity, random faults
 #   FAULTS="<identity>=close <identity>=lazy" ...           # these identities, these faults
 # FAULT_RATE (default 0.15) tunes random faults; burnin.py report runs/<run> checks the outcome.
 #
@@ -35,7 +35,7 @@
 set -eu
 
 [ ! -f "$HOME/.waldo/join/launch.env" ] || . "$HOME/.waldo/join/launch.env"
-run_dir=${1:?usage: run-identities.sh <run>}
+run_dir=${1:?usage: launcher.sh <run>}
 case $run_dir in runs/*) ;; *) run_dir=runs/$run_dir ;; esac
 repo=${RUNS_REPO:?set RUNS_REPO to the runs repository}
 # The plan's identities, when the runs repository is one on this disk.
@@ -93,12 +93,17 @@ tail -c 4000 "$1" 2>/dev/null | tr '\r' '\n' | awk -v unit="$unit" '
 }
 
 # report: every REPORT minutes (default 5), prints each identity's phase when it changes.
+# saves <log>: how many checkpoints an identity has written.
+saves() {
+cat "$1" 2>/dev/null | tr '\r' '\n' | grep -c 'checkpoint step .* persisted' || true
+}
+
 report() {
 n=0
 for identity in $names; do
   n=$((n + 1))
   now=$(phase "$logs/$identity.log")
-  eval "phase_$n=\$now"
+  eval "phase_$n=\$now saves_$n=$(saves "$logs/$identity.log")"
 done
 while sleep $((${REPORT:-5} * 60)); do
   # thermal.log's minutes since the last report: mean GPU busy and chip watts, hottest GPU, fastest fan.
@@ -110,10 +115,14 @@ while sleep $((${REPORT:-5} * 60)); do
   for identity in $names; do
     n=$((n + 1))
     now=$(phase "$logs/$identity.log")
-    eval "was=\${phase_$n:-}"
-    if [ -n "$now" ] && [ "$now" != "$was" ]; then
-      printf '%s %s: %-30s %s\n' "$(date '+%a %H:%M')" "$identity" "$now" "$heat"
-      eval "phase_$n=\$now"
+    count=$(saves "$logs/$identity.log")
+    eval "was=\${phase_$n:-} saved=\${saves_$n:-0}"
+    # SAVED: a checkpoint written since the last report, so stopping now loses little.
+    mark=""
+    [ "$count" -le "$saved" ] || mark=" SAVED"
+    if [ -n "$now" ] && { [ "$now" != "$was" ] || [ -n "$mark" ]; }; then
+      printf '%s %s: %-30s %s%s\n' "$(date '+%a %H:%M')" "$identity" "$now" "$heat" "$mark"
+      eval "phase_$n=\$now saves_$n=$count"
       printed=1
     fi
   done
