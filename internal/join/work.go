@@ -81,6 +81,19 @@ func (joiner *Joiner) built(name string) bool {
 	return err == nil && (inspection.BOM.CurrentRunID != "" || model.IsMerge(inspection.Origin))
 }
 
+// savedStep is the furthest checkpoint a model's unfailed runs kept.
+func savedStep(inspection model.Inspection) int64 {
+	var step int64
+	for _, run := range inspection.Runs {
+		if run.State != model.RunFailed && run.Progress != nil {
+			for _, checkpoint := range run.Progress.Checkpoints {
+				step = max(step, checkpoint.Step)
+			}
+		}
+	}
+	return step
+}
+
 // train trains name from the compose text unless an earlier pass already did.
 func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 	if joiner.built(name) {
@@ -89,10 +102,18 @@ func (joiner *Joiner) train(ctx context.Context, name, text string) error {
 	}
 	// A pass cut short (a closed laptop, a killed process) leaves training to resume from its newest
 	// checkpoint; waldo refuses a run that failed outright, and that one starts over.
-	if _, err := model.Inspect(joiner.models(), name); err == nil {
+	if inspection, err := model.Inspect(joiner.models(), name); err == nil {
 		fmt.Fprintf(joiner.Log, "   %s did not finish training; resuming it\n", name)
-		if err := joiner.waldo(ctx, "model", "continue", name); err == nil && joiner.built(name) {
+		resumed := joiner.waldo(ctx, "model", "continue", name)
+		if resumed == nil && joiner.built(name) {
 			return nil
+		}
+		// A stop, or a resume that fails for now, keeps the checkpoints for the next pass.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if saved := savedStep(inspection); saved > 1 {
+			return fmt.Errorf("%s didn't resume from its checkpoint at step %d; it's kept for the next pass (waldo model rm starts it over): %v", name, saved, resumed)
 		}
 		fmt.Fprintf(joiner.Log, "   %s cannot resume; starting it over\n", name)
 		if err := joiner.waldo(ctx, "model", "rm", name); err != nil {

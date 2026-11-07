@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/openwaldo/waldo/internal/model"
+	"github.com/openwaldo/waldo/internal/training"
 )
 
 func signingKey(t *testing.T, name string) (string, string) {
@@ -443,5 +444,28 @@ func TestRoundsStopAtTheRoundBoundary(t *testing.T) {
 	// A finished run reports done rather than stopping, and no limit never stops.
 	if joiner.stops(Action{Kind: "done", Round: 9}) || (&Joiner{}).stops(Action{Kind: "claim", Round: 99}) {
 		t.Fatal("stopped a done run or one without a limit")
+	}
+}
+
+func TestOnlyACheckpointPastTheFirstStepIsKept(t *testing.T) {
+	progress := func(steps ...int64) *training.Progress {
+		var kept training.Progress
+		for _, step := range steps {
+			kept.Checkpoints = append(kept.Checkpoints, training.Checkpoint{Step: step})
+		}
+		return &kept
+	}
+	for name, test := range map[string]struct {
+		runs []model.RunRecord
+		want int64
+	}{
+		"interrupted after saves": {[]model.RunRecord{{State: model.RunInterrupted, Progress: progress(1, 150, 300)}}, 300},
+		"only the first step":     {[]model.RunRecord{{State: model.RunInterrupted, Progress: progress(1)}}, 1},
+		"failed outright":         {[]model.RunRecord{{State: model.RunFailed, Progress: progress(1, 150)}}, 0},
+		"never started":           {[]model.RunRecord{{State: model.RunPlanned}}, 0},
+	} {
+		if got := savedStep(model.Inspection{Runs: test.runs}); got != test.want {
+			t.Errorf("%s: saved step %d, want %d", name, got, test.want)
+		}
 	}
 }
