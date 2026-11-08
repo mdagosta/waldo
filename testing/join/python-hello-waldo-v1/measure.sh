@@ -1,5 +1,5 @@
 #!/bin/sh
-# Waits for the python-byte-v7 launcher to finish, then scores the final merge on the full held-out gate
+# Waits for the python-hello-waldo-v1 launcher to finish, then scores the final merge on the full held-out gate
 # set and on the 30-request demo, 20 of whose tasks it never trained on, and totals the GPU time, into
 # results/. The demo shows whether it writes those programs or answers with ones it learned.
 set -eu
@@ -8,7 +8,7 @@ bot=$HOME/.waldo/join/mdagosta-v6-2
 waldo=$here/../../../waldo
 mkdir -p "$here/results"
 while pgrep -f "waldo model join" >/dev/null; do sleep 300; done
-model=$(ls "$bot/models" | grep -E '^waldo-python-byte-v7-r[0-9]{4}-merge-[0-9a-f]{12}/?$' | tr -d / | sort | tail -1)
+model=$(ls "$bot/models" | grep -E '^waldo-python-hello-waldo-v1-r[0-9]{4}-merge-[0-9a-f]{12}/?$' | tr -d / | sort | tail -1)
 echo "$model" > "$here/results/model.txt"
 score() {
   WALDO=$waldo WALDO_CONFIG=$bot/waldo-config.json WALDO_GPU_THROTTLE=0.10 uv run -q --with mlx \
@@ -17,5 +17,5 @@ score() {
 }
 score demo.jsonl demo
 score eval.jsonl gate-full
-python3 -I "$HOME/src/openwaldo/waldo-waldito/testing/join/timings.py" python-byte-v7 > "$here/results/timings.txt"
+python3 -I "$HOME/src/openwaldo/waldo-waldito/testing/join/timings.py" python-hello-waldo-v1 > "$here/results/timings.txt"
 echo "done: $(tail -1 "$here/results/demo.txt")"
