@@ -1,0 +1,96 @@
+# python-hello-waldo-v2: post-training on hello-python-v9's pretrained base: our
+# python-programs SFT set only, 12 epochs, gated on its held-out split.
+kind: waldo-model-compose
+schema: 1
+interaction:
+  template: user-assistant-v1
+architecture:
+  family: decoder-transformer
+  context_tokens: 1024           # bytes; the longest post-training program is 373
+  vocabulary_size: 259
+  hidden_size: 512
+  intermediate_size: 1536
+  layers: 8
+  attention_heads: 8
+  key_value_heads: 4
+  tie_embeddings: true
+  parameter_dtype: bfloat16
+  tokenizer:
+    name: byte
+    revision: builtin-byte-schema-1
+stages:
+  - name: sft
+    type: fine-tuning
+    objective: assistant-response-modeling
+    conversation:
+      template: user-assistant-v1
+      supervised_roles: [assistant]
+    corpora:
+      - path: /Users/mdagosta/.waldo/waldito/index-local/post-train/sft/python-programs-v1
+    parameters:
+      profile: causal-pretrain-shuffled
+      epochs: 4
+      batch_size: 16
+      sequence_length: 1024
+      learning_rate: 0.0003
+      weight_decay: 0.05
+      evaluation_fraction: 0.05
+join:
+  name: python-hello-waldo-v2
+  units:  # fine-tuning reads only the names: each unit takes its third of the SFT records
+    py-a:
+      [ray-project/ray, langflow-ai/langflow, fastapi/fastapi, TheAlgorithms/Python,
+       openai/whisper, hiyouga/LlamaFactory, psf/requests, D4Vinci/Scrapling,
+       abi/screenshot-to-code, jingyaogong/minimind, nvbn/thefuck, microsoft/markitdown]
+    py-b:
+      [apache/superset, apache/airflow, d2l-ai/d2l-zh, PaddlePaddle/PaddleOCR, getredash/redash,
+       pandas-dev/pandas, scrapy/scrapy, exo-explore/exo, harry0703/MoneyPrinterTurbo,
+       pallets/flask, httpie/cli, deepseek-ai/DeepSeek-V3, xai-org/grok-1]
+    py-c:
+      [home-assistant/core, mem0ai/mem0, unslothai/unsloth, vllm-project/vllm, django/django,
+       streamlit/streamlit, unclecode/crawl4ai, langchain-ai/langchain, browser-use/browser-use,
+       Aider-AI/aider, 3b1b/manim, Z4nzu/hackingtool, TauricResearch/TradingAgents,
+       xinntao/Real-ESRGAN, sherlock-project/sherlock]
+  replicas: 2
+  closers: 2
+  claim_minutes: 180             # a unit is ~230 steps; at v9's pace, about 2 hours
+  store: file:///Users/mdagosta/.waldo/join/local/store
+  identities:  # v6's, whose stores already hold the base
+    mdagosta-v6-1:
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMWfbG+f18unUpWAoOlyO7B+bn3GJm6Cx1UyCU4Zb+iT
+    mdagosta-v6-2:
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAet+TgxylPozTYWQj8N4mRZweeuCPEw5yyiSbFtG6Cq
+    mdagosta-v6-3:
+      key: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILuwx/5b74m4RAldUXI1Hgxq3Jp95UcTFGJii2h+hBdb
+  # Paste hello-python-v9's last merge here: testing/join/pin-base.sh <its published directory>
+  base:
+    model: waldo-hello-python-v9-r0012-merge-301056e64bda
+    url: file:///Users/mdagosta/.waldo/join/local/store/hello-python-v9/mdagosta-v6-1/waldo-hello-python-v9-r0012-merge-301056e64bda
+    model_sha256: 0919d606206cb296e6864dad13fe222ff086093d8282eba8df2e4266aa82ef85
+    files:
+      architecture.py: 4ab702067e866ca668560bf94aeab2e5d19c9079eb1fde14456c6551b6a6c469
+      ATTRIBUTION.md: 83d25fc78fcc954bc6d6b09d884d08e5bbfd0070598668f711abdf9891713f2b
+      BOM.json: 0cbad1b205f14976a84107b719771ec8c34265dce04ee9582799dbd497418ee8
+      chat_template.jinja: 199bb752fb2d4346abab796528b1513fe40e6c9128a208dba9271a21ae73fb8b
+      config.json: cc83abd390e529f61c7222f2999d5626c4591d946f0a7c446859c1f78a840b2c
+      EU-BOM.json: eeaf6e26fa03eb11458613b9ae03403e7c1a33fa756c0931b10bb72f54926487
+      generation_config.json: 7d0cb9f30bf9cc9b1721c17a0f83782cb3e0abf4321bd3723e27341364e738c1
+      JOIN-ROUND.json: 2552d67fa0aa74cedd1495ee3e2631e51da2aba4e511a7515465fd1e2949ec26
+      LINEAGE.json: 8848ce09fc152d5f7ed6cb32821a84849bb06f9692990afc3e24d066df554976
+      model.safetensors: 0919d606206cb296e6864dad13fe222ff086093d8282eba8df2e4266aa82ef85
+      openwaldo_tokenizer.json: 133a72f1b6c85ab774d4fd8ea81d9877ffad4b65be9cdd837c746dea11c8d20b
+      provenance-163ef6d5acec2f44b2bec0a8e796dc62667b0b65650c5606754ec04e322c49f1.json: 29e102021bd879ce5a2d20594e9ad3a94c9f893de2bd6b956d2e3c59457b572c
+      provenance-aa66946f16a38dbb086b7701fc1d004f2d62cd8e702dfb01fbe302a5d4d46bb4.json: af93a30f52825d5b5c7d1ab39625ae9229429b3db1fb219f38d61949c6f68cba
+      provenance-f9900447a86b552fe88c3b69d62951e7bb70d9fc4e1ba31b600a3614e6b5c8b7.json: bc4a04d740b7715362fbcd43d4c14016ec566107f4bbea03d16406a82155de2a
+      README.md: 260176c16f569f3e86f6b9bb919479a2a8f3eb75e55e81b392e18b5f737db293
+      special_tokens_map.json: 3f330b24e998993152a876811568d84ae615ebd9500d61dc8020a47af2b357c6
+      tokenization_openwaldo.py: 7cc1e68b4fa4c92de105f88adfbd44f9742379ace79ca26a5ea76311b2544fa1
+      tokenizer_config.json: 99a1418b0df93567555d45667cd908e721ad97f866ac33ba1d5140764f978c4d
+      TRAINING-CLOSURE.json: 035dd592a1a29d35ffc7a37ec5b094cd46820085a96250980084f6989a33b6c5
+  # 3 rounds of 4 epochs over each unit's third of python-programs (~190 steps a round); the gate
+  # adds up to 3 more until 90% of 120 held-out programs pass.
+  rounds: {posttrain: 3, epochs_per_round: 4}
+  gates:
+    - {after: posttrain, evaluation: eval.bom.json, evaluator: [python3, evaluate_python.py, --records, eval.jsonl, --limit, "120"], extra_rounds: 3}
+  replica_tolerance: 0.25
+  replica_floor: 0.01
