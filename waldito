@@ -1757,7 +1757,7 @@ class Launch:
             # can read as the end of a file, and it stops.
             prompt, raw = 'def hello_waldo():\n    \"\"\"Print Hello Waldo.\"\"\"\n', ["--raw"]
         say(f"\n== {merge.name} says:")
-        command = [self.waldo, "model", "chat", str(merge), *raw, "--temperature", "0", "--max-tokens", "120", prompt]
+        command = [self.waldo, "model", "chat", str(merge), *raw, "--temperature", "0", "--max-tokens", "400", prompt]
         show_command(command)
         # By path, under the user's own config: an identity's gpu.throttle may be the thermostat's pause.
         environment = {key: value for key, value in os.environ.items() if key != "WALDO_CONFIG"}
