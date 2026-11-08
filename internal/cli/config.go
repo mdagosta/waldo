@@ -39,6 +39,7 @@ var configKeys = []string{
 	"disclosure.provider",
 	"signing.method",
 	"gpu.throttle",
+	"training.checkpoint-minutes",
 	"signing.key",
 }
 
@@ -233,6 +234,12 @@ func runConfigSet(context Context, args []string, stdout, _ io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("lookaside.cache.max-size must be a positive byte size such as 20GiB or 500MiB")
 		}
+	case "training.checkpoint-minutes":
+		value, parseErr := strconv.ParseFloat(strings.TrimSpace(strings.Join(values, "")), 64)
+		if len(values) != 1 || parseErr != nil || value <= 0 {
+			return fmt.Errorf("training.checkpoint-minutes must be a positive number of minutes")
+		}
+		configuration.Training.CheckpointMinutes = &value
 	case "gpu.throttle":
 		value, parseErr := strconv.ParseFloat(strings.TrimSpace(strings.Join(values, "")), 64)
 		if len(values) != 1 || parseErr != nil || value < 0 || value > 1 {
@@ -378,6 +385,8 @@ func runConfigUnset(context Context, args []string, stdout, _ io.Writer) error {
 		configuration.Lookaside.CacheMaxBytes = 0
 	case "gpu.throttle":
 		configuration.GPU.Throttle = nil
+	case "training.checkpoint-minutes":
+		configuration.Training.CheckpointMinutes = nil
 	case "lookaside.cache.retain-completed":
 		configuration.Lookaside.RetainCompleted = false
 	case "lookaside.scratch":
@@ -476,6 +485,11 @@ func configValue(configuration config.Config, key string) (any, bool, error) {
 			return nil, false, nil
 		}
 		return *configuration.GPU.Throttle, true, nil
+	case "training.checkpoint-minutes":
+		if configuration.Training.CheckpointMinutes == nil {
+			return nil, false, nil
+		}
+		return *configuration.Training.CheckpointMinutes, true, nil
 	case "lookaside.cache.retain-completed":
 		return configuration.Lookaside.RetainCompleted, true, nil
 	case "lookaside.scratch":

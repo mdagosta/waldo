@@ -165,7 +165,7 @@ class LiveGPUThrottleTest(unittest.TestCase):
     def load(self, ceiling, configured):
         with open(MLX_WORKER_PATH, encoding="utf-8") as source_file:
             tree = ast.parse(source_file.read(), filename=MLX_WORKER_PATH)
-        wanted = {"config_path", "live_throttle", "live_gpu_throttle", "idle_after"}
+        wanted = {"config_path", "live_config", "live_setting", "live_gpu_throttle", "idle_after", "checkpoint_due"}
         body = [node for node in tree.body
                 if (isinstance(node, ast.FunctionDef) and node.name in wanted)
                 or (isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name) and node.targets[0].id in wanted)]
@@ -219,3 +219,12 @@ class LiveGPUThrottleTest(unittest.TestCase):
         self.assertEqual(naps, [30, 30])
         # The work's second is idled at the new budget; the minute paused isn't multiplied.
         self.assertAlmostEqual(idle, 1.0 * (1 / 0.25 - 1))
+
+    def test_a_checkpoint_comes_by_steps_or_by_minutes(self):
+        namespace, _, _ = self.load(0.25, None)
+        due = namespace["checkpoint_due"]
+        self.assertTrue(due(150, 150, 0, 60, None))            # every checkpoint_every steps
+        self.assertFalse(due(151, 150, 0, 60, None))           # no minutes set: steps only
+        self.assertFalse(due(151, 150, 0, 29 * 60, 30))        # 29 minutes since the last save
+        self.assertTrue(due(151, 150, 0, 30 * 60, 30))         # 30 minutes: save now
+        self.assertFalse(due(151, 0, 0, 99 * 60, 30))          # a plan without checkpoints stays without

@@ -29,6 +29,14 @@ type Config struct {
 	Disclosure Disclosure `json:"disclosure,omitempty"`
 	Signing    Signing    `json:"signing,omitempty"`
 	GPU        GPU        `json:"gpu,omitempty"`
+	Training   Training   `json:"training,omitempty"`
+}
+
+// Training is how often a running worker saves, read live like GPU.Throttle, so a machine whose
+// training slows under a thermostat still saves often enough to stop cheaply.
+// XXX NOTE: upstreamable on its own, apart from join.
+type Training struct {
+	CheckpointMinutes *float64 `json:"checkpoint_minutes,omitempty"`
 }
 
 // GPU is a live GPU budget the MLX workers re-read while they run, held under the
