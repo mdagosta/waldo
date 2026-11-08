@@ -68,6 +68,8 @@ def rgb_color(hex_color, bold=False):
 COMMAND_COLOR = "\033[2;32m"  # dim green, distinct from waldo's own output but not as loud as bold cyan
 FRAME_COLOR = rgb_color("998F30")  # muted mustard yellow, classic log-warning hue without the glare
 ERROR_COLOR = rgb_color("E5484D", bold=True)  # bold red -- an error is never something to miss
+HEAT_COLOR = rgb_color("A8574F")  # dull red: temperature and fan, worth a glance, not an alarm
+THERMOSTAT_COLOR = rgb_color("5FAFB8")  # muted cyan: the thermostat moving the throttle
 RESET_COLOR = "\033[0m"
 
 
@@ -115,7 +117,7 @@ BUILD_LOG = None  # set by `waldito build`: everything shown is also appended he
 def say(text=""):
     print(text, flush=True)
     if BUILD_LOG:
-        BUILD_LOG.write(text + "\n")
+        BUILD_LOG.write(re.sub(r"\033\[[0-9;]*m", "", text) + "\n")  # the log stays plain text
         BUILD_LOG.flush()
 
 
@@ -1441,8 +1443,10 @@ class Launch:
     Settings come from ~/.waldo/join/launch.env under the environment: RUNS_REPO, WALDO, JOIN_EMAIL;
     WALDO_GPU_THROTTLE, the machine's GPU budget, split evenly and never exceeded; ROUNDS (default:
     until the run ends); COOLDOWN minutes between rounds (20); the thermostat's HOT_C (42), where it
-    pauses, COOL_C (35), below which it steps back up, and WARM_C (halfway between), above which it
-    eases off; REPORT minutes between progress lines (5); FAULTS for burnin.py.
+    halves, COOL_C (35), below which it climbs back, COLD_C (COOL_C - 7), below which it climbs
+    faster, and WARM_C (halfway between HOT_C and COOL_C), above which it eases off; SAVE_MINUTES,
+    the longest training goes without saving (30); REPORT minutes between progress lines (5);
+    FAULTS for burnin.py.
     """
 
     def __init__(self, name):
@@ -1474,10 +1478,12 @@ class Launch:
         self.cooldown, self.report_every = int(self.setting("COOLDOWN", "20")), int(self.setting("REPORT", "5"))
         self.hot, self.cool = float(self.setting("HOT_C", "42")), float(self.setting("COOL_C", "35"))
         self.warm = float(self.setting("WARM_C", str((self.hot + self.cool) / 2)))
+        self.cold = float(self.setting("COLD_C", str(self.cool - 7)))
         self.logs = pathlib.Path.home() / ".waldo" / "join" / "logs" / name
         self.logs.mkdir(parents=True, exist_ok=True)
         self.heat = self.logs / "thermal.log"
-        self.level, self.stopping = self.budget, None
+        # A launch starts at half the budget: resuming warms the machine before the thermostat can see it.
+        self.level, self.stopping = self.budget / 2, None
 
     def share(self, budget):
         """One identity's part of a machine budget, at least 0.01 unless paused."""
@@ -1535,6 +1541,22 @@ class Launch:
         except OSError:
             return 0
 
+    def heat_text(self, rows):
+        """The throttle and the heat over these minutes: mean GPU and CPU busy, hottest GPU, fastest fan."""
+        if not rows:
+            return f"throttle {self.level:.2f}"
+        columns = list(zip(*rows))
+        return (f"throttle {self.level:.2f}  gpu {sum(columns[0]) / len(rows):3.0f}% cpu {sum(columns[1]) / len(rows):3.0f}%  "
+                f"{HEAT_COLOR}{max(columns[3]):3.0f}C fan {max(columns[4]):.0f}{RESET_COLOR}")
+
+    def status(self, identity, heat, mark=""):
+        """An identity's progress line: its phase, the throttle and heat, and an optional mark at the
+        end: SAVED after a checkpoint, cooloff or warmup when the thermostat moved the throttle."""
+        line = f"{identity}: {self.phase(identity):<34} {heat}"
+        if mark in ("cooloff", "warmup"):
+            mark = f"{THERMOSTAT_COLOR}{mark}{RESET_COLOR}"
+        self.stamp(f"{line}   {mark}" if mark else line)
+
     def report(self, stop):
         """Every REPORT minutes: each identity's phase when it changes, with the heat over those minutes.
         A first report comes 30 seconds in, showing everything, so the heat shows right away."""
@@ -1544,61 +1566,88 @@ class Launch:
             # The first report's heat is the last two minutes, not minutes from before the launch.
             rows = self.last_minutes(2 if first else self.report_every)
             first, wait = False, self.report_every * 60
-            heat = ""
-            if rows:
-                columns = list(zip(*rows))
-                heat = (f"gpu {sum(columns[0]) / len(rows):3.0f}% cpu {sum(columns[1]) / len(rows):3.0f}% "
-                        f"{sum(columns[2]) / len(rows):4.1f}W {max(columns[3]):3.0f}C fan {max(columns[4]):.0f}")
+            heat = self.heat_text(rows)
             printed = False
             for identity in self.identities:
                 now, count = self.phase(identity), self.saves(identity)
                 # SAVED: a checkpoint written since the last report, so stopping now loses little.
-                mark = " SAVED" if count > last[identity][1] else ""
+                mark = "SAVED" if count > last[identity][1] else ""
                 if now and (now != last[identity][0] or mark):
-                    self.stamp(f"{identity}: {now:<34} {heat}{mark}")
+                    self.status(identity, heat, mark)
                     last[identity], printed = (now, count), True
-            if not printed and rows and max(columns[4]) > 0:
+            if not printed and rows and max(row[4] for row in rows) > 0:
                 self.stamp(heat)  # a fan is news even when no phase changed
+
+    def configure(self, identity, key, value):
+        """`waldo config set` in an identity's own config, which its running workers re-read."""
+        config = pathlib.Path.home() / ".waldo" / "join" / identity / "waldo-config.json"
+        result = subprocess.run([self.waldo, "config", "set", key, value],
+                                env={**os.environ, "WALDO_CONFIG": str(config)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if result.returncode:
+            say(f"can't set {identity}'s {key}; does {self.waldo} know it?")
 
     def set_throttle(self, budget):
         """Each identity's share of the machine budget, live in its own waldo config (gpu.throttle)."""
         for identity in self.identities:
-            config = pathlib.Path.home() / ".waldo" / "join" / identity / "waldo-config.json"
-            result = subprocess.run([self.waldo, "config", "set", "gpu.throttle", f"{self.share(budget):.4f}"],
-                                    env={**os.environ, "WALDO_CONFIG": str(config)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if result.returncode:
-                say(f"can't set {identity}'s gpu.throttle; does {self.waldo} know it?")
+            self.configure(identity, "gpu.throttle", f"{self.share(budget):.4f}")
 
     def machine_heat(self):
-        """(GPU temperature, fan RPM) to act on: the hottest of the last three minutes, since the
-        sensor reads impossible lows (under 20C) while the GPU idles, and the last minute's fan."""
-        rows = self.last_minutes(3)
-        temperatures = [row[3] for row in rows if row[3] >= 20]
-        if not rows or not temperatures:
+        """(GPU temperature, fan RPM) from the last minute. The GPU sensor reads in the teens when the
+        GPU is barely working, which is a cool machine as far as training goes; the fan still answers
+        for heat from anything else."""
+        rows = self.last_minutes(1)
+        if not rows:
             return None
-        return max(temperatures), rows[-1][4]
+        return rows[-1][3], rows[-1][4]
 
     def thermostat(self, stop):
-        """Each minute: above HOT_C, pause; with a fan running, halve, down to a pause; above WARM_C,
-        step down 5% of the budget; below COOL_C, step up 5%; in between, hold."""
+        """Each minute: above HOT_C or with a fan running, halve, pausing once under a step (10% of the
+        budget); above WARM_C, step down; below COLD_C, step up; from COLD_C to COOL_C, half a step up;
+        in between, hold. Backing off fast, recovering fast when cold and easing in as it nears the
+        band settles near what the machine sustains instead of overshooting it."""
         while not stop.wait(60):
             heat = self.machine_heat()
             if heat is None:
                 continue
             temperature, fan = heat
-            level = self.level
-            if temperature > self.hot:
-                level = 0.0
-            elif fan > 0:
-                level = level / 2 if level / 2 >= self.budget / 20 else 0.0
+            level, step = self.level, self.budget / 10
+            if temperature > self.hot or fan > 0:
+                level = level / 2 if level / 2 >= step else 0.0
             elif temperature > self.warm:
-                level = max(0.0, level - self.budget / 20)
+                level = max(0.0, level - step)
+            elif temperature < self.cold:
+                level = min(self.budget, level + step)
             elif temperature < self.cool:
-                level = min(self.budget, level + self.budget / 20)
+                level = min(self.budget, level + step / 2)
             if abs(level - self.level) > 1e-9:
-                self.stamp(f"thermostat: throttle {self.level:.2f} -> {level:.2f} at {temperature:.0f}C, fan {fan:.0f}")
+                label = "cooloff" if level < self.level else "warmup"
                 self.level = level
                 self.set_throttle(level)
+                # The progress lines with the new throttle, marked like SAVED.
+                heat = self.heat_text(self.last_minutes(1))
+                for identity in self.identities:
+                    self.status(identity, heat, label)
+
+    def clean_checkpoints(self):
+        """Deletes checkpoints of this run's finished units: they exist to resume, like a game's save,
+        and a completed run never resumes. Its weights stay, and LINEAGE.json keeps its history."""
+        freed, runs = 0, 0
+        for identity in self.identities:
+            models = pathlib.Path.home() / ".waldo" / "join" / identity / "models"
+            for record in models.glob(f"waldo-{self.name}-r*/runs/*/RUN.json"):
+                checkpoints = record.parent / "artifacts" / "checkpoints"
+                try:
+                    run = json.loads(record.read_text())
+                except (OSError, ValueError):
+                    continue
+                # Only a completed run, which waldo no longer checks checkpoints for; never one that can resume.
+                if run.get("state") != "complete" or run.get("progress") or not checkpoints.is_dir():
+                    continue
+                freed += sum(file.stat().st_size for file in checkpoints.rglob("*") if file.is_file())
+                shutil.rmtree(checkpoints)
+                runs += 1
+        if runs:
+            say(f"cleaned {freed / 1e9:.1f} GB of checkpoints from {runs} finished runs")
 
     def cool_down(self):
         """At least COOLDOWN minutes, then until the fans stop and the GPU is at HOT_C or below."""
@@ -1607,7 +1656,7 @@ class Launch:
         waited = 0
         while (heat := self.machine_heat()) and (heat[1] > 0 or heat[0] > self.hot):
             if waited % 15 == 0:
-                self.stamp(f"waiting for the machine to cool: fan {heat[1]:.0f}, {heat[0]:.0f}C")
+                self.stamp(f"{FRAME_COLOR}waiting for the machine to cool: fan {heat[1]:.0f}, {heat[0]:.0f}C{RESET_COLOR}")
             time.sleep(60)
             waited += 1
 
@@ -1635,9 +1684,11 @@ class Launch:
             else:
                 command = ["uv", "run", "-q", "--with", "mlx", "--with", "huggingface_hub", self.waldo, "model", "join",
                            self.repo, self.run_dir, "--identity", identity, "--email", email, "--rounds", "1", "--wait", "30"]
+            # Leftover work: nice 19, inherited by everything it starts, yields the CPU to anything else.
             with open(self.logs / f"{identity}.log", "ab") as log:
-                children.append(subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT))
-            time.sleep(5)
+                children.append(subprocess.Popen(["nice", "-n", "19", *command], env=env, stdout=log, stderr=subprocess.STDOUT))
+            # Apart, so their startup preflights don't all heat the machine at once.
+            time.sleep(15)
         stop = threading.Event()
         reporter = threading.Thread(target=self.report, args=(stop,), daemon=True)
         reporter.start()
@@ -1736,8 +1787,16 @@ class Launch:
                                                stdout=subprocess.DEVNULL, start_new_session=True))
         else:
             say("macmon isn't installed, so heat isn't logged")
-        # Every launch starts at the full budget, so a pause left from the last one can't hold this one.
-        self.set_throttle(self.budget)
+        # Every launch starts afresh, at half the budget, so a pause left from the last one can't hold
+        # this one and the warm-up of resuming doesn't overshoot.
+        say(f"thermostat starts at {self.level:.2f} of {self.budget:.2f}: halving above {self.hot:.0f}C, easing off above "
+            f"{self.warm:.0f}C, climbing below {self.cool:.0f}C, faster below {self.cold:.0f}C")
+        self.set_throttle(self.level)
+        # Throttled training slows its steps, so it also saves on the clock: Ctrl-C stays cheap.
+        minutes = self.setting("SAVE_MINUTES", "30")
+        say(f"saving at least every {minutes} minutes")
+        for identity in self.identities:
+            self.configure(identity, "training.checkpoint-minutes", minutes)
         stop = threading.Event()
         if shutil.which("macmon"):
             threading.Thread(target=self.thermostat, args=(stop,), daemon=True).start()
@@ -1756,8 +1815,10 @@ class Launch:
                 # Each round's merge is chat-ready as soon as it's published: show how it's doing.
                 self.show_rounds(latest_only=True)
                 self.hello()
+                self.clean_checkpoints()
                 self.cool_down()
             self.results()
+            self.clean_checkpoints()
             say(f"all identities finished; logs in {self.logs}")
         finally:
             stop.set()
