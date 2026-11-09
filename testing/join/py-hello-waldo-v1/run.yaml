@@ -1,5 +1,5 @@
-# python-hello-waldo-v3: post-training on hello-python-v9's pretrained base: our
-# python-basics and python-programs SFT sets at a third of v1's learning rate.
+# py-hello-waldo-v1: post-training on hello-python-v9's pretrained base: our python-basics and
+# python-programs SFT sets, lightly (6 epochs), gated on python-programs' held-out split.
 kind: waldo-model-compose
 schema: 1
 interaction:
@@ -33,11 +33,11 @@ stages:
       epochs: 2
       batch_size: 16
       sequence_length: 1024
-      learning_rate: 0.0001
+      learning_rate: 0.0003
       weight_decay: 0.05
       evaluation_fraction: 0.05
 join:
-  name: python-hello-waldo-v3
+  name: py-hello-waldo-v1
   units:  # fine-tuning reads only the names: each unit takes its third of the SFT records
     py-a:
       [ray-project/ray, langflow-ai/langflow, fastapi/fastapi, TheAlgorithms/Python,
@@ -88,7 +88,7 @@ join:
       tokenization_openwaldo.py: 7cc1e68b4fa4c92de105f88adfbd44f9742379ace79ca26a5ea76311b2544fa1
       tokenizer_config.json: 99a1418b0df93567555d45667cd908e721ad97f866ac33ba1d5140764f978c4d
       TRAINING-CLOSURE.json: 035dd592a1a29d35ffc7a37ec5b094cd46820085a96250980084f6989a33b6c5
-  # 3 rounds of 2 epochs over each unit's third of the SFT records (~75 steps a round in v1); the gate
+  # 3 rounds of 2 epochs over each unit's third of the SFT records (~230 steps a round); the gate
   # adds up to 3 more until 90% of 120 held-out programs pass.
   rounds: {posttrain: 3, epochs_per_round: 2}
   gates:

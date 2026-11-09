@@ -1,7 +1,7 @@
-# python-hello-waldo-v3: post-training on hello-python-v9's save point
+# py-hello-waldo-v3: post-training on hello-python-v9's save point
 
 Same as v1 at a third of the learning rate (0.0001), to change less of what pretraining learned. Compare its `results/` with
-[python-hello-waldo-v1](../python-hello-waldo-v1/README.md)'s.
+[py-hello-waldo-v1](../py-hello-waldo-v1/README.md)'s.
 
 Fine-tunes [hello-python-v9](../hello-python-v9/README.md)'s last merge, pinned as `base:`, on our
 python-basics-v4 and python-programs-v1 SFT sets: 3 rounds of 2 epochs, 6 in all. python-basics-v1
@@ -18,9 +18,9 @@ it never saw, to show whether it writes those or answers with what it learned.
 `base:` in `run.yaml` pins hello-python-v9's last merge, round 12. It runs as v9's identities,
 v6's, whose stores already hold the base. A different fine-tune is a copy of this directory with a
 new name; the base stays the same. Publish `run.yaml`, `eval.bom.json`, `eval.jsonl` and
-`evaluate_python.py` as `runs/python-hello-waldo-v3/`, then:
+`evaluate_python.py` as `runs/py-hello-waldo-v3/`, then:
 
-    ~/src/openwaldo/waldo-waldito/waldito python-hello-waldo-v3
+    ~/src/openwaldo/waldo-waldito/waldito py-hello-waldo-v3
 
 When it finishes, the launcher runs `measure.sh`, which scores the final merge into `results/`.
 
