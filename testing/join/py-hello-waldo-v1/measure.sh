@@ -4,11 +4,12 @@
 # results/. The demo shows whether it writes those programs or answers with ones it learned.
 set -eu
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-bot=$HOME/.waldo/join/mdagosta-v6-2
 waldo=$here/../../../waldo
 mkdir -p "$here/results"
 while pgrep -f "waldo model join" >/dev/null; do sleep 300; done
-model=$(ls "$bot/models" | grep -E '^waldo-py-hello-waldo-v1-r[0-9]{4}-merge-[0-9a-f]{12}/?$' | tr -d / | sort | tail -1)
+# The newest merge in any identity's models: only the last round's closers hold the final one.
+latest=$(for dir in "$HOME"/.waldo/join/mdagosta-v6-*; do ls "$dir/models" | grep -E '^waldo-py-hello-waldo-v1-r[0-9]{4}-merge-[0-9a-f]{12}/?$' | tr -d / | sed "s|$| $dir|"; done | sort | tail -1)
+model=${latest% *} bot=${latest#* }
 echo "$model" > "$here/results/model.txt"
 score() {
   WALDO=$waldo WALDO_CONFIG=$bot/waldo-config.json WALDO_GPU_THROTTLE=0.10 uv run -q --with mlx \
