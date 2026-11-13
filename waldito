@@ -72,6 +72,7 @@ COMMAND_COLOR = "\033[2;32m"  # dim green, distinct from waldo's own output but 
 FRAME_COLOR = rgb_color("998F30")  # muted mustard yellow, classic log-warning hue without the glare
 ERROR_COLOR = rgb_color("E5484D", bold=True)  # bold red -- an error is never something to miss
 HEAT_COLOR = rgb_color("A8574F")  # dull red: temperature and fan, worth a glance, not an alarm
+COLD_COLOR = rgb_color("5B7FB0")  # muted blue: the temperatures the thermostat climbs below
 THERMOSTAT_COLOR = rgb_color("5FAFB8")  # muted cyan: the thermostat moving the throttle
 RESET_COLOR = "\033[0m"
 
@@ -1879,8 +1880,9 @@ class Launch:
         try:
             # Every launch starts afresh, at half the budget, so a pause left from the last one can't hold
             # this one and the warm-up of resuming doesn't overshoot.
-            say(f"thermostat starts at {self.level:.2f} of {self.budget:.2f}: halving above {self.hot:.0f}C, easing off above "
-                f"{self.warm:.0f}C, creeping up below it, climbing below {self.cool:.0f}C, faster below {self.cold:.0f}C")
+            heat = lambda temperature, color=HEAT_COLOR: f"{color}{temperature:.0f}C{RESET_COLOR}"
+            say(f"thermostat {self.level:.2f} of {self.budget:.2f}: halve >{heat(self.hot)}, ease >{heat(self.warm)}, creep, "
+                f"climb <{heat(self.cool, COLD_COLOR)}, faster <{heat(self.cold, COLD_COLOR)}")
             self.set_throttle(self.level)
             # Throttled training slows its steps, so it also saves on the clock: Ctrl-C stays cheap.
             minutes = self.setting("SAVE_MINUTES", "30")
