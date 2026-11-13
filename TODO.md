@@ -12,18 +12,6 @@ report and `ATTRIBUTION.md` moved to it: one owner. What's left of ADR 0090 is t
 themselves (`provenance.go`, merges unioning closures, pulls keeping them). Remove them and the
 ADR, or rewrite it as "the lineage history serves disclosure", once the join PR is next.
 
-## Say when a run stops moving (waldito launcher)
-
-hello-python-v9, 2026-11-06 23:24: a resume sat 24 minutes without one training step while my join
-e2e trained at full speed beside it (each throttled step slowed, then slept 14 times as long), and
-the launcher's screen was simply quiet: it prints only when a phase changes. When an identity's log
-shows no new step for, say, three report intervals, print `<identity>: no progress for N minutes`
-with its last log line. `waldito check-plan` now warns about any training before a launch, which
-would have caught this one.
-
-Also from that night, done 2026-11-06 on join-local-b: `waldo model join` deleted a run whenever
-`waldo model continue` failed, even when Ctrl-C stopped it; only a cancelled context saved v9's
-step-300 checkpoint. It now keeps any run that saved past step 1 and retries the resume.
 
 ## Keep the machine in a heat range while it trains (join-local worker, waldito launcher)
 
@@ -40,6 +28,10 @@ The setting a user actually wants is a range ("keep the fan off", "stay under 60
   toward the user's range (fan at 0, GPU temperature, or chip watts), with bounds and slow steps,
   since temperature lags power by minutes.
 - Not part of the model-merge PR.
+
+--- We should read through the logs from the training runs. Seems like as it gets closer to the 100% mark (set by WALDO_GPU_THROTTLE) that it should warmup slower. Because we're warming up then blowing past it. Might be environmental, because this room is also warm.... but at any rate I think it's worth tuning since it should be simple math. Halving the throttle on fan is correct, I just think we should be more mindful to avoid the fan-on state.
+
+
 
 ## Walk each unit's data once, in order (join-local)
 
@@ -90,6 +82,9 @@ Relaunching resumes it.
   GitHub to score held-out records.
 - Done 2026-11-06 on join-local-b: `waldo model join` retries a failed step up to 6 times,
   doubling the wait, instead of exiting.
+- Done 2026-11-12 in waldito: an identity that exits on a network error, once join's ~63 minutes
+  of retries run out, restarts when GitHub answers (5 times a round at most). Launch with
+  UV_OFFLINE=1 so uv never asks PyPI. The waldo fallback above stays undone, by choice.
 
 ## Prune old models (local, decide first)
 
@@ -144,3 +139,10 @@ onto it.
 ## Upstream crash window
 
 - A crash between `initializeModel`'s rename and copying `base/model.safetensors` (or origin artifacts) leaves a model nothing can inspect; copy them in the `prepare` callback before the rename (found in lineage vet round 6).
+- check-plan: refuse a plan whose longest model name won't fit. `waldo-<plan>-r0000-<unit>-<identity>`
+  plus the closer's `-<12 hex>` must be at most 64 characters; python-hello-waldo-v1 was 65 and every unit was refused.
+- check-plan: fail early on anything that fails late. Beyond name length: the gate's evaluation,
+  records and evaluator files published beside run.yaml; the base pin's files and hashes on disk;
+  every unit's sources readable. A launch should never train a round it can't close.
+- launch: when `runs/<name>` isn't in the runs repository, say "not published yet" and print the
+  copy and publish lines (all four files for a gated plan), not the JOIN_IDENTITY_PREFIX hint.

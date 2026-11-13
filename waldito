@@ -56,6 +56,9 @@ FETCHERS_ROOT = REPO_ROOT.parent / "fetchers"
 # refresh it) plus a file:// lookaside, selected with WALDO_CONFIG so the real config is untouched.
 LOCAL_CONFIG = WALDITO_HOME / "config.json"
 LOCAL_INDEX = WALDITO_HOME / "index-local"
+# How Go's network errors read in a join log when the index refresh can't reach GitHub.
+NETWORK_ERROR = re.compile(r"dial tcp|no such host|i/o timeout|network is unreachable|connection refused"
+                           r"|TLS handshake timeout|connection reset", re.I)
 
 def rgb_color(hex_color, bold=False):
     """24-bit ANSI foreground escape for a #RRGGBB hex string -- exact
@@ -1361,6 +1364,16 @@ def launch_settings():
     return settings
 
 
+def waldo_broken(waldo):
+    """Why this waldo binary can't run, or "" when `waldo --help` works. An interrupted build leaves
+    a 0-byte file that's newer than every commit and fails only when something runs it."""
+    try:
+        result = subprocess.run([str(waldo), "--help"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError as exc:
+        return f"{waldo} doesn't run ({exc.strerror}); rebuild it: go build -o ./waldo ./cmd/waldo"
+    return f"{waldo} --help exits {result.returncode}" if result.returncode else ""
+
+
 def cmd_check_plan(args):
     """Fast checks before publishing and launching a join plan: ✓ fine, ! worth knowing, ✗ stop."""
     import yaml
@@ -1404,7 +1417,9 @@ def cmd_check_plan(args):
         check("data", "✓" if units else "!", "; ".join(f"{unit} {files} files {mb} MB ({share}% {kind})" for unit, mb, files, kind, share in units)
               or "couldn't measure (are the shards in the lookaside cache? run a preflight once)")
     waldo = pathlib.Path(settings.get("WALDO", ""))
-    if waldo.exists():
+    if waldo.exists() and (broken := waldo_broken(waldo)):
+        check("binary", "✗", broken)
+    elif waldo.exists():
         built = quiet("git", "log", "-1", "--format=%ct %h", "--", "*.go", cwd=waldo.parent).stdout.split()
         fresh = built and waldo.stat().st_mtime >= int(built[0])
         check("binary", "✓" if fresh else "✗", f"{waldo} is {'newer than' if fresh else 'OLDER than'} its last Go commit {built[1] if built else '?'}")
@@ -1472,6 +1487,8 @@ class Launch:
             self.identities = [f"{prefix}{n}" for n in range(1, int(self.setting("IDENTITIES", "5")) + 1)]
         rounds = join.get("rounds") or {}
         self.total = (rounds.get("pretrain") or 0) + (rounds.get("posttrain") or 0)
+        # Join counts from 0; with a base and no bootstrap round, show round 1 of 12 as r1, not r0.
+        self.offset = 0 if rounds.get("bootstrap_tokens") else 1
         self.gate = next((gate["heldout_loss_at_most"] for gate in join.get("gates") or [] if "heldout_loss_at_most" in gate), None)
         self.budget = float(self.setting("WALDO_GPU_THROTTLE", "1"))
         self.rounds = int(self.setting("ROUNDS", "0"))
@@ -1529,10 +1546,12 @@ class Launch:
                 line = "merged, publishing"
             elif "until others finish" in entry:
                 line = "waiting for others"
+            elif retrying := re.match(r"retrying in (\S+) \((\d+) of (\d+)\)", entry):
+                line = f"retrying in {retrying[1]} ({retrying[2]}/{retrying[3]})"
             elif re.search(r"is merged; .* stops", entry):
                 line = "round done"
         if line and round_number:
-            line = f"r{round_number}{'/' + str(self.total) if self.total else ''} {line}"
+            line = f"r{int(round_number) + self.offset}{'/' + str(self.total) if self.total else ''} {line}"
         return line
 
     def saves(self, identity):
@@ -1540,6 +1559,16 @@ class Launch:
             return len(re.findall(r"checkpoint step \S+ persisted", (self.logs / f"{identity}.log").read_text(errors="replace")))
         except OSError:
             return 0
+
+    def last_step(self, identity):
+        """The log's latest training step (`step 40/199,`) and its last line, to spot training that stopped."""
+        try:
+            tail = (self.logs / f"{identity}.log").read_text(errors="replace").replace("\r", "\n")[-4000:]
+        except OSError:
+            return "", ""
+        steps = re.findall(r"step \d+/\d+,", tail)
+        lines = [line.strip() for line in tail.splitlines() if line.strip()]
+        return (steps[-1] if steps else ""), (lines[-1][:120] if lines else "")
 
     def heat_text(self, rows):
         """The throttle and the heat over these minutes: mean GPU and CPU busy, hottest GPU, fastest fan."""
@@ -1561,6 +1590,7 @@ class Launch:
         """Every REPORT minutes: each identity's phase when it changes, with the heat over those minutes.
         A first report comes 30 seconds in, showing everything, so the heat shows right away."""
         last = {identity: ("", self.saves(identity)) for identity in self.identities}
+        moved = {}  # identity: (its latest step, when it last changed, warned yet)
         first, wait = True, 30
         while not stop.wait(wait):
             # The first report's heat is the last two minutes, not minutes from before the launch.
@@ -1575,14 +1605,27 @@ class Launch:
                 if now and (now != last[identity][0] or mark):
                     self.status(identity, heat, mark)
                     last[identity], printed = (now, count), True
+                # Training whose step hasn't moved in three reports: the screen would otherwise stay quiet.
+                step, tail = self.last_step(identity)
+                seen = moved.get(identity)
+                if not seen or seen[0] != step or not now.endswith("%"):
+                    moved[identity] = (step, time.monotonic(), False)
+                elif not seen[2] and time.monotonic() - seen[1] >= 3 * self.report_every * 60:
+                    self.stamp(f"{identity}: no progress for {int(time.monotonic() - seen[1]) // 60} minutes; log ends: {tail}")
+                    moved[identity] = (*seen[:2], True)
             if not printed and rows and max(row[4] for row in rows) > 0:
                 self.stamp(heat)  # a fan is news even when no phase changed
 
     def configure(self, identity, key, value):
         """`waldo config set` in an identity's own config, which its running workers re-read."""
         config = pathlib.Path.home() / ".waldo" / "join" / identity / "waldo-config.json"
-        result = subprocess.run([self.waldo, "config", "set", key, value],
-                                env={**os.environ, "WALDO_CONFIG": str(config)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # A broken binary mid-run mustn't kill the thermostat thread; the next round's check stops the run.
+        try:
+            result = subprocess.run([self.waldo, "config", "set", key, value],
+                                    env={**os.environ, "WALDO_CONFIG": str(config)}, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            error(f"can't set {identity}'s {key}: {self.waldo} doesn't run ({exc.strerror})")
+            return
         if result.returncode:
             say(f"can't set {identity}'s {key}; does {self.waldo} know it?")
 
@@ -1603,8 +1646,9 @@ class Launch:
     def thermostat(self, stop):
         """Each minute: above HOT_C or with a fan running, halve, pausing once under a step (10% of the
         budget); above WARM_C, step down; below COLD_C, step up; from COLD_C to COOL_C, half a step up;
-        in between, hold. Backing off fast, recovering fast when cold and easing in as it nears the
-        band settles near what the machine sustains instead of overshooting it."""
+        mild, from COOL_C to WARM_C, a quarter step up. Backing off fast, recovering fast when cold and
+        creeping while mild settles near what the machine sustains instead of overshooting it or
+        parking low on a machine whose idle sits above COOL_C."""
         while not stop.wait(60):
             heat = self.machine_heat()
             if heat is None:
@@ -1619,6 +1663,8 @@ class Launch:
                 level = min(self.budget, level + step)
             elif temperature < self.cool:
                 level = min(self.budget, level + step / 2)
+            else:
+                level = min(self.budget, level + step / 4)
             if abs(level - self.level) > 1e-9:
                 label = "cooloff" if level < self.level else "warmup"
                 self.level = level
@@ -1669,8 +1715,9 @@ class Launch:
     def round(self):
         """Starts every identity for one round and waits for them, reporting as they go."""
         import threading
-        share, faults, children = self.share(self.budget), (self.setting("FAULTS") or "").split(), []
-        for identity in self.identities:
+        share, faults, children = self.share(self.budget), (self.setting("FAULTS") or "").split(), {}
+
+        def start(identity):
             email = self.setting("JOIN_EMAIL") or f"{identity}@waldo.invalid"
             say(f"starting {identity} (throttle {share:.4f}) -> {self.logs / f'{identity}.log'}")
             # The governor: training never goes past this share, whatever gpu.throttle says.
@@ -1686,17 +1733,53 @@ class Launch:
                            self.repo, self.run_dir, "--identity", identity, "--email", email, "--rounds", "1", "--wait", "30"]
             # Leftover work: nice 19, inherited by everything it starts, yields the CPU to anything else.
             with open(self.logs / f"{identity}.log", "ab") as log:
-                children.append(subprocess.Popen(["nice", "-n", "19", *command], env=env, stdout=log, stderr=subprocess.STDOUT))
+                return subprocess.Popen(["nice", "-n", "19", *command], env=env, stdout=log, stderr=subprocess.STDOUT)
+
+        for identity in self.identities:
+            children[identity] = start(identity)
             # Apart, so their startup preflights don't all heat the machine at once.
             time.sleep(15)
         stop = threading.Event()
         reporter = threading.Thread(target=self.report, args=(stop,), daemon=True)
         reporter.start()
+        restarts = collections.Counter()
         try:
-            for child in children:
-                child.wait()
+            while children:
+                time.sleep(10)
+                for identity, child in list(children.items()):
+                    if child.poll() is None:
+                        continue
+                    del children[identity]
+                    # Join retries a failed step for about an hour; past that, a network error ends the
+                    # identity. Joining again resumes it, so wait for GitHub and start it over.
+                    if child.returncode and restarts[identity] < 5 and not self.finished() and self.offline(identity):
+                        restarts[identity] += 1
+                        self.wait_for_github(identity)
+                        say(f"restarting {identity} ({restarts[identity]} of 5)")
+                        children[identity] = start(identity)
         finally:
             stop.set()
+
+    def offline(self, identity):
+        """Whether an identity's log ends on a network error, as when join's retries ran out offline."""
+        try:
+            tail = (self.logs / f"{identity}.log").read_text(errors="replace")[-2000:]
+        except OSError:
+            return False
+        return bool(NETWORK_ERROR.search(tail))
+
+    def wait_for_github(self, identity):
+        """Until the managed index's remote answers, checking each minute."""
+        index = pathlib.Path.home() / ".waldo" / "index"
+        remote = subprocess.run(["git", "-C", str(index), "remote", "get-url", "origin"],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True).stdout.strip() or "https://github.com"
+        self.stamp(f"{identity} stopped on a network error; waiting for {remote}")
+        while True:
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                if subprocess.run(["git", "ls-remote", "--heads", remote], stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, timeout=30).returncode == 0:
+                    return
+            time.sleep(60)
 
     def probes(self):
         """Every unit the closers accepted: (round, unit, held-out loss at the round's start, after it)."""
@@ -1715,7 +1798,7 @@ class Launch:
                 elif replicas := re.search(r"replicas 1 vs 2: probe loss (\S+)", line):
                     end = replicas[1]
                 elif accepted := re.search(r"unit (\S+): accepted", line):
-                    found.add((round_number or 0, accepted[1], start, end))
+                    found.add(((round_number or 0) + self.offset, accepted[1], start, end))
         return sorted(found)
 
     def show_rounds(self, latest_only=False):
@@ -1757,21 +1840,25 @@ class Launch:
             # can read as the end of a file, and it stops.
             prompt, raw = 'def hello_waldo():\n    \"\"\"Print Hello Waldo.\"\"\"\n', ["--raw"]
         say(f"\n== {merge.name} says:")
-        command = [self.waldo, "model", "chat", str(merge), *raw, "--temperature", "0", "--max-tokens", "400", prompt]
+        if broken := waldo_broken(self.waldo):
+            error(broken)
+            return
+        command =[self.waldo, "model", "chat", str(merge), *raw, "--temperature", "0", "--max-tokens", "400", prompt]
         show_command(command)
         # By path, under the user's own config: an identity's gpu.throttle may be the thermostat's pause.
         environment = {key: value for key, value in os.environ.items() if key != "WALDO_CONFIG"}
         environment["WALDO_GPU_THROTTLE"] = str(self.budget)
         chat = subprocess.run(["uv", "run", "-q", "--with", "mlx", "--with", "huggingface_hub", *command],
                               env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        say(chat.stdout.rstrip() or "(no output)")
+        say(chat.stdout.rstrip() or f"(no output; exit {chat.returncode})")
 
     def results(self):
         """What the run reached, its latest merge saying hello, and the plan's own checks."""
         self.show_rounds()
         self.hello()
         measure = pathlib.Path(self.waldo).parent / "testing" / "join" / self.name / "measure.sh"
-        if os.access(measure, os.X_OK):
+        # Only a finished run's final merge: a ROUNDS=n launch would score a midway one into results/.
+        if os.access(measure, os.X_OK) and self.finished():
             say(f"\n== {self.name}/measure.sh")
             measured = subprocess.run([str(measure)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             say(measured.stdout.rstrip())
@@ -1787,23 +1874,28 @@ class Launch:
                                                stdout=subprocess.DEVNULL, start_new_session=True))
         else:
             say("macmon isn't installed, so heat isn't logged")
-        # Every launch starts afresh, at half the budget, so a pause left from the last one can't hold
-        # this one and the warm-up of resuming doesn't overshoot.
-        say(f"thermostat starts at {self.level:.2f} of {self.budget:.2f}: halving above {self.hot:.0f}C, easing off above "
-            f"{self.warm:.0f}C, climbing below {self.cool:.0f}C, faster below {self.cold:.0f}C")
-        self.set_throttle(self.level)
-        # Throttled training slows its steps, so it also saves on the clock: Ctrl-C stays cheap.
-        minutes = self.setting("SAVE_MINUTES", "30")
-        say(f"saving at least every {minutes} minutes")
-        for identity in self.identities:
-            self.configure(identity, "training.checkpoint-minutes", minutes)
         stop = threading.Event()
-        if shutil.which("macmon"):
-            threading.Thread(target=self.thermostat, args=(stop,), daemon=True).start()
+        # From here a crash still stops the heat logger, in the finally below.
         try:
+            # Every launch starts afresh, at half the budget, so a pause left from the last one can't hold
+            # this one and the warm-up of resuming doesn't overshoot.
+            say(f"thermostat starts at {self.level:.2f} of {self.budget:.2f}: halving above {self.hot:.0f}C, easing off above "
+                f"{self.warm:.0f}C, creeping up below it, climbing below {self.cool:.0f}C, faster below {self.cold:.0f}C")
+            self.set_throttle(self.level)
+            # Throttled training slows its steps, so it also saves on the clock: Ctrl-C stays cheap.
+            minutes = self.setting("SAVE_MINUTES", "30")
+            say(f"saving at least every {minutes} minutes")
+            for identity in self.identities:
+                self.configure(identity, "training.checkpoint-minutes", minutes)
+            if shutil.which("macmon"):
+                threading.Thread(target=self.thermostat, args=(stop,), daemon=True).start()
             number = 0
-            of = f"of {self.rounds}" if self.rounds else "until the run ends"
+            of = f"of {self.rounds} this launch" if self.rounds else "of this launch"
             while not self.rounds or number < self.rounds:
+                # A binary rebuilt mid-run can be left empty; every identity would exit at once, round after round.
+                if broken := waldo_broken(self.waldo):
+                    error(f"stopping before round {number + 1}: {broken}")
+                    return
                 number += 1
                 self.stamp(f"round {number} {of} starting")
                 began = time.monotonic()
