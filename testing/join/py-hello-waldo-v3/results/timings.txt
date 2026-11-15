@@ -1,0 +1,3 @@
+experiment                                 runs first start (UTC) elapsed h wall h train h  Mtokens
+py-hello-waldo-v3                            24 2026-11-09 05:23      2.74   1.62    4.70     17.4
+total                                        24                               1.62    4.70     17.4
