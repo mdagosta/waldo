@@ -25,6 +25,7 @@ Usage:
     waldito data heldout <model or run directory>   # the held-out records a run scored, largest first
     waldito data mix run.yaml                   # what a plan trains on: each unit's bytes by file type
     waldito check-plan <plan directory>         # fast checks before publishing and launching a join plan
+    waldito check-stack                         # is every upstream branch (STACK) merged into the launch branch?
     waldito hello-python-v9                     # check-plan, then run its identities here under a thermostat
 """
 import argparse
@@ -1375,6 +1376,53 @@ def waldo_broken(waldo):
     return f"{waldo} --help exits {result.returncode}" if result.returncode else ""
 
 
+def stack_checks(settings):
+    """(branch, mark, detail) for each STACK branch: merged into the launch binary's branch, and pushed to the fork."""
+    repo = pathlib.Path(settings.get("WALDO", "")).parent
+    fork = settings.get("FORK", "mdagosta")
+
+    def git(*argv):
+        return subprocess.run(["git", *argv], cwd=repo, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+
+    head = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    results = []
+    for branch in (settings.get("STACK") or os.environ.get("STACK", "")).split():
+        if git("rev-parse", "--verify", "-q", branch).returncode:
+            results.append((branch, "✗", "no such local branch"))
+            continue
+        own = git("rev-list", "--count", f"{head}..{branch}", "^origin/main").stdout.strip()
+        main = git("rev-list", "--count", f"{head}..{branch}").stdout.strip()
+        # Upstream merges PRs with "Merge pull request #N from <fork>/<branch>".
+        landed = bool(git("log", "-1", "--merges", "--format=%h", f"--grep=from {fork}/{branch}$", "origin/main").stdout.strip())
+        if git("rev-list", "--count", f"origin/main..{branch}").stdout.strip() == "0":
+            results.append((branch, "✓" if landed else "!", "landed on origin/main" if landed else "no commits of its own yet"))
+            continue
+        if main != "0":
+            extra = f" (plus {int(main) - int(own)} from origin/main)" if main != own else ""
+            results.append((branch, "✗", f"{own} commits{extra} not in {head}: git merge {branch}, taking {branch}'s side of any conflict"))
+            continue
+        ahead = git("rev-list", "--count", f"{fork}/{branch}..{branch}").stdout.strip() or "?"
+        behind = git("rev-list", "--count", f"{branch}..{fork}/{branch}").stdout.strip() or "?"
+        pushed = "landed on origin/main" if landed else "matches the fork" if ahead == behind == "0" else \
+            f"{ahead} ahead of, {behind} behind {fork}/{branch} as last fetched"
+        results.append((branch, "✓" if landed or ahead == behind == "0" else "!", f"in {head}; {pushed}"))
+    return head, results
+
+
+def cmd_check_stack(args):
+    """Is every branch going upstream (STACK in launch.env) merged into the branch the launch binary is built from?"""
+    settings = launch_settings()
+    if not (settings.get("STACK") or os.environ.get("STACK")):
+        error('set STACK in ~/.waldo/join/launch.env: : "${STACK:=model-lineage model-merge-b slice-filter}"')
+        sys.exit(1)
+    head, results = stack_checks(settings)
+    say(f"  {head} holds:")
+    for branch, mark, detail in results:
+        say(f"  {mark} {branch:<18} {detail}")
+    if any(mark == "✗" for _, mark, _ in results):
+        sys.exit(1)
+
+
 def cmd_check_plan(args):
     """Fast checks before publishing and launching a join plan: ✓ fine, ! worth knowing, ✗ stop."""
     import yaml
@@ -1447,6 +1495,11 @@ def cmd_check_plan(args):
         check("docs", "!", f"README's launch line doesn't run waldito {name}")
     else:
         check("docs", "✓", f"README launches waldito {name}")
+    if (settings.get("STACK") or os.environ.get("STACK")) and waldo.exists():
+        head, stack = stack_checks(settings)
+        missing = [branch for branch, mark, _ in stack if mark == "✗"]
+        check("stack", "!" if missing else "✓", f"{head} lacks {', '.join(missing)}; see waldito check-stack" if missing
+              else f"{head} holds all {len(stack)} upstream branches")
     for name, mark, detail in results:
         say(f"  {mark} {name:<9} {detail}")
     if any(mark == "✗" for _, mark, _ in results):
@@ -2000,6 +2053,8 @@ def build_parser():
     check_plan = sub.add_parser("check-plan", help="fast checks before publishing and launching a join plan")
     check_plan.add_argument("plan", help="the plan's directory, holding run.yaml and README.md")
     check_plan.set_defaults(func=cmd_check_plan)
+    check_stack = sub.add_parser("check-stack", help="is every upstream branch (STACK) merged into the launch binary's branch?")
+    check_stack.set_defaults(func=cmd_check_stack)
 
     launch = sub.add_parser("launch", help="check a published join plan and run its identities here (also: waldito <plan>)")
     launch.add_argument("plan", help="the plan's name, as in the runs repository's runs/<plan>")
