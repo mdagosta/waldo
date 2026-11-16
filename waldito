@@ -1413,7 +1413,7 @@ def cmd_check_stack(args):
     """Is every branch going upstream (STACK in launch.env) merged into the branch the launch binary is built from?"""
     settings = launch_settings()
     if not (settings.get("STACK") or os.environ.get("STACK")):
-        error('set STACK in ~/.waldo/join/launch.env: : "${STACK:=model-lineage model-merge-b slice-filter}"')
+        error('set STACK in ~/.waldo/join/launch.env: : "${STACK:=model-lineage model-merge slice-filter}"')
         sys.exit(1)
     head, results = stack_checks(settings)
     say(f"  {head} holds:")
