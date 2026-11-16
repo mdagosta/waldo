@@ -1,0 +1,27 @@
+# Used only in allowlist mode (WALDO_FIREWALL_MODE=allowlist; the compose default is open-https, which
+# ignores this file). Hosts the dev container may reach, HTTPS (443) only. firewall.sh resolves each to its
+# IPv4 addresses at container start, and adds new ones every half hour; anything not listed is refused. The
+# file is part of the image, so an edit takes effect at the next `make dev-up` (a rebuild), not a restart.
+# GitHub's ranges come from api.github.com/meta, not this file (git, and waldo's index checkout).
+#
+# Allowed by IP address, and CDNs share addresses between customers, so this narrows what the container
+# can reach rather than sealing it. Keep the list to what dev actually needs.
+
+# Claude Code: the API and the claude.ai login and token refresh.
+api.anthropic.com
+claude.ai
+platform.claude.com
+console.anthropic.com
+
+# Go modules and their checksum database.
+proxy.golang.org
+sum.golang.org
+storage.googleapis.com
+
+# Python packages (the docs repo's make setup).
+pypi.org
+files.pythonhosted.org
+
+# Hugging Face, for waldo model pull.
+huggingface.co
+cdn-lfs.huggingface.co
