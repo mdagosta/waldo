@@ -1,0 +1,5 @@
+compose    4/10
+paraphrase 3/10
+stretch    0/5
+taught     18/20
+trained    10/10
