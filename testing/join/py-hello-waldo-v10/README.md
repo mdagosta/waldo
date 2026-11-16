@@ -34,4 +34,18 @@ The demo is v6's, unchanged, so the tiers compare.
 When it finishes, the launcher runs `measure.sh`, which scores the final merge into `results/`, with
 the demo's score per tier in `results/tiers.txt`.
 
-Results: TBD.
+## Results
+
+Final merge `waldo-py-hello-waldo-v10-r0002-merge-646a8d4ef638`, 3 rounds, 8.9 h wall, 26.4 GPU-h.
+
+Gate 216/218 (v9 211): all six "prints the factorial of N" pass again, as does the greeting v9 lost.
+Two new fails are one-offs: "greets Oonrwmeklofy" gave `max([3, 1, 5, 5])`, and "reverses the string
+yqtijqid" dropped its last letter.
+
+Demo 35/55 (v9 34): trained 10/10, taught 18/20 (v9 16), paraphrase 3/10 (v9 2), compose 4/10 (v9 6),
+stretch 0/5. Fizzbuzz, the average of 4, 8 and 12, and "what is left over when 23 is divided by 4"
+(`23 % 4`) now pass. "Multiplies 12 and 7, then subtracts 5" fell back to one fused step
+(`12 * 7 / 5 + 5`), and v9's lucky `12 + 7 % 2 == 0` became `12 * 7 % 2 == 0`. Still one step only:
+the largest and the smallest (max twice), sort then reverse (reversed alone), the sum of the first 5
+squares (prints the squares). The count-down still greets `Hello World!`, and `100 * 9 > 200` still
+passes by luck.
