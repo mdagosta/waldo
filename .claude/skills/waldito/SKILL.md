@@ -34,7 +34,11 @@ line each, exactly as they will run. Skip a step with nothing to do, and say so.
 
 1. Commit the plan: `cd ~/src/openwaldo/waldo-join-b && git add <files> && git commit -s -m "<one line, 72 characters at most, in the user's voice>"`
 2. Commit tooling, if any changed: the same form in `~/src/openwaldo/waldo-waldito`.
-3. Copy: `mkdir -p <SEED>/runs/<name> && cp <plan directory>/run.yaml <SEED>/runs/<name>/`
+3. Copy: `mkdir -p <SEED>/runs/<name> && cp <plan directory>/run.yaml <files> <SEED>/runs/<name>/`, where
+   `<files>` is everything join reads from the run directory: each gate's `evaluation` BOM and every
+   `evaluator` argument that is a file in the plan directory (e.g. eval.bom.json, eval.jsonl,
+   evaluate_python.py). A plan with no such gates copies run.yaml alone. README.md, measure.sh and
+   demo.jsonl stay in the repo.
 4. Publish: `cd <SEED> && git pull --rebase && git add runs/<name> && git commit -m "runs/<name>: <one line>" && git push`
 5. Launch, for the user to type: `~/src/openwaldo/waldo-waldito/waldito <name>` (WALDO_GPU_THROTTLE from the shell is the budget; add ROUNDS=<n> to stop early)
 

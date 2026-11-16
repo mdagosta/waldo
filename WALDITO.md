@@ -209,6 +209,12 @@ replicas, not by trusting whoever closed first.
   against the round's improvement (lazy = zero improvement). Loses power as training converges.
 - Plain mean beat DiLoCo momentum at 5 rounds, and a lower final-round learning rate or a
   post-merge consolidation step did not help.
+- Name plans `<lang>-<what>-vN` and keep them short: `waldo-<plan>-r0000-<unit>-<identity>`
+  plus the closer's `-<12 hex>` must fit in 64 characters, or every unit is refused after
+  training. With `py-a` units and `mdagosta-v6-1` identities, that leaves 20 for the plan
+  (python-hello-waldo-v1 was 21; py-hello-waldo-v1 fits). A published name is never reused.
+- Fail before the work, not after it. Anything join or waldo would refuse later (names, gate
+  files, pins, sources) is a `waldito check-plan` ✗, so a launch never trains a round it can't close.
 
 ## Composing models
 

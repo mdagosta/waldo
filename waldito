@@ -1492,6 +1492,7 @@ class Launch:
         self.offset = 0 if rounds.get("bootstrap_tokens") else 1
         self.gate = next((gate["heldout_loss_at_most"] for gate in join.get("gates") or [] if "heldout_loss_at_most" in gate), None)
         self.budget = float(self.setting("WALDO_GPU_THROTTLE", "1"))
+        self.scoring = False  # training done: measure.sh's one process gets the whole level, not a share
         self.rounds = int(self.setting("ROUNDS", "0"))
         self.cooldown, self.report_every = int(self.setting("COOLDOWN", "20")), int(self.setting("REPORT", "5"))
         self.hot, self.cool = float(self.setting("HOT_C", "42")), float(self.setting("COOL_C", "35"))
@@ -1505,7 +1506,7 @@ class Launch:
 
     def share(self, budget):
         """One identity's part of a machine budget, at least 0.01 unless paused."""
-        return 0.0 if budget <= 0 else max(0.01, budget / len(self.identities))
+        return 0.0 if budget <= 0 else budget if self.scoring else max(0.01, budget / len(self.identities))
 
     def stamp(self, text):
         say(f"{time.strftime('%a %H:%M')} {text}")
@@ -1860,6 +1861,8 @@ class Launch:
         measure = pathlib.Path(self.waldo).parent / "testing" / "join" / self.name / "measure.sh"
         # Only a finished run's final merge: a ROUNDS=n launch would score a midway one into results/.
         if os.access(measure, os.X_OK) and self.finished():
+            self.scoring = True
+            self.set_throttle(self.level)
             say(f"\n== {self.name}/measure.sh")
             measured = subprocess.run([str(measure)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             say(measured.stdout.rstrip())

@@ -86,6 +86,27 @@ Relaunching resumes it.
   of retries run out, restarts when GitHub answers (5 times a round at most). Launch with
   UV_OFFLINE=1 so uv never asks PyPI. The waldo fallback above stays undone, by choice.
 
+## Say an unpublished plan is unpublished (waldito launcher)
+
+Launching py-hello-waldo-v7 before publishing it passed check-plan (`name … not yet in the runs
+repository` is a ✓) and then stopped with "runs/py-hello-waldo-v7 lists no identities …; set
+JOIN_IDENTITY_PREFIX", which points at the wrong fix. When the plan isn't in the runs repository, say
+so and print the publish steps (copy into the seed, pull, commit, push) instead.
+
+## Check contamination before training (waldito check-plan, join-local)
+
+py-hello-waldo-v8 trained 3 rounds (~6h) before its gate said "contamination policy failed": one
+training record ("create a python script that counts from 1 to 4") was 0.83 like a gate record ("write
+…"), over the 0 fuzzy matches allowed. Then it ran extra rounds, which retraining can't fix. check-plan
+should run the gate's contamination check on the plan's corpora and name both records, and a gate
+that fails only on contamination should stop the run instead of adding rounds.
+
+## Restore the throttle when the launcher stops (waldito launcher)
+
+Ctrl-C on py-hello-waldo-v8 left each identity's `gpu.throttle` at the thermostat's last value, 0.0104.
+The measure.sh run after it caps generation at min(that, 0.10), so it scored at ~1% GPU, 10x slow. On
+any exit, set it back to the budget (or remove it).
+
 ## Prune old models (local, decide first)
 
 Each bot's model store holds ~800 models (58 GB per bot, 3 bots); the join store holds 19 GB. Every
