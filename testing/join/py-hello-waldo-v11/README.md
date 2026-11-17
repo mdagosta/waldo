@@ -33,4 +33,22 @@ the demo's score per tier in `results/tiers.txt`.
 
 ## Results
 
-TBD.
+Scored on the final merge, `waldo-py-hello-waldo-v11-r0002-merge-627cdf94bb60`. v10's scores are in
+parentheses.
+
+| | v11 | v10 |
+|---|---|---|
+| Demo | 35/55 | 35/55 |
+| Gate | 215/218 | 216/218 |
+| `../unseen.jsonl` | 17/20 | 18/20 |
+
+Demo by tier: trained 10/10, taught 17/20 (18), paraphrase 3/10 (3), compose 5/10 (4), stretch 0/5 (0).
+
+- v8's shared numbers fixed the operator slip on "checks whether the sum of 12 and 7 is even", the
+  new compose pass.
+- "multiplies 12 and 7, then subtracts 5" still comes out wrong, now `12 * 7 * 5`: "then subtracts"
+  reads as another multiply.
+- Taught lost `fizzbuzz`, which also fails on the unseen set. `repeat` and `words` fail in both versions.
+
+A tie within a one-task margin on each set. v10 is the simpler model with the same or better scores, so
+data-only changes look to have plateaued.

@@ -1,0 +1,552 @@
+FAIL  compose-00-multiply-subtract  shape differs, values 3/3
+  > write a python script that multiplies 12 and 7, then subtracts 5
+    def main():
+        print(12 * 7 * 5)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  compose-01-upper-length  shape ok, values 1/1
+  > write a python script that prints the string apple in uppercase and then its length
+    def main():
+        print("apple".upper())
+        print(len("apple"))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  compose-02-max-min  shape differs, values 3/3
+  > write a python script that prints the largest and the smallest of 3, 17 and 8
+    def main():
+        print(max(3, 17, 8))
+        print(max(3, 17, 8))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  compose-03-sum-evens  shape differs, values 1/1
+  > write a python script that prints the sum of the even numbers from 2 to 10
+    def main():
+        print(sum(range(2, 10 + 1, 2)))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  compose-04-reverse-upper  shape ok, values 1/1
+  > write a python script that prints the string banana backwards in uppercase
+    def main():
+        print("banana"[::-1].upper())
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  compose-05-sum-is-even  shape differs, values 2/2
+  > write a python script that checks whether the sum of 12 and 7 is even
+    def main():
+        print(12 + 7 % 2 == 0)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  compose-06-sort-reverse  shape differs, values 4/4
+  > write a python script that sorts the list 5, 3, 9, 1 and prints it backwards
+    def main():
+        print(list(reversed([5, 3, 9, 1])))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  compose-07-count-down-greet  shape differs, values 4/4
+  > write a python script that counts down from 3 to 1 and then prints Hello world
+    def main():
+        for number in range(3, 1 - 1, -1):
+            print(number)
+        print("Hello world!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  compose-08-sum-squares  shape differs, values 0/0
+  > write a python script that prints the sum of the first 5 square numbers
+    def main():
+        print(sum(number for number in range(1, 5 + 1)))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  compose-09-celsius-greater  shape differs, values 2/2
+  > write a python script that converts 100 degrees celsius to fahrenheit and checks whether it is greater than 200
+    def main():
+        print(100 * 9 > 200)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  paraphrase-00-multiply  shape differs, values 2/2
+  > write a python script that prints the product of 13 and 6
+    def main():
+        print(13 + 6)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  paraphrase-01-subtract  shape differs, values 1/2
+  > write a python script that prints the difference between 80 and 25
+    def main():
+        print(difference / 25)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  paraphrase-02-count-down  shape differs, values 1/1
+  > write a python script that prints the numbers from 9 to 3 in descending order
+    def main():
+        print(sum(range(9, 3 - 1, -1)))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  paraphrase-03-upper  shape differs, values 1/1
+  > write a python script that prints the word melon in all caps
+    def main():
+        print("melon".capitalize())
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  paraphrase-04-length  shape differs, values 1/1
+  > write a python script that prints how long the word orchestra is
+    def main():
+        print("orchestra".lower())
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  paraphrase-05-remainder  shape ok, values 2/2
+  > write a python script that prints what is left over when 23 is divided by 4
+    def main():
+        print(23 % 4)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  paraphrase-06-maximum  shape ok, values 3/3
+  > write a python script that prints the biggest of 41, 9 and 27
+    def main():
+        print(max(41, 9, 27))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  paraphrase-07-average  shape differs, values 3/3
+  > write a python script that prints the mean of 6, 10 and 20
+    def main():
+        print(mean(6, 10, 20))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  paraphrase-08-sort  shape differs, values 2/4
+  > write a python script that puts 7, 2, 8, 4 in ascending order
+    def main():
+        print(7 + 2 + 7)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  paraphrase-09-squares  shape differs, values 1/1
+  > write a python script that prints n squared for every n from 1 to 6
+    def main():
+        for number in range(1, 6 + 1):
+            print(number * number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  stretch-00-digits  shape differs, values 1/1
+  > write a python script that prints each digit of 4096 on its own line
+    def main():
+        for number in [4096, 7096]:
+            print(4096 + 7096)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  stretch-01-leap-year  shape differs, values 1/1
+  > write a python script that checks whether 2024 is a leap year
+    def main():
+        print(all(2024 % divisor for divisor in range(2, 2024)))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  stretch-02-second-largest  shape differs, values 3/4
+  > write a python script that prints the second largest of 3, 17, 8 and 12
+    def main():
+        print(max(3, 17, 12))
+        print(3 + 17 + 12)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  stretch-03-count-evens  shape differs, values 4/4
+  > write a python script that counts how many even numbers are in the list 4, 7, 10, 13
+    def main():
+        print(len([4, 7, 10, 13]))
+        print(len([4, 7, 10, 13]))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  stretch-04-initials  shape differs, values 1/2
+  > write a python script that prints the initials of Ada Lovelace
+    def main():
+        print("Ada".upper())
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-00-multiply  shape ok, values 2/2
+  > write a python script that multiplies 12 and 7
+    def main():
+        print(12 * 7)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-01-subtract  shape ok, values 2/2
+  > write a python script that subtracts 9 from 50
+    def main():
+        print(50 - 9)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-02-count-down  shape differs, values 2/2
+  > write a python script that counts down from 5 to 1
+    def main():
+        for number in range(5, 1 - 1, -1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-03-evens  shape differs, values 1/1
+  > write a python script that prints the even numbers from 2 to 10
+    def main():
+        for number in range(2, 10 + 1, 2):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-04-squares  shape differs, values 0/0
+  > write a python script that prints the first 10 square numbers
+    def main():
+        for number in range(1, 10 + 1):
+            print(number * number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  taught-05-repeat  shape ok, values 2/3
+  > write a python script that prints Hello world 3 times
+    def main():
+        for _ in range(3):
+            print("Hello 3")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-06-upper  shape ok, values 1/1
+  > write a python script that prints the string apple in uppercase
+    def main():
+        print("apple".upper())
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-07-length  shape ok, values 1/1
+  > write a python script that prints the length of the string waldito
+    def main():
+        print(len("waldito"))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-08-remainder  shape ok, values 2/2
+  > write a python script that prints the remainder of 17 divided by 5
+    def main():
+        print(17 % 5)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-09-maximum  shape ok, values 3/3
+  > write a python script that prints the largest of 3, 17 and 8
+    def main():
+        print(max(3, 17, 8))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-10-times-table  shape differs, values 2/2
+  > write a python script that prints the multiplication table of 3 from 3 x 1 to 3 x 10
+    def main():
+        for number in range(1, 10 + 1):
+            print(3 * number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-11-sum-range  shape differs, values 1/1
+  > write a python script that sums the numbers from 1 to 100
+    def main():
+        print(sum(range(1, 100 + 1)))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-12-average  shape ok, values 3/3
+  > write a python script that prints the average of 4, 8 and 12
+    def main():
+        print((4 + 8 + 12) / 3)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-13-sort  shape ok, values 4/4
+  > write a python script that sorts the list 5, 3, 9, 1
+    def main():
+        print(sorted([5, 3, 9, 1]))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-14-vowels  shape ok, values 1/1
+  > write a python script that counts the vowels in the string banana
+    def main():
+        print(sum(1 for letter in "banana" if letter in "aeiou"))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-15-palindrome  shape ok, values 1/1
+  > write a python script that checks whether racecar is a palindrome
+    def main():
+        print("racecar" == "racecar"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-16-prime  shape ok, values 1/1
+  > write a python script that checks whether 17 is a prime number
+    def main():
+        print(all(17 % divisor for divisor in range(2, 17)))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  taught-17-fizzbuzz  shape differs, values 0/3
+  > write a python script that plays fizzbuzz from 1 to 15
+    ```python
+    def main():
+        for number in range(1, 15 + 1):
+            if number % 15 == 0:
+                print("FizzBuzz")
+            elif number % 3 == 0:
+                print("Fizz")
+            elif number % 5 == 0:
+                print("Buzz")
+            elif number % 5 == 0:
+                print("Buzz")
+            elif number % 5 == 0:
+                print("Buzz")
+            elif number % 5 == 0:
+                print("Buzz")
+            elif number % 5 == 0:
+                print("Buzz")
+            elif number % 5 == 0:
+                print("Buzz")
+
+FAIL  taught-18-words  shape ok, values 1/4
+  > write a python script that prints each word of the sentence the quick brown fox on its own line
+    def main():
+        for word in "the word offse each word offse each word".split():
+            print(word)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  taught-19-celsius  shape ok, values 1/1
+  > write a python script that converts 100 degrees celsius to fahrenheit
+    def main():
+        print(100 * 9 / 5 + 32)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-count-0023  shape ok, values 2/2
+  > write a python program with a main function that prints 1 through 72
+    def main():
+        for number in range(1, 72 + 1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-divide-0010  shape ok, values 4/4
+  > write a python script that divides 9175 by 92 and logs a warning instead of dividing by zero
+    import logging
+    
+    
+    def main():
+        a, b = 9175, 92
+        if b == 0:
+            logging.warning("cannot divide %d by zero", a)
+            return
+        print(a / b)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-factorial-0001  shape ok, values 1/1
+  > write a python program with a main function that computes 45 factorial
+    def main():
+        result = 1
+        for number in range(1, 45 + 1):
+            result *= number
+        print(result)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-fibonacci-0010  shape ok, values 1/1
+  > write a python script that prints the first 89 fibonacci numbers
+    def main():
+        a, b = 0, 1
+        for _ in range(89):
+            print(a)
+            a, b = b, a + b
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-greet-world-0000  shape ok, values 2/2
+  > write a python script that prints Hello world
+    def main():
+        print("Hello, World!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-hello-name-0005  shape ok, values 2/2
+  > write a python program with a main function that says hello to Frank
+    def main():
+        print("Hello, Frank!")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-negative-0008  shape ok, values 3/3
+  > write a python script that prints the absolute value of 42078 and logs a warning if it is negative
+    import logging
+    
+    
+    def main():
+        value = 42078
+        if value < 0:
+            logging.warning("%d is negative", value)
+        print(abs(value))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-read-file-0013  shape ok, values 2/2
+  > write a python program with a main function that reads rzlwhakmg.txt, warning when it does not exist
+    import logging
+    
+    
+    def main():
+        path = "rzlwhakmg.txt"
+        try:
+            with open(path) as file:
+                print(file.read(), end="")
+        except FileNotFoundError:
+            logging.warning("%s is missing", path)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-reverse-0002  shape ok, values 1/1
+  > write a python script that reverses the string pbbvyaipcaxg
+    def main():
+        print("pbbvyaipcaxg"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  trained-sum-0029  shape ok, values 2/2
+  > write a python program with a main function that prints the sum of 91 and 286
+    def main():
+        print(91 + 286)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+program shape matched 28/55; request values copied 99/111
+35/55 programs matched (0 unscorable): pass_rate 0.6364

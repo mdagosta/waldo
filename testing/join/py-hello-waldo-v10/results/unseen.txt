@@ -1,0 +1,196 @@
+pass  unseen-00-multiply  shape ok, values 2/2
+  > write a python script that multiplies 12 and 7
+    def main():
+        print(12 * 7)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-01-subtract  shape ok, values 2/2
+  > write a python script that subtracts 9 from 50
+    def main():
+        print(50 - 9)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-02-count-down  shape differs, values 2/2
+  > write a python script that counts down from 5 to 1
+    def main():
+        for number in range(5, 1 - 1, -1):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-03-evens  shape differs, values 1/1
+  > write a python script that prints the even numbers from 2 to 10
+    def main():
+        for number in range(2, 10 + 1, 2):
+            print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-04-squares  shape differs, values 0/0
+  > write a python script that prints the first 10 square numbers
+    def main():
+        for number in range(1, 10 + 1):
+            print(number * number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-05-repeat  shape ok, values 2/3
+  > write a python script that prints Hello world 3 times
+    def main():
+        for _ in range(3):
+            print("Hello 3 %d by zero")
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-06-upper  shape ok, values 1/1
+  > write a python script that prints the string apple in uppercase
+    def main():
+        print("apple".upper())
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-07-length  shape ok, values 1/1
+  > write a python script that prints the length of the string waldito
+    def main():
+        print(len("waldito"))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-08-remainder  shape ok, values 2/2
+  > write a python script that prints the remainder of 17 divided by 5
+    def main():
+        print(17 % 5)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-09-maximum  shape ok, values 3/3
+  > write a python script that prints the largest of 3, 17 and 8
+    def main():
+        print(max(3, 17, 8))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-10-times-table  shape differs, values 2/2
+  > write a python script that prints the multiplication table of 3 from 3 x 1 to 3 x 10
+    def main():
+        for number in range(1, 10 + 1):
+            print(3 * number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-11-sum-range  shape differs, values 1/1
+  > write a python script that sums the numbers from 1 to 100
+    def main():
+        print(sum(range(1, 100 + 1)))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-12-average  shape ok, values 3/3
+  > write a python script that prints the average of 4, 8 and 12
+    def main():
+        print((4 + 8 + 12) / 3)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-13-sort  shape ok, values 4/4
+  > write a python script that sorts the list 5, 3, 9, 1
+    def main():
+        print(sorted([5, 3, 9, 1]))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-14-vowels  shape ok, values 0/1
+  > write a python script that counts the vowels in the string banana
+    def main():
+        print(sum(1 for letter in "banaa" if letter in "aeiou"))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-15-palindrome  shape ok, values 1/1
+  > write a python script that checks whether racecar is a palindrome
+    def main():
+        print("racecar" == "racecar"[::-1])
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-16-prime  shape ok, values 1/1
+  > write a python script that checks whether 17 is a prime number
+    def main():
+        print(all(17 % divisor for divisor in range(2, 17)))
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-17-fizzbuzz  shape differs, values 3/3
+  > write a python script that plays fizzbuzz from 1 to 15
+    def main():
+        for number in range(1, 15 + 1):
+            if number % 15 == 0:
+                print("FizzBuzz")
+            elif number % 3 == 0:
+                print("Fizz")
+            elif number % 5 == 0:
+                print("Buzz")
+            else:
+                print(number)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+FAIL  unseen-18-words  shape ok, values 1/4
+  > write a python script that prints each word of the sentence the quick brown fox on its own line
+    def main():
+        for word in "the word off".split():
+            print(word)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+pass  unseen-19-celsius  shape ok, values 1/1
+  > write a python script that converts 100 degrees celsius to fahrenheit
+    def main():
+        print(100 * 9 / 5 + 32)
+    
+    
+    if __name__ == "__main__":
+        main()
+
+program shape matched 14/20; request values copied 33/38
+18/20 programs matched (0 unscorable): pass_rate 0.9000
