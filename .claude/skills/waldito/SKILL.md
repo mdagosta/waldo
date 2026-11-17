@@ -60,4 +60,5 @@ run nothing until they say go.
   they can read it, press keys, and stop it. Say what the first lines should say (each identity's
   throttle) and when the first `SAVED` should appear. Read progress from
   `~/.waldo/join/logs/<name>/launcher.log` (`hc read <shell terminal>` for the screen), and when the
-  watcher ends, read the results: `measure.sh` runs by itself after the launcher.
+  watcher ends, read the results: `measure.sh` runs by itself after the launcher. Don't poll: the
+  watcher is the polling, and it costs no tokens. Look at the run when the user asks or the watcher ends.

@@ -55,9 +55,9 @@ PY
 )
   herdr-status "${status:-training starting}"
   if pgrep -f "waldito.* $plan" > /dev/null; then gone=0; else gone=$((gone + 1)); fi
-  if [ "$gone" -ge 3 ]; then
+  if [ "$gone" -ge 2 ]; then
     herdr-status "stopped: train"
     exit 0
   fi
-  sleep 60
+  sleep 180
 done
