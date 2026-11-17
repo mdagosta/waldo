@@ -1911,13 +1911,13 @@ class Launch:
         """What the run reached, its latest merge saying hello, and the plan's own checks."""
         self.show_rounds()
         self.hello()
-        measure = pathlib.Path(self.waldo).parent / "testing" / "join" / self.name / "measure.sh"
+        measure = REPO_ROOT / "testing" / "join" / self.name / "measure.sh"
         # Only a finished run's final merge: a ROUNDS=n launch would score a midway one into results/.
         if os.access(measure, os.X_OK) and self.finished():
             self.scoring = True
             self.set_throttle(self.level)
             say(f"\n== {self.name}/measure.sh")
-            measured = subprocess.run([str(measure)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            measured = subprocess.run([str(measure)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env={**os.environ, "WALDO": self.waldo})
             say(measured.stdout.rstrip())
 
     def run(self):
@@ -1982,7 +1982,7 @@ class Launch:
 def cmd_launch(args):
     """check-plan, then launch: `waldito <plan>` means `waldito launch <plan>`."""
     settings = launch_settings()
-    directory = pathlib.Path(settings.get("WALDO", "")).parent / "testing" / "join" / args.plan.removeprefix("runs/")
+    directory = REPO_ROOT / "testing" / "join" / args.plan.removeprefix("runs/")
     if (directory / "run.yaml").exists():
         try:
             cmd_check_plan(argparse.Namespace(plan=str(directory)))

@@ -4,7 +4,7 @@
 # taught tasks, paraphrases of taught tasks, two taught tasks chained (compose), and stretch tasks.
 set -eu
 here=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-waldo=$here/../../../waldo
+waldo=${WALDO:-$here/../../../waldo}
 mkdir -p "$here/results"
 while pgrep -f "waldo model join" >/dev/null; do sleep 300; done
 # The newest merge in any identity's models (only the last round's closers hold the final one), or round $1's.

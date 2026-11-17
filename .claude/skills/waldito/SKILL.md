@@ -40,7 +40,7 @@ line each, exactly as they will run. Skip a step with nothing to do, and say so.
    evaluate_python.py). A plan with no such gates copies run.yaml alone. README.md, measure.sh and
    demo.jsonl stay in the repo.
 4. Publish: `cd <SEED> && git pull --rebase && git add runs/<name> && git commit -m "runs/<name>: <one line>" && git push`
-5. Launch, for the user to type: `~/src/openwaldo/waldo-waldito/waldito <name>` (WALDO_GPU_THROTTLE from the shell is the budget; add ROUNDS=<n> to stop early)
+5. Launch in this space's shell tab, then watch it: `~/src/openwaldo/waldo-waldito/testing/join/launch-in-shell.sh WALDO_GPU_THROTTLE=<budget> UV_OFFLINE=1 SAVE_MINUTES=10 caffeinate -s ~/src/openwaldo/waldo-waldito/waldito <name>` (add ROUNDS=<n> to stop early), and `~/src/openwaldo/waldo-waldito/testing/join/watch-status.sh <name>` in the background, which keeps this tab's status at `train  r1/3  20%` until the launcher finishes
 
 `SEED` and `RUNS_REPO` come from `~/.waldo/join/launch.env`.
 
@@ -56,6 +56,8 @@ run nothing until they say go.
 - Never amend, force-push, or rebase anything but the seed's own pull.
 - After publishing, confirm the runs repository holds the plan as committed:
   `git --git-dir=<RUNS_REPO> show HEAD:runs/<name>/run.yaml | cmp - <plan directory>/run.yaml`
-- The launch is the user's: it runs for hours in their terminal. Print it last in its own block,
-  with what the first lines should say (each identity's throttle) and when the first `SAVED` should
-  appear.
+- The user's go on the steps is the go for the launch too: step 5 types it into their shell tab, where
+  they can read it, press keys, and stop it. Say what the first lines should say (each identity's
+  throttle) and when the first `SAVED` should appear. Read progress from
+  `~/.waldo/join/logs/<name>/launcher.log` (`hc read <shell terminal>` for the screen), and when the
+  watcher ends, read the results: `measure.sh` runs by itself after the launcher.
