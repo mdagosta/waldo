@@ -12,7 +12,7 @@ command, then run exactly that command: what is on the screen is what lands in t
 
 ## 1. Check (seconds)
 
-- A bare name means `~/src/openwaldo/waldo-join-local/testing/join/<name>`.
+- A bare name means `~/src/openwaldo/waldo-waldito/testing/join/<name>`.
 - Run `~/src/openwaldo/waldo-waldito/waldito check-plan <plan directory>` and show its lines as
   they are. On any ✗, stop: say what to fix, and run nothing.
 
@@ -27,12 +27,12 @@ From the plan's diff against the plan it follows, its README, and `docs/VISION.m
 
 ## 3. Steps
 
-Find what belongs to this launch and isn't committed: `git status` in waldo-join-local (the plan
-directory and READMEs it touched) and waldo-waldito (launcher and tooling), and check-plan's
+Find what belongs to this launch and isn't committed: `git status` in waldo-waldito (the plan
+directory and READMEs it touched, launcher and tooling), and check-plan's
 `name` line for whether `runs/<name>` is already published. List the steps, numbered, one command
 line each, exactly as they will run. Skip a step with nothing to do, and say so.
 
-1. Commit the plan: `cd ~/src/openwaldo/waldo-join-local && git add <files> && git commit -s -m "<one line, 72 characters at most, in the user's voice>"`
+1. Commit the plan: `cd ~/src/openwaldo/waldo-waldito && git add <files> && git commit -s -m "<one line, 72 characters at most, in the user's voice>"`
 2. Commit tooling, if any changed: the same form in `~/src/openwaldo/waldo-waldito`.
 3. Copy: `mkdir -p <SEED>/runs/<name> && cp <plan directory>/run.yaml <files> <SEED>/runs/<name>/`, where
    `<files>` is everything join reads from the run directory: each gate's `evaluation` BOM and every
